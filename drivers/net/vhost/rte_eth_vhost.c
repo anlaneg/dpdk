@@ -53,8 +53,6 @@
 #define ETH_VHOST_CLIENT_ARG		"client"
 #define ETH_VHOST_DEQUEUE_ZERO_COPY	"dequeue-zero-copy"
 
-static const char *drivername = "VHOST PMD";
-
 static const char *valid_arguments[] = {
 	ETH_VHOST_IFACE_ARG,
 	ETH_VHOST_QUEUES_ARG,
@@ -112,12 +110,11 @@ struct vhost_queue {
 };
 
 struct pmd_internal {
+	rte_atomic32_t dev_attached;
 	char *dev_name;
 	char *iface_name;
 	uint16_t max_queues;
-	uint64_t flags;
-
-	volatile uint16_t once;
+	rte_atomic32_t started;
 };
 
 struct internal_list {
@@ -497,6 +494,38 @@ find_internal_resource(char *ifname)
 	return list;
 }
 
+static void
+update_queuing_status(struct rte_eth_dev *dev)
+{
+	struct pmd_internal *internal = dev->data->dev_private;
+	struct vhost_queue *vq;
+	unsigned int i;
+	int allow_queuing = 1;
+
+	if (rte_atomic32_read(&internal->started) == 0 ||
+	    rte_atomic32_read(&internal->dev_attached) == 0)
+		allow_queuing = 0;
+
+	/* Wait until rx/tx_pkt_burst stops accessing vhost device */
+	for (i = 0; i < dev->data->nb_rx_queues; i++) {
+		vq = dev->data->rx_queues[i];
+		if (vq == NULL)
+			continue;
+		rte_atomic32_set(&vq->allow_queuing, allow_queuing);
+		while (rte_atomic32_read(&vq->while_queuing))
+			rte_pause();
+	}
+
+	for (i = 0; i < dev->data->nb_tx_queues; i++) {
+		vq = dev->data->tx_queues[i];
+		if (vq == NULL)
+			continue;
+		rte_atomic32_set(&vq->allow_queuing, allow_queuing);
+		while (rte_atomic32_read(&vq->while_queuing))
+			rte_pause();
+	}
+}
+
 static int
 new_device(int vid)
 {
@@ -548,18 +577,8 @@ new_device(int vid)
 
 	eth_dev->data->dev_link.link_status = ETH_LINK_UP;
 
-	for (i = 0; i < eth_dev->data->nb_rx_queues; i++) {
-		vq = eth_dev->data->rx_queues[i];
-		if (vq == NULL)
-			continue;
-		rte_atomic32_set(&vq->allow_queuing, 1);
-	}
-	for (i = 0; i < eth_dev->data->nb_tx_queues; i++) {
-		vq = eth_dev->data->tx_queues[i];
-		if (vq == NULL)
-			continue;
-		rte_atomic32_set(&vq->allow_queuing, 1);
-	}
+	rte_atomic32_set(&internal->dev_attached, 1);
+	update_queuing_status(eth_dev);
 
 	RTE_LOG(INFO, PMD, "New connection established\n");
 
@@ -572,6 +591,7 @@ static void
 destroy_device(int vid)
 {
 	struct rte_eth_dev *eth_dev;
+	struct pmd_internal *internal;
 	struct vhost_queue *vq;
 	struct internal_list *list;
 	char ifname[PATH_MAX];
@@ -585,24 +605,10 @@ destroy_device(int vid)
 		return;
 	}
 	eth_dev = list->eth_dev;
+	internal = eth_dev->data->dev_private;
 
-	/* Wait until rx/tx_pkt_burst stops accessing vhost device */
-	for (i = 0; i < eth_dev->data->nb_rx_queues; i++) {
-		vq = eth_dev->data->rx_queues[i];
-		if (vq == NULL)
-			continue;
-		rte_atomic32_set(&vq->allow_queuing, 0);
-		while (rte_atomic32_read(&vq->while_queuing))
-			rte_pause();
-	}
-	for (i = 0; i < eth_dev->data->nb_tx_queues; i++) {
-		vq = eth_dev->data->tx_queues[i];
-		if (vq == NULL)
-			continue;
-		rte_atomic32_set(&vq->allow_queuing, 0);
-		while (rte_atomic32_read(&vq->while_queuing))
-			rte_pause();
-	}
+	rte_atomic32_set(&internal->dev_attached, 0);
+	update_queuing_status(eth_dev);
 
 	eth_dev->data->dev_link.link_status = ETH_LINK_DOWN;
 
@@ -779,20 +785,11 @@ static int
 eth_dev_start(struct rte_eth_dev *dev)
 {
 	struct pmd_internal *internal = dev->data->dev_private;
-	int ret = 0;
 
-	if (rte_atomic16_cmpset(&internal->once, 0, 1)) {
-		ret = rte_vhost_driver_register(internal->iface_name,
-						internal->flags);
-		if (ret)
-			return ret;
-	}
+	rte_atomic32_set(&internal->started, 1);
+	update_queuing_status(dev);
 
-	/* We need only one message handling thread */
-	if (rte_atomic16_add_return(&nb_started_ports, 1) == 1)
-		ret = vhost_driver_session_start();
-
-	return ret;
+	return 0;
 }
 
 static void
@@ -800,11 +797,8 @@ eth_dev_stop(struct rte_eth_dev *dev)
 {
 	struct pmd_internal *internal = dev->data->dev_private;
 
-	if (rte_atomic16_cmpset(&internal->once, 1, 0))
-		rte_vhost_driver_unregister(internal->iface_name);
-
-	if (rte_atomic16_sub_return(&nb_started_ports, 1) == 0)
-		vhost_driver_session_stop();
+	rte_atomic32_set(&internal->started, 0);
+	update_queuing_status(dev);
 }
 
 static int
@@ -863,7 +857,6 @@ eth_dev_info(struct rte_eth_dev *dev,
 		return;
 	}
 
-	dev_info->driver_name = drivername;
 	dev_info->max_mac_addrs = 1;
 	dev_info->max_rx_pktlen = (uint32_t)-1;
 	dev_info->max_rx_queues = internal->max_queues;
@@ -989,6 +982,8 @@ static const struct eth_dev_ops ops = {
 	.xstats_get_names = vhost_dev_xstats_get_names,
 };
 
+static struct rte_vdev_driver pmd_vhost_drv;
+
 static int
 eth_dev_vhost_create(const char *name, char *iface_name, int16_t queues,
 		     const unsigned numa_node, uint64_t flags)
@@ -1046,7 +1041,6 @@ eth_dev_vhost_create(const char *name, char *iface_name, int16_t queues,
 	internal->iface_name = strdup(iface_name);
 	if (internal->iface_name == NULL)
 		goto error;
-	internal->flags = flags;
 
 	list->eth_dev = eth_dev;
 	pthread_mutex_lock(&internal_list_lock);
@@ -1074,12 +1068,21 @@ eth_dev_vhost_create(const char *name, char *iface_name, int16_t queues,
 	data->dev_flags =
 		RTE_ETH_DEV_DETACHABLE | RTE_ETH_DEV_INTR_LSC;
 	data->kdrv = RTE_KDRV_NONE;
-	data->drv_name = internal->dev_name;
+	data->drv_name = pmd_vhost_drv.driver.name;
 	data->numa_node = numa_node;
 
 	/* finally assign rx and tx ops */
 	eth_dev->rx_pkt_burst = eth_vhost_rx;
 	eth_dev->tx_pkt_burst = eth_vhost_tx;
+
+	if (rte_vhost_driver_register(iface_name, flags))
+		goto error;
+
+	/* We need only one message handling thread */
+	if (rte_atomic16_add_return(&nb_started_ports, 1) == 1) {
+		if (vhost_driver_session_start())
+			goto error;
+	}
 
 	return data->port_id;
 
@@ -1217,6 +1220,11 @@ rte_pmd_vhost_remove(const char *name)
 	rte_free(list);
 
 	eth_dev_stop(eth_dev);
+
+	rte_vhost_driver_unregister(internal->iface_name);
+
+	if (rte_atomic16_sub_return(&nb_started_ports, 1) == 0)
+		vhost_driver_session_stop();
 
 	rte_free(vring_states[eth_dev->data->port_id]);
 	vring_states[eth_dev->data->port_id] = NULL;

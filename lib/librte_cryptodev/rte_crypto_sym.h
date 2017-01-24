@@ -105,7 +105,11 @@ enum rte_crypto_cipher_algorithm {
 	RTE_CRYPTO_CIPHER_ZUC_EEA3,
 	/**< ZUC algorithm in EEA3 mode */
 
+	RTE_CRYPTO_CIPHER_DES_CBC,
+	/**< DES algorithm in CBC mode */
+
 	RTE_CRYPTO_CIPHER_LIST_END
+
 };
 
 /** Symmetric Cipher Direction */
@@ -541,8 +545,7 @@ struct rte_crypto_sym_op {
 
 		struct {
 			uint8_t *data;
-			/**< If this member of this structure is set this is a
-			 * pointer to the location where the digest result
+			/**< This points to the location where the digest result
 			 * should be inserted (in the case of digest generation)
 			 * or where the purported digest exists (in the case of
 			 * digest verification).
@@ -560,13 +563,6 @@ struct rte_crypto_sym_op {
 			 * @note
 			 * For GCM (@ref RTE_CRYPTO_AUTH_AES_GCM), for
 			 * "digest result" read "authentication tag T".
-			 *
-			 * If this member is not set the digest result is
-			 * understood to be in the destination buffer for
-			 * digest generation, and in the source buffer for
-			 * digest verification. The location of the digest
-			 * result in this case is immediately following the
-			 * region over which the digest is computed.
 			 */
 			phys_addr_t phys_addr;
 			/**< Physical address of digest */

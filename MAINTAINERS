@@ -366,6 +366,12 @@ M: Harish Patil <harish.patil@cavium.com>
 F: drivers/net/qede/
 F: doc/guides/nics/qede.rst
 
+Solarflare sfc_efx
+M: Andrew Rybchenko <arybchenko@solarflare.com>
+F: drivers/net/sfc/
+F: doc/guides/nics/sfc_efx.rst
+F: doc/guides/nics/features/sfc_efx.ini
+
 RedHat virtio
 M: Huawei Xie <huawei.xie@intel.com>
 M: Yuanhan Liu <yuanhan.liu@linux.intel.com>
@@ -393,6 +399,11 @@ M: Ferruh Yigit <ferruh.yigit@intel.com>
 F: drivers/net/pcap/
 F: doc/guides/nics/pcap_ring.rst
 
+Tap PMD
+M: Keith Wiles <keith.wiles@intel.com>
+F: drivers/net/tap/
+F: doc/guides/nics/tap.rst
+
 Ring PMD
 M: Bruce Richardson <bruce.richardson@intel.com>
 F: drivers/net/ring/
@@ -409,6 +420,12 @@ Crypto Drivers
 --------------
 M: Pablo de Lara <pablo.de.lara.guarch@intel.com>
 T: git://dpdk.org/next/dpdk-next-crypto
+
+ARMv8 Crypto PMD
+M: Zbigniew Bodek <zbigniew.bodek@caviumnetworks.com>
+M: Jerin Jacob <jerin.jacob@caviumnetworks.com>
+F: drivers/crypto/armv8/
+F: doc/guides/cryptodevs/armv8.rst
 
 Intel AES-NI GCM PMD
 M: Declan Doherty <declan.doherty@intel.com>
@@ -527,6 +544,15 @@ F: app/test-acl/
 F: app/test/test_acl.*
 F: examples/l3fwd-acl/
 F: doc/guides/sample_app_ug/l3_forward_access_ctrl.rst
+
+EFD
+M: Byron Marohn <byron.marohn@intel.com>
+M: Pablo de Lara Guarch <pablo.de.lara.guarch@intel.com>
+F: lib/librte_efd/
+F: doc/guides/prog_guide/efd_lib.rst
+F: app/test/test_efd*
+F: examples/flow_distributor/
+F: doc/guides/sample_app_ug/flow_distributor.rst
 
 Hashes
 M: Bruce Richardson <bruce.richardson@intel.com>

@@ -66,6 +66,8 @@ extern "C" {
 /**< KASUMI PMD device name */
 #define CRYPTODEV_NAME_ZUC_PMD		crypto_zuc
 /**< KASUMI PMD device name */
+#define CRYPTODEV_NAME_ARMV8_PMD	crypto_armv8
+/**< ARMv8 Crypto PMD device name */
 
 /** Crypto device type */
 enum rte_cryptodev_type {
@@ -77,6 +79,7 @@ enum rte_cryptodev_type {
 	RTE_CRYPTODEV_KASUMI_PMD,	/**< KASUMI PMD */
 	RTE_CRYPTODEV_ZUC_PMD,		/**< ZUC PMD */
 	RTE_CRYPTODEV_OPENSSL_PMD,    /**<  OpenSSL PMD */
+	RTE_CRYPTODEV_ARMV8_PMD,	/**< ARMv8 crypto PMD */
 };
 
 extern const char **rte_cyptodev_names;
@@ -225,6 +228,15 @@ struct rte_cryptodev_capabilities {
 /**< Utilises CPU AES-NI instructions */
 #define	RTE_CRYPTODEV_FF_HW_ACCELERATED		(1ULL << 7)
 /**< Operations are off-loaded to an external hardware accelerator */
+#define	RTE_CRYPTODEV_FF_CPU_AVX512		(1ULL << 8)
+/**< Utilises CPU SIMD AVX512 instructions */
+#define	RTE_CRYPTODEV_FF_MBUF_SCATTER_GATHER	(1ULL << 9)
+/**< Scatter-gather mbufs are supported */
+#define	RTE_CRYPTODEV_FF_CPU_NEON		(1ULL << 10)
+/**< Utilises CPU NEON instructions */
+#define	RTE_CRYPTODEV_FF_CPU_ARM_CE		(1ULL << 11)
+/**< Utilises ARM CPU Cryptographic Extensions */
+
 
 
 /**
@@ -300,6 +312,8 @@ struct rte_cryptodev_stats {
 	/**< Total error count on operations dequeued */
 };
 
+#define RTE_CRYPTODEV_NAME_MAX_LEN	(64)
+/**< Max length of name of crypto PMD */
 #define RTE_CRYPTODEV_VDEV_DEFAULT_MAX_NB_QUEUE_PAIRS	8
 #define RTE_CRYPTODEV_VDEV_DEFAULT_MAX_NB_SESSIONS	2048
 
@@ -311,6 +325,7 @@ struct rte_crypto_vdev_init_params {
 	unsigned max_nb_queue_pairs;
 	unsigned max_nb_sessions;
 	uint8_t socket_id;
+	char name[RTE_CRYPTODEV_NAME_MAX_LEN];
 };
 
 /**
@@ -634,10 +649,6 @@ struct rte_cryptodev {
 	uint8_t attached : 1;
 	/**< Flag indicating the device is attached */
 } __rte_cache_aligned;
-
-
-#define RTE_CRYPTODEV_NAME_MAX_LEN	(64)
-/**< Max length of name of crypto PMD */
 
 /**
  *

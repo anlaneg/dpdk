@@ -183,8 +183,9 @@ rte_cryptodev_pmd_get_named_dev(const char *name)
 	if (name == NULL)
 		return NULL;
 
-	for (i = 0, dev = &rte_cryptodev_globals->devs[i];
-			i < rte_cryptodev_globals->max_devs; i++) {
+	for (i = 0; i < rte_cryptodev_globals->max_devs; i++) {
+		dev = &rte_cryptodev_globals->devs[i];
+
 		if ((dev->attached == RTE_CRYPTODEV_ATTACHED) &&
 				(strcmp(dev->data->name, name) == 0))
 			return dev;
@@ -518,6 +519,13 @@ int rte_cryptodev_pci_probe(struct rte_pci_driver *pci_drv,
  * interface.
  */
 int rte_cryptodev_pci_remove(struct rte_pci_device *pci_dev);
+
+/**
+ * @internal
+ * Create unique device name
+ */
+int
+rte_cryptodev_pmd_create_dev_name(char *name, const char *dev_name_prefix);
 
 #ifdef __cplusplus
 }

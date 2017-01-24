@@ -143,6 +143,8 @@ struct fwd_stream {
 #define TESTPMD_TX_OFFLOAD_INSERT_VLAN       0x0040
 /** Insert double VLAN header in forward engine */
 #define TESTPMD_TX_OFFLOAD_INSERT_QINQ       0x0080
+/** Offload MACsec in forward engine */
+#define TESTPMD_TX_OFFLOAD_MACSEC            0x0100
 
 /** Descriptor for a single flow. */
 struct port_flow {
@@ -598,8 +600,6 @@ void port_rss_reta_info(portid_t port_id,
 			uint16_t nb_entries);
 
 void set_vf_traffic(portid_t port_id, uint8_t is_rx, uint16_t vf, uint8_t on);
-void set_vf_rx_vlan(portid_t port_id, uint16_t vlan_id,
-		uint64_t vf_mask, uint8_t on);
 
 int set_queue_rate_limit(portid_t port_id, uint16_t queue_idx, uint16_t rate);
 int set_vf_rate_limit(portid_t port_id, uint16_t vf, uint16_t rate,
