@@ -87,7 +87,7 @@ bad=$(for commit in $commits ; do
 	if [ $(echo "$drvgrp" | wc -l) -gt 1 ] ; then
 		echo "$headline" | grep -v '^drivers:'
 	elif [ $(echo "$drv" | wc -l) -gt 1 ] ; then
-		echo "$headline" | grep -v "^$drvgrp"
+		echo "$headline" | grep -v "^drivers/$drvgrp"
 	else
 		echo "$headline" | grep -v "^$drv"
 	fi
@@ -128,13 +128,15 @@ bad=$(echo "$headlines" | grep -E --color=always \
 	-e ':.*\<mac\>' \
 	-e ':.*\<mtu\>' \
 	-e ':.*\<nic\>' \
+	-e ':.*\<nvm\>' \
 	-e ':.*\<numa\>' \
 	-e ':.*\<pci\>' \
 	-e ':.*\<pmd\>' \
 	-e ':.*\<rss\>' \
 	-e ':.*\<tile-gx\>' \
 	-e ':.*\<tilegx\>' \
-	-e ':.*\<vlan\>' \
+	-e ':.*\<tso\>' \
+	-e ':.*\<[Vv]lan\>' \
 	| sed 's,^,\t,')
 [ -z "$bad" ] || printf "Wrong headline lowercase:\n$bad\n"
 
