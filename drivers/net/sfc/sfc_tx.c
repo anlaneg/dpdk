@@ -312,11 +312,6 @@ sfc_tx_init(struct sfc_adapter *sa)
 
 	sa->txq_count = sa->eth_dev->data->nb_tx_queues;
 
-	if (sa->tso)
-		sa->txq_count = MIN(sa->txq_count,
-		   efx_nic_cfg_get(sa->nic)->enc_fw_assisted_tso_v2_n_contexts /
-		   efx_nic_cfg_get(sa->nic)->enc_hw_pf_count);
-
 	sa->txq_info = rte_calloc_socket("sfc-txqs", sa->txq_count,
 					 sizeof(sa->txq_info[0]), 0,
 					 sa->socket_id);
@@ -650,7 +645,6 @@ sfc_xmit_pkts(void *tx_queue, struct rte_mbuf **tx_pkts, uint16_t nb_pkts)
 		 */
 		pkt_descs += sfc_tx_maybe_insert_tag(txq, m_seg, &pend);
 
-#ifdef RTE_LIBRTE_SFC_EFX_TSO
 		if (m_seg->ol_flags & PKT_TX_TCP_SEG) {
 			/*
 			 * We expect correct 'pkt->l[2, 3, 4]_len' values
@@ -688,7 +682,6 @@ sfc_xmit_pkts(void *tx_queue, struct rte_mbuf **tx_pkts, uint16_t nb_pkts)
 			 * as for the usual non-TSO path
 			 */
 		}
-#endif /* RTE_LIBRTE_SFC_EFX_TSO */
 
 		for (; m_seg != NULL; m_seg = m_seg->next) {
 			efsys_dma_addr_t	next_frag;

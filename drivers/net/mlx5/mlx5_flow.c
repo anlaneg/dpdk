@@ -410,17 +410,6 @@ priv_flow_validate(struct priv *priv,
 
 		if (items->type == RTE_FLOW_ITEM_TYPE_VOID)
 			continue;
-		/* Handle special situation for VLAN. */
-		if (items->type == RTE_FLOW_ITEM_TYPE_VLAN) {
-			if (((const struct rte_flow_item_vlan *)items)->tci >
-			    ETHER_MAX_VLAN_ID) {
-				rte_flow_error_set(error, ENOTSUP,
-						   RTE_FLOW_ERROR_TYPE_ITEM,
-						   items,
-						   "wrong VLAN id value");
-				return -rte_errno;
-			}
-		}
 		for (i = 0;
 		     cur_item->items &&
 		     cur_item->items[i] != RTE_FLOW_ITEM_TYPE_END;
@@ -435,7 +424,7 @@ priv_flow_validate(struct priv *priv,
 		cur_item = token;
 		err = mlx5_flow_item_validate(items,
 					      (const uint8_t *)cur_item->mask,
-					      sizeof(cur_item->mask_sz));
+					      cur_item->mask_sz);
 		if (err)
 			goto exit_item_not_supported;
 		if (flow->ibv_attr && cur_item->convert) {
@@ -480,7 +469,7 @@ priv_flow_validate(struct priv *priv,
 			goto exit_action_not_supported;
 		}
 	}
-	if (action.mark && !flow->ibv_attr)
+	if (action.mark && !flow->ibv_attr && !action.drop)
 		flow->offset += sizeof(struct ibv_exp_flow_spec_action_tag);
 	if (!action.queue && !action.drop) {
 		rte_flow_error_set(error, ENOTSUP, RTE_FLOW_ERROR_TYPE_HANDLE,
@@ -1042,6 +1031,7 @@ priv_flow_create(struct priv *priv,
 				 actions->conf)->index;
 		} else if (actions->type == RTE_FLOW_ACTION_TYPE_DROP) {
 			action.drop = 1;
+			action.mark = 0;
 		} else if (actions->type == RTE_FLOW_ACTION_TYPE_MARK) {
 			const struct rte_flow_action_mark *mark =
 				(const struct rte_flow_action_mark *)
@@ -1049,7 +1039,7 @@ priv_flow_create(struct priv *priv,
 
 			if (mark)
 				action.mark_id = mark->id;
-			action.mark = 1;
+			action.mark = !action.drop;
 		} else {
 			rte_flow_error_set(error, ENOTSUP,
 					   RTE_FLOW_ERROR_TYPE_ACTION,

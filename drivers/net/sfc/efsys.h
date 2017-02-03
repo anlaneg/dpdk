@@ -43,6 +43,7 @@
 #include <rte_common.h>
 #include <rte_malloc.h>
 #include <rte_log.h>
+#include <rte_io.h>
 
 #include "sfc_debug.h"
 
@@ -440,7 +441,7 @@ typedef struct efsys_bar_s {
 									\
 		_addr = (volatile uint32_t *)(_base + (_offset));	\
 		rte_rmb();						\
-		(_edp)->ed_u32[0] = _addr[0];				\
+		(_edp)->ed_u32[0] = rte_read32_relaxed(_addr);		\
 									\
 		EFSYS_PROBE2(bar_readd, unsigned int, (_offset),	\
 					 uint32_t, (_edp)->ed_u32[0]);	\
@@ -463,7 +464,7 @@ typedef struct efsys_bar_s {
 									\
 		_addr = (volatile uint64_t *)(_base + (_offset));	\
 		rte_rmb();						\
-		(_eqp)->eq_u64[0] = _addr[0];				\
+		(_eqp)->eq_u64[0] = rte_read64_relaxed(_addr);		\
 									\
 		EFSYS_PROBE3(bar_readq, unsigned int, (_offset),	\
 					 uint32_t, (_eqp)->eq_u32[1],	\
@@ -487,6 +488,7 @@ typedef struct efsys_bar_s {
 									\
 		_addr = (volatile __m128i *)(_base + (_offset));	\
 		rte_rmb();						\
+		/* There is no rte_read128_relaxed() yet */		\
 		(_eop)->eo_u128[0] = _addr[0];				\
 									\
 		EFSYS_PROBE5(bar_reado, unsigned int, (_offset),	\
@@ -518,7 +520,7 @@ typedef struct efsys_bar_s {
 					 uint32_t, (_edp)->ed_u32[0]);	\
 									\
 		_addr = (volatile uint32_t *)(_base + (_offset));	\
-		_addr[0] = (_edp)->ed_u32[0];				\
+		rte_write32_relaxed((_edp)->ed_u32[0], _addr);		\
 		rte_wmb();						\
 									\
 		_NOTE(CONSTANTCONDITION);				\
@@ -542,7 +544,7 @@ typedef struct efsys_bar_s {
 					 uint32_t, (_eqp)->eq_u32[0]);	\
 									\
 		_addr = (volatile uint64_t *)(_base + (_offset));	\
-		_addr[0] = (_eqp)->eq_u64[0];				\
+		rte_write64_relaxed((_eqp)->eq_u64[0], _addr);		\
 		rte_wmb();						\
 									\
 		SFC_BAR_UNLOCK(_esbp);					\
@@ -580,6 +582,7 @@ typedef struct efsys_bar_s {
 					 uint32_t, (_eop)->eo_u32[0]);	\
 									\
 		_addr = (volatile __m128i *)(_base + (_offset));	\
+		/* There is no rte_write128_relaxed() yet */		\
 		_addr[0] = (_eop)->eo_u128[0];				\
 		rte_wmb();						\
 									\
@@ -609,7 +612,7 @@ typedef struct efsys_bar_s {
 /* BARRIERS */
 
 #define EFSYS_MEM_READ_BARRIER()	rte_rmb()
-#define EFSYS_PIO_WRITE_BARRIER()	rte_wmb()
+#define EFSYS_PIO_WRITE_BARRIER()	rte_io_wmb()
 
 /* DMA SYNC */
 
@@ -620,7 +623,9 @@ typedef struct efsys_bar_s {
  */
 
 #define EFSYS_DMA_SYNC_FOR_KERNEL(_esmp, _offset, _size)	((void)0)
-#define EFSYS_DMA_SYNC_FOR_DEVICE(_esmp, _offset, _size)	((void)0)
+
+/* Just avoid store and compiler (impliciltly) reordering */
+#define EFSYS_DMA_SYNC_FOR_DEVICE(_esmp, _offset, _size)	rte_wmb()
 
 /* TIMESTAMP */
 

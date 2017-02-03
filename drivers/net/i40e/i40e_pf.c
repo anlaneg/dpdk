@@ -471,7 +471,7 @@ i40e_pf_host_process_cmd_config_vsi_queues(struct i40e_pf_vf *vf,
 		vc_vqci->num_queue_pairs > I40E_MAX_VSI_QP ||
 		msglen < I40E_VIRTCHNL_CONFIG_VSI_QUEUES_SIZE(vc_vqci,
 					vc_vqci->num_queue_pairs)) {
-		PMD_DRV_LOG(ERR, "vsi_queue_config_info argument wrong\n");
+		PMD_DRV_LOG(ERR, "vsi_queue_config_info argument wrong");
 		ret = I40E_ERR_PARAM;
 		goto send_msg;
 	}
@@ -539,7 +539,7 @@ i40e_pf_host_process_cmd_config_vsi_queues_ext(struct i40e_pf_vf *vf,
 		vc_vqcei->num_queue_pairs > I40E_MAX_VSI_QP ||
 		msglen < I40E_VIRTCHNL_CONFIG_VSI_QUEUES_SIZE(vc_vqcei,
 					vc_vqcei->num_queue_pairs)) {
-		PMD_DRV_LOG(ERR, "vsi_queue_config_ext_info argument wrong\n");
+		PMD_DRV_LOG(ERR, "vsi_queue_config_ext_info argument wrong");
 		ret = I40E_ERR_PARAM;
 		goto send_msg;
 	}
@@ -929,7 +929,7 @@ i40e_pf_host_process_cmd_del_ether_address(struct i40e_pf_vf *vf,
 
 	for (i = 0; i < addr_list->num_elements; i++) {
 		mac = (struct ether_addr *)(addr_list->list[i].addr);
-		if(!is_valid_assigned_ether_addr(mac) ||
+		if(is_zero_ether_addr(mac) ||
 			i40e_vsi_delete_mac(vf->vsi, mac)) {
 			ret = I40E_ERR_INVALID_MAC_ADDR;
 			goto send_msg;

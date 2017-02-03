@@ -2,7 +2,6 @@
  *   BSD LICENSE
  *
  *   Copyright(c) 2016-2017 Intel Corporation. All rights reserved.
- *   All rights reserved.
  *
  *   Redistribution and use in source and binary forms, with or without
  *   modification, are permitted provided that the following conditions
@@ -31,46 +30,38 @@
  *   OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#ifndef _INIT_H_
-#define _INIT_H_
+#ifndef _CPERF_OPS_
+#define _CPERF_OPS_
 
-/*
- * #include <rte_ring.h>
- * #include "args.h"
- */
+#include <rte_crypto.h>
 
-/*
- * Define a node structure with all needed info, including
- * stats from the nodes.
- */
-struct node {
-	struct rte_ring *rx_q;
-	unsigned int node_id;
-	/* these stats hold how many packets the node will actually receive,
-	 * and how many packets were dropped because the node's queue was full.
-	 * The port-info stats, in contrast, record how many packets were received
-	 * or transmitted on an actual NIC port.
-	 */
-	struct {
-		uint64_t rx;
-		uint64_t rx_drop;
-	} stats;
+#include "cperf.h"
+#include "cperf_options.h"
+#include "cperf_test_vectors.h"
+
+
+typedef struct rte_cryptodev_sym_session *(*cperf_sessions_create_t)(
+		uint8_t dev_id, const struct cperf_options *options,
+		const struct cperf_test_vector *test_vector);
+
+typedef int (*cperf_populate_ops_t)(struct rte_crypto_op **ops,
+		struct rte_mbuf **bufs_in, struct rte_mbuf **bufs_out,
+		uint16_t nb_ops, struct rte_cryptodev_sym_session *sess,
+		const struct cperf_options *options,
+		const struct cperf_test_vector *test_vector);
+
+
+typedef int (*cperf_verify_crypto_op_t)(struct rte_mbuf *m,
+		const struct cperf_options *options,
+		const struct cperf_test_vector *test_vector);
+
+struct cperf_op_fns {
+	cperf_sessions_create_t sess_create;
+	cperf_populate_ops_t populate_ops;
 };
 
-extern struct rte_efd_table *efd_table;
-extern struct node *nodes;
+int
+cperf_get_op_functions(const struct cperf_options *options,
+		struct cperf_op_fns *op_fns);
 
-/*
- * shared information between distributor and nodes: number of clients,
- * port numbers, rx and tx stats etc.
- */
-extern struct shared_info *info;
-
-extern struct rte_mempool *pktmbuf_pool;
-extern uint8_t num_nodes;
-extern unsigned int num_sockets;
-extern uint32_t num_flows;
-
-int init(int argc, char *argv[]);
-
-#endif /* ifndef _INIT_H_ */
+#endif /* _CPERF_OPS_ */

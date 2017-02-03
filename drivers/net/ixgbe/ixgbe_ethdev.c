@@ -898,6 +898,8 @@ ixgbe_pf_reset_hw(struct ixgbe_hw *hw)
 	IXGBE_WRITE_REG(hw, IXGBE_CTRL_EXT, ctrl_ext);
 	IXGBE_WRITE_FLUSH(hw);
 
+	if (status == IXGBE_ERR_SFP_NOT_PRESENT)
+		status = IXGBE_SUCCESS;
 	return status;
 }
 
@@ -1236,6 +1238,9 @@ eth_ixgbe_dev_init(struct rte_eth_dev *eth_dev)
 		rte_delay_ms(200);
 		diag = ixgbe_init_hw(hw);
 	}
+
+	if (diag == IXGBE_ERR_SFP_NOT_PRESENT)
+		diag = IXGBE_SUCCESS;
 
 	if (diag == IXGBE_ERR_EEPROM_VERSION) {
 		PMD_INIT_LOG(ERR, "This device is a pre-production adapter/"
@@ -2454,7 +2459,7 @@ ixgbe_dev_start(struct rte_eth_dev *dev)
 				    dev->data->nb_rx_queues * sizeof(int), 0);
 		if (intr_handle->intr_vec == NULL) {
 			PMD_INIT_LOG(ERR, "Failed to allocate %d rx_queues"
-				     " intr_vec\n", dev->data->nb_rx_queues);
+				     " intr_vec", dev->data->nb_rx_queues);
 			return -ENOMEM;
 		}
 	}
@@ -2574,7 +2579,7 @@ skip_link_setup:
 					     ixgbe_dev_interrupt_handler, dev);
 		if (dev->data->dev_conf.intr_conf.lsc != 0)
 			PMD_INIT_LOG(INFO, "lsc won't enable because of"
-				     " no intr multiplex\n");
+				     " no intr multiplex");
 	}
 
 	/* check if rxq interrupt is enabled */
@@ -3456,7 +3461,7 @@ ixgbevf_dev_info_get(struct rte_eth_dev *dev,
 	dev_info->max_rx_queues = (uint16_t)hw->mac.max_rx_queues;
 	dev_info->max_tx_queues = (uint16_t)hw->mac.max_tx_queues;
 	dev_info->min_rx_bufsize = 1024; /* cf BSIZEPACKET in SRRCTL reg */
-	dev_info->max_rx_pktlen = 15872; /* includes CRC, cf MAXFRS reg */
+	dev_info->max_rx_pktlen = 9728; /* includes CRC, cf MAXFRS reg */
 	dev_info->max_mac_addrs = hw->mac.num_rar_entries;
 	dev_info->max_hash_mac_addrs = IXGBE_VMDQ_NUM_UC_MAC;
 	dev_info->max_vfs = pci_dev->max_vfs;
@@ -3786,7 +3791,6 @@ ixgbe_dev_interrupt_action(struct rte_eth_dev *dev,
 		IXGBE_DEV_PRIVATE_TO_INTR(dev->data->dev_private);
 	int64_t timeout;
 	struct rte_eth_link link;
-	int intr_enable_delay = false;
 	struct ixgbe_hw *hw =
 		IXGBE_DEV_PRIVATE_TO_HW(dev->data->dev_private);
 
@@ -3819,20 +3823,19 @@ ixgbe_dev_interrupt_action(struct rte_eth_dev *dev,
 			timeout = IXGBE_LINK_DOWN_CHECK_TIMEOUT;
 
 		ixgbe_dev_link_status_print(dev);
-
-		intr_enable_delay = true;
-	}
-
-	if (intr_enable_delay) {
+		intr->mask_original = intr->mask;
+		/* only disable lsc interrupt */
+		intr->mask &= ~IXGBE_EIMS_LSC;
 		if (rte_eal_alarm_set(timeout * 1000,
 				      ixgbe_dev_interrupt_delayed_handler, (void *)dev) < 0)
 			PMD_DRV_LOG(ERR, "Error setting alarm");
-	} else {
-		PMD_DRV_LOG(DEBUG, "enable intr immediately");
-		ixgbe_enable_intr(dev);
-		rte_intr_enable(intr_handle);
+		else
+			intr->mask = intr->mask_original;
 	}
 
+	PMD_DRV_LOG(DEBUG, "enable intr immediately");
+	ixgbe_enable_intr(dev);
+	rte_intr_enable(intr_handle);
 
 	return 0;
 }
@@ -3863,6 +3866,8 @@ ixgbe_dev_interrupt_delayed_handler(void *param)
 		IXGBE_DEV_PRIVATE_TO_HW(dev->data->dev_private);
 	uint32_t eicr;
 
+	ixgbe_disable_intr(hw);
+
 	eicr = IXGBE_READ_REG(hw, IXGBE_EICR);
 	if (eicr & IXGBE_EICR_MAILBOX)
 		ixgbe_pf_mbx_process(dev);
@@ -3884,6 +3889,10 @@ ixgbe_dev_interrupt_delayed_handler(void *param)
 					      NULL);
 		intr->flags &= ~IXGBE_FLAG_MACSEC;
 	}
+
+	/* restore original mask */
+	intr->mask = intr->mask_original;
+	intr->mask_original = 0;
 
 	PMD_DRV_LOG(DEBUG, "enable intr in delayed handler S[%08x]", eicr);
 	ixgbe_enable_intr(dev);
@@ -4273,7 +4282,7 @@ ixgbe_dev_rss_reta_update(struct rte_eth_dev *dev,
 	if (reta_size != sp_reta_size) {
 		PMD_DRV_LOG(ERR, "The size of hash lookup table configured "
 			"(%d) doesn't match the number hardware can supported "
-			"(%d)\n", reta_size, sp_reta_size);
+			"(%d)", reta_size, sp_reta_size);
 		return -EINVAL;
 	}
 
@@ -4320,7 +4329,7 @@ ixgbe_dev_rss_reta_query(struct rte_eth_dev *dev,
 	if (reta_size != sp_reta_size) {
 		PMD_DRV_LOG(ERR, "The size of hash lookup table configured "
 			"(%d) doesn't match the number hardware can supported "
-			"(%d)\n", reta_size, sp_reta_size);
+			"(%d)", reta_size, sp_reta_size);
 		return -EINVAL;
 	}
 
@@ -4580,7 +4589,7 @@ ixgbevf_dev_start(struct rte_eth_dev *dev)
 				    dev->data->nb_rx_queues * sizeof(int), 0);
 		if (intr_handle->intr_vec == NULL) {
 			PMD_INIT_LOG(ERR, "Failed to allocate %d rx_queues"
-				     " intr_vec\n", dev->data->nb_rx_queues);
+				     " intr_vec", dev->data->nb_rx_queues);
 			return -ENOMEM;
 		}
 	}
@@ -6047,7 +6056,7 @@ ixgbe_syn_filter_handle(struct rte_eth_dev *dev,
 				(struct rte_eth_syn_filter *)arg);
 		break;
 	default:
-		PMD_DRV_LOG(ERR, "unsupported operation %u\n", filter_op);
+		PMD_DRV_LOG(ERR, "unsupported operation %u", filter_op);
 		ret = -EINVAL;
 		break;
 	}
@@ -8190,7 +8199,7 @@ int ixgbe_disable_sec_tx_path_generic(struct ixgbe_hw *hw)
 	/* For informational purposes only */
 	if (i >= IXGBE_MAX_SECTX_POLL)
 		PMD_DRV_LOG(DEBUG, "Tx unit being enabled before security "
-			 "path fully disabled.  Continuing with init.\n");
+			 "path fully disabled.  Continuing with init.");
 
 	return IXGBE_SUCCESS;
 }
@@ -8218,9 +8227,14 @@ rte_pmd_ixgbe_macsec_enable(uint8_t port, uint8_t en, uint8_t rp)
 {
 	struct ixgbe_hw *hw;
 	struct rte_eth_dev *dev;
+	struct rte_eth_dev_info dev_info;
 	uint32_t ctrl;
 
 	RTE_ETH_VALID_PORTID_OR_ERR_RET(port, -ENODEV);
+
+	rte_eth_dev_info_get(port, &dev_info);
+	if (is_ixgbe_pmd(dev_info.driver_name) != 0)
+		return -ENOTSUP;
 
 	dev = &rte_eth_devices[port];
 	hw = IXGBE_DEV_PRIVATE_TO_HW(dev->data->dev_private);
@@ -8297,9 +8311,14 @@ rte_pmd_ixgbe_macsec_disable(uint8_t port)
 {
 	struct ixgbe_hw *hw;
 	struct rte_eth_dev *dev;
+	struct rte_eth_dev_info dev_info;
 	uint32_t ctrl;
 
 	RTE_ETH_VALID_PORTID_OR_ERR_RET(port, -ENODEV);
+
+	rte_eth_dev_info_get(port, &dev_info);
+	if (is_ixgbe_pmd(dev_info.driver_name) != 0)
+		return -ENOTSUP;
 
 	dev = &rte_eth_devices[port];
 	hw = IXGBE_DEV_PRIVATE_TO_HW(dev->data->dev_private);
@@ -8357,9 +8376,14 @@ rte_pmd_ixgbe_macsec_config_txsc(uint8_t port, uint8_t *mac)
 {
 	struct ixgbe_hw *hw;
 	struct rte_eth_dev *dev;
+	struct rte_eth_dev_info dev_info;
 	uint32_t ctrl;
 
 	RTE_ETH_VALID_PORTID_OR_ERR_RET(port, -ENODEV);
+
+	rte_eth_dev_info_get(port, &dev_info);
+	if (is_ixgbe_pmd(dev_info.driver_name) != 0)
+		return -ENOTSUP;
 
 	dev = &rte_eth_devices[port];
 	hw = IXGBE_DEV_PRIVATE_TO_HW(dev->data->dev_private);
@@ -8378,9 +8402,14 @@ rte_pmd_ixgbe_macsec_config_rxsc(uint8_t port, uint8_t *mac, uint16_t pi)
 {
 	struct ixgbe_hw *hw;
 	struct rte_eth_dev *dev;
+	struct rte_eth_dev_info dev_info;
 	uint32_t ctrl;
 
 	RTE_ETH_VALID_PORTID_OR_ERR_RET(port, -ENODEV);
+
+	rte_eth_dev_info_get(port, &dev_info);
+	if (is_ixgbe_pmd(dev_info.driver_name) != 0)
+		return -ENOTSUP;
 
 	dev = &rte_eth_devices[port];
 	hw = IXGBE_DEV_PRIVATE_TO_HW(dev->data->dev_private);
@@ -8401,9 +8430,14 @@ rte_pmd_ixgbe_macsec_select_txsa(uint8_t port, uint8_t idx, uint8_t an,
 {
 	struct ixgbe_hw *hw;
 	struct rte_eth_dev *dev;
+	struct rte_eth_dev_info dev_info;
 	uint32_t ctrl, i;
 
 	RTE_ETH_VALID_PORTID_OR_ERR_RET(port, -ENODEV);
+
+	rte_eth_dev_info_get(port, &dev_info);
+	if (is_ixgbe_pmd(dev_info.driver_name) != 0)
+		return -ENOTSUP;
 
 	dev = &rte_eth_devices[port];
 	hw = IXGBE_DEV_PRIVATE_TO_HW(dev->data->dev_private);
@@ -8453,9 +8487,14 @@ rte_pmd_ixgbe_macsec_select_rxsa(uint8_t port, uint8_t idx, uint8_t an,
 {
 	struct ixgbe_hw *hw;
 	struct rte_eth_dev *dev;
+	struct rte_eth_dev_info dev_info;
 	uint32_t ctrl, i;
 
 	RTE_ETH_VALID_PORTID_OR_ERR_RET(port, -ENODEV);
+
+	rte_eth_dev_info_get(port, &dev_info);
+	if (is_ixgbe_pmd(dev_info.driver_name) != 0)
+		return -ENOTSUP;
 
 	dev = &rte_eth_devices[port];
 	hw = IXGBE_DEV_PRIVATE_TO_HW(dev->data->dev_private);

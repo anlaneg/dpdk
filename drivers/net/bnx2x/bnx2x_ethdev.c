@@ -17,7 +17,7 @@
  * The set of PCI devices this driver supports
  */
 #define BROADCOM_PCI_VENDOR_ID 0x14E4
-static struct rte_pci_id pci_id_bnx2x_map[] = {
+static const struct rte_pci_id pci_id_bnx2x_map[] = {
 	{ RTE_PCI_DEVICE(BROADCOM_PCI_VENDOR_ID, CHIP_NUM_57800) },
 	{ RTE_PCI_DEVICE(BROADCOM_PCI_VENDOR_ID, CHIP_NUM_57711) },
 	{ RTE_PCI_DEVICE(BROADCOM_PCI_VENDOR_ID, CHIP_NUM_57810) },
@@ -33,7 +33,7 @@ static struct rte_pci_id pci_id_bnx2x_map[] = {
 	{ .vendor_id = 0, }
 };
 
-static struct rte_pci_id pci_id_bnx2xvf_map[] = {
+static const struct rte_pci_id pci_id_bnx2xvf_map[] = {
 	{ RTE_PCI_DEVICE(BROADCOM_PCI_VENDOR_ID, CHIP_NUM_57800_VF) },
 	{ RTE_PCI_DEVICE(BROADCOM_PCI_VENDOR_ID, CHIP_NUM_57810_VF) },
 	{ RTE_PCI_DEVICE(BROADCOM_PCI_VENDOR_ID, CHIP_NUM_57811_VF) },
@@ -256,6 +256,8 @@ bnx2x_promisc_enable(struct rte_eth_dev *dev)
 
 	PMD_INIT_FUNC_TRACE();
 	sc->rx_mode = BNX2X_RX_MODE_PROMISC;
+	if (rte_eth_allmulticast_get(dev->data->port_id) == 1)
+		sc->rx_mode = BNX2X_RX_MODE_ALLMULTI_PROMISC;
 	bnx2x_set_rx_mode(sc);
 }
 
@@ -266,6 +268,8 @@ bnx2x_promisc_disable(struct rte_eth_dev *dev)
 
 	PMD_INIT_FUNC_TRACE();
 	sc->rx_mode = BNX2X_RX_MODE_NORMAL;
+	if (rte_eth_allmulticast_get(dev->data->port_id) == 1)
+		sc->rx_mode = BNX2X_RX_MODE_ALLMULTI;
 	bnx2x_set_rx_mode(sc);
 }
 
@@ -276,6 +280,8 @@ bnx2x_dev_allmulticast_enable(struct rte_eth_dev *dev)
 
 	PMD_INIT_FUNC_TRACE();
 	sc->rx_mode = BNX2X_RX_MODE_ALLMULTI;
+	if (rte_eth_promiscuous_get(dev->data->port_id) == 1)
+		sc->rx_mode = BNX2X_RX_MODE_ALLMULTI_PROMISC;
 	bnx2x_set_rx_mode(sc);
 }
 
@@ -286,6 +292,8 @@ bnx2x_dev_allmulticast_disable(struct rte_eth_dev *dev)
 
 	PMD_INIT_FUNC_TRACE();
 	sc->rx_mode = BNX2X_RX_MODE_NORMAL;
+	if (rte_eth_promiscuous_get(dev->data->port_id) == 1)
+		sc->rx_mode = BNX2X_RX_MODE_PROMISC;
 	bnx2x_set_rx_mode(sc);
 }
 

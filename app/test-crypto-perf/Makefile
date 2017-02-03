@@ -1,7 +1,6 @@
 #   BSD LICENSE
 #
 #   Copyright(c) 2016-2017 Intel Corporation. All rights reserved.
-#   All rights reserved.
 #
 #   Redistribution and use in source and binary forms, with or without
 #   modification, are permitted provided that the following conditions
@@ -29,29 +28,23 @@
 #   (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 #   OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-ifeq ($(RTE_SDK),)
-$(error "Please define RTE_SDK environment variable")
-endif
-
-# Default target, can be overridden by command line or environment
-RTE_TARGET ?= x86_64-native-linuxapp-gcc
-
 include $(RTE_SDK)/mk/rte.vars.mk
 
-ifneq ($(CONFIG_RTE_EXEC_ENV), "linuxapp")
-$(error This application can only operate in a linuxapp environment, \
-please change the definition of the RTE_TARGET environment variable)
-endif
 
-# binary name
-APP = distributor
+APP = dpdk-test-crypto-perf
+
+CFLAGS += $(WERROR_FLAGS)
 
 # all source are stored in SRCS-y
-SRCS-y := main.c init.c args.c
+SRCS-y := main.c
+SRCS-y += cperf_ops.c
+SRCS-y += cperf_options_parsing.c
+SRCS-y += cperf_test_vectors.c
+SRCS-y += cperf_test_throughput.c
+SRCS-y += cperf_test_latency.c
+SRCS-y += cperf_test_vector_parsing.c
 
-INC := $(wildcard *.h)
+# this application needs libraries first
+DEPDIRS-y += lib
 
-CFLAGS += $(WERROR_FLAGS) -O3
-CFLAGS += -I$(SRCDIR)/../shared
-
-include $(RTE_SDK)/mk/rte.extapp.mk
+include $(RTE_SDK)/mk/rte.app.mk

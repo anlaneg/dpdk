@@ -61,11 +61,35 @@ sfc_port_update_mac_stats(struct sfc_adapter *sa)
 	return 0;
 }
 
+static int
+sfc_port_init_dev_link(struct sfc_adapter *sa)
+{
+	struct rte_eth_link *dev_link = &sa->eth_dev->data->dev_link;
+	int rc;
+	efx_link_mode_t link_mode;
+	struct rte_eth_link current_link;
+
+	rc = efx_port_poll(sa->nic, &link_mode);
+	if (rc != 0)
+		return rc;
+
+	sfc_port_link_mode_to_info(link_mode, &current_link);
+
+	EFX_STATIC_ASSERT(sizeof(*dev_link) == sizeof(rte_atomic64_t));
+	rte_atomic64_set((rte_atomic64_t *)dev_link,
+			 *(uint64_t *)&current_link);
+
+	return 0;
+}
+
 int
 sfc_port_start(struct sfc_adapter *sa)
 {
 	struct sfc_port *port = &sa->port;
 	int rc;
+	uint32_t phy_adv_cap;
+	const uint32_t phy_pause_caps =
+		((1u << EFX_PHY_CAP_PAUSE) | (1u << EFX_PHY_CAP_ASYM));
 
 	sfc_log_init(sa, "entry");
 
@@ -86,8 +110,13 @@ sfc_port_start(struct sfc_adapter *sa)
 	if (rc != 0)
 		goto fail_mac_fcntl_set;
 
-	sfc_log_init(sa, "set phy adv caps to %#x", port->phy_adv_cap);
-	rc = efx_phy_adv_cap_set(sa->nic, port->phy_adv_cap);
+	/* Preserve pause capabilities set by above efx_mac_fcntl_set()  */
+	efx_phy_adv_cap_get(sa->nic, EFX_PHY_CAP_CURRENT, &phy_adv_cap);
+	SFC_ASSERT((port->phy_adv_cap & phy_pause_caps) == 0);
+	phy_adv_cap = port->phy_adv_cap | (phy_adv_cap & phy_pause_caps);
+
+	sfc_log_init(sa, "set phy adv caps to %#x", phy_adv_cap);
+	rc = efx_phy_adv_cap_set(sa->nic, phy_adv_cap);
 	if (rc != 0)
 		goto fail_phy_adv_cap_set;
 
@@ -129,8 +158,16 @@ sfc_port_start(struct sfc_adapter *sa)
 	if (rc != 0)
 		goto fail_mac_drain;
 
+	/* Synchronize link status knowledge */
+	rc = sfc_port_init_dev_link(sa);
+	if (rc != 0)
+		goto fail_port_init_dev_link;
+
 	sfc_log_init(sa, "done");
 	return 0;
+
+fail_port_init_dev_link:
+	(void)efx_mac_drain(sa->nic, B_TRUE);
 
 fail_mac_drain:
 	(void)efx_mac_stats_periodic(sa->nic, &port->mac_stats_dma_mem,

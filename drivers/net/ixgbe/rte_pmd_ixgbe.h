@@ -222,6 +222,7 @@ int rte_pmd_ixgbe_macsec_disable(uint8_t port);
  * @return
  *   - (0) if successful.
  *   - (-ENODEV) if *port* invalid.
+ *   - (-ENOTSUP) if hardware doesn't support this feature.
  */
 int rte_pmd_ixgbe_macsec_config_txsc(uint8_t port, uint8_t *mac);
 
@@ -237,6 +238,7 @@ int rte_pmd_ixgbe_macsec_config_txsc(uint8_t port, uint8_t *mac);
  * @return
  *   - (0) if successful.
  *   - (-ENODEV) if *port* invalid.
+ *   - (-ENOTSUP) if hardware doesn't support this feature.
  */
 int rte_pmd_ixgbe_macsec_config_rxsc(uint8_t port, uint8_t *mac, uint16_t pi);
 
@@ -256,6 +258,7 @@ int rte_pmd_ixgbe_macsec_config_rxsc(uint8_t port, uint8_t *mac, uint16_t pi);
  * @return
  *   - (0) if successful.
  *   - (-ENODEV) if *port* invalid.
+ *   - (-ENOTSUP) if hardware doesn't support this feature.
  *   - (-EINVAL) if bad parameter.
  */
 int rte_pmd_ixgbe_macsec_select_txsa(uint8_t port, uint8_t idx, uint8_t an,
@@ -277,6 +280,7 @@ int rte_pmd_ixgbe_macsec_select_txsa(uint8_t port, uint8_t idx, uint8_t an,
  * @return
  *   - (0) if successful.
  *   - (-ENODEV) if *port* invalid.
+ *   - (-ENOTSUP) if hardware doesn't support this feature.
  *   - (-EINVAL) if bad parameter.
  */
 int rte_pmd_ixgbe_macsec_select_rxsa(uint8_t port, uint8_t idx, uint8_t an,
@@ -289,7 +293,7 @@ int rte_pmd_ixgbe_macsec_select_rxsa(uint8_t port, uint8_t idx, uint8_t an,
 *   The port identifier of the Ethernet device.
 * @param vf
 *   VF id.
-* @param rx_mode
+* @param rx_mask
 *    The RX mode mask, which is one or more of accepting Untagged Packets,
 *    packets that match the PFUTA table, Broadcast and Multicast Promiscuous.
 *    ETH_VMDQ_ACCEPT_UNTAG,ETH_VMDQ_ACCEPT_HASH_UC,
@@ -349,9 +353,9 @@ rte_pmd_ixgbe_set_vf_tx(uint8_t port, uint16_t vf, uint8_t on);
 * Enable/Disable hardware VF VLAN filtering by an Ethernet device of
 * received VLAN packets tagged with a given VLAN Tag Identifier.
 *
-* @param port id
+* @param port
 *   The port identifier of the Ethernet device.
-* @param vlan_id
+* @param vlan
 *   The VLAN Tag Identifier whose filtering must be enabled or disabled.
 * @param vf_mask
 *    Bitmap listing which VFs participate in the VLAN filtering.
@@ -370,7 +374,7 @@ rte_pmd_ixgbe_set_vf_vlan_filter(uint8_t port, uint16_t vlan, uint64_t vf_mask, 
 /**
  * Set the rate limitation for a vf on an Ethernet device.
  *
- * @param port_id
+ * @param port
  *   The port identifier of the Ethernet device.
  * @param vf
  *   VF id.

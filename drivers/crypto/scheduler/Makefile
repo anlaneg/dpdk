@@ -1,7 +1,6 @@
 #   BSD LICENSE
 #
-#   Copyright(c) 2016-2017 Intel Corporation. All rights reserved.
-#   All rights reserved.
+#   Copyright(c) 2017 Intel Corporation. All rights reserved.
 #
 #   Redistribution and use in source and binary forms, with or without
 #   modification, are permitted provided that the following conditions
@@ -29,16 +28,39 @@
 #   (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 #   OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-ifeq ($(RTE_SDK),)
-$(error "Please define RTE_SDK environment variable")
-endif
-
-# Default target, can be overridden by command line or environment
-RTE_TARGET ?= x86_64-native-linuxapp-gcc
-
 include $(RTE_SDK)/mk/rte.vars.mk
 
-DIRS-$(CONFIG_RTE_EXEC_ENV_LINUXAPP) += distributor
-DIRS-$(CONFIG_RTE_EXEC_ENV_LINUXAPP) += node
+# library name
+LIB = librte_pmd_crypto_scheduler.a
 
-include $(RTE_SDK)/mk/rte.extsubdir.mk
+# build flags
+CFLAGS += -O3
+CFLAGS += $(WERROR_FLAGS)
+
+# library version
+LIBABIVER := 1
+
+# versioning export map
+EXPORT_MAP := rte_pmd_crypto_scheduler_version.map
+
+#
+# Export include files
+#
+SYMLINK-y-include += rte_cryptodev_scheduler_operations.h
+SYMLINK-y-include += rte_cryptodev_scheduler.h
+
+# library source files
+SRCS-$(CONFIG_RTE_LIBRTE_PMD_CRYPTO_SCHEDULER) += scheduler_pmd.c
+SRCS-$(CONFIG_RTE_LIBRTE_PMD_CRYPTO_SCHEDULER) += scheduler_pmd_ops.c
+SRCS-$(CONFIG_RTE_LIBRTE_PMD_CRYPTO_SCHEDULER) += rte_cryptodev_scheduler.c
+SRCS-$(CONFIG_RTE_LIBRTE_PMD_CRYPTO_SCHEDULER) += scheduler_roundrobin.c
+
+# library dependencies
+DEPDIRS-$(CONFIG_RTE_LIBRTE_PMD_CRYPTO_SCHEDULER) += lib/librte_cryptodev
+DEPDIRS-$(CONFIG_RTE_LIBRTE_PMD_CRYPTO_SCHEDULER) += lib/librte_eal
+DEPDIRS-$(CONFIG_RTE_LIBRTE_PMD_CRYPTO_SCHEDULER) += lib/librte_kvargs
+DEPDIRS-$(CONFIG_RTE_LIBRTE_PMD_CRYPTO_SCHEDULER) += lib/librte_mbuf
+DEPDIRS-$(CONFIG_RTE_LIBRTE_PMD_CRYPTO_SCHEDULER) += lib/librte_mempool
+DEPDIRS-$(CONFIG_RTE_LIBRTE_PMD_CRYPTO_SCHEDULER) += lib/librte_reorder
+
+include $(RTE_SDK)/mk/rte.lib.mk

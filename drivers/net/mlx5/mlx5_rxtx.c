@@ -1038,11 +1038,13 @@ mlx5_tx_burst_mpw_inline(void *dpdk_txq, struct rte_mbuf **pkts,
 				rte_memcpy((void *)(uintptr_t)mpw.data.raw,
 					   (void *)addr,
 					   length);
-				mpw.data.raw += length;
+
+				if (length == max)
+					mpw.data.raw =
+						(volatile void *)txq->wqes;
+				else
+					mpw.data.raw += length;
 			}
-			if ((uintptr_t)mpw.data.raw ==
-			    (uintptr_t)tx_mlx5_wqe(txq, 1 << txq->wqe_n))
-				mpw.data.raw = (volatile void *)txq->wqes;
 			++mpw.pkts_n;
 			++j;
 			if (mpw.pkts_n == MLX5_MPW_DSEG_MAX) {
@@ -1107,23 +1109,20 @@ static inline uint32_t
 rxq_cq_to_pkt_type(volatile struct mlx5_cqe *cqe)
 {
 	uint32_t pkt_type;
-	uint8_t flags = cqe->l4_hdr_type_etc;
+	uint16_t flags = ntohs(cqe->hdr_type_etc);
 
-	if (cqe->pkt_info & MLX5_CQE_RX_TUNNEL_PACKET)
+	if (cqe->pkt_info & MLX5_CQE_RX_TUNNEL_PACKET) {
 		pkt_type =
-			TRANSPOSE(flags,
-				  MLX5_CQE_RX_OUTER_IPV4_PACKET,
-				  RTE_PTYPE_L3_IPV4_EXT_UNKNOWN) |
-			TRANSPOSE(flags,
-				  MLX5_CQE_RX_OUTER_IPV6_PACKET,
-				  RTE_PTYPE_L3_IPV6_EXT_UNKNOWN) |
 			TRANSPOSE(flags,
 				  MLX5_CQE_RX_IPV4_PACKET,
 				  RTE_PTYPE_INNER_L3_IPV4_EXT_UNKNOWN) |
 			TRANSPOSE(flags,
 				  MLX5_CQE_RX_IPV6_PACKET,
 				  RTE_PTYPE_INNER_L3_IPV6_EXT_UNKNOWN);
-	else
+		pkt_type |= ((cqe->pkt_info & MLX5_CQE_RX_OUTER_PACKET) ?
+			     RTE_PTYPE_L3_IPV6_EXT_UNKNOWN :
+			     RTE_PTYPE_L3_IPV4_EXT_UNKNOWN);
+	} else {
 		pkt_type =
 			TRANSPOSE(flags,
 				  MLX5_CQE_L3_HDR_TYPE_IPV6,
@@ -1131,6 +1130,7 @@ rxq_cq_to_pkt_type(volatile struct mlx5_cqe *cqe)
 			TRANSPOSE(flags,
 				  MLX5_CQE_L3_HDR_TYPE_IPV4,
 				  RTE_PTYPE_L3_IPV4_EXT_UNKNOWN);
+	}
 	return pkt_type;
 }
 
@@ -1157,6 +1157,7 @@ mlx5_rx_poll_len(struct rxq *rxq, volatile struct mlx5_cqe *cqe,
 	struct rxq_zip *zip = &rxq->zip;
 	uint16_t cqe_n = cqe_cnt + 1;
 	int len = 0;
+	uint16_t idx, end;
 
 	/* Process compressed data in the CQE and mini arrays. */
 	if (zip->ai) {
@@ -1167,6 +1168,14 @@ mlx5_rx_poll_len(struct rxq *rxq, volatile struct mlx5_cqe *cqe,
 		len = ntohl((*mc)[zip->ai & 7].byte_cnt);
 		*rss_hash = ntohl((*mc)[zip->ai & 7].rx_hash_result);
 		if ((++zip->ai & 7) == 0) {
+			/* Invalidate consumed CQEs */
+			idx = zip->ca;
+			end = zip->na;
+			while (idx != end) {
+				(*rxq->cqes)[idx & cqe_cnt].op_own =
+					MLX5_CQE_INVALIDATE;
+				++idx;
+			}
 			/*
 			 * Increment consumer index to skip the number of
 			 * CQEs consumed. Hardware leaves holes in the CQ
@@ -1176,8 +1185,9 @@ mlx5_rx_poll_len(struct rxq *rxq, volatile struct mlx5_cqe *cqe,
 			zip->na += 8;
 		}
 		if (unlikely(rxq->zip.ai == rxq->zip.cqe_cnt)) {
-			uint16_t idx = rxq->cq_ci + 1;
-			uint16_t end = zip->cq_ci;
+			/* Invalidate the rest */
+			idx = zip->ca;
+			end = zip->cq_ci;
 
 			while (idx != end) {
 				(*rxq->cqes)[idx & cqe_cnt].op_own =
@@ -1213,7 +1223,7 @@ mlx5_rx_poll_len(struct rxq *rxq, volatile struct mlx5_cqe *cqe,
 			 * special case the second one is located 7 CQEs after
 			 * the initial CQE instead of 8 for subsequent ones.
 			 */
-			zip->ca = rxq->cq_ci & cqe_cnt;
+			zip->ca = rxq->cq_ci;
 			zip->na = zip->ca + 7;
 			/* Compute the next non compressed CQE. */
 			--rxq->cq_ci;
@@ -1222,6 +1232,13 @@ mlx5_rx_poll_len(struct rxq *rxq, volatile struct mlx5_cqe *cqe,
 			len = ntohl((*mc)[0].byte_cnt);
 			*rss_hash = ntohl((*mc)[0].rx_hash_result);
 			zip->ai = 1;
+			/* Prefetch all the entries to be invalidated */
+			idx = zip->ca;
+			end = zip->cq_ci;
+			while (idx != end) {
+				rte_prefetch0(&(*rxq->cqes)[(idx) & cqe_cnt]);
+				++idx;
+			}
 		} else {
 			len = ntohl(cqe->byte_cnt);
 			*rss_hash = ntohl(cqe->rx_hash_res);
@@ -1248,28 +1265,22 @@ static inline uint32_t
 rxq_cq_to_ol_flags(struct rxq *rxq, volatile struct mlx5_cqe *cqe)
 {
 	uint32_t ol_flags = 0;
-	uint8_t l3_hdr = (cqe->l4_hdr_type_etc) & MLX5_CQE_L3_HDR_TYPE_MASK;
-	uint8_t l4_hdr = (cqe->l4_hdr_type_etc) & MLX5_CQE_L4_HDR_TYPE_MASK;
+	uint16_t flags = ntohs(cqe->hdr_type_etc);
 
-	if ((l3_hdr == MLX5_CQE_L3_HDR_TYPE_IPV4) ||
-	    (l3_hdr == MLX5_CQE_L3_HDR_TYPE_IPV6))
-		ol_flags |= TRANSPOSE(cqe->hds_ip_ext,
-				      MLX5_CQE_L3_OK,
-				      PKT_RX_IP_CKSUM_GOOD);
-	if ((l4_hdr == MLX5_CQE_L4_HDR_TYPE_TCP) ||
-	    (l4_hdr == MLX5_CQE_L4_HDR_TYPE_TCP_EMP_ACK) ||
-	    (l4_hdr == MLX5_CQE_L4_HDR_TYPE_TCP_ACK) ||
-	    (l4_hdr == MLX5_CQE_L4_HDR_TYPE_UDP))
-		ol_flags |= TRANSPOSE(cqe->hds_ip_ext,
-				      MLX5_CQE_L4_OK,
-				      PKT_RX_L4_CKSUM_GOOD);
+	ol_flags =
+		TRANSPOSE(flags,
+			  MLX5_CQE_RX_L3_HDR_VALID,
+			  PKT_RX_IP_CKSUM_GOOD) |
+		TRANSPOSE(flags,
+			  MLX5_CQE_RX_L4_HDR_VALID,
+			  PKT_RX_L4_CKSUM_GOOD);
 	if ((cqe->pkt_info & MLX5_CQE_RX_TUNNEL_PACKET) && (rxq->csum_l2tun))
 		ol_flags |=
-			TRANSPOSE(cqe->l4_hdr_type_etc,
-				  MLX5_CQE_RX_OUTER_IP_CSUM_OK,
+			TRANSPOSE(flags,
+				  MLX5_CQE_RX_L3_HDR_VALID,
 				  PKT_RX_IP_CKSUM_GOOD) |
-			TRANSPOSE(cqe->l4_hdr_type_etc,
-				  MLX5_CQE_RX_OUTER_TCP_UDP_CSUM_OK,
+			TRANSPOSE(flags,
+				  MLX5_CQE_RX_L4_HDR_VALID,
 				  PKT_RX_L4_CKSUM_GOOD);
 	return ol_flags;
 }
@@ -1376,7 +1387,7 @@ mlx5_rx_burst(void *dpdk_rxq, struct rte_mbuf **pkts, uint16_t pkts_n)
 					pkt->ol_flags |=
 						rxq_cq_to_ol_flags(rxq, cqe);
 				}
-				if (cqe->l4_hdr_type_etc &
+				if (cqe->hdr_type_etc &
 				    MLX5_CQE_VLAN_STRIPPED) {
 					pkt->ol_flags |= PKT_RX_VLAN_PKT |
 						PKT_RX_VLAN_STRIPPED;
