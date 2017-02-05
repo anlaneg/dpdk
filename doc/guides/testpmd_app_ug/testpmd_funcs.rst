@@ -51,10 +51,10 @@ If you type a partial command and hit ``<TAB>`` you get a list of the available 
 
    testpmd> show port <TAB>
 
-       info [Mul-choice STRING]: show|clear port info|stats|xstats|fdir|stat_qmap|dcb_tc X
-       info [Mul-choice STRING]: show|clear port info|stats|xstats|fdir|stat_qmap|dcb_tc all
-       stats [Mul-choice STRING]: show|clear port info|stats|xstats|fdir|stat_qmap|dcb_tc X
-       stats [Mul-choice STRING]: show|clear port info|stats|xstats|fdir|stat_qmap|dcb_tc all
+       info [Mul-choice STRING]: show|clear port info|stats|xstats|fdir|stat_qmap|dcb_tc|cap X
+       info [Mul-choice STRING]: show|clear port info|stats|xstats|fdir|stat_qmap|dcb_tc|cap all
+       stats [Mul-choice STRING]: show|clear port info|stats|xstats|fdir|stat_qmap|dcb_tc|cap X
+       stats [Mul-choice STRING]: show|clear port info|stats|xstats|fdir|stat_qmap|dcb_tc|cap all
        ...
 
 
@@ -131,7 +131,7 @@ show port
 
 Display information for a given port or all ports::
 
-   testpmd> show port (info|stats|xstats|fdir|stat_qmap|dcb_tc) (port_id|all)
+   testpmd> show port (info|stats|xstats|fdir|stat_qmap|dcb_tc|cap) (port_id|all)
 
 The available information categories are:
 
@@ -146,6 +146,8 @@ The available information categories are:
 * ``stat_qmap``: Queue statistics mapping.
 
 * ``dcb_tc``: DCB information such as TC mapping.
+
+* ``cap``: Supported offload capabilities.
 
 For example:
 
@@ -507,6 +509,45 @@ Set mac antispoof for a VF from the PF::
 
    testpmd> set vf mac antispoof  (port_id) (vf_id) (on|off)
 
+set macsec offload
+~~~~~~~~~~~~~~~~~~
+
+Enable/disable MACsec offload::
+
+   testpmd> set macsec offload (port_id) on encrypt (on|off) replay-protect (on|off)
+   testpmd> set macsec offload (port_id) off
+
+set macsec sc
+~~~~~~~~~~~~~
+
+Configure MACsec secure connection (SC)::
+
+   testpmd> set macsec sc (tx|rx) (port_id) (mac) (pi)
+
+.. note::
+
+   The pi argument is ignored for tx.
+   Check the NIC Datasheet for hardware limits.
+
+set macsec sa
+~~~~~~~~~~~~~
+
+Configure MACsec secure association (SA)::
+
+   testpmd> set macsec sa (tx|rx) (port_id) (idx) (an) (pn) (key)
+
+.. note::
+
+   The IDX value must be 0 or 1.
+   Check the NIC Datasheet for hardware limits.
+
+set broadcast mode (for VF)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Set broadcast mode for a VF from the PF::
+
+   testpmd> set vf broadcast (port_id) (vf_id) (on|off)
+
 vlan set strip
 ~~~~~~~~~~~~~~
 
@@ -534,6 +575,13 @@ vlan set insert (for VF)
 Set VLAN insert for a VF from the PF::
 
    testpmd> set vf vlan insert (port_id) (vf_id) (vlan_id)
+
+vlan set tag (for VF)
+~~~~~~~~~~~~~~~~~~~~~
+
+Set VLAN tag for a VF from the PF::
+
+   testpmd> set vf vlan tag (port_id) (vf_id) (on|off)
 
 vlan set antispoof (for VF)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -820,6 +868,24 @@ Set the allmulti mode for a port or for all ports::
 
 Same as the ifconfig (8) option. Controls how multicast packets are handled.
 
+set promisc (for VF)
+~~~~~~~~~~~~~~~~~~~~
+
+Set the unicast promiscuous mode for a VF from PF.
+It's supported by Intel i40e NICs now.
+In promiscuous mode packets are not dropped if they aren't for the specified MAC address::
+
+   testpmd> set vf promisc (port_id) (vf_id) (on|off)
+
+set allmulticast (for VF)
+~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Set the multicast promiscuous mode for a VF from PF.
+It's supported by Intel i40e NICs now.
+In promiscuous mode packets are not dropped if they aren't for the specified MAC address::
+
+   testpmd> set vf allmulti (port_id) (vf_id) (on|off)
+
 set flow_ctrl rx
 ~~~~~~~~~~~~~~~~
 
@@ -841,7 +907,7 @@ Where:
 
 * ``mac_ctrl_frame_fwd``: Enable receiving MAC control frames.
 
-* ``autoneg``: Change the auto-negotiation para mete.
+* ``autoneg``: Change the auto-negotiation parameter.
 
 set pfc_ctrl rx
 ~~~~~~~~~~~~~~~

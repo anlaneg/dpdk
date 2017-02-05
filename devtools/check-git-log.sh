@@ -87,7 +87,7 @@ bad=$(for commit in $commits ; do
 	if [ $(echo "$drvgrp" | wc -l) -gt 1 ] ; then
 		echo "$headline" | grep -v '^drivers:'
 	elif [ $(echo "$drv" | wc -l) -gt 1 ] ; then
-		echo "$headline" | grep -v "^$drvgrp"
+		echo "$headline" | grep -v "^drivers/$drvgrp"
 	else
 		echo "$headline" | grep -v "^$drv"
 	fi
@@ -113,10 +113,10 @@ bad=$(echo "$headlines" | grep --color=always \
 
 # check headline uppercase (Rx/Tx, VF, L2, MAC, Linux, ARM...)
 bad=$(echo "$headlines" | grep -E --color=always \
-	-e '\<(rx|tx|RX|TX)\>' \
-	-e '\<[pv]f\>' \
-	-e '\<[hsf]w\>' \
-	-e '\<l[234]\>' \
+	-e ':.*\<(rx|tx|RX|TX)\>' \
+	-e ':.*\<[pv]f\>' \
+	-e ':.*\<[hsf]w\>' \
+	-e ':.*\<l[234]\>' \
 	-e ':.*\<api\>' \
 	-e ':.*\<arm\>' \
 	-e ':.*\<armv7\>' \
@@ -128,13 +128,15 @@ bad=$(echo "$headlines" | grep -E --color=always \
 	-e ':.*\<mac\>' \
 	-e ':.*\<mtu\>' \
 	-e ':.*\<nic\>' \
+	-e ':.*\<nvm\>' \
 	-e ':.*\<numa\>' \
 	-e ':.*\<pci\>' \
 	-e ':.*\<pmd\>' \
 	-e ':.*\<rss\>' \
 	-e ':.*\<tile-gx\>' \
 	-e ':.*\<tilegx\>' \
-	-e ':.*\<vlan\>' \
+	-e ':.*\<tso\>' \
+	-e ':.*\<[Vv]lan\>' \
 	| sed 's,^,\t,')
 [ -z "$bad" ] || printf "Wrong headline lowercase:\n$bad\n"
 
@@ -170,12 +172,6 @@ bad=$(echo "$tags" |
 	sed 's,^.,\t&,')
 [ -z "$bad" ] || printf "Wrong tag:\n$bad\n"
 
-# check blank line after last Fixes: tag
-bad=$(echo "$bodylines" |
-	sed -n 'N;/\nFixes:/D;/\n$/D;/^Fixes:/P' |
-	sed 's,^.,\t&,')
-[ -z "$bad" ] || printf "Missing blank line after 'Fixes' tag:\n$bad\n"
-
 # check missing Fixes: tag
 bad=$(for fix in $fixes ; do
 	git log --format='%b' -1 $fix | grep -q '^Fixes: ' ||
@@ -198,9 +194,9 @@ bad=$(for fixtag in $fixtags ; do
 done | sed 's,^,\t,')
 [ -z "$bad" ] || printf "Wrong 'Fixes' reference:\n$bad\n"
 
-# check CC:stable for fixes
+# check Cc: stable@dpdk.org for fixes
 bad=$(for fix in $stablefixes ; do
-	git log --format='%b' -1 $fix | grep -qi '^CC: *stable@dpdk.org' ||
+	git log --format='%b' -1 $fix | grep -qi '^Cc: *stable@dpdk.org' ||
 		git log --format='\t%s' -1 $fix
 done)
-[ -z "$bad" ] || printf "Should CC: stable@dpdk.org\n$bad\n"
+[ -z "$bad" ] || printf "Is it candidate for Cc: stable@dpdk.org backport?\n$bad\n"

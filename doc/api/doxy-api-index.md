@@ -43,10 +43,14 @@ There are many libraries, so their headers may be grouped by topics:
   [rte_flow_driver]    (@ref rte_flow_driver.h),
   [cryptodev]          (@ref rte_cryptodev.h),
   [devargs]            (@ref rte_devargs.h),
+  [PCI]                (@ref rte_pci.h)
+
+- **device specific**:
   [bond]               (@ref rte_eth_bond.h),
   [vhost]              (@ref rte_virtio_net.h),
   [KNI]                (@ref rte_kni.h),
-  [PCI]                (@ref rte_pci.h),
+  [ixgbe]              (@ref rte_pmd_ixgbe.h),
+  [i40e]               (@ref rte_pmd_i40e.h)
 
 - **memory**:
   [memseg]             (@ref rte_memory.h),
@@ -70,7 +74,8 @@ There are many libraries, so their headers may be grouped by topics:
   [cache prefetch]     (@ref rte_prefetch.h),
   [SIMD]               (@ref rte_vect.h),
   [byte order]         (@ref rte_byteorder.h),
-  [CPU flags]          (@ref rte_cpuflags.h)
+  [CPU flags]          (@ref rte_cpuflags.h),
+  [I/O access]         (@ref rte_io.h)
 
 - **CPU multicore**:
   [interrupts]         (@ref rte_interrupts.h),
@@ -90,7 +95,8 @@ There are many libraries, so their headers may be grouped by topics:
   [frag/reass]         (@ref rte_ip_frag.h),
   [LPM IPv4 route]     (@ref rte_lpm.h),
   [LPM IPv6 route]     (@ref rte_lpm6.h),
-  [ACL]                (@ref rte_acl.h)
+  [ACL]                (@ref rte_acl.h),
+  [EFD]                (@ref rte_efd.h)
 
 - **QoS**:
   [metering]           (@ref rte_meter.h),

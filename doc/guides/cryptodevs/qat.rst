@@ -54,6 +54,7 @@ Cipher algorithms:
 * ``RTE_CRYPTO_CIPHER_AES_GCM``
 * ``RTE_CRYPTO_CIPHER_NULL``
 * ``RTE_CRYPTO_CIPHER_KASUMI_F8``
+* ``RTE_CRYPTO_CIPHER_DES_CBC``
 
 Hash algorithms:
 
@@ -73,9 +74,7 @@ Hash algorithms:
 Limitations
 -----------
 
-* Chained mbufs are not supported.
 * Hash only is not supported except SNOW 3G UIA2 and KASUMI F9.
-* Cipher only is not supported except SNOW 3G UEA2, KASUMI F8 and 3DES.
 * Only supports the session-oriented API implementation (session-less APIs are not supported).
 * SNOW 3G (UEA2) and KASUMI (F8) supported only if cipher length, cipher offset fields are byte-aligned.
 * SNOW 3G (UIA2) and KASUMI (F9) supported only if hash length, hash offset fields are byte-aligned.

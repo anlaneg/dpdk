@@ -90,6 +90,10 @@
 @example quota_watermark/qw/init.c
 @example quota_watermark/qw/main.c
 @example rxtx_callbacks/main.c
+@example server_node_efd/server/args.c
+@example server_node_efd/server/init.c
+@example server_node_efd/server/main.c
+@example server_node_efd/node/node.c
 @example skeleton/basicfwd.c
 @example tep_termination/main.c
 @example tep_termination/vxlan.c

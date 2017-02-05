@@ -177,7 +177,7 @@ static const struct ena_stats ena_stats_ena_com_strings[] = {
 #define	ENA_TX_OFFLOAD_NOTSUP_MASK	\
 	(PKT_TX_OFFLOAD_MASK ^ ENA_TX_OFFLOAD_MASK)
 
-static struct rte_pci_id pci_id_ena_map[] = {
+static const struct rte_pci_id pci_id_ena_map[] = {
 	{ RTE_PCI_DEVICE(PCI_VENDOR_ID_AMAZON, PCI_DEVICE_ID_ENA_VF) },
 	{ RTE_PCI_DEVICE(PCI_VENDOR_ID_AMAZON, PCI_DEVICE_ID_ENA_LLQ_VF) },
 	{ .device_id = 0 },
@@ -227,7 +227,7 @@ static int ena_rss_reta_query(struct rte_eth_dev *dev,
 			      uint16_t reta_size);
 static int ena_get_sset_count(struct rte_eth_dev *dev, int sset);
 
-static struct eth_dev_ops ena_dev_ops = {
+static const struct eth_dev_ops ena_dev_ops = {
 	.dev_configure        = ena_dev_configure,
 	.dev_infos_get        = ena_infos_get,
 	.rx_queue_setup       = ena_rx_queue_setup,
@@ -746,7 +746,7 @@ static int ena_queue_restart_all(struct rte_eth_dev *dev,
 
 			if (rc) {
 				PMD_INIT_LOG(ERR,
-					     "failed to restart queue %d type(%d)\n",
+					     "failed to restart queue %d type(%d)",
 					     i, ring_type);
 				return -1;
 			}
@@ -772,7 +772,7 @@ static int ena_check_valid_conf(struct ena_adapter *adapter)
 	uint32_t max_frame_len = ena_get_mtu_conf(adapter);
 
 	if (max_frame_len > adapter->max_mtu) {
-		PMD_INIT_LOG(ERR, "Unsupported MTU of %d\n", max_frame_len);
+		PMD_INIT_LOG(ERR, "Unsupported MTU of %d", max_frame_len);
 		return -1;
 	}
 
@@ -799,7 +799,7 @@ ena_calc_queue_size(struct ena_com_dev *ena_dev,
 		queue_size = rte_align32pow2(queue_size >> 1);
 
 	if (queue_size == 0) {
-		PMD_INIT_LOG(ERR, "Invalid queue size\n");
+		PMD_INIT_LOG(ERR, "Invalid queue size");
 		return -EFAULT;
 	}
 
@@ -937,7 +937,7 @@ static int ena_queue_restart(struct ena_ring *ring)
 
 	rc = ena_populate_rx_queue(ring, ring->ring_size);
 	if ((unsigned int)rc != ring->ring_size) {
-		PMD_INIT_LOG(ERR, "Failed to populate rx ring !\n");
+		PMD_INIT_LOG(ERR, "Failed to populate rx ring !");
 		return (-1);
 	}
 
@@ -1293,7 +1293,7 @@ static int eth_ena_dev_init(struct rte_eth_dev *eth_dev)
 	pci_dev = RTE_DEV_TO_PCI(eth_dev->device);
 	adapter->pdev = pci_dev;
 
-	PMD_INIT_LOG(INFO, "Initializing %x:%x:%x.%d\n",
+	PMD_INIT_LOG(INFO, "Initializing %x:%x:%x.%d",
 		     pci_dev->addr.domain,
 		     pci_dev->addr.bus,
 		     pci_dev->addr.devid,
@@ -1310,7 +1310,7 @@ static int eth_ena_dev_init(struct rte_eth_dev *eth_dev)
 	else if (adapter->regs)
 		ena_dev->tx_mem_queue_type = ENA_ADMIN_PLACEMENT_POLICY_HOST;
 	else
-		PMD_INIT_LOG(CRIT, "Failed to access registers BAR(%d)\n",
+		PMD_INIT_LOG(CRIT, "Failed to access registers BAR(%d)",
 			     ENA_REGS_BAR);
 
 	ena_dev->reg_bar = adapter->regs;
@@ -1324,7 +1324,7 @@ static int eth_ena_dev_init(struct rte_eth_dev *eth_dev)
 	/* device specific initialization routine */
 	rc = ena_device_init(ena_dev, &get_feat_ctx);
 	if (rc) {
-		PMD_INIT_LOG(CRIT, "Failed to init ENA device\n");
+		PMD_INIT_LOG(CRIT, "Failed to init ENA device");
 		return -1;
 	}
 
@@ -1332,7 +1332,7 @@ static int eth_ena_dev_init(struct rte_eth_dev *eth_dev)
 		if (get_feat_ctx.max_queues.max_llq_num == 0) {
 			PMD_INIT_LOG(ERR,
 				     "Trying to use LLQ but llq_num is 0.\n"
-				     "Fall back into regular queues.\n");
+				     "Fall back into regular queues.");
 			ena_dev->tx_mem_queue_type =
 				ENA_ADMIN_PLACEMENT_POLICY_HOST;
 			adapter->num_queues =
@@ -1360,6 +1360,10 @@ static int eth_ena_dev_init(struct rte_eth_dev *eth_dev)
 	/* Set max MTU for this device */
 	adapter->max_mtu = get_feat_ctx.dev_attr.max_mtu;
 
+	/* set device support for TSO */
+	adapter->tso4_supported = get_feat_ctx.offload.tx &
+				  ENA_ADMIN_FEATURE_OFFLOAD_DESC_TSO_IPV4_MASK;
+
 	/* Copy MAC address and point DPDK to it */
 	eth_dev->data->mac_addrs = (struct ether_addr *)adapter->mac_addr;
 	ether_addr_copy((struct ether_addr *)get_feat_ctx.dev_attr.mac_addr,
@@ -1386,7 +1390,7 @@ static int ena_dev_configure(struct rte_eth_dev *dev)
 
 	if (!(adapter->state == ENA_ADAPTER_STATE_INIT ||
 	      adapter->state == ENA_ADAPTER_STATE_STOPPED)) {
-		PMD_INIT_LOG(ERR, "Illegal adapter state: %d\n",
+		PMD_INIT_LOG(ERR, "Illegal adapter state: %d",
 			     adapter->state);
 		return -1;
 	}
@@ -1478,7 +1482,7 @@ static void ena_infos_get(struct rte_eth_dev *dev,
 			DEV_TX_OFFLOAD_UDP_CKSUM |
 			DEV_TX_OFFLOAD_TCP_CKSUM;
 
-	if (feat.offload.tx &
+	if (feat.offload.rx_supported &
 	    ENA_ADMIN_FEATURE_OFFLOAD_DESC_RX_L4_IPV4_CSUM_MASK)
 		rx_feat |= DEV_RX_OFFLOAD_IPV4_CKSUM |
 			DEV_RX_OFFLOAD_UDP_CKSUM  |
@@ -1585,13 +1589,20 @@ static uint16_t eth_ena_recv_pkts(void *rx_queue, struct rte_mbuf **rx_pkts,
 }
 
 static uint16_t
-eth_ena_prep_pkts(__rte_unused void *tx_queue, struct rte_mbuf **tx_pkts,
+eth_ena_prep_pkts(void *tx_queue, struct rte_mbuf **tx_pkts,
 		uint16_t nb_pkts)
 {
 	int32_t ret;
 	uint32_t i;
 	struct rte_mbuf *m;
+	struct ena_ring *tx_ring = (struct ena_ring *)(tx_queue);
+	struct ipv4_hdr *ip_hdr;
 	uint64_t ol_flags;
+	uint16_t frag_field;
+
+	/* ENA needs partial checksum for TSO packets only, skip early */
+	if (!tx_ring->adapter->tso4_supported)
+		return nb_pkts;
 
 	for (i = 0; i != nb_pkts; i++) {
 		m = tx_pkts[i];
@@ -1611,7 +1622,21 @@ eth_ena_prep_pkts(__rte_unused void *tx_queue, struct rte_mbuf **tx_pkts,
 			return i;
 		}
 #endif
-		/* ENA doesn't need different phdr cskum for TSO */
+
+		if (!(m->ol_flags & PKT_TX_IPV4))
+			continue;
+
+		ip_hdr = rte_pktmbuf_mtod_offset(m, struct ipv4_hdr *,
+						 m->l2_len);
+		frag_field = rte_be_to_cpu_16(ip_hdr->fragment_offset);
+		if (frag_field & IPV4_HDR_DF_FLAG)
+			continue;
+
+		/* In case we are supposed to TSO and have DF not set (DF=0)
+		 * hardware must be provided with partial checksum, otherwise
+		 * it will take care of necessary calculations.
+		 */
+
 		ret = rte_net_intel_cksum_flags_prepare(m,
 			ol_flags & ~PKT_TX_TCP_SEG);
 		if (ret != 0) {

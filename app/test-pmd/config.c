@@ -94,6 +94,9 @@
 #include <rte_cycles.h>
 #include <rte_flow.h>
 #include <rte_errno.h>
+#ifdef RTE_LIBRTE_IXGBE_PMD
+#include <rte_pmd_ixgbe.h>
+#endif
 
 #include "testpmd.h"
 
@@ -538,6 +541,182 @@ port_infos_display(portid_t port_id)
 	printf("Min possible number of TXDs per queue: %hu\n",
 		dev_info.tx_desc_lim.nb_min);
 	printf("TXDs number alignment: %hu\n", dev_info.tx_desc_lim.nb_align);
+}
+
+void
+port_offload_cap_display(portid_t port_id)
+{
+	struct rte_eth_dev *dev;
+	struct rte_eth_dev_info dev_info;
+	static const char *info_border = "************";
+
+	if (port_id_is_invalid(port_id, ENABLED_WARN))
+		return;
+
+	dev = &rte_eth_devices[port_id];
+	rte_eth_dev_info_get(port_id, &dev_info);
+
+	printf("\n%s Port %d supported offload features: %s\n",
+		info_border, port_id, info_border);
+
+	if (dev_info.rx_offload_capa & DEV_RX_OFFLOAD_VLAN_STRIP) {
+		printf("VLAN stripped:                 ");
+		if (dev->data->dev_conf.rxmode.hw_vlan_strip)
+			printf("on\n");
+		else
+			printf("off\n");
+	}
+
+	if (dev_info.rx_offload_capa & DEV_RX_OFFLOAD_QINQ_STRIP) {
+		printf("Double VLANs stripped:         ");
+		if (dev->data->dev_conf.rxmode.hw_vlan_extend)
+			printf("on\n");
+		else
+			printf("off\n");
+	}
+
+	if (dev_info.rx_offload_capa & DEV_RX_OFFLOAD_IPV4_CKSUM) {
+		printf("RX IPv4 checksum:              ");
+		if (dev->data->dev_conf.rxmode.hw_ip_checksum)
+			printf("on\n");
+		else
+			printf("off\n");
+	}
+
+	if (dev_info.rx_offload_capa & DEV_RX_OFFLOAD_UDP_CKSUM) {
+		printf("RX UDP checksum:               ");
+		if (dev->data->dev_conf.rxmode.hw_ip_checksum)
+			printf("on\n");
+		else
+			printf("off\n");
+	}
+
+	if (dev_info.rx_offload_capa & DEV_RX_OFFLOAD_TCP_CKSUM) {
+		printf("RX TCP checksum:               ");
+		if (dev->data->dev_conf.rxmode.hw_ip_checksum)
+			printf("on\n");
+		else
+			printf("off\n");
+	}
+
+	if (dev_info.rx_offload_capa & DEV_RX_OFFLOAD_OUTER_IPV4_CKSUM)
+		printf("RX Outer IPv4 checksum:        on");
+
+	if (dev_info.rx_offload_capa & DEV_RX_OFFLOAD_TCP_LRO) {
+		printf("Large receive offload:         ");
+		if (dev->data->dev_conf.rxmode.enable_lro)
+			printf("on\n");
+		else
+			printf("off\n");
+	}
+
+	if (dev_info.tx_offload_capa & DEV_TX_OFFLOAD_VLAN_INSERT) {
+		printf("VLAN insert:                   ");
+		if (ports[port_id].tx_ol_flags &
+		    TESTPMD_TX_OFFLOAD_INSERT_VLAN)
+			printf("on\n");
+		else
+			printf("off\n");
+	}
+
+	if (dev_info.tx_offload_capa & DEV_TX_OFFLOAD_QINQ_INSERT) {
+		printf("Double VLANs insert:           ");
+		if (ports[port_id].tx_ol_flags &
+		    TESTPMD_TX_OFFLOAD_INSERT_QINQ)
+			printf("on\n");
+		else
+			printf("off\n");
+	}
+
+	if (dev_info.tx_offload_capa & DEV_TX_OFFLOAD_IPV4_CKSUM) {
+		printf("TX IPv4 checksum:              ");
+		if (ports[port_id].tx_ol_flags & TESTPMD_TX_OFFLOAD_IP_CKSUM)
+			printf("on\n");
+		else
+			printf("off\n");
+	}
+
+	if (dev_info.tx_offload_capa & DEV_TX_OFFLOAD_UDP_CKSUM) {
+		printf("TX UDP checksum:               ");
+		if (ports[port_id].tx_ol_flags & TESTPMD_TX_OFFLOAD_UDP_CKSUM)
+			printf("on\n");
+		else
+			printf("off\n");
+	}
+
+	if (dev_info.tx_offload_capa & DEV_TX_OFFLOAD_TCP_CKSUM) {
+		printf("TX TCP checksum:               ");
+		if (ports[port_id].tx_ol_flags & TESTPMD_TX_OFFLOAD_TCP_CKSUM)
+			printf("on\n");
+		else
+			printf("off\n");
+	}
+
+	if (dev_info.tx_offload_capa & DEV_TX_OFFLOAD_SCTP_CKSUM) {
+		printf("TX SCTP checksum:              ");
+		if (ports[port_id].tx_ol_flags & TESTPMD_TX_OFFLOAD_SCTP_CKSUM)
+			printf("on\n");
+		else
+			printf("off\n");
+	}
+
+	if (dev_info.tx_offload_capa & DEV_TX_OFFLOAD_OUTER_IPV4_CKSUM) {
+		printf("TX Outer IPv4 checksum:        ");
+		if (ports[port_id].tx_ol_flags &
+		    TESTPMD_TX_OFFLOAD_OUTER_IP_CKSUM)
+			printf("on\n");
+		else
+			printf("off\n");
+	}
+
+	if (dev_info.tx_offload_capa & DEV_TX_OFFLOAD_TCP_TSO) {
+		printf("TX TCP segmentation:           ");
+		if (ports[port_id].tso_segsz != 0)
+			printf("on\n");
+		else
+			printf("off\n");
+	}
+
+	if (dev_info.tx_offload_capa & DEV_TX_OFFLOAD_UDP_TSO) {
+		printf("TX UDP segmentation:           ");
+		if (ports[port_id].tso_segsz != 0)
+			printf("on\n");
+		else
+			printf("off\n");
+	}
+
+	if (dev_info.tx_offload_capa & DEV_TX_OFFLOAD_VXLAN_TNL_TSO) {
+		printf("TSO for VXLAN tunnel packet:   ");
+		if (ports[port_id].tunnel_tso_segsz)
+			printf("on\n");
+		else
+			printf("off\n");
+	}
+
+	if (dev_info.tx_offload_capa & DEV_TX_OFFLOAD_GRE_TNL_TSO) {
+		printf("TSO for GRE tunnel packet:     ");
+		if (ports[port_id].tunnel_tso_segsz)
+			printf("on\n");
+		else
+			printf("off\n");
+	}
+
+	if (dev_info.tx_offload_capa & DEV_TX_OFFLOAD_IPIP_TNL_TSO) {
+		printf("TSO for IPIP tunnel packet:    ");
+		if (ports[port_id].tunnel_tso_segsz)
+			printf("on\n");
+		else
+			printf("off\n");
+	}
+
+	if (dev_info.tx_offload_capa & DEV_TX_OFFLOAD_GENEVE_TNL_TSO) {
+		printf("TSO for GENEVE tunnel packet:  ");
+		if (ports[port_id].tunnel_tso_segsz)
+			printf("on\n");
+		else
+			printf("off\n");
+	}
+
 }
 
 int
@@ -2822,43 +3001,28 @@ fdir_set_flex_payload(portid_t port_id, struct rte_eth_flex_payload_cfg *cfg)
 
 }
 
+#ifdef RTE_LIBRTE_IXGBE_PMD
 void
 set_vf_traffic(portid_t port_id, uint8_t is_rx, uint16_t vf, uint8_t on)
 {
 	int diag;
 
-	if (port_id_is_invalid(port_id, ENABLED_WARN))
-		return;
 	if (is_rx)
-		diag = rte_eth_dev_set_vf_rx(port_id,vf,on);
+		diag = rte_pmd_ixgbe_set_vf_rx(port_id, vf, on);
 	else
-		diag = rte_eth_dev_set_vf_tx(port_id,vf,on);
+		diag = rte_pmd_ixgbe_set_vf_tx(port_id, vf, on);
+
 	if (diag == 0)
 		return;
 	if(is_rx)
-		printf("rte_eth_dev_set_vf_rx for port_id=%d failed "
+		printf("rte_pmd_ixgbe_set_vf_rx for port_id=%d failed "
 	       		"diag=%d\n", port_id, diag);
 	else
-		printf("rte_eth_dev_set_vf_tx for port_id=%d failed "
+		printf("rte_pmd_ixgbe_set_vf_tx for port_id=%d failed "
 	       		"diag=%d\n", port_id, diag);
 
 }
-
-void
-set_vf_rx_vlan(portid_t port_id, uint16_t vlan_id, uint64_t vf_mask, uint8_t on)
-{
-	int diag;
-
-	if (port_id_is_invalid(port_id, ENABLED_WARN))
-		return;
-	if (vlan_id_is_invalid(vlan_id))
-		return;
-	diag = rte_eth_dev_set_vf_vlan_filter(port_id, vlan_id, vf_mask, on);
-	if (diag == 0)
-		return;
-	printf("rte_eth_dev_set_vf_vlan_filter for port_id=%d failed "
-	       "diag=%d\n", port_id, diag);
-}
+#endif
 
 int
 set_queue_rate_limit(portid_t port_id, uint16_t queue_idx, uint16_t rate)
@@ -2882,30 +3046,20 @@ set_queue_rate_limit(portid_t port_id, uint16_t queue_idx, uint16_t rate)
 	return diag;
 }
 
+#ifdef RTE_LIBRTE_IXGBE_PMD
 int
 set_vf_rate_limit(portid_t port_id, uint16_t vf, uint16_t rate, uint64_t q_msk)
 {
 	int diag;
-	struct rte_eth_link link;
 
-	if (q_msk == 0)
-		return 0;
-
-	if (port_id_is_invalid(port_id, ENABLED_WARN))
-		return 1;
-	rte_eth_link_get_nowait(port_id, &link);
-	if (rate > link.link_speed) {
-		printf("Invalid rate value:%u bigger than link speed: %u\n",
-			rate, link.link_speed);
-		return 1;
-	}
-	diag = rte_eth_set_vf_rate_limit(port_id, vf, rate, q_msk);
+	diag = rte_pmd_ixgbe_set_vf_rate_limit(port_id, vf, rate, q_msk);
 	if (diag == 0)
 		return diag;
-	printf("rte_eth_set_vf_rate_limit for port_id=%d failed diag=%d\n",
+	printf("rte_pmd_ixgbe_set_vf_rate_limit for port_id=%d failed diag=%d\n",
 		port_id, diag);
 	return diag;
 }
+#endif
 
 /*
  * Functions to manage the set of filtered Multicast MAC addresses.

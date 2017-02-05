@@ -900,7 +900,6 @@ bond_ethdev_tx_burst_alb(void *queue, struct rte_mbuf **bufs, uint16_t nb_pkts)
 		}
 
 		num_tx_total += num_send;
-		num_not_send += slave_bufs_pkts[RTE_MAX_ETHPORTS] - num_send;
 	}
 
 	return num_tx_total;
@@ -2562,12 +2561,12 @@ bond_ethdev_configure(struct rte_eth_dev *dev)
 	return 0;
 }
 
-static struct rte_vdev_driver bond_drv = {
+struct rte_vdev_driver pmd_bond_drv = {
 	.probe = bond_probe,
 	.remove = bond_remove,
 };
 
-RTE_PMD_REGISTER_VDEV(net_bonding, bond_drv);
+RTE_PMD_REGISTER_VDEV(net_bonding, pmd_bond_drv);
 RTE_PMD_REGISTER_ALIAS(net_bonding, eth_bond);
 
 RTE_PMD_REGISTER_PARAM_STRING(net_bonding,

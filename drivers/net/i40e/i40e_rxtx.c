@@ -151,8 +151,11 @@ i40e_rxd_error_to_pkt_flags(uint64_t qword)
 	uint64_t error_bits = (qword >> I40E_RXD_QW1_ERROR_SHIFT);
 
 #define I40E_RX_ERR_BITS 0x3f
-	if (likely((error_bits & I40E_RX_ERR_BITS) == 0))
+	if (likely((error_bits & I40E_RX_ERR_BITS) == 0)) {
+		flags |= (PKT_RX_IP_CKSUM_GOOD | PKT_RX_L4_CKSUM_GOOD);
 		return flags;
+	}
+
 	if (unlikely(error_bits & (1 << I40E_RX_DESC_ERROR_IPE_SHIFT)))
 		flags |= PKT_RX_IP_CKSUM_BAD;
 	else
@@ -266,7 +269,7 @@ i40e_parse_tunneling_params(uint64_t ol_flags,
 		*cd_tunneling |= I40E_TXD_CTX_GRE_TUNNELING;
 		break;
 	default:
-		PMD_TX_LOG(ERR, "Tunnel type not supported\n");
+		PMD_TX_LOG(ERR, "Tunnel type not supported");
 		return;
 	}
 
@@ -421,15 +424,6 @@ check_rx_burst_bulk_alloc_preconditions(__rte_unused struct i40e_rx_queue *rxq)
 			     "rxq->nb_rx_desc=%d, "
 			     "rxq->rx_free_thresh=%d",
 			     rxq->nb_rx_desc, rxq->rx_free_thresh);
-		ret = -EINVAL;
-	} else if (!(rxq->nb_rx_desc < (I40E_MAX_RING_DESC -
-				RTE_PMD_I40E_RX_MAX_BURST))) {
-		PMD_INIT_LOG(DEBUG, "Rx Burst Bulk Alloc Preconditions: "
-			     "rxq->nb_rx_desc=%d, "
-			     "I40E_MAX_RING_DESC=%d, "
-			     "RTE_PMD_I40E_RX_MAX_BURST=%d",
-			     rxq->nb_rx_desc, I40E_MAX_RING_DESC,
-			     RTE_PMD_I40E_RX_MAX_BURST);
 		ret = -EINVAL;
 	}
 #else
@@ -594,7 +588,7 @@ i40e_rx_alloc_bufs(struct i40e_rx_queue *rxq)
 
 	/* Update rx tail regsiter */
 	rte_wmb();
-	I40E_PCI_REG_WRITE(rxq->qrx_tail, rxq->rx_free_trigger);
+	I40E_PCI_REG_WRITE_RELAXED(rxq->qrx_tail, rxq->rx_free_trigger);
 
 	rxq->rx_free_trigger =
 		(uint16_t)(rxq->rx_free_trigger + rxq->rx_free_thresh);
@@ -1241,7 +1235,7 @@ end_of_tx:
 		   (unsigned) txq->port_id, (unsigned) txq->queue_id,
 		   (unsigned) tx_id, (unsigned) nb_tx);
 
-	I40E_PCI_REG_WRITE(txq->qtx_tail, tx_id);
+	I40E_PCI_REG_WRITE_RELAXED(txq->qtx_tail, tx_id);
 	txq->tx_tail = tx_id;
 
 	return nb_tx;
@@ -1393,7 +1387,7 @@ tx_xmit_pkts(struct i40e_tx_queue *txq,
 
 	/* Update the tx tail register */
 	rte_wmb();
-	I40E_PCI_REG_WRITE(txq->qtx_tail, txq->tx_tail);
+	I40E_PCI_REG_WRITE_RELAXED(txq->qtx_tail, txq->tx_tail);
 
 	return nb_pkts;
 }
@@ -1768,8 +1762,19 @@ i40e_dev_rx_queue_setup(struct rte_eth_dev *dev,
 	rxq->rx_deferred_start = rx_conf->rx_deferred_start;
 
 	/* Allocate the maximun number of RX ring hardware descriptor. */
-	ring_size = sizeof(union i40e_rx_desc) * I40E_MAX_RING_DESC;
-	ring_size = RTE_ALIGN(ring_size, I40E_DMA_MEM_ALIGN);
+	len = I40E_MAX_RING_DESC;
+
+#ifdef RTE_LIBRTE_I40E_RX_ALLOW_BULK_ALLOC
+	/**
+	 * Allocating a little more memory because vectorized/bulk_alloc Rx
+	 * functions doesn't check boundaries each time.
+	 */
+	len += RTE_PMD_I40E_RX_MAX_BURST;
+#endif
+
+	ring_size = RTE_ALIGN(len * sizeof(union i40e_rx_desc),
+			      I40E_DMA_MEM_ALIGN);
+
 	rz = rte_eth_dma_zone_reserve(dev, "rx_ring", queue_idx,
 			      ring_size, I40E_RING_BASE_ALIGN, socket_id);
 	if (!rz) {
@@ -1986,8 +1991,7 @@ i40e_dev_tx_queue_setup(struct rte_eth_dev *dev,
 		return I40E_ERR_PARAM;
 	}
 	if (tx_free_thresh >= (nb_desc - 3)) {
-		PMD_INIT_LOG(ERR, "tx_rs_thresh must be less than the "
-			     "tx_free_thresh must be less than the "
+		PMD_INIT_LOG(ERR, "tx_free_thresh must be less than the "
 			     "number of TX descriptors minus 3. "
 			     "(tx_free_thresh=%u port=%d queue=%d)",
 			     (unsigned int)tx_free_thresh,
