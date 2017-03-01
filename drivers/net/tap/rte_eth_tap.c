@@ -57,7 +57,11 @@
 #define ETH_TAP_IFACE_ARG       "iface"
 #define ETH_TAP_SPEED_ARG       "speed"
 
+#ifdef IFF_MULTI_QUEUE
 #define RTE_PMD_TAP_MAX_QUEUES	16
+#else
+#define RTE_PMD_TAP_MAX_QUEUES	1
+#endif
 
 static struct rte_vdev_driver pmd_tap_drv;
 
@@ -103,7 +107,6 @@ struct pmd_internals {
 	struct ether_addr eth_addr;	/* Mac address of the device port */
 
 	int if_index;			/* IF_INDEX for the port */
-	int fds[RTE_PMD_TAP_MAX_QUEUES]; /* List of all file descriptors */
 
 	struct rx_queue rxq[RTE_PMD_TAP_MAX_QUEUES];	/* List of RX queues */
 	struct tx_queue txq[RTE_PMD_TAP_MAX_QUEUES];	/* List of TX queues */
@@ -115,17 +118,20 @@ struct pmd_internals {
  * supplied name.
  */
 static int
-tun_alloc(char *name)
+tun_alloc(struct pmd_internals *pmd, uint16_t qid)
 {
 	struct ifreq ifr;
+#ifdef IFF_MULTI_QUEUE
 	unsigned int features;
+#endif
 	int fd;
 
 	memset(&ifr, 0, sizeof(struct ifreq));
 
 	ifr.ifr_flags = IFF_TAP | IFF_NO_PI;
-	if (name && name[0])
-		strncpy(ifr.ifr_name, name, IFNAMSIZ);
+	strncpy(ifr.ifr_name, pmd->name, IFNAMSIZ);
+
+	RTE_LOG(DEBUG, PMD, "ifr_name '%s'\n", ifr.ifr_name);
 
 	fd = open(TUN_TAP_DEV_PATH, O_RDWR);
 	if (fd < 0) {
@@ -133,39 +139,29 @@ tun_alloc(char *name)
 		goto error;
 	}
 
-	/* Grab the TUN features to verify we can work */
-	if (ioctl(fd, TUNGETFEATURES, &features) < 0) {
-		RTE_LOG(ERR, PMD, "Unable to get TUN/TAP features\n");
-		goto error;
-	}
-	RTE_LOG(DEBUG, PMD, "TUN/TAP Features %08x\n", features);
-
 #ifdef IFF_MULTI_QUEUE
-	if (!(features & IFF_MULTI_QUEUE) && (RTE_PMD_TAP_MAX_QUEUES > 1)) {
-		RTE_LOG(DEBUG, PMD, "TUN/TAP device only one queue\n");
+	/* Grab the TUN features to verify we can work multi-queue */
+	if (ioctl(fd, TUNGETFEATURES, &features) < 0) {
+		RTE_LOG(ERR, PMD, "TAP unable to get TUN/TAP features\n");
 		goto error;
-	} else if ((features & IFF_ONE_QUEUE) &&
-			(RTE_PMD_TAP_MAX_QUEUES == 1)) {
-		ifr.ifr_flags |= IFF_ONE_QUEUE;
-		RTE_LOG(DEBUG, PMD, "Single queue only support\n");
-	} else {
-		ifr.ifr_flags |= IFF_MULTI_QUEUE;
-		RTE_LOG(DEBUG, PMD, "Multi-queue support for %d queues\n",
-			RTE_PMD_TAP_MAX_QUEUES);
 	}
-#else
-	if (RTE_PMD_TAP_MAX_QUEUES > 1) {
-		RTE_LOG(DEBUG, PMD, "TUN/TAP device only one queue\n");
-		goto error;
-	} else {
-		ifr.ifr_flags |= IFF_ONE_QUEUE;
-		RTE_LOG(DEBUG, PMD, "Single queue only support\n");
-	}
-#endif
+	RTE_LOG(DEBUG, PMD, "  TAP Features %08x\n", features);
 
-	/* Set the TUN/TAP configuration and get the name if needed */
+	if (features & IFF_MULTI_QUEUE) {
+		RTE_LOG(DEBUG, PMD, "  Multi-queue support for %d queues\n",
+			RTE_PMD_TAP_MAX_QUEUES);
+		ifr.ifr_flags |= IFF_MULTI_QUEUE;
+	} else
+#endif
+	{
+		ifr.ifr_flags |= IFF_ONE_QUEUE;
+		RTE_LOG(DEBUG, PMD, "  Single queue only support\n");
+	}
+
+	/* Set the TUN/TAP configuration and set the name if needed */
 	if (ioctl(fd, TUNSETIFF, (void *)&ifr) < 0) {
-		RTE_LOG(ERR, PMD, "Unable to set TUNSETIFF for %s\n",
+		RTE_LOG(WARNING, PMD,
+			"Unable to set TUNSETIFF for %s\n",
 			ifr.ifr_name);
 		perror("TUNSETIFF");
 		goto error;
@@ -173,14 +169,22 @@ tun_alloc(char *name)
 
 	/* Always set the file descriptor to non-blocking */
 	if (fcntl(fd, F_SETFL, O_NONBLOCK) < 0) {
-		RTE_LOG(ERR, PMD, "Unable to set to nonblocking\n");
+		RTE_LOG(WARNING, PMD,
+			"Unable to set %s to nonblocking\n",
+			ifr.ifr_name);
 		perror("F_SETFL, NONBLOCK");
 		goto error;
 	}
 
-	/* If the name is different that new name as default */
-	if (name && strcmp(name, ifr.ifr_name))
-		snprintf(name, RTE_ETH_NAME_MAX_LEN - 1, "%s", ifr.ifr_name);
+	if (qid == 0) {
+		if (ioctl(fd, SIOCGIFHWADDR, &ifr) == -1) {
+			RTE_LOG(ERR, PMD, "ioctl failed (SIOCGIFHWADDR) (%s)\n",
+				ifr.ifr_name);
+			goto error;
+		}
+
+		rte_memcpy(&pmd->eth_addr, ifr.ifr_hwaddr.sa_data, ETH_ALEN);
+	}
 
 	return fd;
 
@@ -206,7 +210,7 @@ pmd_rx_burst(void *queue, struct rte_mbuf **bufs, uint16_t nb_pkts)
 		/* allocate the next mbuf */
 		mbuf = rte_pktmbuf_alloc(rxq->mp);
 		if (unlikely(!mbuf)) {
-			RTE_LOG(WARNING, PMD, "Unable to allocate mbuf\n");
+			RTE_LOG(WARNING, PMD, "TAP unable to allocate mbuf\n");
 			break;
 		}
 
@@ -276,12 +280,69 @@ pmd_tx_burst(void *queue, struct rte_mbuf **bufs, uint16_t nb_pkts)
 }
 
 static int
-tap_dev_start(struct rte_eth_dev *dev)
+tap_link_set_flags(struct pmd_internals *pmd, short flags, int add)
 {
-	/* Force the Link up */
-	dev->data->dev_link.link_status = ETH_LINK_UP;
+	struct ifreq ifr;
+	int err, s;
+
+	/*
+	 * An AF_INET/DGRAM socket is needed for
+	 * SIOCGIFFLAGS/SIOCSIFFLAGS, using fd won't work.
+	 */
+	s = socket(AF_INET, SOCK_DGRAM, 0);
+	if (s < 0) {
+		RTE_LOG(ERR, PMD,
+			"Unable to get a socket to set flags: %s\n",
+			strerror(errno));
+		return -1;
+	}
+	memset(&ifr, 0, sizeof(ifr));
+	strncpy(ifr.ifr_name, pmd->name, IFNAMSIZ);
+	err = ioctl(s, SIOCGIFFLAGS, &ifr);
+	if (err < 0) {
+		RTE_LOG(WARNING, PMD, "Unable to get %s device flags: %s\n",
+			pmd->name, strerror(errno));
+		close(s);
+		return -1;
+	}
+	if (add)
+		ifr.ifr_flags |= flags;
+	else
+		ifr.ifr_flags &= ~flags;
+	err = ioctl(s, SIOCSIFFLAGS, &ifr);
+	if (err < 0) {
+		RTE_LOG(WARNING, PMD, "Unable to %s flags 0x%x: %s\n",
+			add ? "set" : "unset", flags, strerror(errno));
+		close(s);
+		return -1;
+	}
+	close(s);
 
 	return 0;
+}
+
+static int
+tap_link_set_down(struct rte_eth_dev *dev)
+{
+	struct pmd_internals *pmd = dev->data->dev_private;
+
+	dev->data->dev_link.link_status = ETH_LINK_DOWN;
+	return tap_link_set_flags(pmd, IFF_UP | IFF_NOARP, 0);
+}
+
+static int
+tap_link_set_up(struct rte_eth_dev *dev)
+{
+	struct pmd_internals *pmd = dev->data->dev_private;
+
+	dev->data->dev_link.link_status = ETH_LINK_UP;
+	return tap_link_set_flags(pmd, IFF_UP | IFF_NOARP, 1);
+}
+
+static int
+tap_dev_start(struct rte_eth_dev *dev)
+{
+	return tap_link_set_up(dev);
 }
 
 /* This function gets called when the current port gets stopped.
@@ -289,14 +350,7 @@ tap_dev_start(struct rte_eth_dev *dev)
 static void
 tap_dev_stop(struct rte_eth_dev *dev)
 {
-	int i;
-	struct pmd_internals *internals = dev->data->dev_private;
-
-	for (i = 0; i < internals->nb_queues; i++)
-		if (internals->fds[i] != -1)
-			close(internals->fds[i]);
-
-	dev->data->dev_link.link_status = ETH_LINK_DOWN;
+	tap_link_set_down(dev);
 }
 
 static int
@@ -335,9 +389,7 @@ tap_stats_get(struct rte_eth_dev *dev, struct rte_eth_stats *tap_stats)
 		tap_stats->q_ibytes[i] = pmd->rxq[i].stats.ibytes;
 		rx_total += tap_stats->q_ipackets[i];
 		rx_bytes_total += tap_stats->q_ibytes[i];
-	}
 
-	for (i = 0; i < imax; i++) {
 		tap_stats->q_opackets[i] = pmd->txq[i].stats.opackets;
 		tap_stats->q_errors[i] = pmd->txq[i].stats.errs;
 		tap_stats->q_obytes[i] = pmd->txq[i].stats.obytes;
@@ -362,9 +414,7 @@ tap_stats_reset(struct rte_eth_dev *dev)
 	for (i = 0; i < pmd->nb_queues; i++) {
 		pmd->rxq[i].stats.ipackets = 0;
 		pmd->rxq[i].stats.ibytes = 0;
-	}
 
-	for (i = 0; i < pmd->nb_queues; i++) {
 		pmd->txq[i].stats.opackets = 0;
 		pmd->txq[i].stats.errs = 0;
 		pmd->txq[i].stats.obytes = 0;
@@ -374,6 +424,17 @@ tap_stats_reset(struct rte_eth_dev *dev)
 static void
 tap_dev_close(struct rte_eth_dev *dev __rte_unused)
 {
+	int i;
+	struct pmd_internals *internals = dev->data->dev_private;
+
+	tap_link_set_down(dev);
+
+	for (i = 0; i < internals->nb_queues; i++) {
+		if (internals->rxq[i].fd != -1)
+			close(internals->rxq[i].fd);
+		internals->rxq[i].fd = -1;
+		internals->txq[i].fd = -1;
+	}
 }
 
 static void
@@ -405,11 +466,48 @@ tap_link_update(struct rte_eth_dev *dev __rte_unused,
 	return 0;
 }
 
+static void
+tap_promisc_enable(struct rte_eth_dev *dev)
+{
+	struct pmd_internals *pmd = dev->data->dev_private;
+
+	dev->data->promiscuous = 1;
+	tap_link_set_flags(pmd, IFF_PROMISC, 1);
+}
+
+static void
+tap_promisc_disable(struct rte_eth_dev *dev)
+{
+	struct pmd_internals *pmd = dev->data->dev_private;
+
+	dev->data->promiscuous = 0;
+	tap_link_set_flags(pmd, IFF_PROMISC, 0);
+}
+
+static void
+tap_allmulti_enable(struct rte_eth_dev *dev)
+{
+	struct pmd_internals *pmd = dev->data->dev_private;
+
+	dev->data->all_multicast = 1;
+	tap_link_set_flags(pmd, IFF_ALLMULTI, 1);
+}
+
+static void
+tap_allmulti_disable(struct rte_eth_dev *dev)
+{
+	struct pmd_internals *pmd = dev->data->dev_private;
+
+	dev->data->all_multicast = 0;
+	tap_link_set_flags(pmd, IFF_ALLMULTI, 0);
+}
+
 static int
 tap_setup_queue(struct rte_eth_dev *dev,
 		struct pmd_internals *internals,
 		uint16_t qid)
 {
+	struct pmd_internals *pmd = dev->data->dev_private;
 	struct rx_queue *rx = &internals->rxq[qid];
 	struct tx_queue *tx = &internals->txq[qid];
 	int fd;
@@ -419,11 +517,11 @@ tap_setup_queue(struct rte_eth_dev *dev,
 		fd = tx->fd;
 		if (fd < 0) {
 			RTE_LOG(INFO, PMD, "Add queue to TAP %s for qid %d\n",
-				dev->data->name, qid);
-			fd = tun_alloc(dev->data->name);
+				pmd->name, qid);
+			fd = tun_alloc(pmd, qid);
 			if (fd < 0) {
-				RTE_LOG(ERR, PMD, "tun_alloc(%s) failed\n",
-					dev->data->name);
+				RTE_LOG(ERR, PMD, "tun_alloc(%s, %d) failed\n",
+					pmd->name, qid);
 				return -1;
 			}
 		}
@@ -468,8 +566,9 @@ tap_rx_queue_setup(struct rte_eth_dev *dev,
 	int fd;
 
 	if ((rx_queue_id >= internals->nb_queues) || !mp) {
-		RTE_LOG(ERR, PMD, "nb_queues %d mp %p\n",
-			internals->nb_queues, mp);
+		RTE_LOG(WARNING, PMD,
+			"nb_queues %d too small or mempool NULL\n",
+			internals->nb_queues);
 		return -1;
 	}
 
@@ -481,7 +580,7 @@ tap_rx_queue_setup(struct rte_eth_dev *dev,
 				RTE_PKTMBUF_HEADROOM);
 
 	if (buf_size < ETH_FRAME_LEN) {
-		RTE_LOG(ERR, PMD,
+		RTE_LOG(WARNING, PMD,
 			"%s: %d bytes will not fit in mbuf (%d bytes)\n",
 			dev->data->name, ETH_FRAME_LEN, buf_size);
 		return -ENOMEM;
@@ -491,9 +590,8 @@ tap_rx_queue_setup(struct rte_eth_dev *dev,
 	if (fd == -1)
 		return -1;
 
-	internals->fds[rx_queue_id] = fd;
-	RTE_LOG(INFO, PMD, "RX TAP device name %s, qid %d on fd %d\n",
-		dev->data->name, rx_queue_id, internals->rxq[rx_queue_id].fd);
+	RTE_LOG(DEBUG, PMD, "  RX TAP device name %s, qid %d on fd %d\n",
+		internals->name, rx_queue_id, internals->rxq[rx_queue_id].fd);
 
 	return 0;
 }
@@ -515,8 +613,8 @@ tap_tx_queue_setup(struct rte_eth_dev *dev,
 	if (ret == -1)
 		return -1;
 
-	RTE_LOG(INFO, PMD, "TX TAP device name %s, qid %d on fd %d\n",
-		dev->data->name, tx_queue_id, internals->txq[tx_queue_id].fd);
+	RTE_LOG(DEBUG, PMD, "  TX TAP device name %s, qid %d on fd %d\n",
+		internals->name, tx_queue_id, internals->txq[tx_queue_id].fd);
 
 	return 0;
 }
@@ -532,52 +630,15 @@ static const struct eth_dev_ops ops = {
 	.rx_queue_release       = tap_rx_queue_release,
 	.tx_queue_release       = tap_tx_queue_release,
 	.link_update            = tap_link_update,
+	.dev_set_link_up        = tap_link_set_up,
+	.dev_set_link_down      = tap_link_set_down,
+	.promiscuous_enable     = tap_promisc_enable,
+	.promiscuous_disable    = tap_promisc_disable,
+	.allmulticast_enable    = tap_allmulti_enable,
+	.allmulticast_disable   = tap_allmulti_disable,
 	.stats_get              = tap_stats_get,
 	.stats_reset            = tap_stats_reset,
 };
-
-static int
-pmd_mac_address(int fd, struct rte_eth_dev *dev, struct ether_addr *addr)
-{
-	struct ifreq ifr;
-
-	if ((fd <= 0) || !dev || !addr)
-		return -1;
-
-	memset(&ifr, 0, sizeof(ifr));
-
-	if (ioctl(fd, SIOCGIFHWADDR, &ifr) == -1) {
-		RTE_LOG(ERR, PMD, "ioctl failed (SIOCGIFHWADDR) (%s)\n",
-			ifr.ifr_name);
-		return -1;
-	}
-
-	/* Set the host based MAC address to this special MAC format */
-	ifr.ifr_hwaddr.sa_data[0] = 'T';
-	ifr.ifr_hwaddr.sa_data[1] = 'a';
-	ifr.ifr_hwaddr.sa_data[2] = 'p';
-	ifr.ifr_hwaddr.sa_data[3] = '-';
-	ifr.ifr_hwaddr.sa_data[4] = dev->data->port_id;
-	ifr.ifr_hwaddr.sa_data[5] = dev->data->numa_node;
-	if (ioctl(fd, SIOCSIFHWADDR, &ifr) == -1) {
-		RTE_LOG(ERR, PMD, "%s: ioctl failed (SIOCSIFHWADDR) (%s)\n",
-			dev->data->name, ifr.ifr_name);
-		return -1;
-	}
-
-	/* Set the local application MAC address, needs to be different then
-	 * the host based MAC address.
-	 */
-	ifr.ifr_hwaddr.sa_data[0] = 'd';
-	ifr.ifr_hwaddr.sa_data[1] = 'n';
-	ifr.ifr_hwaddr.sa_data[2] = 'e';
-	ifr.ifr_hwaddr.sa_data[3] = 't';
-	ifr.ifr_hwaddr.sa_data[4] = dev->data->port_id;
-	ifr.ifr_hwaddr.sa_data[5] = dev->data->numa_node;
-	rte_memcpy(addr, ifr.ifr_hwaddr.sa_data, ETH_ALEN);
-
-	return 0;
-}
 
 static int
 eth_dev_tap_create(const char *name, char *tap_name)
@@ -586,28 +647,25 @@ eth_dev_tap_create(const char *name, char *tap_name)
 	struct rte_eth_dev *dev = NULL;
 	struct pmd_internals *pmd = NULL;
 	struct rte_eth_dev_data *data = NULL;
-	int i, fd = -1;
+	int i;
 
-	RTE_LOG(INFO, PMD,
-		"%s: Create TAP Ethernet device with %d queues on numa %u\n",
-		 name, RTE_PMD_TAP_MAX_QUEUES, rte_socket_id());
+	RTE_LOG(DEBUG, PMD, "  TAP device on numa %u\n", rte_socket_id());
 
 	data = rte_zmalloc_socket(tap_name, sizeof(*data), 0, numa_node);
 	if (!data) {
-		RTE_LOG(INFO, PMD, "Failed to allocate data\n");
+		RTE_LOG(ERR, PMD, "TAP Failed to allocate data\n");
 		goto error_exit;
 	}
 
 	pmd = rte_zmalloc_socket(tap_name, sizeof(*pmd), 0, numa_node);
 	if (!pmd) {
-		RTE_LOG(INFO, PMD, "Unable to allocate internal struct\n");
+		RTE_LOG(ERR, PMD, "TAP Unable to allocate internal struct\n");
 		goto error_exit;
 	}
 
-	/* Use the name and not the tap_name */
 	dev = rte_eth_dev_allocate(tap_name);
 	if (!dev) {
-		RTE_LOG(INFO, PMD, "Unable to allocate device struct\n");
+		RTE_LOG(ERR, PMD, "TAP Unable to allocate device struct\n");
 		goto error_exit;
 	}
 
@@ -635,34 +693,16 @@ eth_dev_tap_create(const char *name, char *tap_name)
 	dev->tx_pkt_burst = pmd_tx_burst;
 	snprintf(dev->data->name, sizeof(dev->data->name), "%s", name);
 
-	/* Create the first Tap device */
-	fd = tun_alloc(tap_name);
-	if (fd < 0) {
-		RTE_LOG(INFO, PMD, "tun_alloc() failed\n");
-		goto error_exit;
-	}
-
-	/* Presetup the fds to -1 as being not working */
+	/* Presetup the fds to -1 as being not valid */
 	for (i = 0; i < RTE_PMD_TAP_MAX_QUEUES; i++) {
-		pmd->fds[i] = -1;
 		pmd->rxq[i].fd = -1;
 		pmd->txq[i].fd = -1;
-	}
-
-	/* Take the TUN/TAP fd and place in the first location */
-	pmd->rxq[0].fd = fd;
-	pmd->txq[0].fd = fd;
-	pmd->fds[0] = fd;
-
-	if (pmd_mac_address(fd, dev, &pmd->eth_addr) < 0) {
-		RTE_LOG(INFO, PMD, "Unable to get MAC address\n");
-		goto error_exit;
 	}
 
 	return 0;
 
 error_exit:
-	RTE_PMD_DEBUG_TRACE("Unable to initialize %s\n", name);
+	RTE_LOG(DEBUG, PMD, "TAP Unable to initialize %s\n", name);
 
 	rte_free(data);
 	rte_free(pmd);
@@ -712,11 +752,8 @@ rte_pmd_tap_probe(const char *name, const char *params)
 	snprintf(tap_name, sizeof(tap_name), "%s%d",
 		 DEFAULT_TAP_NAME, tap_unit++);
 
-	RTE_LOG(INFO, PMD, "Initializing pmd_tap for %s as %s\n",
-		name, tap_name);
-
 	if (params && (params[0] != '\0')) {
-		RTE_LOG(INFO, PMD, "paramaters (%s)\n", params);
+		RTE_LOG(DEBUG, PMD, "paramaters (%s)\n", params);
 
 		kvlist = rte_kvargs_parse(params, valid_arguments);
 		if (kvlist) {
@@ -741,11 +778,14 @@ rte_pmd_tap_probe(const char *name, const char *params)
 	}
 	pmd_link.link_speed = speed;
 
+	RTE_LOG(NOTICE, PMD, "Initializing pmd_tap for %s as %s\n",
+		name, tap_name);
+
 	ret = eth_dev_tap_create(name, tap_name);
 
 leave:
 	if (ret == -1) {
-		RTE_LOG(INFO, PMD, "Failed to create pmd for %s as %s\n",
+		RTE_LOG(ERR, PMD, "Failed to create pmd for %s as %s\n",
 			name, tap_name);
 		tap_unit--;		/* Restore the unit number */
 	}
@@ -763,7 +803,7 @@ rte_pmd_tap_remove(const char *name)
 	struct pmd_internals *internals;
 	int i;
 
-	RTE_LOG(INFO, PMD, "Closing TUN/TAP Ethernet device on numa %u\n",
+	RTE_LOG(DEBUG, PMD, "Closing TUN/TAP Ethernet device on numa %u\n",
 		rte_socket_id());
 
 	/* find the ethdev entry */
@@ -773,8 +813,8 @@ rte_pmd_tap_remove(const char *name)
 
 	internals = eth_dev->data->dev_private;
 	for (i = 0; i < internals->nb_queues; i++)
-		if (internals->fds[i] != -1)
-			close(internals->fds[i]);
+		if (internals->rxq[i].fd != -1)
+			close(internals->rxq[i].fd);
 
 	rte_free(eth_dev->data->dev_private);
 	rte_free(eth_dev->data);

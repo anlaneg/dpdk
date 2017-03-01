@@ -1,6 +1,6 @@
 #   BSD LICENSE
 #
-#   Copyright(c) 2010-2014 Intel Corporation. All rights reserved.
+#   Copyright(c) 2017 Intel Corporation. All rights reserved.
 #   All rights reserved.
 #
 #   Redistribution and use in source and binary forms, with or without
@@ -29,35 +29,11 @@
 #   (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 #   OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-ifeq (,$(wildcard $(RTE_OUTPUT)/.config))
-  $(error "need a make config first")
-endif
-ifeq (,$(wildcard $(RTE_OUTPUT)/Makefile))
-  $(error "need a make config first")
-endif
+include $(RTE_SDK)/mk/rte.vars.mk
 
-DEPDIR_FILES = $(addsuffix /.depdirs, $(addprefix $(BUILDDIR)/,$(ROOTDIRS-y) $(ROOTDIRS-)))
+DIRS-$(CONFIG_RTE_APP_TEST) += test
+DIRS-$(CONFIG_RTE_LIBRTE_ACL) += test-acl
+DIRS-$(CONFIG_RTE_LIBRTE_PIPELINE) += test-pipeline
+DIRS-$(CONFIG_RTE_LIBRTE_CMDLINE) += cmdline_test
 
-.PHONY: depdirs
-depdirs: $(RTE_OUTPUT)/.depdirs
-$(RTE_OUTPUT)/.depdirs: $(DEPDIR_FILES)
-	@rm -f $@
-	@sort -u -o $@ $(DEPDIR_FILES)
-
-$(DEPDIR_FILES): $(RTE_OUTPUT)/.config
-	@dir=$(notdir $(@D)); \
-	[ -d $(BUILDDIR)/$$dir ] || mkdir -p $(BUILDDIR)/$$dir; \
-	$(MAKE) S=$$dir -f $(RTE_SRCDIR)/$$dir/Makefile depdirs > $@
-
-.PHONY: depgraph
-depgraph:
-	@echo "digraph unix {" ; \
-	echo "    size=\"6,6\";" ; \
-	echo "    node [color=lightblue2, style=filled];" ; \
-	for d in $(ROOTDIRS-y); do \
-		echo "    \"root\" -> \"$$d\"" ; \
-		if [ -f $(RTE_SRCDIR)/$$d/Makefile ]; then \
-			$(MAKE) S=$$d -f $(RTE_SRCDIR)/$$d/Makefile depgraph ; \
-		fi ; \
-	done ; \
-	echo "}"
+include $(RTE_SDK)/mk/rte.subdir.mk

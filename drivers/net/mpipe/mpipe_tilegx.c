@@ -39,10 +39,19 @@
 #include <rte_malloc.h>
 #include <rte_cycles.h>
 
-#include <arch/mpipe_xaui_def.h>
-#include <arch/mpipe_gbe_def.h>
-
 #include <gxio/mpipe.h>
+
+/* mPIPE GBE hardware register definitions. */
+#define MPIPE_GBE_NETWORK_CONFIGURATION 0x8008
+#define MPIPE_GBE_NETWORK_CONFIGURATION__COPY_ALL_SHIFT 4
+#define MPIPE_GBE_NETWORK_CONFIGURATION__MULTI_HASH_ENA_SHIFT 6
+#define MPIPE_GBE_NETWORK_CONFIGURATION__UNI_HASH_ENA_SHIFT 7
+
+/* mPIPE XAUI hardware register definitions. */
+#define MPIPE_XAUI_RECEIVE_CONFIGURATION 0x8020
+#define MPIPE_XAUI_RECEIVE_CONFIGURATION__COPY_ALL_SHIFT 0
+#define MPIPE_XAUI_RECEIVE_CONFIGURATION__ENA_HASH_MULTI_SHIFT 2
+#define MPIPE_XAUI_RECEIVE_CONFIGURATION__ENA_HASH_UNI_SHIFT 3
 
 #ifdef RTE_LIBRTE_MPIPE_PMD_DEBUG
 #define PMD_DEBUG_RX(...)	RTE_LOG(DEBUG, PMD, __VA_ARGS__)
@@ -558,7 +567,7 @@ mpipe_register_segment(struct mpipe_dev_priv *priv, const struct rte_memseg *ms)
 {
 	size_t size = ms->hugepage_sz;
 	uint8_t *addr, *end;
-	int rc;
+	int rc = -EINVAL;
 
 	for (addr = ms->addr, end = addr + ms->len; addr < end; addr += size) {
 		rc = gxio_mpipe_register_page(priv->context, priv->stack, addr,
@@ -1621,6 +1630,17 @@ rte_pmd_mpipe_probe_common(struct rte_vdev_driver *drv, const char *ifname,
 	return 0;
 }
 
+static int rte_pmd_mpipe_xgbe_probe(const char *ifname, const char *params);
+static int rte_pmd_mpipe_gbe_probe(const char *ifname, const char *params);
+
+static struct rte_vdev_driver pmd_mpipe_xgbe_drv = {
+	.probe = rte_pmd_mpipe_xgbe_probe,
+};
+
+static struct rte_vdev_driver pmd_mpipe_gbe_drv = {
+	.probe = rte_pmd_mpipe_gbe_probe,
+};
+
 static int
 rte_pmd_mpipe_xgbe_probe(const char *ifname, const char *params __rte_unused)
 {
@@ -1632,14 +1652,6 @@ rte_pmd_mpipe_gbe_probe(const char *ifname, const char *params __rte_unused)
 {
 	return rte_pmd_mpipe_probe_common(&pmd_mpipe_gbe_drv, ifname, params);
 }
-
-static struct rte_vdev_driver pmd_mpipe_xgbe_drv = {
-	.probe = rte_pmd_mpipe_xgbe_probe,
-};
-
-static struct rte_vdev_driver pmd_mpipe_gbe_drv = {
-	.probe = rte_pmd_mpipe_gbe_probe,
-};
 
 RTE_PMD_REGISTER_VDEV(net_mpipe_xgbe, pmd_mpipe_xgbe_drv);
 RTE_PMD_REGISTER_ALIAS(net_mpipe_xgbe, xgbe);

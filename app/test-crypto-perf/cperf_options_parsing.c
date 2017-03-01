@@ -128,7 +128,13 @@ parse_total_ops(struct cperf_options *opts, const char *arg)
 	int ret = parse_uint32_t(&opts->total_ops, arg);
 
 	if (ret)
-		RTE_LOG(ERR, USER1, "failed to parse total operations count");
+		RTE_LOG(ERR, USER1, "failed to parse total operations count\n");
+
+	if (opts->total_ops == 0) {
+		RTE_LOG(ERR, USER1,
+				"invalid total operations count number specified\n");
+		return -1;
+	}
 
 	return ret;
 }
@@ -198,7 +204,8 @@ parse_device_type(struct cperf_options *opts, const char *arg)
 	if (strlen(arg) > (sizeof(opts->device_type) - 1))
 		return -1;
 
-	strncpy(opts->device_type, arg, sizeof(opts->device_type));
+	strncpy(opts->device_type, arg, sizeof(opts->device_type) - 1);
+	*(opts->device_type + sizeof(opts->device_type) - 1) = '\0';
 
 	return 0;
 }
