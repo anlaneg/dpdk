@@ -1,1 +1,4 @@
 doc/guides/nics/overview_table.txt
+.cproject
+.project
+.settings/
