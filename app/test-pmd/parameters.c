@@ -1,7 +1,7 @@
 /*-
  *   BSD LICENSE
  *
- *   Copyright(c) 2010-2016 Intel Corporation. All rights reserved.
+ *   Copyright(c) 2010-2017 Intel Corporation. All rights reserved.
  *   All rights reserved.
  *
  *   Redistribution and use in source and binary forms, with or without
@@ -86,6 +86,7 @@ usage(char* progname)
 	printf("usage: %s "
 #ifdef RTE_LIBRTE_CMDLINE
 	       "[--interactive|-i] "
+	       "[--cmdline-file=FILENAME] "
 #endif
 	       "[--help|-h] | [--auto-start|-a] | ["
 	       "--coremask=COREMASK --portmask=PORTMASK --numa "
@@ -103,6 +104,7 @@ usage(char* progname)
 	       progname);
 #ifdef RTE_LIBRTE_CMDLINE
 	printf("  --interactive: run in interactive mode.\n");
+	printf("  --cmdline-file: execute cli commands before startup.\n");
 #endif
 	printf("  --auto-start: start forwarding on init "
 	       "[always when non-interactive].\n");
@@ -149,7 +151,11 @@ usage(char* progname)
 	       "the packet will be enqueued into the rx drop-queue. "
 	       "If the drop-queue doesn't exist, the packet is dropped. "
 	       "By default drop-queue=127.\n");
-	printf("  --crc-strip: enable CRC stripping by hardware.\n");
+#ifdef RTE_LIBRTE_LATENCY_STATS
+	printf("  --latencystats=N: enable latency and jitter statistcs "
+	       "monitoring on forwarding lcore id N.\n");
+#endif
+	printf("  --disable-crc-strip: disable CRC stripping by hardware.\n");
 	printf("  --enable-lro: enable large receive offload.\n");
 	printf("  --enable-rx-cksum: enable rx hardware checksum offload.\n");
 	printf("  --disable-hw-vlan: disable hardware vlan.\n");
@@ -196,6 +202,10 @@ usage(char* progname)
 		" or total packet length.\n");
 	printf("  --disable-link-check: disable check on link status when "
 	       "starting/stopping ports.\n");
+	printf("  --no-lsc-interrupt: disable link status change interrupt.\n");
+	printf("  --no-rmv-interrupt: disable device removal interrupt.\n");
+	printf("  --bitrate-stats=N: set the logical core N to perform "
+		"bit-rate calculation.\n");
 }
 
 #ifdef RTE_LIBRTE_CMDLINE
@@ -394,7 +404,7 @@ parse_portnuma_config(const char *q_arg)
 		port_id = (uint8_t)int_fld[FLD_PORT];
 		if (port_id_is_invalid(port_id, ENABLED_WARN)) {
 			printf("Valid port range is [0");
-			FOREACH_PORT(pid, ports)
+			RTE_ETH_FOREACH_DEV(pid)
 				printf(", %d", pid);
 			printf("]\n");
 			return -1;
@@ -454,7 +464,7 @@ parse_ringnuma_config(const char *q_arg)
 		port_id = (uint8_t)int_fld[FLD_PORT];
 		if (port_id_is_invalid(port_id, ENABLED_WARN)) {
 			printf("Valid port range is [0");
-			FOREACH_PORT(pid, ports)
+			RTE_ETH_FOREACH_DEV(pid)
 				printf(", %d", pid);
 			printf("]\n");
 			return -1;
@@ -505,6 +515,7 @@ launch_args_parse(int argc, char** argv)
 		{ "help",			0, 0, 0 },
 #ifdef RTE_LIBRTE_CMDLINE
 		{ "interactive",		0, 0, 0 },
+		{ "cmdline-file",		1, 0, 0 },
 		{ "auto-start",			0, 0, 0 },
 		{ "eth-peers-configfile",	1, 0, 0 },
 		{ "eth-peer",			1, 0, 0 },
@@ -515,6 +526,7 @@ launch_args_parse(int argc, char** argv)
 		{ "coremask",			1, 0, 0 },
 		{ "portmask",			1, 0, 0 },
 		{ "numa",			0, 0, 0 },
+		{ "no-numa",			0, 0, 0 },
 		{ "mp-anon",			0, 0, 0 },
 		{ "port-numa-config",           1, 0, 0 },
 		{ "ring-numa-config",           1, 0, 0 },
@@ -526,7 +538,13 @@ launch_args_parse(int argc, char** argv)
 		{ "pkt-filter-report-hash",     1, 0, 0 },
 		{ "pkt-filter-size",            1, 0, 0 },
 		{ "pkt-filter-drop-queue",      1, 0, 0 },
-		{ "crc-strip",                  0, 0, 0 },
+#ifdef RTE_LIBRTE_LATENCY_STATS
+		{ "latencystats",               1, 0, 0 },
+#endif
+#ifdef RTE_LIBRTE_BITRATE
+		{ "bitrate-stats",              1, 0, 0 },
+#endif
+		{ "disable-crc-strip",          0, 0, 0 },
 		{ "enable-lro",                 0, 0, 0 },
 		{ "enable-rx-cksum",            0, 0, 0 },
 		{ "enable-scatter",             0, 0, 0 },
@@ -561,6 +579,8 @@ launch_args_parse(int argc, char** argv)
 		{ "no-flush-rx",	0, 0, 0 },
 		{ "txpkts",			1, 0, 0 },
 		{ "disable-link-check",		0, 0, 0 },
+		{ "no-lsc-interrupt",		0, 0, 0 },
+		{ "no-rmv-interrupt",		0, 0, 0 },
 		{ 0, 0, 0, 0 },
 	};
 
@@ -594,6 +614,13 @@ launch_args_parse(int argc, char** argv)
 			if (!strcmp(lgopts[opt_idx].name, "interactive")) {
 				printf("Interactive-mode selected\n");
 				interactive = 1;
+			}
+			if (!strcmp(lgopts[opt_idx].name, "cmdline-file")) {
+				printf("CLI commands to be read from %s\n",
+				       optarg);
+				snprintf(cmdline_filename,
+					 sizeof(cmdline_filename), "%s",
+					 optarg);
 			}
 			if (!strcmp(lgopts[opt_idx].name, "auto-start")) {
 				printf("Auto-start selected\n");
@@ -651,6 +678,8 @@ launch_args_parse(int argc, char** argv)
 				parse_fwd_coremask(optarg);
 			if (!strcmp(lgopts[opt_idx].name, "portmask"))
 				parse_fwd_portmask(optarg);
+			if (!strcmp(lgopts[opt_idx].name, "no-numa"))
+				numa_support = 0;
 			if (!strcmp(lgopts[opt_idx].name, "numa")) {
 				numa_support = 1;
 				memset(port_numa,NUMA_NO_CONFIG,RTE_MAX_ETHPORTS);
@@ -766,8 +795,33 @@ launch_args_parse(int argc, char** argv)
 						 "drop queue %d invalid - must"
 						 "be >= 0 \n", n);
 			}
-			if (!strcmp(lgopts[opt_idx].name, "crc-strip"))
-				rx_mode.hw_strip_crc = 1;
+#ifdef RTE_LIBRTE_LATENCY_STATS
+			if (!strcmp(lgopts[opt_idx].name,
+				    "latencystats")) {
+				n = atoi(optarg);
+				if (n >= 0) {
+					latencystats_lcore_id = (lcoreid_t) n;
+					latencystats_enabled = 1;
+				} else
+					rte_exit(EXIT_FAILURE,
+						 "invalid lcore id %d for latencystats"
+						 " must be >= 0\n", n);
+			}
+#endif
+#ifdef RTE_LIBRTE_BITRATE
+			if (!strcmp(lgopts[opt_idx].name, "bitrate-stats")) {
+				n = atoi(optarg);
+				if (n >= 0) {
+					bitrate_lcore_id = (lcoreid_t) n;
+					bitrate_enabled = 1;
+				} else
+					rte_exit(EXIT_FAILURE,
+						 "invalid lcore id %d for bitrate stats"
+						 " must be >= 0\n", n);
+			}
+#endif
+			if (!strcmp(lgopts[opt_idx].name, "disable-crc-strip"))
+				rx_mode.hw_strip_crc = 0;
 			if (!strcmp(lgopts[opt_idx].name, "enable-lro"))
 				rx_mode.enable_lro = 1;
 			if (!strcmp(lgopts[opt_idx].name, "enable-scatter"))
@@ -978,6 +1032,10 @@ launch_args_parse(int argc, char** argv)
 				no_flush_rx = 1;
 			if (!strcmp(lgopts[opt_idx].name, "disable-link-check"))
 				no_link_check = 1;
+			if (!strcmp(lgopts[opt_idx].name, "no-lsc-interrupt"))
+				lsc_interrupt = 0;
+			if (!strcmp(lgopts[opt_idx].name, "no-rmv-interrupt"))
+				rmv_interrupt = 0;
 
 			break;
 		case 'h':

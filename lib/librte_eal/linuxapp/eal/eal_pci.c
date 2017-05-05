@@ -35,6 +35,7 @@
 #include <dirent.h>
 
 #include <rte_log.h>
+#include <rte_bus.h>
 #include <rte_pci.h>
 #include <rte_eal_memconfig.h>
 #include <rte_malloc.h>
@@ -53,6 +54,8 @@
  * When a registered device matches a driver, it is then initialized with
  * IGB_UIO driver (or doesn't initialize, if the device wasn't bound to it).
  */
+
+extern struct rte_pci_bus rte_pci_bus;
 
 static int
 pci_get_kernel_driver_by_path(const char *filename, char *dri_name)
@@ -99,8 +102,10 @@ rte_eal_pci_map_device(struct rte_pci_device *dev)
 		break;
 	case RTE_KDRV_IGB_UIO:
 	case RTE_KDRV_UIO_GENERIC:
-		/* map resources for devices that use uio */
-		ret = pci_uio_map_resource(dev);
+		if (rte_eal_using_phys_addrs()) {
+			/* map resources for devices that use uio */
+			ret = pci_uio_map_resource(dev);
+		}
 		break;
 	default:
 		RTE_LOG(DEBUG, EAL,
@@ -119,7 +124,10 @@ rte_eal_pci_unmap_device(struct rte_pci_device *dev)
 	/* try unmapping the NIC resources using VFIO if it exists */
 	switch (dev->kdrv) {
 	case RTE_KDRV_VFIO:
-		RTE_LOG(ERR, EAL, "Hotplug doesn't support vfio yet\n");
+#ifdef VFIO_PRESENT
+		if (pci_vfio_is_enabled())
+			pci_vfio_unmap_resource(dev);
+#endif
 		break;
 	case RTE_KDRV_IGB_UIO:
 	case RTE_KDRV_UIO_GENERIC:
@@ -316,6 +324,9 @@ pci_scan_one(const char *dirname, const struct rte_pci_addr *addr)
 		dev->device.numa_node = tmp;
 	}
 
+	rte_eal_pci_device_name(addr, dev->name, sizeof(dev->name));
+	dev->device.name = dev->name;
+
 	/* parse resources */
 	snprintf(filename, sizeof(filename), "%s/resource", dirname);
 	if (pci_parse_sysfs_resource(filename, dev) < 0) {
@@ -346,21 +357,19 @@ pci_scan_one(const char *dirname, const struct rte_pci_addr *addr)
 		dev->kdrv = RTE_KDRV_NONE;
 
 	/* device is valid, add in list (sorted) */
-	if (TAILQ_EMPTY(&pci_device_list)) {
-		rte_eal_device_insert(&dev->device);
-		TAILQ_INSERT_TAIL(&pci_device_list, dev, next);
+	if (TAILQ_EMPTY(&rte_pci_bus.device_list)) {
+		rte_eal_pci_add_device(dev);
 	} else {
 		struct rte_pci_device *dev2;
 		int ret;
 
-		TAILQ_FOREACH(dev2, &pci_device_list, next) {
+		TAILQ_FOREACH(dev2, &rte_pci_bus.device_list, next) {
 			ret = rte_eal_compare_pci_addr(&dev->addr, &dev2->addr);
 			if (ret > 0)
 				continue;
 
 			if (ret < 0) {
-				TAILQ_INSERT_BEFORE(dev2, dev, next);
-				rte_eal_device_insert(&dev->device);
+				rte_eal_pci_insert_device(dev2, dev);
 			} else { /* already registered */
 				dev2->kdrv = dev->kdrv;
 				dev2->max_vfs = dev->max_vfs;
@@ -370,8 +379,8 @@ pci_scan_one(const char *dirname, const struct rte_pci_addr *addr)
 			}
 			return 0;
 		}
-		rte_eal_device_insert(&dev->device);
-		TAILQ_INSERT_TAIL(&pci_device_list, dev, next);
+
+		rte_eal_pci_add_device(dev);
 	}
 
 	return 0;
@@ -447,6 +456,10 @@ rte_eal_pci_scan(void)
 	char dirname[PATH_MAX];
 	struct rte_pci_addr addr;
 
+	/* for debug purposes, PCI can be disabled */
+	if (internal_config.no_pci)
+		return 0;
+
 	dir = opendir(pci_get_sysfs_path());
 	if (dir == NULL) {
 		RTE_LOG(ERR, EAL, "%s(): opendir failed: %s\n",
@@ -463,6 +476,7 @@ rte_eal_pci_scan(void)
 
 		snprintf(dirname, sizeof(dirname), "%s/%s",
 				pci_get_sysfs_path(), e->d_name);
+
 		if (pci_scan_one(dirname, &addr) < 0)
 			goto error;
 	}
@@ -706,20 +720,4 @@ rte_eal_pci_ioport_unmap(struct rte_pci_ioport *p)
 	}
 
 	return ret;
-}
-
-/* Init the PCI EAL subsystem */
-int
-rte_eal_pci_init(void)
-{
-	/* for debug purposes, PCI can be disabled */
-	if (internal_config.no_pci)
-		return 0;
-
-	if (rte_eal_pci_scan() < 0) {
-		RTE_LOG(ERR, EAL, "%s(): Cannot scan PCI bus\n", __func__);
-		return -1;
-	}
-
-	return 0;
 }

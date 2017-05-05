@@ -52,6 +52,7 @@
 #define BLOCKCIPHER_TEST_TARGET_PMD_OPENSSL	0x0004 /* SW OPENSSL flag */
 #define BLOCKCIPHER_TEST_TARGET_PMD_ARMV8	0x0008 /* ARMv8 flag */
 #define BLOCKCIPHER_TEST_TARGET_PMD_SCHEDULER	0x0010 /* Scheduler */
+#define BLOCKCIPHER_TEST_TARGET_PMD_DPAA2_SEC	0x0020 /* DPAA2_SEC flag */
 
 #define BLOCKCIPHER_TEST_OP_CIPHER	(BLOCKCIPHER_TEST_OP_ENCRYPT | \
 					BLOCKCIPHER_TEST_OP_DECRYPT)
@@ -68,10 +69,12 @@
 enum blockcipher_test_type {
 	BLKCIPHER_AES_CHAIN_TYPE,	/* use aes_chain_test_cases[] */
 	BLKCIPHER_AES_CIPHERONLY_TYPE,	/* use aes_cipheronly_test_cases[] */
+	BLKCIPHER_AES_DOCSIS_TYPE,	/* use aes_docsis_test_cases[] */
 	BLKCIPHER_3DES_CHAIN_TYPE,	/* use triple_des_chain_test_cases[] */
 	BLKCIPHER_3DES_CIPHERONLY_TYPE,	/* triple_des_cipheronly_test_cases[] */
 	BLKCIPHER_AUTHONLY_TYPE,	/* use hash_test_cases[] */
-	BLKCIPHER_DES_CIPHERONLY_TYPE	/* use des_cipheronly_test_cases[] */
+	BLKCIPHER_DES_CIPHERONLY_TYPE,	/* use des_cipheronly_test_cases[] */
+	BLKCIPHER_DES_DOCSIS_TYPE	/* use des_docsis_test_cases[] */
 };
 
 struct blockcipher_test_case {

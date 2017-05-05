@@ -85,12 +85,7 @@ extern "C" {
 #include <rte_debug.h>
 #include <rte_interrupts.h>
 #include <rte_dev.h>
-
-TAILQ_HEAD(pci_device_list, rte_pci_device); /**< PCI devices in D-linked Q. */
-TAILQ_HEAD(pci_driver_list, rte_pci_driver); /**< PCI drivers in D-linked Q. */
-
-extern struct pci_driver_list pci_driver_list; /**< Global list of PCI drivers. */
-extern struct pci_device_list pci_device_list; /**< Global list of PCI devices. */
+#include <rte_bus.h>
 
 /** Pathname of PCI devices directory. */
 const char *pci_get_sysfs_path(void);
@@ -110,6 +105,25 @@ const char *pci_get_sysfs_path(void);
 
 /** Maximum number of PCI resources. */
 #define PCI_MAX_RESOURCE 6
+
+/** Name of PCI Bus */
+#define PCI_BUS_NAME "PCI"
+
+/* Forward declarations */
+struct rte_pci_device;
+struct rte_pci_driver;
+
+/** List of PCI devices */
+TAILQ_HEAD(rte_pci_device_list, rte_pci_device);
+/** List of PCI drivers */
+TAILQ_HEAD(rte_pci_driver_list, rte_pci_driver);
+
+/* PCI Bus iterators */
+#define FOREACH_DEVICE_ON_PCIBUS(p)	\
+		TAILQ_FOREACH(p, &(rte_pci_bus.device_list), next)
+
+#define FOREACH_DRIVER_ON_PCIBUS(p)	\
+		TAILQ_FOREACH(p, &(rte_pci_bus.driver_list), next)
 
 /**
  * A structure describing an ID for a PCI driver. Each driver provides a
@@ -158,6 +172,7 @@ struct rte_pci_device {
 	struct rte_pci_driver *driver;          /**< Associated driver */
 	uint16_t max_vfs;                       /**< sriov enable if not zero */
 	enum rte_kernel_driver kdrv;            /**< Kernel driver passthrough */
+	char name[PCI_PRI_STR_SIZE+1];          /**< PCI location (ASCII) */
 };
 
 /**
@@ -188,8 +203,6 @@ struct rte_pci_device {
 	.subsystem_device_id = PCI_ANY_ID
 #endif
 
-struct rte_pci_driver;
-
 /**
  * Initialisation function for the driver called during PCI probing.
  */
@@ -206,16 +219,28 @@ typedef int (pci_remove_t)(struct rte_pci_device *);
 struct rte_pci_driver {
 	TAILQ_ENTRY(rte_pci_driver) next;       /**< Next in list. */
 	struct rte_driver driver;               /**< Inherit core driver. */
+	struct rte_pci_bus *bus;                /**< PCI bus reference. */
 	pci_probe_t *probe;                     /**< Device Probe function. */
 	pci_remove_t *remove;                   /**< Device Remove function. */
 	const struct rte_pci_id *id_table;	/**< ID table, NULL terminated. */
 	uint32_t drv_flags;                     /**< Flags contolling handling of device. */
 };
 
+/**
+ * Structure describing the PCI bus
+ */
+struct rte_pci_bus {
+	struct rte_bus bus;               /**< Inherit the generic class */
+	struct rte_pci_device_list device_list;  /**< List of PCI devices */
+	struct rte_pci_driver_list driver_list;  /**< List of PCI drivers */
+};
+
 /** Device needs PCI BAR mapping (done with either IGB_UIO or VFIO) */
 #define RTE_PCI_DRV_NEED_MAPPING 0x0001
 /** Device driver supports link state interrupt */
 #define RTE_PCI_DRV_INTR_LSC	0x0008
+/** Device driver supports device removal interrupt */
+#define RTE_PCI_DRV_INTR_RMV 0x0010
 
 /**
  * A structure describing a PCI mapping.
@@ -371,17 +396,14 @@ rte_eal_compare_pci_addr(const struct rte_pci_addr *addr,
 int rte_eal_pci_scan(void);
 
 /**
- * Probe the PCI bus for registered drivers.
- *
- * Scan the content of the PCI bus, and call the probe() function for
- * all registered drivers that have a matching entry in its id_table
- * for discovered devices.
+ * Probe the PCI bus
  *
  * @return
  *   - 0 on success.
- *   - Negative on error.
+ *   - !0 on error.
  */
-int rte_eal_pci_probe(void);
+int
+rte_eal_pci_probe(void);
 
 /**
  * Map the PCI device resources in user space virtual memory address

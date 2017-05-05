@@ -38,6 +38,7 @@
 #include <unistd.h>
 
 #include <rte_ethdev.h>
+#include <rte_ethdev_pci.h>
 #include <rte_memcpy.h>
 #include <rte_string_fns.h>
 #include <rte_memzone.h>
@@ -545,6 +546,9 @@ virtio_free_queues(struct virtio_hw *hw)
 	int queue_type;
 	uint16_t i;
 
+	if (hw->vqs == NULL)
+		return;
+
 	for (i = 0; i < nr_vq; i++) {
 		vq = hw->vqs[i];
 		if (!vq)
@@ -563,9 +567,11 @@ virtio_free_queues(struct virtio_hw *hw)
 		}
 
 		rte_free(vq);
+		hw->vqs[i] = NULL;
 	}
 
 	rte_free(hw->vqs);
+	hw->vqs = NULL;
 }
 
 static int
@@ -721,10 +727,13 @@ virtio_mtu_set(struct rte_eth_dev *dev, uint16_t mtu)
 	uint32_t ether_hdr_len = ETHER_HDR_LEN + VLAN_TAG_LEN +
 				 hw->vtnet_hdr_size;
 	uint32_t frame_size = mtu + ether_hdr_len;
+	uint32_t max_frame_size = hw->max_mtu + ether_hdr_len;
 
-	if (mtu < ETHER_MIN_MTU || frame_size > VIRTIO_MAX_RX_PKTLEN) {
+	max_frame_size = RTE_MIN(max_frame_size, VIRTIO_MAX_RX_PKTLEN);
+
+	if (mtu < ETHER_MIN_MTU || frame_size > max_frame_size) {
 		PMD_INIT_LOG(ERR, "MTU should be between %d and %d",
-			ETHER_MIN_MTU, VIRTIO_MAX_RX_PKTLEN - ether_hdr_len);
+			ETHER_MIN_MTU, max_frame_size - ether_hdr_len);
 		return -EINVAL;
 	}
 	return 0;
@@ -1158,6 +1167,18 @@ virtio_negotiate_features(struct virtio_hw *hw, uint64_t req_features)
 	PMD_INIT_LOG(DEBUG, "host_features before negotiate = %" PRIx64,
 		host_features);
 
+	/* If supported, ensure MTU value is valid before acknowledging it. */
+	if (host_features & req_features & (1ULL << VIRTIO_NET_F_MTU)) {
+		struct virtio_net_config config;
+
+		vtpci_read_dev_config(hw,
+			offsetof(struct virtio_net_config, mtu),
+			&config.mtu, sizeof(config.mtu));
+
+		if (config.mtu < ETHER_MIN_MTU)
+			req_features &= ~(1ULL << VIRTIO_NET_F_MTU);
+	}
+
 	/*
 	 * Negotiate features: Subset of device feature bits are written back
 	 * guest feature bits.
@@ -1190,9 +1211,8 @@ virtio_negotiate_features(struct virtio_hw *hw, uint64_t req_features)
  * Process Virtio Config changed interrupt and call the callback
  * if link state changed.
  */
-static void
-virtio_interrupt_handler(struct rte_intr_handle *handle,
-			 void *param)
+void
+virtio_interrupt_handler(void *param)
 {
 	struct rte_eth_dev *dev = param;
 	struct virtio_hw *hw = dev->data->dev_private;
@@ -1202,7 +1222,7 @@ virtio_interrupt_handler(struct rte_intr_handle *handle,
 	isr = vtpci_isr(hw);
 	PMD_DRV_LOG(INFO, "interrupt status = %#x", isr);
 
-	if (rte_intr_enable(handle) < 0)
+	if (rte_intr_enable(dev->intr_handle) < 0)
 		PMD_DRV_LOG(ERR, "interrupt enable failed");
 
 	if (isr & VIRTIO_PCI_ISR_CONFIG) {
@@ -1333,16 +1353,17 @@ virtio_init_device(struct rte_eth_dev *eth_dev, uint64_t req_features)
 	if (virtio_negotiate_features(hw, req_features) < 0)
 		return -1;
 
-	if (eth_dev->device) {
+	if (!hw->virtio_user_dev) {
 		pci_dev = RTE_DEV_TO_PCI(eth_dev->device);
 		rte_eth_copy_pci_info(eth_dev, pci_dev);
 	}
 
-	/* If host does not support status then disable LSC */
-	if (!vtpci_with_feature(hw, VIRTIO_NET_F_STATUS))
-		eth_dev->data->dev_flags &= ~RTE_ETH_DEV_INTR_LSC;
-	else
+	eth_dev->data->dev_flags = RTE_ETH_DEV_DETACHABLE;
+	/* If host does not support both status and MSI-X then disable LSC */
+	if (vtpci_with_feature(hw, VIRTIO_NET_F_STATUS) && hw->use_msix)
 		eth_dev->data->dev_flags |= RTE_ETH_DEV_INTR_LSC;
+	else
+		eth_dev->data->dev_flags &= ~RTE_ETH_DEV_INTR_LSC;
 
 	rx_func_get(eth_dev);
 
@@ -1391,6 +1412,32 @@ virtio_init_device(struct rte_eth_dev *eth_dev, uint64_t req_features)
 		}
 
 		hw->max_queue_pairs = config->max_virtqueue_pairs;
+
+		if (vtpci_with_feature(hw, VIRTIO_NET_F_MTU)) {
+			vtpci_read_dev_config(hw,
+				offsetof(struct virtio_net_config, mtu),
+				&config->mtu,
+				sizeof(config->mtu));
+
+			/*
+			 * MTU value has already been checked at negotiation
+			 * time, but check again in case it has changed since
+			 * then, which should not happen.
+			 */
+			if (config->mtu < ETHER_MIN_MTU) {
+				PMD_INIT_LOG(ERR, "invalid max MTU value (%u)",
+						config->mtu);
+				return -1;
+			}
+
+			hw->max_mtu = config->mtu;
+			/* Set initial MTU to maximum one supported by vhost */
+			eth_dev->data->mtu = config->mtu;
+
+		} else {
+			hw->max_mtu = VIRTIO_MAX_RX_PKTLEN - ETHER_HDR_LEN -
+				VLAN_TAG_LEN - hw->vtnet_hdr_size;
+		}
 
 		PMD_INIT_LOG(DEBUG, "config->max_virtqueue_pairs=%d",
 				config->max_virtqueue_pairs);
@@ -1480,7 +1527,6 @@ int
 eth_virtio_dev_init(struct rte_eth_dev *eth_dev)
 {
 	struct virtio_hw *hw = eth_dev->data->dev_private;
-	uint32_t dev_flags = RTE_ETH_DEV_DETACHABLE;
 	int ret;
 
 	RTE_BUILD_BUG_ON(RTE_PKTMBUF_HEADROOM < sizeof(struct virtio_net_hdr_mrg_rxbuf));
@@ -1520,13 +1566,10 @@ eth_virtio_dev_init(struct rte_eth_dev *eth_dev)
 	 * virtio_user_eth_dev_alloc() before eth_virtio_dev_init() is called.
 	 */
 	if (!hw->virtio_user_dev) {
-		ret = vtpci_init(RTE_DEV_TO_PCI(eth_dev->device), hw,
-				 &dev_flags);
+		ret = vtpci_init(RTE_DEV_TO_PCI(eth_dev->device), hw);
 		if (ret)
 			return ret;
 	}
-
-	eth_dev->data->dev_flags = dev_flags;
 
 	/* reset device and negotiate default features */
 	ret = virtio_init_device(eth_dev, VIRTIO_PMD_DEFAULT_GUEST_FEATURES);
@@ -1572,19 +1615,26 @@ eth_virtio_dev_uninit(struct rte_eth_dev *eth_dev)
 	return 0;
 }
 
-static struct eth_driver rte_virtio_pmd = {
-	.pci_drv = {
-		.driver = {
-			.name = "net_virtio",
-		},
-		.id_table = pci_id_virtio_map,
-		.drv_flags = 0,
-		.probe = rte_eth_dev_pci_probe,
-		.remove = rte_eth_dev_pci_remove,
+static int eth_virtio_pci_probe(struct rte_pci_driver *pci_drv __rte_unused,
+	struct rte_pci_device *pci_dev)
+{
+	return rte_eth_dev_pci_generic_probe(pci_dev, sizeof(struct virtio_hw),
+		eth_virtio_dev_init);
+}
+
+static int eth_virtio_pci_remove(struct rte_pci_device *pci_dev)
+{
+	return rte_eth_dev_pci_generic_remove(pci_dev, eth_virtio_dev_uninit);
+}
+
+static struct rte_pci_driver rte_virtio_pmd = {
+	.driver = {
+		.name = "net_virtio",
 	},
-	.eth_dev_init = eth_virtio_dev_init,
-	.eth_dev_uninit = eth_virtio_dev_uninit,
-	.dev_private_size = sizeof(struct virtio_hw),
+	.id_table = pci_id_virtio_map,
+	.drv_flags = 0,
+	.probe = eth_virtio_pci_probe,
+	.remove = eth_virtio_pci_remove,
 };
 
 RTE_INIT(rte_virtio_pmd_init);
@@ -1596,7 +1646,7 @@ rte_virtio_pmd_init(void)
 		return;
 	}
 
-	rte_eal_pci_register(&rte_virtio_pmd.pci_drv);
+	rte_eal_pci_register(&rte_virtio_pmd);
 }
 
 /*
@@ -1697,9 +1747,6 @@ virtio_dev_start(struct rte_eth_dev *dev)
 		}
 	}
 
-	/* Initialize Link state */
-	virtio_dev_link_update(dev, 0);
-
 	/*Notify the backend
 	 *Otherwise the tap backend might already stop its queue due to fullness.
 	 *vhost backend will have no chance to be waked up
@@ -1728,6 +1775,11 @@ virtio_dev_start(struct rte_eth_dev *dev)
 		txvq = dev->data->tx_queues[i];
 		VIRTQUEUE_DUMP(txvq->vq);
 	}
+
+	hw->started = 1;
+
+	/* Initialize Link state */
+	virtio_dev_link_update(dev, 0);
 
 	return 0;
 }
@@ -1783,6 +1835,7 @@ static void virtio_dev_free_mbufs(struct rte_eth_dev *dev)
 static void
 virtio_dev_stop(struct rte_eth_dev *dev)
 {
+	struct virtio_hw *hw = dev->data->dev_private;
 	struct rte_eth_link link;
 	struct rte_intr_conf *intr_conf = &dev->data->dev_conf.intr_conf;
 
@@ -1791,6 +1844,7 @@ virtio_dev_stop(struct rte_eth_dev *dev)
 	if (intr_conf->lsc || intr_conf->rxq)
 		rte_intr_disable(dev->intr_handle);
 
+	hw->started = 0;
 	memset(&link, 0, sizeof(link));
 	virtio_dev_atomic_write_link_status(dev, &link);
 }
@@ -1807,7 +1861,9 @@ virtio_dev_link_update(struct rte_eth_dev *dev, __rte_unused int wait_to_complet
 	link.link_duplex = ETH_LINK_FULL_DUPLEX;
 	link.link_speed  = SPEED_10G;
 
-	if (vtpci_with_feature(hw, VIRTIO_NET_F_STATUS)) {
+	if (hw->started == 0) {
+		link.link_status = ETH_LINK_DOWN;
+	} else if (vtpci_with_feature(hw, VIRTIO_NET_F_STATUS)) {
 		PMD_INIT_LOG(DEBUG, "Get link status from hw");
 		vtpci_read_dev_config(hw,
 				offsetof(struct virtio_net_config, status),

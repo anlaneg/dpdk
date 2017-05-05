@@ -39,6 +39,28 @@ extern "C" {
 
 #include <sys/queue.h>
 #include <rte_dev.h>
+#include <rte_devargs.h>
+
+struct rte_vdev_device {
+	TAILQ_ENTRY(rte_vdev_device) next;      /**< Next attached vdev */
+	struct rte_device device;               /**< Inherit core device */
+};
+
+static inline const char *
+rte_vdev_device_name(const struct rte_vdev_device *dev)
+{
+	if (dev && dev->device.devargs)
+		return dev->device.devargs->virt.drv_name;
+	return NULL;
+}
+
+static inline const char *
+rte_vdev_device_args(const struct rte_vdev_device *dev)
+{
+	if (dev && dev->device.devargs)
+		return dev->device.devargs->args;
+	return "";
+}
 
 /** Double linked list of virtual device drivers. */
 TAILQ_HEAD(vdev_driver_list, rte_vdev_driver);
@@ -46,12 +68,12 @@ TAILQ_HEAD(vdev_driver_list, rte_vdev_driver);
 /**
  * Probe function called for each virtual device driver once.
  */
-typedef int (rte_vdev_probe_t)(const char *name, const char *args);
+typedef int (rte_vdev_probe_t)(struct rte_vdev_device *dev);
 
 /**
  * Remove function called for each virtual device driver once.
  */
-typedef int (rte_vdev_remove_t)(const char *name);
+typedef int (rte_vdev_remove_t)(struct rte_vdev_device *dev);
 
 /**
  * A virtual device driver abstraction.

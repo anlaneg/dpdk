@@ -84,6 +84,7 @@ VPATH += $(SRCDIR)/base
 
 #
 # all source are stored in SRCS-y
+# base driver is based on the package of cid-fm10k.2017.01.24.tar.gz
 #
 SRCS-$(CONFIG_RTE_LIBRTE_FM10K_PMD) += fm10k_ethdev.c
 SRCS-$(CONFIG_RTE_LIBRTE_FM10K_PMD) += fm10k_rxtx.c
@@ -95,11 +96,5 @@ SRCS-$(CONFIG_RTE_LIBRTE_FM10K_PMD) += fm10k_mbx.c
 SRCS-$(CONFIG_RTE_LIBRTE_FM10K_PMD) += fm10k_vf.c
 SRCS-$(CONFIG_RTE_LIBRTE_FM10K_PMD) += fm10k_api.c
 SRCS-$(CONFIG_RTE_LIBRTE_FM10K_INC_VECTOR) += fm10k_rxtx_vec.c
-
-# this lib depends upon:
-DEPDIRS-$(CONFIG_RTE_LIBRTE_FM10K_PMD) += lib/librte_eal lib/librte_ether
-DEPDIRS-$(CONFIG_RTE_LIBRTE_FM10K_PMD) += lib/librte_mempool lib/librte_mbuf
-DEPDIRS-$(CONFIG_RTE_LIBRTE_FM10K_PMD) += lib/librte_net
-DEPDIRS-$(CONFIG_RTE_LIBRTE_FM10K_PMD) += lib/librte_kvargs
 
 include $(RTE_SDK)/mk/rte.lib.mk

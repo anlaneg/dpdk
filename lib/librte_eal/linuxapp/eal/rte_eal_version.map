@@ -6,8 +6,6 @@ DPDK_2.0 {
 	eal_parse_sysfs_value;
 	eal_timer_source;
 	lcore_config;
-	pci_device_list;
-	pci_driver_list;
 	per_lcore__lcore_id;
 	per_lcore__rte_errno;
 	rte_calloc;
@@ -22,12 +20,9 @@ DPDK_2.0 {
 	rte_dump_tailq;
 	rte_eal_alarm_cancel;
 	rte_eal_alarm_set;
-	rte_eal_dev_init;
 	rte_eal_devargs_add;
 	rte_eal_devargs_dump;
 	rte_eal_devargs_type_count;
-	rte_eal_driver_register;
-	rte_eal_driver_unregister;
 	rte_eal_get_configuration;
 	rte_eal_get_lcore_state;
 	rte_eal_get_physmem_layout;
@@ -186,3 +181,20 @@ DPDK_17.02 {
 	rte_bus_unregister;
 
 } DPDK_16.11;
+
+DPDK_17.05 {
+	global:
+
+	rte_cpu_is_supported;
+	rte_intr_free_epoll_fd;
+	rte_log_dump;
+	rte_log_get_global_level;
+	rte_log_register;
+	rte_log_set_global_level;
+	rte_log_set_level;
+	rte_log_set_level_regexp;
+	vfio_get_container_fd;
+	vfio_get_group_fd;
+	vfio_get_group_no;
+
+} DPDK_17.02;

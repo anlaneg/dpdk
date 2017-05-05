@@ -713,14 +713,14 @@ test_pipeline_single_filter(int expected_count)
 		void *objs[RING_TX_SIZE];
 		struct rte_mbuf *mbuf;
 
-		ret = rte_ring_sc_dequeue_burst(rings_tx[i], objs, 10);
+		ret = rte_ring_sc_dequeue_burst(rings_tx[i], objs, 10, NULL);
 		if (ret <= 0) {
 			printf("Got no objects from ring %d - error code %d\n",
 				i, ret);
 		} else {
 			printf("Got %d object(s) from ring %d!\n", ret, i);
 			for (j = 0; j < ret; j++) {
-				mbuf = (struct rte_mbuf *)objs[j];
+				mbuf = objs[j];
 				rte_hexdump(stdout, "mbuf",
 					rte_pktmbuf_mtod(mbuf, char *), 64);
 				rte_pktmbuf_free(mbuf);

@@ -162,6 +162,12 @@ Run-time configuration
 
 - **ethtool** operations on related kernel interfaces also affect the PMD.
 
+- ``port`` parameter [int]
+
+  This parameter provides a physical port to probe and can be specified multiple
+  times for additional ports. All ports are probed by default if left
+  unspecified.
+
 Kernel module parameters
 ~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -343,7 +349,7 @@ devices managed by librte_pmd_mlx4.
 
    .. code-block:: console
 
-      testpmd -c 0xff00 -n 4 -w 0000:83:00.0 -w 0000:84:00.0 -- --rxq=2 --txq=2 -i
+      testpmd -l 8-15 -n 4 -w 0000:83:00.0 -w 0000:84:00.0 -- --rxq=2 --txq=2 -i
 
    Example output:
 

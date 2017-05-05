@@ -49,6 +49,7 @@
 #include <rte_sctp.h>
 #include <rte_tcp.h>
 #include <rte_udp.h>
+#include <rte_byteorder.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -282,6 +283,20 @@ enum rte_flow_item_type {
 	 * See struct rte_flow_item_nvgre.
 	 */
 	RTE_FLOW_ITEM_TYPE_NVGRE,
+
+	/**
+	 * Matches a MPLS header.
+	 *
+	 * See struct rte_flow_item_mpls.
+	 */
+	RTE_FLOW_ITEM_TYPE_MPLS,
+
+	/**
+	 * Matches a GRE header.
+	 *
+	 * See struct rte_flow_item_gre.
+	 */
+	RTE_FLOW_ITEM_TYPE_GRE,
 };
 
 /**
@@ -300,9 +315,11 @@ struct rte_flow_item_any {
 };
 
 /** Default mask for RTE_FLOW_ITEM_TYPE_ANY. */
+#ifndef __cplusplus
 static const struct rte_flow_item_any rte_flow_item_any_mask = {
 	.num = 0x00000000,
 };
+#endif
 
 /**
  * RTE_FLOW_ITEM_TYPE_VF
@@ -327,9 +344,11 @@ struct rte_flow_item_vf {
 };
 
 /** Default mask for RTE_FLOW_ITEM_TYPE_VF. */
+#ifndef __cplusplus
 static const struct rte_flow_item_vf rte_flow_item_vf_mask = {
 	.id = 0x00000000,
 };
+#endif
 
 /**
  * RTE_FLOW_ITEM_TYPE_PORT
@@ -356,9 +375,11 @@ struct rte_flow_item_port {
 };
 
 /** Default mask for RTE_FLOW_ITEM_TYPE_PORT. */
+#ifndef __cplusplus
 static const struct rte_flow_item_port rte_flow_item_port_mask = {
 	.index = 0x00000000,
 };
+#endif
 
 /**
  * RTE_FLOW_ITEM_TYPE_RAW
@@ -389,6 +410,7 @@ struct rte_flow_item_raw {
 };
 
 /** Default mask for RTE_FLOW_ITEM_TYPE_RAW. */
+#ifndef __cplusplus
 static const struct rte_flow_item_raw rte_flow_item_raw_mask = {
 	.relative = 1,
 	.search = 1,
@@ -397,6 +419,7 @@ static const struct rte_flow_item_raw rte_flow_item_raw_mask = {
 	.limit = 0xffff,
 	.length = 0xffff,
 };
+#endif
 
 /**
  * RTE_FLOW_ITEM_TYPE_ETH
@@ -410,11 +433,13 @@ struct rte_flow_item_eth {
 };
 
 /** Default mask for RTE_FLOW_ITEM_TYPE_ETH. */
+#ifndef __cplusplus
 static const struct rte_flow_item_eth rte_flow_item_eth_mask = {
 	.dst.addr_bytes = "\xff\xff\xff\xff\xff\xff",
 	.src.addr_bytes = "\xff\xff\xff\xff\xff\xff",
 	.type = 0x0000,
 };
+#endif
 
 /**
  * RTE_FLOW_ITEM_TYPE_VLAN
@@ -430,10 +455,12 @@ struct rte_flow_item_vlan {
 };
 
 /** Default mask for RTE_FLOW_ITEM_TYPE_VLAN. */
+#ifndef __cplusplus
 static const struct rte_flow_item_vlan rte_flow_item_vlan_mask = {
 	.tpid = 0x0000,
 	.tci = 0xffff,
 };
+#endif
 
 /**
  * RTE_FLOW_ITEM_TYPE_IPV4
@@ -447,12 +474,14 @@ struct rte_flow_item_ipv4 {
 };
 
 /** Default mask for RTE_FLOW_ITEM_TYPE_IPV4. */
+#ifndef __cplusplus
 static const struct rte_flow_item_ipv4 rte_flow_item_ipv4_mask = {
 	.hdr = {
 		.src_addr = 0xffffffff,
 		.dst_addr = 0xffffffff,
 	},
 };
+#endif
 
 /**
  * RTE_FLOW_ITEM_TYPE_IPV6.
@@ -466,6 +495,7 @@ struct rte_flow_item_ipv6 {
 };
 
 /** Default mask for RTE_FLOW_ITEM_TYPE_IPV6. */
+#ifndef __cplusplus
 static const struct rte_flow_item_ipv6 rte_flow_item_ipv6_mask = {
 	.hdr = {
 		.src_addr =
@@ -476,6 +506,7 @@ static const struct rte_flow_item_ipv6 rte_flow_item_ipv6_mask = {
 			"\xff\xff\xff\xff\xff\xff\xff\xff",
 	},
 };
+#endif
 
 /**
  * RTE_FLOW_ITEM_TYPE_ICMP.
@@ -487,12 +518,14 @@ struct rte_flow_item_icmp {
 };
 
 /** Default mask for RTE_FLOW_ITEM_TYPE_ICMP. */
+#ifndef __cplusplus
 static const struct rte_flow_item_icmp rte_flow_item_icmp_mask = {
 	.hdr = {
 		.icmp_type = 0xff,
 		.icmp_code = 0xff,
 	},
 };
+#endif
 
 /**
  * RTE_FLOW_ITEM_TYPE_UDP.
@@ -504,12 +537,14 @@ struct rte_flow_item_udp {
 };
 
 /** Default mask for RTE_FLOW_ITEM_TYPE_UDP. */
+#ifndef __cplusplus
 static const struct rte_flow_item_udp rte_flow_item_udp_mask = {
 	.hdr = {
 		.src_port = 0xffff,
 		.dst_port = 0xffff,
 	},
 };
+#endif
 
 /**
  * RTE_FLOW_ITEM_TYPE_TCP.
@@ -521,12 +556,14 @@ struct rte_flow_item_tcp {
 };
 
 /** Default mask for RTE_FLOW_ITEM_TYPE_TCP. */
+#ifndef __cplusplus
 static const struct rte_flow_item_tcp rte_flow_item_tcp_mask = {
 	.hdr = {
 		.src_port = 0xffff,
 		.dst_port = 0xffff,
 	},
 };
+#endif
 
 /**
  * RTE_FLOW_ITEM_TYPE_SCTP.
@@ -538,12 +575,14 @@ struct rte_flow_item_sctp {
 };
 
 /** Default mask for RTE_FLOW_ITEM_TYPE_SCTP. */
+#ifndef __cplusplus
 static const struct rte_flow_item_sctp rte_flow_item_sctp_mask = {
 	.hdr = {
 		.src_port = 0xffff,
 		.dst_port = 0xffff,
 	},
 };
+#endif
 
 /**
  * RTE_FLOW_ITEM_TYPE_VXLAN.
@@ -558,9 +597,11 @@ struct rte_flow_item_vxlan {
 };
 
 /** Default mask for RTE_FLOW_ITEM_TYPE_VXLAN. */
+#ifndef __cplusplus
 static const struct rte_flow_item_vxlan rte_flow_item_vxlan_mask = {
 	.vni = "\xff\xff\xff",
 };
+#endif
 
 /**
  * RTE_FLOW_ITEM_TYPE_E_TAG.
@@ -580,6 +621,19 @@ struct rte_flow_item_e_tag {
 	uint8_t ecid_e; /**< E-CID ext. */
 };
 
+/** Default mask for RTE_FLOW_ITEM_TYPE_E_TAG. */
+#ifndef __cplusplus
+static const struct rte_flow_item_e_tag rte_flow_item_e_tag_mask = {
+#if RTE_BYTE_ORDER == RTE_BIG_ENDIAN
+	.rsvd_grp_ecid_b = 0x3fff,
+#elif RTE_BYTE_ORDER == RTE_LITTLE_ENDIAN
+	.rsvd_grp_ecid_b = 0xff3f,
+#else
+#error Unsupported endianness.
+#endif
+};
+#endif
+
 /**
  * RTE_FLOW_ITEM_TYPE_NVGRE.
  *
@@ -597,6 +651,54 @@ struct rte_flow_item_nvgre {
 	uint8_t tni[3]; /**< Virtual subnet ID. */
 	uint8_t flow_id; /**< Flow ID. */
 };
+
+/** Default mask for RTE_FLOW_ITEM_TYPE_NVGRE. */
+#ifndef __cplusplus
+static const struct rte_flow_item_nvgre rte_flow_item_nvgre_mask = {
+	.tni = "\xff\xff\xff",
+};
+#endif
+
+/**
+ * RTE_FLOW_ITEM_TYPE_MPLS.
+ *
+ * Matches a MPLS header.
+ */
+struct rte_flow_item_mpls {
+	/**
+	 * Label (20b), TC (3b), Bottom of Stack (1b).
+	 */
+	uint8_t label_tc_s[3];
+	uint8_t ttl; /** Time-to-Live. */
+};
+
+/** Default mask for RTE_FLOW_ITEM_TYPE_MPLS. */
+#ifndef __cplusplus
+static const struct rte_flow_item_mpls rte_flow_item_mpls_mask = {
+	.label_tc_s = "\xff\xff\xf0",
+};
+#endif
+
+/**
+ * RTE_FLOW_ITEM_TYPE_GRE.
+ *
+ * Matches a GRE header.
+ */
+struct rte_flow_item_gre {
+	/**
+	 * Checksum (1b), reserved 0 (12b), version (3b).
+	 * Refer to RFC 2784.
+	 */
+	uint16_t c_rsvd0_ver;
+	uint16_t protocol; /**< Protocol type. */
+};
+
+/** Default mask for RTE_FLOW_ITEM_TYPE_GRE. */
+#ifndef __cplusplus
+static const struct rte_flow_item_gre rte_flow_item_gre_mask = {
+	.protocol = 0xffff,
+};
+#endif
 
 /**
  * Matching pattern item definition.
@@ -932,9 +1034,11 @@ struct rte_flow_error {
 /**
  * Check whether a flow rule can be created on a given port.
  *
- * While this function has no effect on the target device, the flow rule is
- * validated against its current configuration state and the returned value
- * should be considered valid by the caller for that state only.
+ * The flow rule is validated for correctness and whether it could be accepted
+ * by the device given sufficient resources. The rule is checked against the
+ * current device mode and queue configuration. The flow rule may also
+ * optionally be validated against existing flow rules and device resources.
+ * This function has no effect on the target device.
  *
  * The returned value is guaranteed to remain valid only as long as no
  * successful calls to rte_flow_create() or rte_flow_destroy() are made in
@@ -965,9 +1069,13 @@ struct rte_flow_error {
  *   -ENOTSUP: valid but unsupported rule specification (e.g. partial
  *   bit-masks are unsupported).
  *
- *   -EEXIST: collision with an existing rule.
+ *   -EEXIST: collision with an existing rule. Only returned if device
+ *   supports flow rule collision checking and there was a flow rule
+ *   collision. Not receiving this return code is no guarantee that creating
+ *   the rule will not fail due to a collision.
  *
- *   -ENOMEM: not enough resources.
+ *   -ENOMEM: not enough memory to execute the function, or if the device
+ *   supports resource validation, resource limitation on the device.
  *
  *   -EBUSY: action cannot be performed due to busy device resources, may
  *   succeed if the affected queues or even the entire port are in a stopped
