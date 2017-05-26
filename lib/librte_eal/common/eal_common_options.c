@@ -109,6 +109,7 @@ struct shared_driver {
 };
 
 /* List of external loadable drivers */
+//参数指定的可外部加载的驱动
 static struct shared_driver_list solib_list =
 TAILQ_HEAD_INITIALIZER(solib_list);
 
@@ -176,7 +177,7 @@ eal_plugin_add(const char *path)
 	memset(solib, 0, sizeof(*solib));
 	strncpy(solib->name, path, PATH_MAX-1);
 	solib->name[PATH_MAX-1] = 0;
-	TAILQ_INSERT_TAIL(&solib_list, solib, next);
+	TAILQ_INSERT_TAIL(&solib_list, solib, next);//生成一个solib,并加入
 
 	return 0;
 }
@@ -280,28 +281,40 @@ eal_parse_coremask(const char *coremask)
 	/* Remove all blank characters ahead and after .
 	 * Remove 0x/0X if exists.
 	 */
+	//跳过空字符
 	while (isblank(*coremask))
 		coremask++;
+
+	//跳过0x或者0X
 	if (coremask[0] == '0' && ((coremask[1] == 'x')
 		|| (coremask[1] == 'X')))
 		coremask += 2;
+
+	//跳过结尾的空字符
 	i = strlen(coremask);
 	while ((i > 0) && isblank(coremask[i - 1]))
 		i--;
+
+	//排除掉空串情况
 	if (i == 0)
 		return -1;
 
+	//返序遍历
 	for (i = i - 1; i >= 0 && idx < RTE_MAX_LCORE; i--) {
 		c = coremask[i];
 		if (isxdigit(c) == 0) {
 			/* invalid characters */
 			return -1;
 		}
-		val = xdigit2val(c);
+		val = xdigit2val(c);//取出字符值
+
+		//检查此字符相关的4个cpu
 		for (j = 0; j < BITS_PER_HEX && idx < RTE_MAX_LCORE; j++, idx++)
 		{
+			//idx对应的cpu被指定了
 			if ((1 << j) & val) {
 				if (!lcore_config[idx].detected) {
+					//没有检测到，返回-1,指定了不存在的cpu
 					RTE_LOG(ERR, EAL, "lcore %u "
 					        "unavailable\n", idx);
 					return -1;
@@ -315,17 +328,22 @@ eal_parse_coremask(const char *coremask)
 			}
 		}
 	}
+
 	for (; i >= 0; i--)
 		if (coremask[i] != '0')
-			return -1;
+			return -1;//指的cpu比RTE_MAX_LCORE要多
+
+	//用户未指定的，全部置为关闭
 	for (; idx < RTE_MAX_LCORE; idx++) {
 		cfg->lcore_role[idx] = ROLE_OFF;
 		lcore_config[idx].core_index = -1;
 	}
+
+	//用户指定为0的情况
 	if (count == 0)
 		return -1;
 	/* Update the count of enabled logical cores of the EAL configuration */
-	cfg->lcore_count = count;
+	cfg->lcore_count = count;//更新为开启了多少逻辑core
 	return 0;
 }
 
@@ -888,11 +906,11 @@ eal_parse_common_option(int opt, const char *optarg,
 		conf->no_shconf = 1;
 		break;
 
-	case OPT_PROC_TYPE_NUM:
+	case OPT_PROC_TYPE_NUM://多进程模式
 		conf->process_type = eal_parse_proc_type(optarg);
 		break;
 
-	case OPT_MASTER_LCORE_NUM:
+	case OPT_MASTER_LCORE_NUM://设置master线程在哪个core上
 		if (eal_parse_master_lcore(optarg) < 0) {
 			RTE_LOG(ERR, EAL, "invalid parameter for --"
 					OPT_MASTER_LCORE "\n");
@@ -900,7 +918,7 @@ eal_parse_common_option(int opt, const char *optarg,
 		}
 		break;
 
-	case OPT_VDEV_NUM:
+	case OPT_VDEV_NUM://虚设备驱动
 		if (rte_eal_devargs_add(RTE_DEVTYPE_VIRTUAL,
 				optarg) < 0) {
 			return -1;

@@ -73,6 +73,7 @@ eal_cpu_detected(unsigned lcore_id)
  * lcore_id and returns the numa node where the lcore is found. If lcore is not
  * found on any numa node, returns zero.
  */
+//获取core对应的numa节点
 unsigned
 eal_cpu_socket_id(unsigned lcore_id)
 {
@@ -90,6 +91,7 @@ eal_cpu_socket_id(unsigned lcore_id)
 }
 
 /* Get the cpu core id value from the /sys/.../cpuX core_id value */
+//读给定lcore_id对应的物理core_id
 unsigned
 eal_cpu_core_id(unsigned lcore_id)
 {

@@ -61,7 +61,7 @@ extern "C" {
  * Structure storing internal configuration (per-lcore)
  */
 struct lcore_config {
-	unsigned detected;         /**< true if lcore was detected */
+	unsigned detected;         /**< true if lcore was detected */ //是否被检测到
 	pthread_t thread_id;       /**< pthread identifier */
 	int pipe_master2slave[2];  /**< communication pipe with master */
 	int pipe_slave2master[2];  /**< communication pipe with master */
@@ -69,10 +69,10 @@ struct lcore_config {
 	void * volatile arg;       /**< argument of function */
 	volatile int ret;          /**< return value of function */
 	volatile enum rte_lcore_state_t state; /**< lcore state */
-	unsigned socket_id;        /**< physical socket id for this lcore */
-	unsigned core_id;          /**< core number on socket for this lcore */
-	int core_index;            /**< relative index, starting from 0 */
-	rte_cpuset_t cpuset;       /**< cpu set which the lcore affinity to */
+	unsigned socket_id;        /**< physical socket id for this lcore */ //属于那个numa
+	unsigned core_id;          /**< core number on socket for this lcore */ //物理core id
+	int core_index;            /**< relative index, starting from 0 */ //core编号
+	rte_cpuset_t cpuset;       /**< cpu set which the lcore affinity to */ //仅包含此core的cpuset
 };
 
 /**
