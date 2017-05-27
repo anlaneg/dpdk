@@ -60,9 +60,9 @@ struct hugepage_info {
  * internal configuration
  */
 struct internal_config {
-	volatile size_t memory;           /**< amount of asked memory */
-	volatile unsigned force_nchannel; /**< force number of channels */
-	volatile unsigned force_nrank;    /**< force number of ranks */
+	volatile size_t memory;           /**< amount of asked memory */ //-m给定了多少M内存
+	volatile unsigned force_nchannel; /**< force number of channels */ //内存通道参数
+	volatile unsigned force_nrank;    /**< force number of ranks */ //内存强制rank
 	volatile unsigned no_hugetlbfs;   /**< true to disable hugetlbfs */
 	unsigned hugepage_unlink;         /**< true to unlink backing files */
 	volatile unsigned xen_dom0_support; /**< support app running on Xen Dom0*/
@@ -80,8 +80,8 @@ struct internal_config {
 	volatile int syslog_facility;	  /**< facility passed to openlog() */
 	/** default interrupt mode for VFIO */
 	volatile enum rte_intr_mode vfio_intr_mode;
-	const char *hugefile_prefix;      /**< the base filename of hugetlbfs files */
-	const char *hugepage_dir;         /**< specific hugetlbfs directory to use */
+	const char *hugefile_prefix;      /**< the base filename of hugetlbfs files */ //大页文件前缀
+	const char *hugepage_dir;         /**< specific hugetlbfs directory to use */ //采用那个大页目录
 
 	unsigned num_hugepage_sizes;      /**< how many sizes on this system */
 	struct hugepage_info hugepage_info[MAX_HUGEPAGE_SIZES];

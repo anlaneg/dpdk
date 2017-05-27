@@ -78,9 +78,9 @@ enum rte_proc_type_t {
  * The global RTE configuration structure.
  */
 struct rte_config {
-	uint32_t master_lcore;       /**< Id of the master lcore */
-	uint32_t lcore_count;        /**< Number of available logical cores. */
-	enum rte_lcore_role_t lcore_role[RTE_MAX_LCORE]; /**< State of cores. */
+	uint32_t master_lcore;       /**< Id of the master lcore */ //master线程用那个逻辑core
+	uint32_t lcore_count;        /**< Number of available logical cores. */ //有多少个逻辑core（-c指定后，更新为有多少有效core)
+	enum rte_lcore_role_t lcore_role[RTE_MAX_LCORE]; /**< State of cores. */ //记录用户启用了那些core,未用哪些core
 
 	/** Primary or secondary configuration */
 	enum rte_proc_type_t process_type;

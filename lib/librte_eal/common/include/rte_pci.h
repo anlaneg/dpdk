@@ -300,7 +300,7 @@ static inline int
 eal_parse_pci_BDF(const char *input, struct rte_pci_addr *dev_addr)
 {
 	dev_addr->domain = 0;
-	GET_PCIADDR_FIELD(input, dev_addr->bus, UINT8_MAX, ':');
+	GET_PCIADDR_FIELD(input, dev_addr->bus, UINT8_MAX, ':');//只接受XX:XX.X格式
 	GET_PCIADDR_FIELD(input, dev_addr->devid, UINT8_MAX, '.');
 	GET_PCIADDR_FIELD(input, dev_addr->function, UINT8_MAX, 0);
 	return 0;

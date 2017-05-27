@@ -48,6 +48,7 @@
 struct rte_devargs_list devargs_list =
 	TAILQ_HEAD_INITIALIZER(devargs_list);
 
+//将devargs_str通过','号分隔成drvname与drvargs
 int
 rte_eal_parse_devargs_str(const char *devargs_str,
 			char **drvname, char **drvargs)
@@ -101,6 +102,7 @@ rte_eal_devargs_add(enum rte_devtype devtype, const char *devargs_str)
 	case RTE_DEVTYPE_WHITELISTED_PCI:
 	case RTE_DEVTYPE_BLACKLISTED_PCI:
 		/* try to parse pci identifier */
+		//尝试着用XX:XX.X格式解析buf,如果解析失败，则尝试采用XXXX:XX:XX.X方式来解析
 		if (eal_parse_pci_BDF(buf, &devargs->pci.addr) != 0 &&
 		    eal_parse_pci_DomBDF(buf, &devargs->pci.addr) != 0)
 			goto fail;
@@ -108,6 +110,7 @@ rte_eal_devargs_add(enum rte_devtype devtype, const char *devargs_str)
 		break;
 	case RTE_DEVTYPE_VIRTUAL:
 		/* save driver name */
+		//保存驱动名称
 		ret = snprintf(devargs->virt.drv_name,
 			       sizeof(devargs->virt.drv_name), "%s", buf);
 		if (ret < 0 || ret >= (int)sizeof(devargs->virt.drv_name))
@@ -117,7 +120,7 @@ rte_eal_devargs_add(enum rte_devtype devtype, const char *devargs_str)
 	}
 
 	free(buf);
-	TAILQ_INSERT_TAIL(&devargs_list, devargs, next);
+	TAILQ_INSERT_TAIL(&devargs_list, devargs, next);//将dev参数加入到链表
 	return 0;
 
 fail:

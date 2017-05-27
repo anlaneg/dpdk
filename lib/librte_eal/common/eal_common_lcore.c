@@ -69,9 +69,10 @@ rte_eal_cpu_init(void)
 		CPU_ZERO(&lcore_config[lcore_id].cpuset);
 
 		/* in 1:1 mapping, record related cpu detected state */
+		//检查lcore_id是否存在
 		lcore_config[lcore_id].detected = eal_cpu_detected(lcore_id);
 		if (lcore_config[lcore_id].detected == 0) {
-			config->lcore_role[lcore_id] = ROLE_OFF;
+			config->lcore_role[lcore_id] = ROLE_OFF;//定为off
 			lcore_config[lcore_id].core_index = -1;
 			continue;
 		}
