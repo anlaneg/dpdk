@@ -204,6 +204,7 @@ get_hugepage_dir(uint64_t hugepage_sz)
  * there are. Checks if the file is locked (i.e.
  * if it's in use by another DPDK process).
  */
+//删除掉hugepage上所有的hugepage文件
 static int
 clear_hugedir(const char * hugedir)
 {
@@ -219,7 +220,7 @@ clear_hugedir(const char * hugedir)
 				hugedir);
 		goto error;
 	}
-	dir_fd = dirfd(dir);
+	dir_fd = dirfd(dir);//将dir转为fd
 
 	dirent = readdir(dir);
 	if (!dirent) {
@@ -369,10 +370,12 @@ eal_hugepage_info_init(void)
 	internal_config.num_hugepage_sizes = num_sizes;
 
 	/* sort the page directory entries by size, largest to smallest */
+	//按页大小进行排序（从最大size到最小size)
 	qsort(&internal_config.hugepage_info[0], num_sizes,
 	      sizeof(internal_config.hugepage_info[0]), compare_hpi);
 
 	/* now we have all info, check we have at least one valid size */
+	//至少要有一个有效的hugepage_info
 	for (i = 0; i < num_sizes; i++)
 		if (internal_config.hugepage_info[i].hugedir != NULL &&
 		    internal_config.hugepage_info[i].num_pages[0] > 0)

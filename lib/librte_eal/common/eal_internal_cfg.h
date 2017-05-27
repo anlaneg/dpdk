@@ -83,7 +83,7 @@ struct internal_config {
 	const char *hugefile_prefix;      /**< the base filename of hugetlbfs files */ //大页文件前缀
 	const char *hugepage_dir;         /**< specific hugetlbfs directory to use */ //采用那个大页目录
 
-	unsigned num_hugepage_sizes;      /**< how many sizes on this system */
+	unsigned num_hugepage_sizes;      /**< how many sizes on this system */ //有多少种大页类型
 	struct hugepage_info hugepage_info[MAX_HUGEPAGE_SIZES];
 };
 extern struct internal_config internal_config; /**< Global EAL configuration. */
