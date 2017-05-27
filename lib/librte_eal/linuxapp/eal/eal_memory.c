@@ -987,6 +987,7 @@ rte_eal_hugepage_init(void)
 	mcfg = rte_eal_get_configuration()->mem_config;
 
 	/* hugetlbfs can be disabled */
+	//当大页被禁用，此时memseg即使用addr
 	if (internal_config.no_hugetlbfs) {
 		addr = mmap(NULL, internal_config.memory, PROT_READ | PROT_WRITE,
 				MAP_PRIVATE | MAP_ANONYMOUS, 0, 0);

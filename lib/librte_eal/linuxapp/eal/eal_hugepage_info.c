@@ -63,6 +63,7 @@ static const char sys_dir_path[] = "/sys/kernel/mm/hugepages";
 
 /* this function is only called from eal_hugepage_info_init which itself
  * is only called from a primary process */
+//获取此类型大页内存的空闲页数目
 static uint32_t
 get_num_hugepages(const char *subdir)
 {
@@ -72,11 +73,13 @@ get_num_hugepages(const char *subdir)
 	const char *nr_rsvd_file = "resv_hugepages";
 
 	/* first, check how many reserved pages kernel reports */
+	//提取reserved的页大小
 	snprintf(path, sizeof(path), "%s/%s/%s",
 			sys_dir_path, subdir, nr_rsvd_file);
 	if (eal_parse_sysfs_value(path, &resv_pages) < 0)
 		return 0;
 
+	//提取free的页大小
 	snprintf(path, sizeof(path), "%s/%s/%s",
 			sys_dir_path, subdir, nr_hp_file);
 	if (eal_parse_sysfs_value(path, &num_pages) < 0)
@@ -100,6 +103,7 @@ get_num_hugepages(const char *subdir)
 	return num_pages;
 }
 
+//取meminfo中的Hugepagesize字段量，即大页的大小
 static uint64_t
 get_default_hp_size(void)
 {
@@ -109,10 +113,11 @@ get_default_hp_size(void)
 	char buffer[256];
 	unsigned long long size = 0;
 
-	FILE *fd = fopen(proc_meminfo, "r");
+	FILE *fd = fopen(proc_meminfo, "r");//打开meminfo
 	if (fd == NULL)
 		rte_panic("Cannot open %s\n", proc_meminfo);
 	while(fgets(buffer, sizeof(buffer), fd)){
+		//取Hugepagesize:字段
 		if (strncmp(buffer, str_hugepagesz, hugepagesz_len) == 0){
 			size = rte_str_to_size(&buffer[hugepagesz_len]);
 			break;
@@ -160,14 +165,18 @@ get_hugepage_dir(uint64_t hugepage_sz)
 		}
 
 		/* we have a specified --huge-dir option, only examine that dir */
+		//如果internal_config.hugepage_dir被指定，则仅要求含有hugepage_dir这一行
 		if (internal_config.hugepage_dir != NULL &&
 				strcmp(splitstr[MOUNTPT], internal_config.hugepage_dir) != 0)
 			continue;
 
+		//仅要求文件类型为hugetlbfs类型
 		if (strncmp(splitstr[FSTYPE], hugetlbfs_str, htlbfs_str_len) == 0){
+			//取pagesize选项
 			const char *pagesz_str = strstr(splitstr[OPTIONS], pagesize_opt);
 
 			/* if no explicit page size, the default page size is compared */
+			//如果没有指定页大小，则与默认页大小比对
 			if (pagesz_str == NULL){
 				if (hugepage_sz == default_size){
 					retval = strdup(splitstr[MOUNTPT]);
@@ -175,6 +184,7 @@ get_hugepage_dir(uint64_t hugepage_sz)
 				}
 			}
 			/* there is an explicit page size, so check it */
+			//如果指定了页大小，与页大小比对
 			else {
 				uint64_t pagesz = rte_str_to_size(&pagesz_str[pagesize_opt_len]);
 				if (pagesz == hugepage_sz) {
@@ -282,6 +292,7 @@ eal_hugepage_info_init(void)
 	DIR *dir;
 	struct dirent *dirent;
 
+	//打开大页目录
 	dir = opendir(sys_dir_path);
 	if (dir == NULL) {
 		RTE_LOG(ERR, EAL,
@@ -293,6 +304,7 @@ eal_hugepage_info_init(void)
 	for (dirent = readdir(dir); dirent != NULL; dirent = readdir(dir)) {
 		struct hugepage_info *hpi;
 
+		//如果不以dirent_start_text开头，则忽略
 		if (strncmp(dirent->d_name, dirent_start_text,
 			    dirent_start_len) != 0)
 			continue;
@@ -300,15 +312,18 @@ eal_hugepage_info_init(void)
 		if (num_sizes >= MAX_HUGEPAGE_SIZES)
 			break;
 
+		//获取大页类型
 		hpi = &internal_config.hugepage_info[num_sizes];
 		hpi->hugepage_sz =
-			rte_str_to_size(&dirent->d_name[dirent_start_len]);
-		hpi->hugedir = get_hugepage_dir(hpi->hugepage_sz);
+			rte_str_to_size(&dirent->d_name[dirent_start_len]);//页大小
+		hpi->hugedir = get_hugepage_dir(hpi->hugepage_sz);//获取页大小为hugepage_sz的挂载点
 
 		/* first, check if we have a mountpoint */
+		//检查此页大小是否有挂载点
 		if (hpi->hugedir == NULL) {
 			uint32_t num_pages;
 
+			//告警，有reserved，但没有挂载
 			num_pages = get_num_hugepages(dirent->d_name);
 			if (num_pages > 0)
 				RTE_LOG(NOTICE, EAL,
