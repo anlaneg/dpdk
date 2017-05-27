@@ -480,7 +480,7 @@ uint64_t test_hash(
 	__attribute__((unused)) uint32_t key_size,
 	__attribute__((unused)) uint64_t seed)
 {
-	uint32_t *k32 = (uint32_t *) key;
+	uint32_t *k32 = key;
 	uint32_t ip_dst = rte_be_to_cpu_32(k32[0]);
 	uint64_t signature = (ip_dst >> 2) | ((ip_dst & 0x3) << 30);
 
@@ -546,7 +546,8 @@ app_main_loop_rx_metadata(void) {
 			ret = rte_ring_sp_enqueue_bulk(
 				app.rings_rx[i],
 				(void **) app.mbuf_rx.array,
-				n_mbufs);
-		} while (ret < 0);
+				n_mbufs,
+				NULL);
+		} while (ret == 0);
 	}
 }

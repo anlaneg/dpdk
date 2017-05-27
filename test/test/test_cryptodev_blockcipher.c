@@ -613,6 +613,11 @@ test_blockcipher_all_tests(struct rte_mempool *mbuf_pool,
 		sizeof(aes_cipheronly_test_cases[0]);
 		tcs = aes_cipheronly_test_cases;
 		break;
+	case BLKCIPHER_AES_DOCSIS_TYPE:
+		n_test_cases = sizeof(aes_docsis_test_cases) /
+		sizeof(aes_docsis_test_cases[0]);
+		tcs = aes_docsis_test_cases;
+		break;
 	case BLKCIPHER_3DES_CHAIN_TYPE:
 		n_test_cases = sizeof(triple_des_chain_test_cases) /
 		sizeof(triple_des_chain_test_cases[0]);
@@ -627,6 +632,11 @@ test_blockcipher_all_tests(struct rte_mempool *mbuf_pool,
 		n_test_cases = sizeof(des_cipheronly_test_cases) /
 		sizeof(des_cipheronly_test_cases[0]);
 		tcs = des_cipheronly_test_cases;
+		break;
+	case BLKCIPHER_DES_DOCSIS_TYPE:
+		n_test_cases = sizeof(des_docsis_test_cases) /
+		sizeof(des_docsis_test_cases[0]);
+		tcs = des_docsis_test_cases;
 		break;
 	case BLKCIPHER_AUTHONLY_TYPE:
 		n_test_cases = sizeof(hash_test_cases) /
@@ -652,6 +662,9 @@ test_blockcipher_all_tests(struct rte_mempool *mbuf_pool,
 		break;
 	case RTE_CRYPTODEV_SCHEDULER_PMD:
 		target_pmd_mask = BLOCKCIPHER_TEST_TARGET_PMD_SCHEDULER;
+		break;
+	case RTE_CRYPTODEV_DPAA2_SEC_PMD:
+		target_pmd_mask = BLOCKCIPHER_TEST_TARGET_PMD_DPAA2_SEC;
 		break;
 	default:
 		TEST_ASSERT(0, "Unrecognized cryptodev type");

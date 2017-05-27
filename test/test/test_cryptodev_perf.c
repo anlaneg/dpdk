@@ -207,6 +207,8 @@ static const char *pmd_name(enum rte_cryptodev_type pmd)
 		return RTE_STR(CRYPTODEV_NAME_QAT_SYM_PMD);
 	case RTE_CRYPTODEV_SNOW3G_PMD:
 		return RTE_STR(CRYPTODEV_NAME_SNOW3G_PMD);
+	case RTE_CRYPTODEV_DPAA2_SEC_PMD:
+		return RTE_STR(CRYPTODEV_NAME_DPAA2_SEC_PMD);
 	default:
 		return "";
 	}
@@ -321,7 +323,7 @@ testsuite_setup(void)
 			return TEST_FAILED;
 		}
 
-	/* Create 2 AESNI MB devices if required */
+	/* Create an AESNI MB device if required */
 	if (gbl_cryptodev_perftest_devtype == RTE_CRYPTODEV_AESNI_MB_PMD) {
 #ifndef RTE_LIBRTE_PMD_AESNI_MB
 		RTE_LOG(ERR, USER1, "CONFIG_RTE_LIBRTE_PMD_AESNI_MB must be"
@@ -329,19 +331,17 @@ testsuite_setup(void)
 		return TEST_FAILED;
 #endif
 		nb_devs = rte_cryptodev_count_devtype(RTE_CRYPTODEV_AESNI_MB_PMD);
-		if (nb_devs < 2) {
-			for (i = nb_devs; i < 2; i++) {
-				ret = rte_eal_vdev_init(
-					RTE_STR(CRYPTODEV_NAME_AESNI_MB_PMD), NULL);
+		if (nb_devs < 1) {
+			ret = rte_vdev_init(
+				RTE_STR(CRYPTODEV_NAME_AESNI_MB_PMD), NULL);
 
-				TEST_ASSERT(ret == 0,
-					"Failed to create instance %u of pmd : %s",
-					i, RTE_STR(CRYPTODEV_NAME_AESNI_MB_PMD));
-			}
+			TEST_ASSERT(ret == 0,
+				"Failed to create instance of pmd : %s",
+				RTE_STR(CRYPTODEV_NAME_AESNI_MB_PMD));
 		}
 	}
 
-	/* Create 2 AESNI GCM devices if required */
+	/* Create an AESNI GCM device if required */
 	if (gbl_cryptodev_perftest_devtype == RTE_CRYPTODEV_AESNI_GCM_PMD) {
 #ifndef RTE_LIBRTE_PMD_AESNI_GCM
 		RTE_LOG(ERR, USER1, "CONFIG_RTE_LIBRTE_PMD_AESNI_GCM must be"
@@ -349,19 +349,17 @@ testsuite_setup(void)
 		return TEST_FAILED;
 #endif
 		nb_devs = rte_cryptodev_count_devtype(RTE_CRYPTODEV_AESNI_GCM_PMD);
-		if (nb_devs < 2) {
-			for (i = nb_devs; i < 2; i++) {
-				ret = rte_eal_vdev_init(
-					RTE_STR(CRYPTODEV_NAME_AESNI_GCM_PMD), NULL);
+		if (nb_devs < 1) {
+			ret = rte_vdev_init(
+				RTE_STR(CRYPTODEV_NAME_AESNI_GCM_PMD), NULL);
 
-				TEST_ASSERT(ret == 0,
-					"Failed to create instance %u of pmd : %s",
-					i, RTE_STR(CRYPTODEV_NAME_AESNI_GCM_PMD));
-			}
+			TEST_ASSERT(ret == 0,
+				"Failed to create instance of pmd : %s",
+				RTE_STR(CRYPTODEV_NAME_AESNI_GCM_PMD));
 		}
 	}
 
-	/* Create 2 SNOW3G devices if required */
+	/* Create a SNOW3G device if required */
 	if (gbl_cryptodev_perftest_devtype == RTE_CRYPTODEV_SNOW3G_PMD) {
 #ifndef RTE_LIBRTE_PMD_SNOW3G
 		RTE_LOG(ERR, USER1, "CONFIG_RTE_LIBRTE_PMD_SNOW3G must be"
@@ -369,19 +367,17 @@ testsuite_setup(void)
 		return TEST_FAILED;
 #endif
 		nb_devs = rte_cryptodev_count_devtype(RTE_CRYPTODEV_SNOW3G_PMD);
-		if (nb_devs < 2) {
-			for (i = nb_devs; i < 2; i++) {
-				ret = rte_eal_vdev_init(
-					RTE_STR(CRYPTODEV_NAME_SNOW3G_PMD), NULL);
+		if (nb_devs < 1) {
+			ret = rte_vdev_init(
+				RTE_STR(CRYPTODEV_NAME_SNOW3G_PMD), NULL);
 
-				TEST_ASSERT(ret == 0,
-					"Failed to create instance %u of pmd : %s",
-					i, RTE_STR(CRYPTODEV_NAME_SNOW3G_PMD));
-			}
+			TEST_ASSERT(ret == 0,
+				"Failed to create instance of pmd : %s",
+				RTE_STR(CRYPTODEV_NAME_SNOW3G_PMD));
 		}
 	}
 
-	/* Create 2 OPENSSL devices if required */
+	/* Create an OPENSSL device if required */
 	if (gbl_cryptodev_perftest_devtype == RTE_CRYPTODEV_OPENSSL_PMD) {
 #ifndef RTE_LIBRTE_PMD_OPENSSL
 		RTE_LOG(ERR, USER1, "CONFIG_RTE_LIBRTE_PMD_OPENSSL must be"
@@ -390,20 +386,18 @@ testsuite_setup(void)
 #endif
 		nb_devs = rte_cryptodev_count_devtype(
 				RTE_CRYPTODEV_OPENSSL_PMD);
-		if (nb_devs < 2) {
-			for (i = nb_devs; i < 2; i++) {
-				ret = rte_eal_vdev_init(
-					RTE_STR(CRYPTODEV_NAME_OPENSSL_PMD),
-					NULL);
+		if (nb_devs < 1) {
+			ret = rte_vdev_init(
+				RTE_STR(CRYPTODEV_NAME_OPENSSL_PMD),
+				NULL);
 
-				TEST_ASSERT(ret == 0, "Failed to create "
-					"instance %u of pmd : %s", i,
-					RTE_STR(CRYPTODEV_NAME_OPENSSL_PMD));
-			}
+			TEST_ASSERT(ret == 0, "Failed to create "
+				"instance of pmd : %s",
+				RTE_STR(CRYPTODEV_NAME_OPENSSL_PMD));
 		}
 	}
 
-	/* Create 2 ARMv8 devices if required */
+	/* Create an ARMv8 device if required */
 	if (gbl_cryptodev_perftest_devtype == RTE_CRYPTODEV_ARMV8_PMD) {
 #ifndef RTE_LIBRTE_PMD_ARMV8_CRYPTO
 		RTE_LOG(ERR, USER1, "CONFIG_RTE_LIBRTE_PMD_ARMV8_CRYPTO must be"
@@ -412,16 +406,14 @@ testsuite_setup(void)
 #endif
 		nb_devs = rte_cryptodev_count_devtype(
 				RTE_CRYPTODEV_ARMV8_PMD);
-		if (nb_devs < 2) {
-			for (i = nb_devs; i < 2; i++) {
-				ret = rte_eal_vdev_init(
-					RTE_STR(CRYPTODEV_NAME_ARMV8_PMD),
-					NULL);
+		if (nb_devs < 1) {
+			ret = rte_vdev_init(
+				RTE_STR(CRYPTODEV_NAME_ARMV8_PMD),
+				NULL);
 
-				TEST_ASSERT(ret == 0, "Failed to create "
-					"instance %u of pmd : %s", i,
-					RTE_STR(CRYPTODEV_NAME_ARMV8_PMD));
-			}
+			TEST_ASSERT(ret == 0, "Failed to create "
+				"instance of pmd : %s",
+				RTE_STR(CRYPTODEV_NAME_ARMV8_PMD));
 		}
 	}
 
@@ -4659,6 +4651,17 @@ static struct unit_test_suite cryptodev_testsuite  = {
 	}
 };
 
+static struct unit_test_suite cryptodev_dpaa2_sec_testsuite  = {
+	.suite_name = "Crypto Device DPAA2_SEC Unit Test Suite",
+	.setup = testsuite_setup,
+	.teardown = testsuite_teardown,
+	.unit_test_cases = {
+		TEST_CASE_ST(ut_setup, ut_teardown,
+			     test_perf_aes_cbc_encrypt_digest_vary_pkt_size),
+		TEST_CASES_END() /**< NULL terminate unit test array */
+	}
+};
+
 static struct unit_test_suite cryptodev_gcm_testsuite  = {
 	.suite_name = "Crypto Device AESNI GCM Unit Test Suite",
 	.setup = testsuite_setup,
@@ -4784,6 +4787,14 @@ perftest_sw_armv8_cryptodev(void /*argv __rte_unused, int argc __rte_unused*/)
 	return unit_test_suite_runner(&cryptodev_armv8_testsuite);
 }
 
+static int
+perftest_dpaa2_sec_cryptodev(void)
+{
+	gbl_cryptodev_perftest_devtype = RTE_CRYPTODEV_DPAA2_SEC_PMD;
+
+	return unit_test_suite_runner(&cryptodev_dpaa2_sec_testsuite);
+}
+
 REGISTER_TEST_COMMAND(cryptodev_aesni_mb_perftest, perftest_aesni_mb_cryptodev);
 REGISTER_TEST_COMMAND(cryptodev_qat_perftest, perftest_qat_cryptodev);
 REGISTER_TEST_COMMAND(cryptodev_sw_snow3g_perftest, perftest_sw_snow3g_cryptodev);
@@ -4795,3 +4806,5 @@ REGISTER_TEST_COMMAND(cryptodev_qat_continual_perftest,
 		perftest_qat_continual_cryptodev);
 REGISTER_TEST_COMMAND(cryptodev_sw_armv8_perftest,
 		perftest_sw_armv8_cryptodev);
+REGISTER_TEST_COMMAND(cryptodev_dpaa2_sec_perftest,
+		      perftest_dpaa2_sec_cryptodev);

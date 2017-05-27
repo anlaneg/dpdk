@@ -143,7 +143,7 @@ static struct rte_eth_conf default_pmd_conf = {
 		.hw_ip_checksum = 0, /**< IP checksum offload enabled */
 		.hw_vlan_filter = 0, /**< VLAN filtering disabled */
 		.jumbo_frame    = 0, /**< Jumbo Frame Support disabled */
-		.hw_strip_crc   = 0, /**< CRC stripped by hardware */
+		.hw_strip_crc   = 1, /**< CRC stripped by hardware */
 	},
 	.txmode = {
 		.mq_mode = ETH_MQ_TX_NONE,
@@ -193,7 +193,8 @@ static uint8_t lacpdu_rx_count[RTE_MAX_ETHPORTS] = {0, };
 static int
 slave_get_pkts(struct slave_conf *slave, struct rte_mbuf **buf, uint16_t size)
 {
-	return rte_ring_dequeue_burst(slave->tx_queue, (void **)buf, size);
+	return rte_ring_dequeue_burst(slave->tx_queue, (void **)buf,
+			size, NULL);
 }
 
 /*
@@ -206,7 +207,8 @@ slave_get_pkts(struct slave_conf *slave, struct rte_mbuf **buf, uint16_t size)
 static int
 slave_put_pkts(struct slave_conf *slave, struct rte_mbuf **buf, uint16_t size)
 {
-	return rte_ring_enqueue_burst(slave->rx_queue, (void **)buf, size);
+	return rte_ring_enqueue_burst(slave->rx_queue, (void **)buf,
+			size, NULL);
 }
 
 static uint16_t

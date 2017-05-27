@@ -62,24 +62,24 @@ static int
 test_logs(void)
 {
 	/* enable these logs type */
-	rte_set_log_type(RTE_LOGTYPE_TESTAPP1, 1);
-	rte_set_log_type(RTE_LOGTYPE_TESTAPP2, 1);
+	rte_log_set_level(RTE_LOGTYPE_TESTAPP1, RTE_LOG_EMERG);
+	rte_log_set_level(RTE_LOGTYPE_TESTAPP2, RTE_LOG_EMERG);
 
 	/* log in error level */
-	rte_set_log_level(RTE_LOG_ERR);
+	rte_log_set_global_level(RTE_LOG_ERR);
 	RTE_LOG(ERR, TESTAPP1, "error message\n");
 	RTE_LOG(CRIT, TESTAPP1, "critical message\n");
 
 	/* log in critical level */
-	rte_set_log_level(RTE_LOG_CRIT);
+	rte_log_set_global_level(RTE_LOG_CRIT);
 	RTE_LOG(ERR, TESTAPP2, "error message (not displayed)\n");
 	RTE_LOG(CRIT, TESTAPP2, "critical message\n");
 
 	/* disable one log type */
-	rte_set_log_type(RTE_LOGTYPE_TESTAPP2, 0);
+	rte_log_set_level(RTE_LOGTYPE_TESTAPP2, RTE_LOG_DEBUG);
 
 	/* log in error level */
-	rte_set_log_level(RTE_LOG_ERR);
+	rte_log_set_global_level(RTE_LOG_ERR);
 	RTE_LOG(ERR, TESTAPP1, "error message\n");
 	RTE_LOG(ERR, TESTAPP2, "error message (not displayed)\n");
 

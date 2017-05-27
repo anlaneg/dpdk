@@ -92,11 +92,14 @@ default: all
 config showconfigs showversion showversionum:
 	$(Q)$(MAKE) -f $(RTE_SDK)/mk/rte.sdkconfig.mk $@
 
+.PHONY: cscope gtags tags etags
+cscope gtags tags etags:
+	$(Q)$(RTE_SDK)/devtools/build-tags.sh $@ $T
+
 .PHONY: test test-basic test-fast test-ring test-mempool test-perf coverage
 test test-basic test-fast test-ring test-mempool test-perf coverage:
 	$(Q)$(MAKE) -f $(RTE_SDK)/mk/rte.sdktest.mk $@
 
-.PHONY: test-buid
 test: test-build
 
 .PHONY: install
@@ -111,10 +114,6 @@ doc: doc-all
 help: doc-help
 doc-%:
 	$(Q)$(MAKE) -f $(RTE_SDK)/mk/rte.sdkdoc.mk $*
-
-.PHONY: depdirs depgraph
-depdirs depgraph:
-	$(Q)$(MAKE) -f $(RTE_SDK)/mk/rte.sdkdepdirs.mk $@
 
 .PHONY: gcov gcovclean
 gcov gcovclean:

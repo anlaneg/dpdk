@@ -80,7 +80,7 @@ test_port_ring_reader(void)
 	mbuf[0] = (void *)rte_pktmbuf_alloc(pool);
 
 	expected_pkts = rte_ring_sp_enqueue_burst(port_ring_reader_params.ring,
-		mbuf, 1);
+		mbuf, 1, NULL);
 	received_pkts = rte_port_ring_reader_ops.f_rx(port, res_mbuf, 1);
 
 	if (received_pkts < expected_pkts)
@@ -93,7 +93,7 @@ test_port_ring_reader(void)
 		mbuf[i] = rte_pktmbuf_alloc(pool);
 
 	expected_pkts = rte_ring_sp_enqueue_burst(port_ring_reader_params.ring,
-		(void * const *) mbuf, RTE_PORT_IN_BURST_SIZE_MAX);
+		(void * const *) mbuf, RTE_PORT_IN_BURST_SIZE_MAX, NULL);
 	received_pkts = rte_port_ring_reader_ops.f_rx(port, res_mbuf,
 		RTE_PORT_IN_BURST_SIZE_MAX);
 
@@ -163,7 +163,7 @@ test_port_ring_writer(void)
 	rte_port_ring_writer_ops.f_flush(port);
 	expected_pkts = 1;
 	received_pkts = rte_ring_sc_dequeue_burst(port_ring_writer_params.ring,
-		(void **)res_mbuf, port_ring_writer_params.tx_burst_sz);
+		(void **)res_mbuf, port_ring_writer_params.tx_burst_sz, NULL);
 
 	if (received_pkts < expected_pkts)
 		return -7;
@@ -178,7 +178,7 @@ test_port_ring_writer(void)
 
 	expected_pkts = RTE_PORT_IN_BURST_SIZE_MAX;
 	received_pkts = rte_ring_sc_dequeue_burst(port_ring_writer_params.ring,
-		(void **)res_mbuf, port_ring_writer_params.tx_burst_sz);
+		(void **)res_mbuf, port_ring_writer_params.tx_burst_sz, NULL);
 
 	if (received_pkts < expected_pkts)
 		return -8;
@@ -193,7 +193,7 @@ test_port_ring_writer(void)
 
 	expected_pkts = RTE_PORT_IN_BURST_SIZE_MAX;
 	received_pkts = rte_ring_sc_dequeue_burst(port_ring_writer_params.ring,
-		(void **)res_mbuf, port_ring_writer_params.tx_burst_sz);
+		(void **)res_mbuf, port_ring_writer_params.tx_burst_sz, NULL);
 
 	if (received_pkts < expected_pkts)
 		return -8;
@@ -208,7 +208,7 @@ test_port_ring_writer(void)
 
 	expected_pkts = RTE_PORT_IN_BURST_SIZE_MAX;
 	received_pkts = rte_ring_sc_dequeue_burst(port_ring_writer_params.ring,
-		(void **)res_mbuf, port_ring_writer_params.tx_burst_sz);
+		(void **)res_mbuf, port_ring_writer_params.tx_burst_sz, NULL);
 
 	if (received_pkts < expected_pkts)
 		return -9;

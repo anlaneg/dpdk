@@ -83,8 +83,8 @@ test_resource.res: test_resource.c
 	@ cp $< $@
 $(eval $(call linked_resource,test_resource_c,test_resource.res))
 $(eval $(call linked_tar_resource,test_resource_tar,test_resource.c))
-SRCS-$(CONFIG_RTE_APP_TEST_RESOURCE_TAR) += test_pci.c
-$(eval $(call linked_tar_resource,test_pci_sysfs,test_pci_sysfs))
+SRCS-$(CONFIG_RTE_APP_TEST_RESOURCE_TAR) += test_cfgfile.c
+$(eval $(call linked_tar_resource,test_cfgfiles,test_cfgfiles))
 SRCS-y += test_prefetch.c
 SRCS-y += test_byteorder.c
 SRCS-y += test_per_lcore.c
@@ -160,6 +160,8 @@ SRCS-$(CONFIG_RTE_LIBRTE_CMDLINE) += test_cmdline_cirbuf.c
 SRCS-$(CONFIG_RTE_LIBRTE_CMDLINE) += test_cmdline_string.c
 SRCS-$(CONFIG_RTE_LIBRTE_CMDLINE) += test_cmdline_lib.c
 
+SRCS-$(CONFIG_RTE_LIBRTE_NET) += test_crc.c
+
 ifeq ($(CONFIG_RTE_LIBRTE_SCHED),y)
 SRCS-y += test_red.c
 SRCS-y += test_sched.c
@@ -197,6 +199,12 @@ SRCS-$(CONFIG_RTE_LIBRTE_CRYPTODEV) += test_cryptodev_blockcipher.c
 SRCS-$(CONFIG_RTE_LIBRTE_CRYPTODEV) += test_cryptodev_perf.c
 SRCS-$(CONFIG_RTE_LIBRTE_CRYPTODEV) += test_cryptodev.c
 
+ifeq ($(CONFIG_RTE_LIBRTE_EVENTDEV),y)
+SRCS-y += test_eventdev.c
+SRCS-$(CONFIG_RTE_LIBRTE_PMD_SW_EVENTDEV) += test_eventdev_sw.c
+SRCS-$(CONFIG_RTE_LIBRTE_PMD_OCTEONTX_SSOVF) += test_eventdev_octeontx.c
+endif
+
 SRCS-$(CONFIG_RTE_LIBRTE_KVARGS) += test_kvargs.c
 
 CFLAGS += -O3
@@ -211,11 +219,13 @@ ifeq ($(CONFIG_RTE_TOOLCHAIN_GCC),y)
 ifeq ($(shell test $(GCC_VERSION) -ge 44 && echo 1), 1)
 CFLAGS_test_memcpy.o += -fno-var-tracking-assignments
 CFLAGS_test_memcpy_perf.o += -fno-var-tracking-assignments
+# for older GCC versions, allow us to initialize an event using
+# designated initializers.
+ifeq ($(shell test $(GCC_VERSION) -le 50 && echo 1), 1)
+CFLAGS_test_eventdev_sw.o += -Wno-missing-field-initializers
 endif
 endif
-
-# this application needs libraries first
-DEPDIRS-y += lib drivers
+endif
 
 # Link against shared libraries when needed
 ifeq ($(CONFIG_RTE_LIBRTE_PMD_BOND),y)
