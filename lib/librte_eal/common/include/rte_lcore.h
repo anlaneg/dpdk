@@ -62,16 +62,16 @@ extern "C" {
  */
 struct lcore_config {
 	unsigned detected;         /**< true if lcore was detected */ //是否被检测到
-	pthread_t thread_id;       /**< pthread identifier */
-	int pipe_master2slave[2];  /**< communication pipe with master */
-	int pipe_slave2master[2];  /**< communication pipe with master */
-	lcore_function_t * volatile f;         /**< function to call */
-	void * volatile arg;       /**< argument of function */
-	volatile int ret;          /**< return value of function */
-	volatile enum rte_lcore_state_t state; /**< lcore state */
+	pthread_t thread_id;       /**< pthread identifier */ //绑定的线程
+	int pipe_master2slave[2];  /**< communication pipe with master */ //master通信用
+	int pipe_slave2master[2];  /**< communication pipe with master */  //向master通信用
+	lcore_function_t * volatile f;         /**< function to call */ //此核要执行的函数
+	void * volatile arg;       /**< argument of function */ //函数的参数
+	volatile int ret;          /**< return value of function */ //执行后的返回值（与状态配合使用）
+	volatile enum rte_lcore_state_t state; /**< lcore state */  //工作状态，执行函数用
 	unsigned socket_id;        /**< physical socket id for this lcore */ //属于那个numa
 	unsigned core_id;          /**< core number on socket for this lcore */ //物理core id
-	int core_index;            /**< relative index, starting from 0 */ //core编号
+	int core_index;            /**< relative index, starting from 0 */ //core编号，如果不存在将为-1(最终按用户mask后的顺序）
 	rte_cpuset_t cpuset;       /**< cpu set which the lcore affinity to */ //仅包含此core的cpuset
 };
 
@@ -169,6 +169,7 @@ rte_lcore_to_socket_id(unsigned lcore_id)
  * @return
  *   True if the given lcore is enabled; false otherwise.
  */
+//检查给定的core是否被启用了
 static inline int
 rte_lcore_is_enabled(unsigned lcore_id)
 {
@@ -199,6 +200,7 @@ rte_get_next_lcore(unsigned i, int skip_master, int wrap)
 		i %= RTE_MAX_LCORE;
 
 	while (i < RTE_MAX_LCORE) {
+		//如果此core未占用，则检查是否需要跳过master
 		if (!rte_lcore_is_enabled(i) ||
 		    (skip_master && (i == rte_get_master_lcore()))) {
 			i++;

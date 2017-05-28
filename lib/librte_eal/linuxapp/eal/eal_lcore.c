@@ -52,6 +52,7 @@
 #define NUMA_NODE_PATH "/sys/devices/system/node"
 
 /* Check if a cpu is present by the presence of the cpu information for it */
+//看指定core是否存在
 int
 eal_cpu_detected(unsigned lcore_id)
 {

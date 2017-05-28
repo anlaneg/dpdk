@@ -105,11 +105,11 @@ struct shared_driver {
 	TAILQ_ENTRY(shared_driver) next;
 
 	char    name[PATH_MAX];
-	void*   lib_handle;
+	void*   lib_handle;//so对应的handle
 };
 
 /* List of external loadable drivers */
-//参数指定的可外部加载的驱动
+//参数指定的可外部加载的驱动（-d参数指定）
 static struct shared_driver_list solib_list =
 TAILQ_HEAD_INITIALIZER(solib_list);
 
@@ -124,9 +124,11 @@ static const char *default_solib_dir = RTE_EAL_PMD_PATH;
 static const char dpdk_solib_path[] __attribute__((used)) =
 "DPDK_PLUGIN_PATH=" RTE_EAL_PMD_PATH;
 
-
+//master线程是否被指定
 static int master_lcore_parsed;
+//是否指定了内存-m参数
 static int mem_parsed;
+//是否指定了核
 static int core_parsed;
 
 void
@@ -175,6 +177,7 @@ eal_plugin_add(const char *path)
 		return -1;
 	}
 	memset(solib, 0, sizeof(*solib));
+	//将path名称写入
 	strncpy(solib->name, path, PATH_MAX-1);
 	solib->name[PATH_MAX-1] = 0;
 	TAILQ_INSERT_TAIL(&solib_list, solib, next);//生成一个solib,并加入
@@ -217,6 +220,7 @@ eal_plugindir_init(const char *path)
 	return (dent == NULL) ? 0 : -1;
 }
 
+//对于目录，递归加入。对于文件，则用dl_open打开。
 int
 eal_plugins_init(void)
 {
@@ -229,6 +233,7 @@ eal_plugins_init(void)
 		struct stat sb;
 
 		if (stat(solib->name, &sb) == 0 && S_ISDIR(sb.st_mode)) {
+			//对于目录，则递归加入
 			if (eal_plugindir_init(solib->name) == -1) {
 				RTE_LOG(ERR, EAL,
 					"Cannot init plugin directory %s\n",
@@ -236,6 +241,7 @@ eal_plugins_init(void)
 				return -1;
 			}
 		} else {
+			//打开so文件
 			RTE_LOG(DEBUG, EAL, "open shared lib %s\n",
 				solib->name);
 			solib->lib_handle = dlopen(solib->name, RTLD_NOW);
@@ -314,15 +320,18 @@ eal_parse_coremask(const char *coremask)
 			//idx对应的cpu被指定了
 			if ((1 << j) & val) {
 				if (!lcore_config[idx].detected) {
-					//没有检测到，返回-1,指定了不存在的cpu
+					//没有检测到，但用户却指定了，报错，返回-1
 					RTE_LOG(ERR, EAL, "lcore %u "
 					        "unavailable\n", idx);
 					return -1;
 				}
+				//检测时已定指定ROLE_RTE,这里重复设置，但core_index这里会
+				//按用户指定顺序将其修改
 				cfg->lcore_role[idx] = ROLE_RTE;
 				lcore_config[idx].core_index = count;
 				count++;
 			} else {
+				//用户未指定此cpu,修改为ROLE_OFF,修改core_index
 				cfg->lcore_role[idx] = ROLE_OFF;
 				lcore_config[idx].core_index = -1;
 			}
@@ -331,15 +340,15 @@ eal_parse_coremask(const char *coremask)
 
 	for (; i >= 0; i--)
 		if (coremask[i] != '0')
-			return -1;//指的cpu比RTE_MAX_LCORE要多
+			return -1;//指的cpu比RTE_MAX_LCORE要多,返回error
 
-	//用户未指定的，全部置为关闭
+	//检查到的cpu，但用户未指定的，全部置为关闭
 	for (; idx < RTE_MAX_LCORE; idx++) {
 		cfg->lcore_role[idx] = ROLE_OFF;
 		lcore_config[idx].core_index = -1;
 	}
 
-	//用户指定为0的情况
+	//用户指定为0的情况，返回error
 	if (count == 0)
 		return -1;
 	/* Update the count of enabled logical cores of the EAL configuration */
@@ -347,6 +356,7 @@ eal_parse_coremask(const char *coremask)
 	return 0;
 }
 
+//解析-l参数，当前支持样例 -l "2,3-9,10,21"这种形式
 static int
 eal_parse_corelist(const char *corelist)
 {
@@ -360,13 +370,17 @@ eal_parse_corelist(const char *corelist)
 		return -1;
 
 	/* Remove all blank characters ahead and after */
+	//跳过前导的空格
 	while (isblank(*corelist))
 		corelist++;
+
+	//跳过后置的空格
 	i = strlen(corelist);
 	while ((i > 0) && isblank(corelist[i - 1]))
 		i--;
 
 	/* Reset config */
+	//丢弃掉已有角色，core_index配置
 	for (idx = 0; idx < RTE_MAX_LCORE; idx++) {
 		cfg->lcore_role[idx] = ROLE_OFF;
 		lcore_config[idx].core_index = -1;
@@ -391,6 +405,7 @@ eal_parse_corelist(const char *corelist)
 			max = idx;
 			if (min == RTE_MAX_LCORE)
 				min = idx;
+			//如果min与max有误，将被忽略
 			for (idx = min; idx <= max; idx++) {
 				if (cfg->lcore_role[idx] != ROLE_RTE) {
 					cfg->lcore_role[idx] = ROLE_RTE;
@@ -774,15 +789,16 @@ eal_parse_log_level(const char *arg)
 	/* check for errors */
 	if ((errno != 0) || (level[0] == '\0') ||
 		    end == NULL || (*end != '\0'))
-		goto fail;
+		goto fail;//level非数字
 
 	/* log_level is a uint32_t */
 	if (tmp >= UINT32_MAX)
-		goto fail;
+		goto fail;//level数字过大
 
-	if (type == NULL) {
+	if (type == NULL) {//不指定类型，仅指定level
 		rte_log_set_global_level(tmp);
 	} else if (rte_log_set_level_regexp(type, tmp) < 0) {
+		//通过正则表达式设置log level
 		printf("cannot set log level %s,%lu\n",
 			type, tmp);
 		goto fail;
@@ -796,6 +812,7 @@ fail:
 	return -1;
 }
 
+//依据不同自符串确定进程类型
 static enum rte_proc_type_t
 eal_parse_proc_type(const char *arg)
 {
@@ -837,6 +854,7 @@ eal_parse_common_option(int opt, const char *optarg,
 		core_parsed = 1;
 		break;
 	/* corelist */
+		//一种更易读的cpu指定形式
 	case 'l':
 		if (eal_parse_corelist(optarg) < 0) {
 			RTE_LOG(ERR, EAL, "invalid core list\n");
@@ -846,6 +864,7 @@ eal_parse_common_option(int opt, const char *optarg,
 		break;
 	/* size of memory */
 	case 'm':
+		//使用的内存大小
 		conf->memory = atoi(optarg);
 		conf->memory *= 1024ULL;
 		conf->memory *= 1024ULL;
@@ -878,6 +897,7 @@ eal_parse_common_option(int opt, const char *optarg,
 		 * write message at highest log level so it can always
 		 * be seen
 		 * even if info or warning messages are disabled */
+		//显示版本号
 		RTE_LOG(CRIT, EAL, "RTE Version: '%s'\n", rte_version());
 		break;
 
@@ -926,6 +946,7 @@ eal_parse_common_option(int opt, const char *optarg,
 		break;
 
 	case OPT_SYSLOG_NUM:
+		//syslog的输出位置
 		if (eal_parse_syslog(optarg, conf) < 0) {
 			RTE_LOG(ERR, EAL, "invalid parameters for --"
 					OPT_SYSLOG "\n");
@@ -933,6 +954,7 @@ eal_parse_common_option(int opt, const char *optarg,
 		}
 		break;
 
+	//--log-level处理
 	case OPT_LOG_LEVEL_NUM: {
 		if (eal_parse_log_level(optarg) < 0) {
 			RTE_LOG(ERR, EAL,
@@ -968,10 +990,12 @@ eal_auto_detect_cores(struct rte_config *cfg)
 	rte_cpuset_t affinity_set;
 	pthread_t tid = pthread_self();
 
+	//获取当前cpu的亲呢性
 	if (pthread_getaffinity_np(tid, sizeof(rte_cpuset_t),
 				&affinity_set) < 0)
 		CPU_ZERO(&affinity_set);
 
+	//将没有绑定在此线程上的cpu置为role_off（未更新id)
 	for (lcore_id = 0; lcore_id < RTE_MAX_LCORE; lcore_id++) {
 		if (cfg->lcore_role[lcore_id] == ROLE_RTE &&
 		    !CPU_ISSET(lcore_id, &affinity_set)) {
@@ -980,7 +1004,7 @@ eal_auto_detect_cores(struct rte_config *cfg)
 		}
 	}
 
-	cfg->lcore_count -= removed;
+	cfg->lcore_count -= removed;//core数量被移除
 }
 
 int
@@ -989,60 +1013,75 @@ eal_adjust_config(struct internal_config *internal_cfg)
 	int i;
 	struct rte_config *cfg = rte_eal_get_configuration();
 
+	//如果未指定core，则检查core
 	if (!core_parsed)
 		eal_auto_detect_cores(cfg);
 
+	//如果进程类型为auto,则检测进程类型
 	if (internal_config.process_type == RTE_PROC_AUTO)
 		internal_config.process_type = eal_proc_type_detect();
 
 	/* default master lcore is the first one */
+	//如果未指定master core，则选择第一个开启的core做为master core
 	if (!master_lcore_parsed)
 		cfg->master_lcore = rte_get_next_lcore(-1, 0, 0);
 
 	/* if no memory amounts were requested, this will result in 0 and
 	 * will be overridden later, right after eal_hugepage_info_init() */
+	//合入各socket上分配的内存
 	for (i = 0; i < RTE_MAX_NUMA_NODES; i++)
 		internal_cfg->memory += internal_cfg->socket_mem[i];
 
 	return 0;
 }
 
+//选项检查
 int
 eal_check_common_options(struct internal_config *internal_cfg)
 {
 	struct rte_config *cfg = rte_eal_get_configuration();
 
+	//master_core必须是开启了的
 	if (cfg->lcore_role[cfg->master_lcore] != ROLE_RTE) {
 		RTE_LOG(ERR, EAL, "Master lcore is not enabled for DPDK\n");
 		return -1;
 	}
 
+	//进程类型必须是有效的
 	if (internal_cfg->process_type == RTE_PROC_INVALID) {
 		RTE_LOG(ERR, EAL, "Invalid process type specified\n");
 		return -1;
 	}
+
+	//hugefile_prefix中不能有格式化符号
 	if (index(internal_cfg->hugefile_prefix, '%') != NULL) {
 		RTE_LOG(ERR, EAL, "Invalid char, '%%', in --"OPT_FILE_PREFIX" "
 			"option\n");
 		return -1;
 	}
+
+	//-m 是指定非numa内存， --socket-mem 是指定numa内存，两者不可同时存在
 	if (mem_parsed && internal_cfg->force_sockets == 1) {
 		RTE_LOG(ERR, EAL, "Options -m and --"OPT_SOCKET_MEM" cannot "
 			"be specified at the same time\n");
 		return -1;
 	}
+
+	//--no-huge用于指定无大页， --socket-mem指定在numa的x上有大页，两者相互冲突
 	if (internal_cfg->no_hugetlbfs && internal_cfg->force_sockets == 1) {
 		RTE_LOG(ERR, EAL, "Option --"OPT_SOCKET_MEM" cannot "
 			"be specified together with --"OPT_NO_HUGE"\n");
 		return -1;
 	}
 
+	//？？？？？？？？
 	if (internal_cfg->no_hugetlbfs && internal_cfg->hugepage_unlink) {
 		RTE_LOG(ERR, EAL, "Option --"OPT_HUGE_UNLINK" cannot "
 			"be specified together with --"OPT_NO_HUGE"\n");
 		return -1;
 	}
 
+	//黑名单与白名单不得同时使用，一个指定不能用哪些，一个指定需要用哪些
 	if (rte_eal_devargs_type_count(RTE_DEVTYPE_WHITELISTED_PCI) != 0 &&
 		rte_eal_devargs_type_count(RTE_DEVTYPE_BLACKLISTED_PCI) != 0) {
 		RTE_LOG(ERR, EAL, "Options blacklist (-b) and whitelist (-w) "

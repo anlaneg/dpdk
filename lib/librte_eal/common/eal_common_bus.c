@@ -39,6 +39,7 @@
 
 #include "eal_private.h"
 
+//注册的bus挂载此链上
 struct rte_bus_list rte_bus_list =
 	TAILQ_HEAD_INITIALIZER(rte_bus_list);
 
@@ -63,6 +64,7 @@ rte_bus_unregister(struct rte_bus *bus)
 }
 
 /* Scan all the buses for registered devices */
+//做bus扫描
 int
 rte_bus_scan(void)
 {
@@ -89,6 +91,7 @@ rte_bus_probe(void)
 	struct rte_bus *bus, *vbus = NULL;
 
 	TAILQ_FOREACH(bus, &rte_bus_list, next) {
+		//virtual bus被安排在最后探测
 		if (!strcmp(bus->name, "virtual")) {
 			vbus = bus;
 			continue;

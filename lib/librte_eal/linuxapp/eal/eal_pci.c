@@ -57,6 +57,7 @@
 
 extern struct rte_pci_bus rte_pci_bus;
 
+//获取pci设备用哪个kernel驱动
 static int
 pci_get_kernel_driver_by_path(const char *filename, char *dri_name)
 {
@@ -67,13 +68,14 @@ pci_get_kernel_driver_by_path(const char *filename, char *dri_name)
 	if (!filename || !dri_name)
 		return -1;
 
+	//读取link
 	count = readlink(filename, path, PATH_MAX);
 	if (count >= PATH_MAX)
 		return -1;
 
 	/* For device does not have a driver */
 	if (count < 0)
-		return 1;
+		return 1;//还没有driver
 
 	path[count] = '\0';
 
@@ -162,6 +164,7 @@ pci_find_max_end_va(void)
 /* parse one line of the "resource" sysfs file (note that the 'line'
  * string is modified)
  */
+//解析pci资源行
 int
 pci_parse_one_sysfs_resource(char *line, size_t len, uint64_t *phys_addr,
 	uint64_t *end_addr, uint64_t *flags)
@@ -175,6 +178,7 @@ pci_parse_one_sysfs_resource(char *line, size_t len, uint64_t *phys_addr,
 		char *ptrs[PCI_RESOURCE_FMT_NVAL];
 	} res_info;
 
+	//将buf按空格分为三部分
 	if (rte_strsplit(line, len, res_info.ptrs, 3, ' ') != 3) {
 		RTE_LOG(ERR, EAL,
 			"%s(): bad resource format\n", __func__);
@@ -194,6 +198,7 @@ pci_parse_one_sysfs_resource(char *line, size_t len, uint64_t *phys_addr,
 }
 
 /* parse the "resource" sysfs file */
+//解析资源文件，填充dev->mem_resource
 static int
 pci_parse_sysfs_resource(const char *filename, struct rte_pci_device *dev)
 {
@@ -215,10 +220,13 @@ pci_parse_sysfs_resource(const char *filename, struct rte_pci_device *dev)
 				"%s(): cannot read resource\n", __func__);
 			goto error;
 		}
+
+		//每行数据由三部分组成: 物理地址,结束地址，标记位
 		if (pci_parse_one_sysfs_resource(buf, sizeof(buf), &phys_addr,
 				&end_addr, &flags) < 0)
 			goto error;
 
+		//收集io resource memory
 		if (flags & IORESOURCE_MEM) {
 			dev->mem_resource[i].phys_addr = phys_addr;
 			dev->mem_resource[i].len = end_addr - phys_addr + 1;
@@ -235,6 +243,7 @@ error:
 }
 
 /* Scan one pci sysfs entry, and fill the devices list from it. */
+//扫描一个pci文件夹，并将此设备挂在devices链上
 static int
 pci_scan_one(const char *dirname, const struct rte_pci_addr *addr)
 {
@@ -296,12 +305,14 @@ pci_scan_one(const char *dirname, const struct rte_pci_addr *addr)
 	dev->id.class_id = (uint32_t)tmp & RTE_CLASS_ANY_ID;
 
 	/* get max_vfs */
+	//如果有max_vfs，则读取max_vfs
 	dev->max_vfs = 0;
 	snprintf(filename, sizeof(filename), "%s/max_vfs", dirname);
 	if (!access(filename, F_OK) &&
 	    eal_parse_sysfs_value(filename, &tmp) == 0)
 		dev->max_vfs = (uint16_t)tmp;
 	else {
+		//如果有sriov_numvfs,则读取max_vfs
 		/* for non igb_uio driver, need kernel version >= 3.8 */
 		snprintf(filename, sizeof(filename),
 			 "%s/sriov_numvfs", dirname);
@@ -311,6 +322,7 @@ pci_scan_one(const char *dirname, const struct rte_pci_addr *addr)
 	}
 
 	/* get numa node */
+	//获取numa节点
 	snprintf(filename, sizeof(filename), "%s/numa_node",
 		 dirname);
 	if (access(filename, R_OK) != 0) {
@@ -324,6 +336,7 @@ pci_scan_one(const char *dirname, const struct rte_pci_addr *addr)
 		dev->device.numa_node = tmp;
 	}
 
+	//格式化addr到dev->name
 	rte_pci_device_name(addr, dev->name, sizeof(dev->name));
 	dev->device.name = dev->name;
 
@@ -337,6 +350,7 @@ pci_scan_one(const char *dirname, const struct rte_pci_addr *addr)
 
 	/* parse driver */
 	snprintf(filename, sizeof(filename), "%s/driver", dirname);
+	//读取filename链接的地址或者其本身，如果返回值为0，则通过链接地址得知驱动名，如果为1，则为无驱动
 	ret = pci_get_kernel_driver_by_path(filename, driver);
 	if (ret < 0) {
 		RTE_LOG(ERR, EAL, "Fail to get kernel driver\n");
@@ -345,6 +359,7 @@ pci_scan_one(const char *dirname, const struct rte_pci_addr *addr)
 	}
 
 	if (!ret) {
+		//有驱动，检查驱动，设置驱动类型
 		if (!strcmp(driver, "vfio-pci"))
 			dev->kdrv = RTE_KDRV_VFIO;
 		else if (!strcmp(driver, "igb_uio"))
@@ -358,7 +373,7 @@ pci_scan_one(const char *dirname, const struct rte_pci_addr *addr)
 
 	/* device is valid, add in list (sorted) */
 	if (TAILQ_EMPTY(&rte_pci_bus.device_list)) {
-		rte_pci_add_device(dev);
+		rte_pci_add_device(dev);//链为空，直接加入
 	} else {
 		struct rte_pci_device *dev2;
 		int ret;
@@ -366,11 +381,12 @@ pci_scan_one(const char *dirname, const struct rte_pci_addr *addr)
 		TAILQ_FOREACH(dev2, &rte_pci_bus.device_list, next) {
 			ret = rte_eal_compare_pci_addr(&dev->addr, &dev2->addr);
 			if (ret > 0)
-				continue;
+				continue;//需要继续比对
 
 			if (ret < 0) {
-				rte_pci_insert_device(dev2, dev);
+				rte_pci_insert_device(dev2, dev);//加入
 			} else { /* already registered */
+				//已存在了（更新）
 				dev2->kdrv = dev->kdrv;
 				dev2->max_vfs = dev->max_vfs;
 				memmove(dev2->mem_resource, dev->mem_resource,
@@ -380,12 +396,14 @@ pci_scan_one(const char *dirname, const struct rte_pci_addr *addr)
 			return 0;
 		}
 
+		//遍历完整个链，没有遇到相同的及比自已大的，加入
 		rte_pci_add_device(dev);
 	}
 
 	return 0;
 }
 
+//扫描给定pci地址的设备，更新其内容
 int
 pci_update_device(const struct rte_pci_addr *addr)
 {
@@ -401,6 +419,7 @@ pci_update_device(const struct rte_pci_addr *addr)
 /*
  * split up a pci address into its constituent parts.
  */
+//将buf解析为pci地址
 static int
 parse_pci_addr_format(const char *buf, int bufsize, struct rte_pci_addr *addr)
 {
@@ -419,6 +438,7 @@ parse_pci_addr_format(const char *buf, int bufsize, struct rte_pci_addr *addr)
 	if (buf_copy == NULL)
 		return -1;
 
+	//传入str,采用union将domain,bus一并赋值
 	if (rte_strsplit(buf_copy, bufsize, splitaddr.str, PCI_FMT_NVAL, ':')
 			!= PCI_FMT_NVAL - 1)
 		goto error;
@@ -429,6 +449,7 @@ parse_pci_addr_format(const char *buf, int bufsize, struct rte_pci_addr *addr)
 	*splitaddr.function++ = '\0';
 
 	/* now convert to int values */
+	//转换为数字
 	errno = 0;
 	addr->domain = (uint16_t)strtoul(splitaddr.domain, NULL, 16);
 	addr->bus = (uint8_t)strtoul(splitaddr.bus, NULL, 16);
@@ -448,6 +469,7 @@ error:
  * Scan the content of the PCI bus, and the devices in the devices
  * list
  */
+//pci扫描，识别所有pci设备
 int
 rte_pci_scan(void)
 {
@@ -471,6 +493,7 @@ rte_pci_scan(void)
 		if (e->d_name[0] == '.')
 			continue;
 
+		//解析pci地址,domain,bus,driver-id,function
 		if (parse_pci_addr_format(e->d_name, sizeof(e->d_name), &addr) != 0)
 			continue;
 

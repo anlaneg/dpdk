@@ -95,6 +95,7 @@ rte_eal_log_init(const char *id, int facility)
 	if (log_stream == NULL)
 		return -1;
 
+	//打开log
 	openlog(id, LOG_NDELAY | LOG_PID, facility);
 
 	eal_log_set_default(log_stream);

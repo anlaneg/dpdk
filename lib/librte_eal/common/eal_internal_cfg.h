@@ -66,21 +66,24 @@ struct internal_config {
 	volatile unsigned no_hugetlbfs;   /**< true to disable hugetlbfs */
 	unsigned hugepage_unlink;         /**< true to unlink backing files */
 	volatile unsigned xen_dom0_support; /**< support app running on Xen Dom0*/
-	volatile unsigned no_pci;         /**< true to disable PCI */
+	volatile unsigned no_pci;         /**< true to disable PCI */ //是否禁用pci,debug用
 	volatile unsigned no_hpet;        /**< true to disable HPET */
 	volatile unsigned vmware_tsc_map; /**< true to use VMware TSC mapping
 										* instead of native TSC */
 	volatile unsigned no_shconf;      /**< true if there is no shared config */
 	volatile unsigned create_uio_dev; /**< true to create /dev/uioX devices */
+	//多进程处理模式
 	volatile enum rte_proc_type_t process_type; /**< multi-process proc type */
 	/** true to try allocating memory on specific sockets */
 	volatile unsigned force_sockets;
+	//每个numa上的内存大小
 	volatile uint64_t socket_mem[RTE_MAX_NUMA_NODES]; /**< amount of memory per socket */
 	uintptr_t base_virtaddr;          /**< base address to try and reserve memory from */
+	//指定sys日志输出位置（默认是LOG_DAEMON）
 	volatile int syslog_facility;	  /**< facility passed to openlog() */
 	/** default interrupt mode for VFIO */
 	volatile enum rte_intr_mode vfio_intr_mode;
-	const char *hugefile_prefix;      /**< the base filename of hugetlbfs files */ //大页文件前缀
+	const char *hugefile_prefix;      /**< the base filename of hugetlbfs files */ //大页文件前缀（默认rte)
 	const char *hugepage_dir;         /**< specific hugetlbfs directory to use */ //采用那个大页目录
 
 	unsigned num_hugepage_sizes;      /**< how many sizes on this system */ //有多少种大页类型

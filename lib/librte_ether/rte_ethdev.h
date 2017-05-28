@@ -1657,11 +1657,11 @@ enum rte_eth_dev_state {
  * process, while the actual configuration data for the device is shared.
  */
 struct rte_eth_dev {
-	eth_rx_burst_t rx_pkt_burst; /**< Pointer to PMD receive function. */
-	eth_tx_burst_t tx_pkt_burst; /**< Pointer to PMD transmit function. */
-	eth_tx_prep_t tx_pkt_prepare; /**< Pointer to PMD transmit prepare function. */
-	struct rte_eth_dev_data *data;  /**< Pointer to device data */
-	const struct eth_dev_ops *dev_ops; /**< Functions exported by PMD */
+	eth_rx_burst_t rx_pkt_burst; /**< Pointer to PMD receive function. */ //收包函数
+	eth_tx_burst_t tx_pkt_burst; /**< Pointer to PMD transmit function. */ //发包函数
+	eth_tx_prep_t tx_pkt_prepare; /**< Pointer to PMD transmit prepare function. */ //发包前准备函数
+	struct rte_eth_dev_data *data;  /**< Pointer to device data */ //指向eth-dev-data
+	const struct eth_dev_ops *dev_ops; /**< Functions exported by PMD */ //操作函数
 	struct rte_device *device; /**< Backing device */
 	struct rte_intr_handle *intr_handle; /**< Device interrupt handle */
 	/** User application callbacks for NIC interrupts */
@@ -1676,7 +1676,7 @@ struct rte_eth_dev {
 	 * received packets before passing them to the driver for transmission.
 	 */
 	struct rte_eth_rxtx_callback *pre_tx_burst_cbs[RTE_MAX_QUEUES_PER_PORT];
-	enum rte_eth_dev_state state; /**< Flag indicating the port state */
+	enum rte_eth_dev_state state; /**< Flag indicating the port state */ //描述空间的使用情况
 } __rte_cache_aligned;
 
 struct rte_eth_dev_sriov {
@@ -2756,6 +2756,7 @@ int rte_eth_dev_set_vlan_pvid(uint8_t port_id, uint16_t pvid, int on);
  *   of pointers to *rte_mbuf* structures effectively supplied to the
  *   *rx_pkts* array.
  */
+//自指定port的指定队列收取多个报文
 static inline uint16_t
 rte_eth_rx_burst(uint8_t port_id, uint16_t queue_id,
 		 struct rte_mbuf **rx_pkts, const uint16_t nb_pkts)
@@ -3266,6 +3267,7 @@ rte_eth_tx_buffer_flush(uint8_t port_id, uint16_t queue_id,
  *     causing N packets to be sent, and the error callback to be called for
  *     the rest.
  */
+//向指定port的指定队列发送报文
 static inline uint16_t __attribute__((always_inline))
 rte_eth_tx_buffer(uint8_t port_id, uint16_t queue_id,
 		struct rte_eth_dev_tx_buffer *buffer, struct rte_mbuf *tx_pkt)

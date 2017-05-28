@@ -118,8 +118,8 @@ rte_pmd_debug_trace(const char *func_name, const char *fmt, ...)
  * A generic memory resource representation.
  */
 struct rte_mem_resource {
-	uint64_t phys_addr; /**< Physical address, 0 if not resource. */
-	uint64_t len;       /**< Length of the resource. */
+	uint64_t phys_addr; /**< Physical address, 0 if not resource. */ //起始地址
+	uint64_t len;       /**< Length of the resource. */ //资源长度
 	void *addr;         /**< Virtual address, NULL when not mapped. */
 };
 
@@ -128,7 +128,7 @@ struct rte_mem_resource {
  */
 struct rte_driver {
 	TAILQ_ENTRY(rte_driver) next;  /**< Next in list. */
-	const char *name;                   /**< Driver name. */
+	const char *name;                   /**< Driver name. */ //驱动名称
 	const char *alias;              /**< Driver alias. */
 };
 
@@ -138,9 +138,9 @@ struct rte_driver {
 struct rte_device {
 	TAILQ_ENTRY(rte_device) next; /**< Next device */
 	const char *name;             /**< Device name */
-	const struct rte_driver *driver;/**< Associated driver */
-	int numa_node;                /**< NUMA node connection */
-	struct rte_devargs *devargs;  /**< Device user arguments */
+	const struct rte_driver *driver;/**< Associated driver */ //采用哪个驱动
+	int numa_node;                /**< NUMA node connection */ //属于那个numa
+	struct rte_devargs *devargs;  /**< Device user arguments */ //用户为此设备提供的参数
 };
 
 /**

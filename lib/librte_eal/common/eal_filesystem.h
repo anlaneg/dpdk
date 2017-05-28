@@ -53,6 +53,7 @@
 
 static const char *default_config_dir = "/var/run";
 
+//获取runtime配置路径
 static inline const char *
 eal_runtime_config_path(void)
 {

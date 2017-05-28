@@ -329,6 +329,7 @@ int rte_vlog(uint32_t level, uint32_t logtype, const char *format, va_list ap)
  *   - 0: Success.
  *   - Negative on error.
  */
+//此log性能不好
 #define RTE_LOG(l, t, ...)					\
 	 rte_log(RTE_LOG_ ## l,					\
 		 RTE_LOGTYPE_ ## t, # t ": " __VA_ARGS__)

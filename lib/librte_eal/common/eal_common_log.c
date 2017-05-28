@@ -46,6 +46,7 @@
 #include "eal_private.h"
 
 /* global log structure */
+//全局的log struct
 struct rte_logs rte_logs = {
 	.type = ~0,
 	.level = RTE_LOG_DEBUG,
@@ -165,6 +166,7 @@ rte_log_set_level_regexp(const char *pattern, uint32_t level)
 	for (i = 0; i < rte_logs.dynamic_types_len; i++) {
 		if (rte_logs.dynamic_types[i].name == NULL)
 			continue;
+		//与name区配，则设置loglevel
 		if (regexec(&r, rte_logs.dynamic_types[i].name, 0,
 				NULL, 0) == 0)
 			rte_logs.dynamic_types[i].loglevel = level;

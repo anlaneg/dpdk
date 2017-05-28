@@ -75,10 +75,12 @@ rte_eal_remote_launch(int (*f)(void *), void *arg, unsigned slave_id)
 	if (lcore_config[slave_id].state != WAIT)
 		return -EBUSY;
 
+	//分配任务给slave
 	lcore_config[slave_id].f = f;
 	lcore_config[slave_id].arg = arg;
 
 	/* send message */
+	//通知slave工作已安排
 	n = 0;
 	while (n == 0 || (n < 0 && errno == EINTR))
 		n = write(m2s, &c, 1);
@@ -86,6 +88,7 @@ rte_eal_remote_launch(int (*f)(void *), void *arg, unsigned slave_id)
 		rte_panic("cannot write on configuration pipe\n");
 
 	/* wait ack */
+	//等待此slave答复
 	do {
 		n = read(s2m, &c, 1);
 	} while (n < 0 && errno == EINTR);
@@ -115,6 +118,7 @@ void eal_thread_init_master(unsigned lcore_id)
 	RTE_PER_LCORE(_lcore_id) = lcore_id;
 
 	/* set CPU affinity */
+	//设置对应core的亲昵性
 	if (eal_thread_set_affinity() < 0)
 		rte_panic("cannot set affinity\n");
 }
@@ -133,10 +137,12 @@ eal_thread_loop(__attribute__((unused)) void *arg)
 	thread_id = pthread_self();
 
 	/* retrieve our lcore_id from the configuration structure */
+	//获取自已现在用哪个core进行服务
 	RTE_LCORE_FOREACH_SLAVE(lcore_id) {
 		if (thread_id == lcore_config[lcore_id].thread_id)
 			break;
 	}
+	//没有拿到core_id,挂掉
 	if (lcore_id == RTE_MAX_LCORE)
 		rte_panic("cannot retrieve lcore id\n");
 
@@ -144,6 +150,7 @@ eal_thread_loop(__attribute__((unused)) void *arg)
 	s2m = lcore_config[lcore_id].pipe_slave2master[1];
 
 	/* set the lcore ID in per-lcore memory area */
+	//设置自已的core_id
 	RTE_PER_LCORE(_lcore_id) = lcore_id;
 
 	/* set CPU affinity */
@@ -161,30 +168,42 @@ eal_thread_loop(__attribute__((unused)) void *arg)
 
 		/* wait command */
 		do {
+			//阻塞等待master发送工作通知
 			n = read(m2s, &c, 1);
 		} while (n < 0 && errno == EINTR);
 
+		//与master之间无法通信，挂掉
 		if (n <= 0)
 			rte_panic("cannot read on configuration pipe\n");
 
+		//收到工作通知，更改自已为running状态
 		lcore_config[lcore_id].state = RUNNING;
 
 		/* send ack */
+		//知会master自已已计划开始工作
 		n = 0;
 		while (n == 0 || (n < 0 && errno == EINTR))
 			n = write(s2m, &c, 1);
+
+		//无法知会master，挂掉
 		if (n < 0)
 			rte_panic("cannot write on configuration pipe\n");
 
+		//master深深的伤害了我，挂掉，它一定会知道自已错了
 		if (lcore_config[lcore_id].f == NULL)
 			rte_panic("NULL function pointer\n");
 
 		/* call the function and store the return value */
+		//处理master交待的任务
 		fct_arg = lcore_config[lcore_id].arg;
 		ret = lcore_config[lcore_id].f(fct_arg);
 		lcore_config[lcore_id].ret = ret;
 		rte_wmb();
+
+		//工作完成，置自已为finish状态
 		lcore_config[lcore_id].state = FINISHED;
+
+		//让我们愉快的进行下一轮玩耍吧！
 	}
 
 	/* never reached */
@@ -198,6 +217,7 @@ int rte_sys_gettid(void)
 	return (int)syscall(SYS_gettid);
 }
 
+//设置线程名称
 int rte_thread_setname(pthread_t id, const char *name)
 {
 	int ret = -1;

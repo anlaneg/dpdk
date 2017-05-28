@@ -138,4 +138,5 @@ struct rte_fslmc_bus rte_fslmc_bus = {
 	.driver_list = TAILQ_HEAD_INITIALIZER(rte_fslmc_bus.driver_list),
 };
 
+//加载时注册rte_fslmc_bus.bus
 RTE_REGISTER_BUS(FSLMC_BUS_NAME, rte_fslmc_bus.bus);

@@ -50,6 +50,7 @@
  * processors on the machine. The function will fill the cpu_info
  * structure.
  */
+//检测cpu,初始化lcore-config
 int
 rte_eal_cpu_init(void)
 {
@@ -78,12 +79,14 @@ rte_eal_cpu_init(void)
 		}
 
 		/* By default, lcore 1:1 map to cpu id */
+		//设置此core对应的cpuset
 		CPU_SET(lcore_id, &lcore_config[lcore_id].cpuset);
 
 		/* By default, each detected core is enabled */
 		config->lcore_role[lcore_id] = ROLE_RTE;
 		lcore_config[lcore_id].core_id = eal_cpu_core_id(lcore_id);
 		lcore_config[lcore_id].socket_id = eal_cpu_socket_id(lcore_id);
+		//机器的numa id比假设的最大numa 要大，报错。
 		if (lcore_config[lcore_id].socket_id >= RTE_MAX_NUMA_NODES) {
 #ifdef RTE_EAL_ALLOW_INV_SOCKET_ID
 			lcore_config[lcore_id].socket_id = 0;

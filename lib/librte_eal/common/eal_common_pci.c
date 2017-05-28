@@ -88,6 +88,7 @@ extern struct rte_pci_bus rte_pci_bus;
 
 #define SYSFS_PCI_DEVICES "/sys/bus/pci/devices"
 
+//pci扫描路径
 const char *pci_get_sysfs_path(void)
 {
 	const char *path = NULL;
@@ -106,7 +107,7 @@ static struct rte_devargs *pci_devargs_lookup(struct rte_pci_device *dev)
 	TAILQ_FOREACH(devargs, &devargs_list, next) {
 		if (devargs->type != RTE_DEVTYPE_BLACKLISTED_PCI &&
 			devargs->type != RTE_DEVTYPE_WHITELISTED_PCI)
-			continue;
+			continue;//虚设备暂跳过
 		if (!rte_eal_compare_pci_addr(&dev->addr, &devargs->pci.addr))
 			return devargs;
 	}
@@ -162,6 +163,7 @@ pci_unmap_resource(void *requested_addr, size_t size)
  *	1 for successful match
  *	0 for unsuccessful match
  */
+//检查pci-drv是否可匹配此设备
 static int
 rte_pci_match(const struct rte_pci_driver *pci_drv,
 	      const struct rte_pci_device *pci_dev)
@@ -189,7 +191,7 @@ rte_pci_match(const struct rte_pci_driver *pci_drv,
 				id_table->class_id != RTE_CLASS_ANY_ID)
 			continue;
 
-		return 1;
+		return 1;//驱动匹配此设备
 	}
 
 	return 0;
@@ -214,16 +216,19 @@ rte_pci_probe_one_driver(struct rte_pci_driver *dr,
 	/* The device is not blacklisted; Check if driver supports it */
 	if (!rte_pci_match(dr, dev)) {
 		/* Match of device and driver failed */
+		//此driver不匹配此device
 		RTE_LOG(DEBUG, EAL, "Driver (%s) doesn't match the device\n",
 			dr->driver.name);
 		return 1;
 	}
 
+	//设备被识别
 	RTE_LOG(INFO, EAL, "PCI device "PCI_PRI_FMT" on NUMA socket %i\n",
 			loc->domain, loc->bus, loc->devid, loc->function,
 			dev->device.numa_node);
 
 	/* no initialization when blacklisted, return without error */
+	//设备被列在黑名单里，不初始化
 	if (dev->device.devargs != NULL &&
 		dev->device.devargs->type ==
 			RTE_DEVTYPE_BLACKLISTED_PCI) {
@@ -232,6 +237,7 @@ rte_pci_probe_one_driver(struct rte_pci_driver *dr,
 		return 1;
 	}
 
+	//指名驱动适配成功
 	RTE_LOG(INFO, EAL, "  probe driver: %x:%x %s\n", dev->id.vendor_id,
 		dev->id.device_id, dr->driver.name);
 
@@ -247,6 +253,7 @@ rte_pci_probe_one_driver(struct rte_pci_driver *dr,
 	dev->device.driver = &dr->driver;
 
 	/* call the driver probe() function */
+	//用此driver探测此设备
 	ret = dr->probe(dr, dev);
 	if (ret) {
 		dev->driver = NULL;
@@ -298,6 +305,7 @@ rte_pci_detach_dev(struct rte_pci_device *dev)
  * registered driver for the given device. Return -1 if initialization
  * failed, return 1 if no driver is found for this device.
  */
+//探测所有设备
 static int
 pci_probe_all_drivers(struct rte_pci_device *dev)
 {
@@ -308,9 +316,11 @@ pci_probe_all_drivers(struct rte_pci_device *dev)
 		return -1;
 
 	/* Check if a driver is already loaded */
+	//如果已有驱动，则不必再探测了
 	if (dev->driver != NULL)
 		return 0;
 
+	//遍历已注册的pci驱动
 	FOREACH_DRIVER_ON_PCIBUS(dr) {
 		rc = rte_pci_probe_one_driver(dr, dev);
 		if (rc < 0)
@@ -413,13 +423,16 @@ rte_pci_probe(void)
 	int probe_all = 0;
 	int ret = 0;
 
+	//白名单计数为0，则需要探测所有
 	if (rte_eal_devargs_type_count(RTE_DEVTYPE_WHITELISTED_PCI) == 0)
 		probe_all = 1;
 
+	//遍历扫描出来的所有设备
 	FOREACH_DEVICE_ON_PCIBUS(dev) {
 		probed++;
 
 		/* set devargs in PCI structure */
+		//取出用户配置的设备（仅关心白名单，黑名单）
 		devargs = pci_devargs_lookup(dev);
 		if (devargs != NULL)
 			dev->device.devargs = devargs;
@@ -429,8 +442,13 @@ rte_pci_probe(void)
 			ret = pci_probe_all_drivers(dev);
 		else if (devargs != NULL &&
 			devargs->type == RTE_DEVTYPE_WHITELISTED_PCI)
+			//用户配置了此设备，且为白名单
 			ret = pci_probe_all_drivers(dev);
+
+		//黑名单或者虚拟设备时，将被跳过
+
 		if (ret < 0) {
+			//设备无法被使用，报错，继续尝试
 			RTE_LOG(ERR, EAL, "Requested device " PCI_PRI_FMT
 				 " cannot be used\n", dev->addr.domain, dev->addr.bus,
 				 dev->addr.devid, dev->addr.function);
@@ -440,6 +458,7 @@ rte_pci_probe(void)
 		}
 	}
 
+	//探测的与失败的一样多时，返回-1
 	return (probed && probed == failed) ? -1 : 0;
 }
 
@@ -475,6 +494,7 @@ rte_pci_dump(FILE *f)
 }
 
 /* register a driver */
+//pci驱动注册
 void
 rte_pci_register(struct rte_pci_driver *driver)
 {
@@ -514,11 +534,13 @@ rte_pci_remove_device(struct rte_pci_device *pci_dev)
 
 struct rte_pci_bus rte_pci_bus = {
 	.bus = {
-		.scan = rte_pci_scan,
-		.probe = rte_pci_probe,
+		.scan = rte_pci_scan,//扫描函数
+		.probe = rte_pci_probe,//探测
 	},
+	//保存读到的pci设备
 	.device_list = TAILQ_HEAD_INITIALIZER(rte_pci_bus.device_list),
 	.driver_list = TAILQ_HEAD_INITIALIZER(rte_pci_bus.driver_list),
 };
 
+//加载pci bus
 RTE_REGISTER_BUS(PCI_BUS_NAME, rte_pci_bus.bus);

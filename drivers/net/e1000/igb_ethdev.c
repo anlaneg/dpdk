@@ -5415,7 +5415,7 @@ eth_igb_configure_msix_intr(struct rte_eth_dev *dev)
 
 	E1000_WRITE_FLUSH(hw);
 }
-
+//注册名称为net_e1000_igb的pci驱动rte_igb_pmd
 RTE_PMD_REGISTER_PCI(net_e1000_igb, rte_igb_pmd);
 RTE_PMD_REGISTER_PCI_TABLE(net_e1000_igb, pci_id_igb_map);
 RTE_PMD_REGISTER_KMOD_DEP(net_e1000_igb, "* igb_uio | uio_pci_generic | vfio");

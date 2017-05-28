@@ -45,6 +45,7 @@
 #include "eal_private.h"
 
 /** Global list of user devices */
+//黑名单（-b)，白名单(-w)，虚拟设备（--vdev参数）均串在此链上。
 struct rte_devargs_list devargs_list =
 	TAILQ_HEAD_INITIALIZER(devargs_list);
 
@@ -134,6 +135,7 @@ fail:
 }
 
 /* count the number of devices of a specified type */
+//获得指定类型设备的数目
 unsigned int
 rte_eal_devargs_type_count(enum rte_devtype devtype)
 {

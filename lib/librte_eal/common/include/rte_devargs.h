@@ -56,9 +56,9 @@ extern "C" {
  * Type of generic device
  */
 enum rte_devtype {
-	RTE_DEVTYPE_WHITELISTED_PCI,
-	RTE_DEVTYPE_BLACKLISTED_PCI,
-	RTE_DEVTYPE_VIRTUAL,
+	RTE_DEVTYPE_WHITELISTED_PCI,//白名单
+	RTE_DEVTYPE_BLACKLISTED_PCI,//黑名单
+	RTE_DEVTYPE_VIRTUAL,//虚拟设备
 };
 
 /**

@@ -386,6 +386,7 @@ tx_desc_vlan_flags_to_cmdtype(uint64_t ol_flags)
 	return cmdtype;
 }
 
+//发包回调
 uint16_t
 eth_igb_xmit_pkts(void *tx_queue, struct rte_mbuf **tx_pkts,
 	       uint16_t nb_pkts)
@@ -812,6 +813,7 @@ rx_desc_error_to_pkt_flags(uint32_t rx_status)
 		E1000_RXD_ERR_CKSUM_BIT) & E1000_RXD_ERR_CKSUM_MSK];
 }
 
+//收包回调
 uint16_t
 eth_igb_recv_pkts(void *rx_queue, struct rte_mbuf **rx_pkts,
 	       uint16_t nb_pkts)

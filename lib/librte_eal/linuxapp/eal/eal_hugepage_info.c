@@ -310,6 +310,7 @@ eal_hugepage_info_init(void)
 			    dirent_start_len) != 0)
 			continue;
 
+		//我们最多支持3种（2M，1G，4M）
 		if (num_sizes >= MAX_HUGEPAGE_SIZES)
 			break;
 

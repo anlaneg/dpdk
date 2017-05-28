@@ -69,6 +69,7 @@
 #include "rte_ethdev.h"
 
 static const char *MZ_RTE_ETH_DEV_DATA = "rte_eth_dev_data";
+//网络设备对象（用于管理按口编号等）
 struct rte_eth_dev rte_eth_devices[RTE_MAX_ETHPORTS];
 static struct rte_eth_dev_data *rte_eth_dev_data;
 static uint8_t eth_dev_last_created_port;
@@ -151,6 +152,7 @@ rte_eth_find_next(uint8_t port_id)
 	return port_id;
 }
 
+//分配eth_dev_data空间
 static void
 rte_eth_dev_data_alloc(void)
 {
@@ -172,6 +174,7 @@ rte_eth_dev_data_alloc(void)
 				RTE_MAX_ETHPORTS * sizeof(*rte_eth_dev_data));
 }
 
+//给定eth设备名称，获取其对应的ret_eth-devices结构体
 struct rte_eth_dev *
 rte_eth_dev_allocated(const char *name)
 {
@@ -185,6 +188,7 @@ rte_eth_dev_allocated(const char *name)
 	return NULL;
 }
 
+//分配空闲的eth-dev
 static uint8_t
 rte_eth_dev_find_free_port(void)
 {
@@ -203,7 +207,7 @@ eth_dev_get(uint8_t port_id)
 	struct rte_eth_dev *eth_dev = &rte_eth_devices[port_id];
 
 	eth_dev->data = &rte_eth_dev_data[port_id];
-	eth_dev->state = RTE_ETH_DEV_ATTACHED;
+	eth_dev->state = RTE_ETH_DEV_ATTACHED;//标记占用
 	TAILQ_INIT(&(eth_dev->link_intr_cbs));
 
 	eth_dev_last_created_port = port_id;
@@ -218,21 +222,26 @@ rte_eth_dev_allocate(const char *name)
 	uint8_t port_id;
 	struct rte_eth_dev *eth_dev;
 
+	//分配空间的端口号（对应的eth-dev对象）
 	port_id = rte_eth_dev_find_free_port();
 	if (port_id == RTE_MAX_ETHPORTS) {
+		//无空闲节点可分配
 		RTE_PMD_DEBUG_TRACE("Reached maximum number of Ethernet ports\n");
 		return NULL;
 	}
 
+	//如果rte_egh_dev_data未分配，则分配空间
 	if (rte_eth_dev_data == NULL)
 		rte_eth_dev_data_alloc();
 
+	//如果name已有对应的eth-dev结构，则报错
 	if (rte_eth_dev_allocated(name) != NULL) {
 		RTE_PMD_DEBUG_TRACE("Ethernet Device with name %s already allocated!\n",
 				name);
 		return NULL;
 	}
 
+	//初始化此设备对应的eth-dev，及eth-dev-data结构
 	memset(&rte_eth_dev_data[port_id], 0, sizeof(struct rte_eth_dev_data));
 	eth_dev = eth_dev_get(port_id);
 	snprintf(eth_dev->data->name, sizeof(eth_dev->data->name), "%s", name);
@@ -687,6 +696,7 @@ rte_eth_speed_bitflag(uint32_t speed, int duplex)
 	}
 }
 
+//接口配置
 int
 rte_eth_dev_configure(uint8_t port_id, uint16_t nb_rx_q, uint16_t nb_tx_q,
 		      const struct rte_eth_conf *dev_conf)
@@ -893,6 +903,7 @@ rte_eth_dev_config_restore(uint8_t port_id)
 		rte_eth_allmulticast_disable(port_id);
 }
 
+//启动网卡
 int
 rte_eth_dev_start(uint8_t port_id)
 {
@@ -994,6 +1005,7 @@ rte_eth_dev_close(uint8_t port_id)
 	dev->data->tx_queues = NULL;
 }
 
+//启动收队列
 int
 rte_eth_rx_queue_setup(uint8_t port_id, uint16_t rx_queue_id,
 		       uint16_t nb_rx_desc, unsigned int socket_id,
@@ -1085,6 +1097,7 @@ rte_eth_rx_queue_setup(uint8_t port_id, uint16_t rx_queue_id,
 	return ret;
 }
 
+//启动发队列
 int
 rte_eth_tx_queue_setup(uint8_t port_id, uint16_t tx_queue_id,
 		       uint16_t nb_tx_desc, unsigned int socket_id,
@@ -1203,6 +1216,7 @@ rte_eth_tx_done_cleanup(uint8_t port_id, uint16_t queue_id, uint32_t free_cnt)
 			free_cnt);
 }
 
+//将网卡设置为混杂模式
 void
 rte_eth_promiscuous_enable(uint8_t port_id)
 {

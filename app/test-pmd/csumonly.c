@@ -848,6 +848,7 @@ pkt_burst_checksum_forward(struct fwd_stream *fs)
 		}
 	}
 
+	//发包前准备函数
 	nb_prep = rte_eth_tx_prepare(fs->tx_port, fs->tx_queue,
 			pkts_burst, nb_rx);
 	if (nb_prep != nb_rx)

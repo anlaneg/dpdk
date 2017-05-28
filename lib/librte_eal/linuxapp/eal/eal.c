@@ -114,6 +114,7 @@ static struct rte_config rte_config = {
 };
 
 /* internal configuration (per-core) */
+//各core配置
 struct lcore_config lcore_config[RTE_MAX_LCORE];
 
 /* internal configuration */
@@ -130,6 +131,7 @@ rte_eal_get_configuration(void)
 }
 
 /* parse a sysfs (or other) file containing one integer value */
+//读文件，并解析其包含的一行数据，将其解析为整数
 int
 eal_parse_sysfs_value(const char *filename, unsigned long *val)
 {
@@ -286,6 +288,7 @@ rte_eal_config_reattach(void)
 enum rte_proc_type_t
 eal_proc_type_detect(void)
 {
+	//默认是主进程
 	enum rte_proc_type_t ptype = RTE_PROC_PRIMARY;
 	const char *pathname = eal_runtime_config_path();
 
@@ -294,7 +297,7 @@ eal_proc_type_detect(void)
 	 * and don't close it to prevent a race condition between multiple opens */
 	if (((mem_cfg_fd = open(pathname, O_RDWR)) >= 0) &&
 			(fcntl(mem_cfg_fd, F_SETLK, &wr_lock) < 0))
-		ptype = RTE_PROC_SECONDARY;
+		ptype = RTE_PROC_SECONDARY;//如果无法锁住，则为从进程
 
 	RTE_LOG(INFO, EAL, "Auto-detected process type: %s\n",
 			ptype == RTE_PROC_PRIMARY ? "PRIMARY" : "SECONDARY");
@@ -309,7 +312,7 @@ rte_config_init(void)
 	rte_config.process_type = internal_config.process_type;
 
 	switch (rte_config.process_type){
-	case RTE_PROC_PRIMARY:
+	case RTE_PROC_PRIMARY://进程为主类型
 		rte_eal_config_create();
 		break;
 	case RTE_PROC_SECONDARY:
@@ -377,6 +380,7 @@ rte_set_application_usage_hook( rte_usage_hook_t usage_func )
 	return old_func;
 }
 
+//解析各socket上内存"1024,1024,1024"
 static int
 eal_parse_socket_mem(char *socket_mem)
 {
@@ -385,6 +389,7 @@ eal_parse_socket_mem(char *socket_mem)
 	int arg_num, i, len;
 	uint64_t total_mem = 0;
 
+	//长度限制
 	len = strnlen(socket_mem, SOCKET_MEM_STRLEN);
 	if (len == SOCKET_MEM_STRLEN) {
 		RTE_LOG(ERR, EAL, "--socket-mem is too long\n");
@@ -392,6 +397,7 @@ eal_parse_socket_mem(char *socket_mem)
 	}
 
 	/* all other error cases will be caught later */
+	//最后一个字符非数字，报错
 	if (!isdigit(socket_mem[len-1]))
 		return -1;
 
@@ -409,18 +415,23 @@ eal_parse_socket_mem(char *socket_mem)
 	errno = 0;
 	for (i = 0; i < arg_num; i++) {
 		end = NULL;
+		//记录第i个socket上使用内存
 		internal_config.socket_mem[i] = strtoull(arg[i], &end, 10);
 
 		/* check for invalid input */
 		if ((errno != 0)  ||
 				(arg[i][0] == '\0') || (end == NULL) || (*end != '\0'))
 			return -1;
+		//换算成字节
 		internal_config.socket_mem[i] *= 1024ULL;
 		internal_config.socket_mem[i] *= 1024ULL;
+
+		//计录总内存
 		total_mem += internal_config.socket_mem[i];
 	}
 
 	/* check if we have a positive amount of total memory */
+	//错误，0情况
 	if (total_mem == 0)
 		return -1;
 
@@ -501,6 +512,7 @@ eal_log_level_parse(int argc, char **argv)
 		if (opt == '?')
 			break;
 
+		//--log-level
 		ret = (opt == OPT_LOG_LEVEL_NUM) ?
 			eal_parse_common_option(opt, optarg, &internal_config) : 0;
 
@@ -577,6 +589,7 @@ eal_parse_args(int argc, char **argv)
 			internal_config.hugefile_prefix = optarg;
 			break;
 
+			//socket内存设置
 		case OPT_SOCKET_MEM_NUM:
 			if (eal_parse_socket_mem(optarg) < 0) {
 				RTE_LOG(ERR, EAL, "invalid parameters for --"
@@ -630,6 +643,7 @@ eal_parse_args(int argc, char **argv)
 		}
 	}
 
+	//对core,进程类型等需要自动检测的，进行检测
 	if (eal_adjust_config(&internal_config) != 0) {
 		ret = -1;
 		goto out;
@@ -651,10 +665,12 @@ eal_parse_args(int argc, char **argv)
 		goto out;
 	}
 
+	//修改argv[optind-1]为进程名，将其它选项交给argv后面处理
 	if (optind >= 0)
 		argv[optind-1] = prgname;
 	ret = optind-1;
 
+	//还原getopt
 out:
 	/* restore getopt lib */
 	optind = old_optind;
@@ -763,12 +779,14 @@ rte_eal_init(int argc, char **argv)
 		return -1;
 	}
 
+	//仅能运行一次
 	if (!rte_atomic32_test_and_set(&run_once)) {
 		rte_eal_init_alert("already called initialization.");
 		rte_errno = EALREADY;
 		return -1;
 	}
 
+	//取可执行程序名称
 	logid = strrchr(argv[0], '/');
 	logid = strdup(logid ? logid + 1: argv[0]);
 
@@ -777,14 +795,17 @@ rte_eal_init(int argc, char **argv)
 	eal_reset_internal_config(&internal_config);
 
 	/* set log level as early as possible */
+	//处理log-level
 	eal_log_level_parse(argc, argv);
 
+	//cpu配置检测
 	if (rte_eal_cpu_init() < 0) {
 		rte_eal_init_alert("Cannot detect lcores.");
 		rte_errno = ENOTSUP;
 		return -1;
 	}
 
+	//参数解析
 	fctret = eal_parse_args(argc, argv);
 	if (fctret < 0) {
 		rte_eal_init_alert("Invalid 'command line' arguments.");
@@ -793,6 +814,7 @@ rte_eal_init(int argc, char **argv)
 		return -1;
 	}
 
+	//初始化hugepage
 	if (internal_config.no_hugetlbfs == 0 &&
 			internal_config.process_type != RTE_PROC_SECONDARY &&
 			internal_config.xen_dom0_support == 0 &&
@@ -819,10 +841,11 @@ rte_eal_init(int argc, char **argv)
 #endif
 	}
 
-	rte_srand(rte_rdtsc());
+	rte_srand(rte_rdtsc());//rand种子
 
 	rte_config_init();
 
+	//初始化syslog
 	if (rte_eal_log_init(logid, internal_config.syslog_facility) < 0) {
 		rte_eal_init_alert("Cannot init logging.");
 		rte_errno = ENOMEM;
@@ -890,25 +913,29 @@ rte_eal_init(int argc, char **argv)
 		return -1;
 	}
 
+	//扫描总线，识别相应总线的设备
 	if (rte_bus_scan()) {
 		rte_eal_init_alert("Cannot scan the buses for devices\n");
 		rte_errno = ENODEV;
 		return -1;
 	}
 
+	//遍历所有slave core
 	RTE_LCORE_FOREACH_SLAVE(i) {
 
 		/*
 		 * create communication pipes between master thread
 		 * and children
 		 */
+		//建立主从间通信用的管道
 		if (pipe(lcore_config[i].pipe_master2slave) < 0)
 			rte_panic("Cannot create pipe\n");
 		if (pipe(lcore_config[i].pipe_slave2master) < 0)
 			rte_panic("Cannot create pipe\n");
 
-		lcore_config[i].state = WAIT;
+		lcore_config[i].state = WAIT;//将各slave core状态直为wait状态
 
+		//为slave创建线程（并阻塞，等待master安排任务）
 		/* create a thread for each lcore */
 		ret = pthread_create(&lcore_config[i].thread_id, NULL,
 				     eal_thread_loop, NULL);
@@ -916,6 +943,7 @@ rte_eal_init(int argc, char **argv)
 			rte_panic("Cannot create thread\n");
 
 		/* Set thread_name for aid in debugging. */
+		//设置slave线程名称
 		snprintf(thread_name, RTE_MAX_THREAD_NAME_LEN,
 			"lcore-slave-%d", i);
 		ret = rte_thread_setname(lcore_config[i].thread_id,
@@ -930,9 +958,10 @@ rte_eal_init(int argc, char **argv)
 	 * knows they are all ready when this function returns.
 	 */
 	rte_eal_mp_remote_launch(sync_func, NULL, SKIP_MASTER);
-	rte_eal_mp_wait_lcore();
+	rte_eal_mp_wait_lcore();//阻塞确保各slave完成工作
 
 	/* Probe all the buses and devices/drivers on them */
+	//bus探测
 	if (rte_bus_probe()) {
 		rte_eal_init_alert("Cannot probe devices\n");
 		rte_errno = ENOTSUP;

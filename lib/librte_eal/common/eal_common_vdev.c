@@ -58,6 +58,7 @@ static void rte_vdev_bus_register(void);
 void
 rte_vdev_register(struct rte_vdev_driver *driver)
 {
+	//注册vdev_bus
 	rte_vdev_bus_register();
 
 	TAILQ_INSERT_TAIL(&vdev_driver_list, driver, next);

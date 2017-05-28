@@ -106,6 +106,7 @@ rte_eth_dev_pci_allocate(struct rte_pci_device *dev, size_t private_data_size)
 			eth_dev->data->dev_private = rte_zmalloc_socket(name,
 				private_data_size, RTE_CACHE_LINE_SIZE,
 				dev->device.numa_node);
+			//申请失败，释放port
 			if (!eth_dev->data->dev_private) {
 				rte_eth_dev_release_port(eth_dev);
 				return NULL;
@@ -152,13 +153,16 @@ rte_eth_dev_pci_generic_probe(struct rte_pci_device *pci_dev,
 	struct rte_eth_dev *eth_dev;
 	int ret;
 
+	//分配eth_dev
 	eth_dev = rte_eth_dev_pci_allocate(pci_dev, private_data_size);
 	if (!eth_dev)
 		return -ENOMEM;
 
+	//调用回调
 	RTE_FUNC_PTR_OR_ERR_RET(*dev_init, -EINVAL);
 	ret = dev_init(eth_dev);
 	if (ret)
+		//初始化失败，释放port
 		rte_eth_dev_pci_release(eth_dev);
 
 	return ret;

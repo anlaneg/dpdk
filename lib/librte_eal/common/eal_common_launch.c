@@ -76,16 +76,20 @@ rte_eal_mp_remote_launch(int (*f)(void *), void *arg,
 	int master = rte_get_master_lcore();
 
 	/* check state of lcores */
+	//各slave必须处于wait状态
 	RTE_LCORE_FOREACH_SLAVE(lcore_id) {
 		if (lcore_config[lcore_id].state != WAIT)
 			return -EBUSY;
 	}
 
 	/* send messages to cores */
+	//逐个向slave安排任务，并等待答复
 	RTE_LCORE_FOREACH_SLAVE(lcore_id) {
 		rte_eal_remote_launch(f, arg, lcore_id);
 	}
 
+	//作为master，理论下也是要做事情的，这里做做样子，让master
+	//也处理处理任务。由上层控制，是否做
 	if (call_master == CALL_MASTER) {
 		lcore_config[master].ret = f(arg);
 		lcore_config[master].state = FINISHED;
@@ -107,6 +111,7 @@ rte_eal_get_lcore_state(unsigned lcore_id)
  * Do a rte_eal_wait_lcore() for every lcore. The return values are
  * ignored.
  */
+//等待各slave完成工作，并在确认完成后，将状态直为wait状态（下一步做什么，等待指令）
 void
 rte_eal_mp_wait_lcore(void)
 {

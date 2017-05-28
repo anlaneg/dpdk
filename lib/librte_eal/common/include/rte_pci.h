@@ -92,7 +92,7 @@ const char *pci_get_sysfs_path(void);
 
 /** Formatting string for PCI device identifier: Ex: 0000:00:01.0 */
 #define PCI_PRI_FMT "%.4" PRIx16 ":%.2" PRIx8 ":%.2" PRIx8 ".%" PRIx8
-#define PCI_PRI_STR_SIZE sizeof("XXXX:XX:XX.X")
+#define PCI_PRI_STR_SIZE sizeof("XXXX:XX:XX.X") //pci格式串
 
 /** Short formatting string, without domain, for PCI device: Ex: 00:01.0 */
 #define PCI_SHORT_PRI_FMT "%.2" PRIx8 ":%.2" PRIx8 ".%" PRIx8
@@ -130,11 +130,11 @@ TAILQ_HEAD(rte_pci_driver_list, rte_pci_driver);
  * table of these IDs for each device that it supports.
  */
 struct rte_pci_id {
-	uint32_t class_id;            /**< Class ID (class, subclass, pi) or RTE_CLASS_ANY_ID. */
-	uint16_t vendor_id;           /**< Vendor ID or PCI_ANY_ID. */
-	uint16_t device_id;           /**< Device ID or PCI_ANY_ID. */
-	uint16_t subsystem_vendor_id; /**< Subsystem vendor ID or PCI_ANY_ID. */
-	uint16_t subsystem_device_id; /**< Subsystem device ID or PCI_ANY_ID. */
+	uint32_t class_id;            /**< Class ID (class, subclass, pi) or RTE_CLASS_ANY_ID. */ //设备类型
+	uint16_t vendor_id;           /**< Vendor ID or PCI_ANY_ID. */ //供货商
+	uint16_t device_id;           /**< Device ID or PCI_ANY_ID. */ //设备编号
+	uint16_t subsystem_vendor_id; /**< Subsystem vendor ID or PCI_ANY_ID. */ //细化供货商
+	uint16_t subsystem_device_id; /**< Subsystem device ID or PCI_ANY_ID. */ //细化设备编号
 };
 
 /**
@@ -150,12 +150,12 @@ struct rte_pci_addr {
 struct rte_devargs;
 
 enum rte_kernel_driver {
-	RTE_KDRV_UNKNOWN = 0,
+	RTE_KDRV_UNKNOWN = 0,//不认识的驱动
 	RTE_KDRV_IGB_UIO,
 	RTE_KDRV_VFIO,
 	RTE_KDRV_UIO_GENERIC,
 	RTE_KDRV_NIC_UIO,
-	RTE_KDRV_NONE,
+	RTE_KDRV_NONE,//没有驱动
 };
 
 /**
@@ -164,15 +164,15 @@ enum rte_kernel_driver {
 struct rte_pci_device {
 	TAILQ_ENTRY(rte_pci_device) next;       /**< Next probed PCI device. */
 	struct rte_device device;               /**< Inherit core device */
-	struct rte_pci_addr addr;               /**< PCI location. */
-	struct rte_pci_id id;                   /**< PCI ID. */
-	struct rte_mem_resource mem_resource[PCI_MAX_RESOURCE];
+	struct rte_pci_addr addr;               /**< PCI location. */ //pci地址
+	struct rte_pci_id id;                   /**< PCI ID. */ //pci id号
+	struct rte_mem_resource mem_resource[PCI_MAX_RESOURCE];//设备资源
 						/**< PCI Memory Resource */
 	struct rte_intr_handle intr_handle;     /**< Interrupt handle */
-	struct rte_pci_driver *driver;          /**< Associated driver */
+	struct rte_pci_driver *driver;          /**< Associated driver */ //为此设备关联的驱动
 	uint16_t max_vfs;                       /**< sriov enable if not zero */
-	enum rte_kernel_driver kdrv;            /**< Kernel driver passthrough */
-	char name[PCI_PRI_STR_SIZE+1];          /**< PCI location (ASCII) */
+	enum rte_kernel_driver kdrv;            /**< Kernel driver passthrough */ //驱动类型
+	char name[PCI_PRI_STR_SIZE+1];          /**< PCI location (ASCII) */ //pci地址
 };
 
 /**
@@ -222,7 +222,7 @@ struct rte_pci_driver {
 	struct rte_pci_bus *bus;                /**< PCI bus reference. */
 	pci_probe_t *probe;                     /**< Device Probe function. */
 	pci_remove_t *remove;                   /**< Device Remove function. */
-	const struct rte_pci_id *id_table;	/**< ID table, NULL terminated. */
+	const struct rte_pci_id *id_table;	/**< ID table, NULL terminated. */ //通过id_table指明自已支持哪些设备
 	uint32_t drv_flags;                     /**< Flags contolling handling of device. */
 };
 
@@ -231,8 +231,8 @@ struct rte_pci_driver {
  */
 struct rte_pci_bus {
 	struct rte_bus bus;               /**< Inherit the generic class */
-	struct rte_pci_device_list device_list;  /**< List of PCI devices */
-	struct rte_pci_driver_list driver_list;  /**< List of PCI drivers */
+	struct rte_pci_device_list device_list;  /**< List of PCI devices */ //串扫描到的pci设备
+	struct rte_pci_driver_list driver_list;  /**< List of PCI drivers */ //串注册的pci驱动
 };
 
 /** Device needs PCI BAR mapping (done with either IGB_UIO or VFIO) */
@@ -364,6 +364,7 @@ rte_pci_device_name(const struct rte_pci_addr *addr,
  *	Positive on addr is greater than addr2.
  *	Negative on addr is less than addr2, or error.
  */
+//比对两个pci地址
 static inline int
 rte_eal_compare_pci_addr(const struct rte_pci_addr *addr,
 			 const struct rte_pci_addr *addr2)
