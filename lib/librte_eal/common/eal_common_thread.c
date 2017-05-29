@@ -53,6 +53,8 @@ unsigned rte_socket_id(void)
 	return RTE_PER_LCORE(_socket_id);
 }
 
+//检查cpusetp中cpu对应的numa,如果cpusetp中包含的cpu有多个
+//且分属于不同的numa,则返回的numa为ANY,否则返回cpu对应的numa
 int eal_cpuset_socket_id(rte_cpuset_t *cpusetp)
 {
 	unsigned cpu = 0;
@@ -63,13 +65,19 @@ int eal_cpuset_socket_id(rte_cpuset_t *cpusetp)
 		return SOCKET_ID_ANY;
 
 	do {
+		//遍历检查cpusetp中包含的是那个cpu
 		if (!CPU_ISSET(cpu, cpusetp))
 			continue;
 
+		//如果未设置值，则使用此cpu对应的numa
 		if (socket_id == SOCKET_ID_ANY)
 			socket_id = eal_cpu_socket_id(cpu);
 
+		//取当前cpu对应的numa
 		sid = eal_cpu_socket_id(cpu);
+
+		//如果cpusetp中包含有多个cpu，且numa不相等，则将socket_id置为any
+		//且不再尝试
 		if (socket_id != sid) {
 			socket_id = SOCKET_ID_ANY;
 			break;
@@ -89,6 +97,7 @@ rte_thread_set_affinity(rte_cpuset_t *cpusetp)
 
 	tid = pthread_self();
 
+	//使线程绑定cpu
 	s = pthread_setaffinity_np(tid, sizeof(rte_cpuset_t), cpusetp);
 	if (s != 0) {
 		RTE_LOG(ERR, EAL, "pthread_setaffinity_np failed\n");
@@ -96,10 +105,12 @@ rte_thread_set_affinity(rte_cpuset_t *cpusetp)
 	}
 
 	/* store socket_id in TLS for quick access */
+	//设置当前线程默认使用的socket_id
 	RTE_PER_LCORE(_socket_id) =
 		eal_cpuset_socket_id(cpusetp);
 
 	/* store cpuset in TLS for quick access */
+	//存储本线程占用的cpuset
 	memmove(&RTE_PER_LCORE(_cpuset), cpusetp,
 		sizeof(rte_cpuset_t));
 

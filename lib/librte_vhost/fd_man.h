@@ -42,18 +42,18 @@
 typedef void (*fd_cb)(int fd, void *dat, int *remove);
 
 struct fdentry {
-	int fd;		/* -1 indicates this entry is empty */
-	fd_cb rcb;	/* callback when this fd is readable. */
-	fd_cb wcb;	/* callback when this fd is writeable.*/
-	void *dat;	/* fd context */
-	int busy;	/* whether this entry is being used in cb. */
+	int fd;		/* -1 indicates this entry is empty */ //fd
+	fd_cb rcb;	/* callback when this fd is readable. */ //读回调
+	fd_cb wcb;	/* callback when this fd is writeable.*/ //写回调
+	void *dat;	/* fd context */ //回调参数
+	int busy;	/* whether this entry is being used in cb. */ //指明entry是否正在被用
 };
 
 struct fdset {
-	struct pollfd rwfds[MAX_FDS];
-	struct fdentry fd[MAX_FDS];
-	pthread_mutex_t fd_mutex;
-	int num;	/* current fd number of this fdset */
+	struct pollfd rwfds[MAX_FDS];//poll参数
+	struct fdentry fd[MAX_FDS];//注册所有fd用于轮询
+	pthread_mutex_t fd_mutex;//保护rwfds,fd数组
+	int num;	/* current fd number of this fdset */ //rwfds,fd数组的有效长度
 };
 
 

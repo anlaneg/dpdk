@@ -44,8 +44,10 @@ extern "C" {
 static inline unsigned
 malloc_get_numa_socket(void)
 {
+	//尝试当前线程，所在的numa节点
 	unsigned socket_id = rte_socket_id();
 
+	//如果当前线程所在numa节点为any,使用0
 	if (socket_id == (unsigned)SOCKET_ID_ANY)
 		return 0;
 

@@ -175,23 +175,23 @@ struct virtio_net {
 	struct rte_vhost_memory	*mem;
 	uint64_t		features;
 	uint64_t		protocol_features;
-	int			vid;
+	int			vid;//virtio编号，属于vhost_devices的下标
 	uint32_t		flags;
 	uint16_t		vhost_hlen;
 	/* to tell if we need broadcast rarp packet */
 	rte_atomic16_t		broadcast_rarp;
-	uint32_t		nr_vring;
-	int			dequeue_zero_copy;
+	uint32_t		nr_vring;//队列数（收＋发）
+	int			dequeue_zero_copy;//是否入队是zero copy
 	struct vhost_virtqueue	*virtqueue[VHOST_MAX_QUEUE_PAIRS * 2];
 #define IF_NAME_SZ (PATH_MAX > IFNAMSIZ ? PATH_MAX : IFNAMSIZ)
-	char			ifname[IF_NAME_SZ];
+	char			ifname[IF_NAME_SZ];//设备名称
 	uint64_t		log_size;
 	uint64_t		log_base;
 	uint64_t		log_addr;
 	struct ether_addr	mac;
 	uint16_t		mtu;
 
-	struct vhost_device_ops const *notify_ops;
+	struct vhost_device_ops const *notify_ops;//此设备的操作集
 
 	uint32_t		nr_guest_pages;
 	uint32_t		max_guest_pages;

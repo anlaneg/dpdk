@@ -93,6 +93,7 @@ rte_malloc_socket(const char *type, size_t size, unsigned align, int socket_arg)
 	if (ret != NULL || socket_arg != SOCKET_ID_ANY)
 		return ret;
 
+	//在期望的numa节点上无法申请到内存，尝试其它numa节点
 	/* try other heaps */
 	for (i = 0; i < RTE_MAX_NUMA_NODES; i++) {
 		/* we already tried this one */

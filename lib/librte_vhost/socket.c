@@ -62,12 +62,12 @@ TAILQ_HEAD(vhost_user_connection_list, vhost_user_connection);
 struct vhost_user_socket {
 	struct vhost_user_connection_list conn_list;
 	pthread_mutex_t conn_mutex;
-	char *path;
-	int socket_fd;
-	struct sockaddr_un un;
-	bool is_server;
+	char *path;//unix socket地址
+	int socket_fd;//unix socket对应的fd
+	struct sockaddr_un un;//采用path构造的unix地址
+	bool is_server;//是否为server
 	bool reconnect;
-	bool dequeue_zero_copy;
+	bool dequeue_zero_copy;//是否开启出队zero copy
 
 	/*
 	 * The "supported_features" indicates the feature bits the
@@ -79,7 +79,7 @@ struct vhost_user_socket {
 	uint64_t supported_features;
 	uint64_t features;
 
-	struct vhost_device_ops const *notify_ops;
+	struct vhost_device_ops const *notify_ops;//操作集
 };
 
 struct vhost_user_connection {
@@ -215,6 +215,7 @@ vhost_user_add_connection(int fd, struct vhost_user_socket *vsocket)
 		return;
 	}
 
+	//申请一个vhost
 	vid = vhost_new_device();
 	if (vid == -1) {
 		close(fd);
@@ -225,6 +226,7 @@ vhost_user_add_connection(int fd, struct vhost_user_socket *vsocket)
 	size = strnlen(vsocket->path, PATH_MAX);
 	vhost_set_ifname(vid, vsocket->path, size);
 
+	//如果vsocket开启了入队zero copy,则设置在dev上
 	if (vsocket->dequeue_zero_copy)
 		vhost_enable_dequeue_zero_copy(vid);
 
@@ -290,6 +292,7 @@ vhost_user_read_cb(int connfd, void *dat, int *remove)
 	}
 }
 
+//创建vhost user对应的unix socket
 static int
 create_unix_socket(struct vhost_user_socket *vsocket)
 {
@@ -302,6 +305,7 @@ create_unix_socket(struct vhost_user_socket *vsocket)
 	RTE_LOG(INFO, VHOST_CONFIG, "vhost-user %s: socket created, fd: %d\n",
 		vsocket->is_server ? "server" : "client", fd);
 
+	//如果不是server,则将fd置为非阻塞
 	if (!vsocket->is_server && fcntl(fd, F_SETFL, O_NONBLOCK)) {
 		RTE_LOG(ERR, VHOST_CONFIG,
 			"vhost-user: can't set nonblocking mode for socket, fd: "
@@ -312,7 +316,7 @@ create_unix_socket(struct vhost_user_socket *vsocket)
 
 	memset(un, 0, sizeof(*un));
 	un->sun_family = AF_UNIX;
-	strncpy(un->sun_path, vsocket->path, sizeof(un->sun_path));
+	strncpy(un->sun_path, vsocket->path, sizeof(un->sun_path));//使用path进行监听
 	un->sun_path[sizeof(un->sun_path) - 1] = '\0';
 
 	vsocket->socket_fd = fd;
@@ -498,6 +502,7 @@ vhost_user_start_client(struct vhost_user_socket *vsocket)
 	return 0;
 }
 
+//通过path找到vsocket
 static struct vhost_user_socket *
 find_vhost_user_socket(const char *path)
 {
@@ -591,6 +596,7 @@ rte_vhost_driver_get_features(const char *path, uint64_t *features)
  * (the default case), or client (when RTE_VHOST_USER_CLIENT) flag
  * is set.
  */
+//vhost-user socket注册
 int
 rte_vhost_driver_register(const char *path, uint64_t flags)
 {
@@ -602,12 +608,14 @@ rte_vhost_driver_register(const char *path, uint64_t flags)
 
 	pthread_mutex_lock(&vhost_user.mutex);
 
+	//vsocket数量已超限，报错
 	if (vhost_user.vsocket_cnt == MAX_VHOST_SOCKET) {
 		RTE_LOG(ERR, VHOST_CONFIG,
 			"error: the number of vhost sockets reaches maximum\n");
 		goto out;
 	}
 
+	//申请vsocket对象
 	vsocket = malloc(sizeof(struct vhost_user_socket));
 	if (!vsocket)
 		goto out;
@@ -615,6 +623,7 @@ rte_vhost_driver_register(const char *path, uint64_t flags)
 	vsocket->path = strdup(path);
 	TAILQ_INIT(&vsocket->conn_list);
 	pthread_mutex_init(&vsocket->conn_mutex, NULL);
+	//是否开启出队zero copy
 	vsocket->dequeue_zero_copy = flags & RTE_VHOST_USER_DEQUEUE_ZERO_COPY;
 
 	/*
@@ -632,6 +641,7 @@ rte_vhost_driver_register(const char *path, uint64_t flags)
 	vsocket->supported_features = VIRTIO_NET_SUPPORTED_FEATURES;
 	vsocket->features           = VIRTIO_NET_SUPPORTED_FEATURES;
 
+	//指明为vhost user client
 	if ((flags & RTE_VHOST_USER_CLIENT) != 0) {
 		vsocket->reconnect = !(flags & RTE_VHOST_USER_NO_RECONNECT);
 		if (vsocket->reconnect && reconn_tid == 0) {
@@ -651,6 +661,7 @@ rte_vhost_driver_register(const char *path, uint64_t flags)
 		goto out;
 	}
 
+	//注册刚创建的vsocket
 	vhost_user.vsockets[vhost_user.vsocket_cnt++] = vsocket;
 
 out:
@@ -695,10 +706,12 @@ rte_vhost_driver_unregister(const char *path)
 
 	pthread_mutex_lock(&vhost_user.mutex);
 
+	//先找到path对应的vsocket
 	for (i = 0; i < vhost_user.vsocket_cnt; i++) {
 		struct vhost_user_socket *vsocket = vhost_user.vsockets[i];
 
 		if (!strcmp(vsocket->path, path)) {
+			//要解注册的就是这个vsocket
 			if (vsocket->is_server) {
 				fdset_del(&vhost_user.fdset, vsocket->socket_fd);
 				close(vsocket->socket_fd);
@@ -758,6 +771,7 @@ rte_vhost_driver_callback_register(const char *path,
 	return vsocket ? 0 : -1;
 }
 
+//通过path查找vhost设备的操作集
 struct vhost_device_ops const *
 vhost_driver_callback_get(const char *path)
 {
@@ -783,7 +797,9 @@ rte_vhost_driver_start(const char *path)
 	if (!vsocket)
 		return -1;
 
+	//如果fdset dispatch线程还没有创建，则创建
 	if (fdset_tid == 0) {
+		//启动线程，处理vhost_user的读写事件
 		int ret = pthread_create(&fdset_tid, NULL, fdset_event_dispatch,
 				     &vhost_user.fdset);
 		if (ret < 0)

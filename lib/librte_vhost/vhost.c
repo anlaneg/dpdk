@@ -51,6 +51,7 @@
 
 struct virtio_net *vhost_devices[MAX_VHOST_DEVICE];
 
+//通过id获取对应的virtio_net结构
 struct virtio_net *
 get_device(int vid)
 {
@@ -186,6 +187,7 @@ vhost_new_device(void)
 	struct virtio_net *dev;
 	int i;
 
+	//申请一个virtio_net
 	dev = rte_zmalloc(NULL, sizeof(struct virtio_net), 0);
 	if (dev == NULL) {
 		RTE_LOG(ERR, VHOST_CONFIG,
@@ -193,10 +195,13 @@ vhost_new_device(void)
 		return -1;
 	}
 
+	//分配一个vhost_id(通过找空闲的vhost_devices来确定）
 	for (i = 0; i < MAX_VHOST_DEVICE; i++) {
 		if (vhost_devices[i] == NULL)
 			break;
 	}
+
+	//vhost_device达到上限，报错
 	if (i == MAX_VHOST_DEVICE) {
 		RTE_LOG(ERR, VHOST_CONFIG,
 			"Failed to find a free slot for new device.\n");
@@ -233,6 +238,7 @@ vhost_destroy_device(int vid)
 	vhost_devices[vid] = NULL;
 }
 
+//设置vhost接口名称
 void
 vhost_set_ifname(int vid, const char *if_name, unsigned int if_len)
 {
@@ -250,6 +256,7 @@ vhost_set_ifname(int vid, const char *if_name, unsigned int if_len)
 	dev->ifname[sizeof(dev->ifname) - 1] = '\0';
 }
 
+//开启zero copy
 void
 vhost_enable_dequeue_zero_copy(int vid)
 {
@@ -328,6 +335,7 @@ rte_vhost_get_vring_num(int vid)
 	return dev->nr_vring;
 }
 
+//获取virtio对应的接口名称
 int
 rte_vhost_get_ifname(int vid, char *buf, size_t len)
 {

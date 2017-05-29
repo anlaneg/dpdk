@@ -956,6 +956,7 @@ vhost_user_msg_handler(int vid, int fd)
 		return -1;
 
 	if (!dev->notify_ops) {
+		//如果未对ops赋值，则通过dev->ifname查找并赋值
 		dev->notify_ops = vhost_driver_callback_get(dev->ifname);
 		if (!dev->notify_ops) {
 			RTE_LOG(ERR, VHOST_CONFIG,
@@ -1100,6 +1101,7 @@ vhost_user_msg_handler(int vid, int fd)
 						"dequeue zero copy is enabled\n");
 			}
 
+			//添加设备
 			if (dev->notify_ops->new_device(dev->vid) == 0)
 				dev->flags |= VIRTIO_DEV_RUNNING;
 		}
