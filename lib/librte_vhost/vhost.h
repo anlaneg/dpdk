@@ -172,7 +172,7 @@ struct guest_page {
  */
 struct virtio_net {
 	/* Frontend (QEMU) memory and memory region information */
-	struct rte_vhost_memory	*mem;
+	struct rte_vhost_memory	*mem;//内存信息（由消息发送过来，我们map)
 	uint64_t		features;
 	uint64_t		protocol_features;
 	int			vid;//virtio编号，属于vhost_devices的下标
@@ -182,7 +182,7 @@ struct virtio_net {
 	rte_atomic16_t		broadcast_rarp;
 	uint32_t		nr_vring;//队列数（收＋发）
 	int			dequeue_zero_copy;//是否入队是zero copy
-	struct vhost_virtqueue	*virtqueue[VHOST_MAX_QUEUE_PAIRS * 2];
+	struct vhost_virtqueue	*virtqueue[VHOST_MAX_QUEUE_PAIRS * 2];//vhost队列
 #define IF_NAME_SZ (PATH_MAX > IFNAMSIZ ? PATH_MAX : IFNAMSIZ)
 	char			ifname[IF_NAME_SZ];//设备名称
 	uint64_t		log_size;

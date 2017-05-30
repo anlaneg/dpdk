@@ -62,11 +62,11 @@ TAILQ_HEAD(vhost_user_connection_list, vhost_user_connection);
 struct vhost_user_socket {
 	struct vhost_user_connection_list conn_list;
 	pthread_mutex_t conn_mutex;
-	char *path;//unix socket地址
+	char *path;//server unix socket地址
 	int socket_fd;//unix socket对应的fd
 	struct sockaddr_un un;//采用path构造的unix地址
 	bool is_server;//是否为server
-	bool reconnect;
+	bool reconnect;//是否开启重连接
 	bool dequeue_zero_copy;//是否开启出队zero copy
 
 	/*
@@ -201,6 +201,7 @@ send_fd_message(int sockfd, char *buf, int buflen, int *fds, int fd_num)
 	return ret;
 }
 
+//加入连接，注册fd读事件
 static void
 vhost_user_add_connection(int fd, struct vhost_user_socket *vsocket)
 {
@@ -232,6 +233,7 @@ vhost_user_add_connection(int fd, struct vhost_user_socket *vsocket)
 
 	RTE_LOG(INFO, VHOST_CONFIG, "new device, handle is %d\n", vid);
 
+	//初始化连接，注册fd进行读取
 	conn->connfd = fd;
 	conn->vsocket = vsocket;
 	conn->vid = vid;
@@ -253,6 +255,7 @@ vhost_user_add_connection(int fd, struct vhost_user_socket *vsocket)
 }
 
 /* call back when there is new vhost-user connection from client  */
+//vhost_user 服务端读取函数，监听新连接
 static void
 vhost_user_server_new_connection(int fd, void *dat, int *remove __rte_unused)
 {
@@ -263,9 +266,11 @@ vhost_user_server_new_connection(int fd, void *dat, int *remove __rte_unused)
 		return;
 
 	RTE_LOG(INFO, VHOST_CONFIG, "new vhost user connection is %d\n", fd);
+	//收到新的连接，加入读事件
 	vhost_user_add_connection(fd, vsocket);
 }
 
+//vhost_user客户端读取处理
 static void
 vhost_user_read_cb(int connfd, void *dat, int *remove)
 {
@@ -323,6 +328,7 @@ create_unix_socket(struct vhost_user_socket *vsocket)
 	return 0;
 }
 
+//启动vhost user server
 static int
 vhost_user_start_server(struct vhost_user_socket *vsocket)
 {
@@ -330,6 +336,7 @@ vhost_user_start_server(struct vhost_user_socket *vsocket)
 	int fd = vsocket->socket_fd;
 	const char *path = vsocket->path;
 
+	//bind到地址un
 	ret = bind(fd, (struct sockaddr *)&vsocket->un, sizeof(vsocket->un));
 	if (ret < 0) {
 		RTE_LOG(ERR, VHOST_CONFIG,
@@ -339,10 +346,12 @@ vhost_user_start_server(struct vhost_user_socket *vsocket)
 	}
 	RTE_LOG(INFO, VHOST_CONFIG, "bind to %s\n", path);
 
+	//开始监听地址
 	ret = listen(fd, MAX_VIRTIO_BACKLOG);
 	if (ret < 0)
 		goto err;
 
+	//监听读事件，接入新的client
 	ret = fdset_add(&vhost_user.fdset, fd, vhost_user_server_new_connection,
 		  NULL, vsocket);
 	if (ret < 0) {
@@ -373,14 +382,16 @@ struct vhost_user_reconnect_list {
 	pthread_mutex_t mutex;
 };
 
-static struct vhost_user_reconnect_list reconn_list;
-static pthread_t reconn_tid;
+static struct vhost_user_reconnect_list reconn_list;//重连链表
+static pthread_t reconn_tid;//重连线程id
 
+//连接到un地址
 static int
 vhost_user_connect_nonblock(int fd, struct sockaddr *un, size_t sz)
 {
 	int ret, flags;
 
+	//连接到un
 	ret = connect(fd, un, sz);
 	if (ret < 0 && errno != EISCONN)
 		return -1;
@@ -389,16 +400,21 @@ vhost_user_connect_nonblock(int fd, struct sockaddr *un, size_t sz)
 	if (flags < 0) {
 		RTE_LOG(ERR, VHOST_CONFIG,
 			"can't get flags for connfd %d\n", fd);
+		//fd有问题
 		return -2;
 	}
+
+	//将socket 置为非阻塞
 	if ((flags & O_NONBLOCK) && fcntl(fd, F_SETFL, flags & ~O_NONBLOCK)) {
 		RTE_LOG(ERR, VHOST_CONFIG,
 				"can't disable nonblocking on fd %d\n", fd);
+		//fd有问题
 		return -2;
 	}
 	return 0;
 }
 
+//周期性处理reconn_list链接，执行连接操作
 static void *
 vhost_user_client_reconnect(void *arg __rte_unused)
 {
@@ -420,6 +436,7 @@ vhost_user_client_reconnect(void *arg __rte_unused)
 						(struct sockaddr *)&reconn->un,
 						sizeof(reconn->un));
 			if (ret == -2) {
+				//重连失败，主要是fd的问题，不再尝试
 				close(reconn->fd);
 				RTE_LOG(ERR, VHOST_CONFIG,
 					"reconnection for fd %d failed\n",
@@ -427,23 +444,28 @@ vhost_user_client_reconnect(void *arg __rte_unused)
 				goto remove_fd;
 			}
 			if (ret == -1)
+				//重链失败，后续尝试
 				continue;
 
+			//重连成功，加入connect
 			RTE_LOG(INFO, VHOST_CONFIG,
 				"%s: connected\n", reconn->vsocket->path);
 			vhost_user_add_connection(reconn->fd, reconn->vsocket);
+
+			//丢弃重连数据
 remove_fd:
 			TAILQ_REMOVE(&reconn_list.head, reconn, next);
 			free(reconn);
 		}
 
 		pthread_mutex_unlock(&reconn_list.mutex);
-		sleep(1);
+		sleep(1);//应搞个信号量来处理此情况，而不是简单的sleep(1)
 	}
 
 	return NULL;
 }
 
+//初始化重连线程
 static int
 vhost_user_reconnect_init(void)
 {
@@ -460,6 +482,7 @@ vhost_user_reconnect_init(void)
 	return ret;
 }
 
+//连接到vsocket.un，如果连接成功，则监测，并注册read处理函数
 static int
 vhost_user_start_client(struct vhost_user_socket *vsocket)
 {
@@ -471,19 +494,23 @@ vhost_user_start_client(struct vhost_user_socket *vsocket)
 	ret = vhost_user_connect_nonblock(fd, (struct sockaddr *)&vsocket->un,
 					  sizeof(vsocket->un));
 	if (ret == 0) {
+		//连接成功
 		vhost_user_add_connection(fd, vsocket);
 		return 0;
 	}
 
+	//连接失败
 	RTE_LOG(WARNING, VHOST_CONFIG,
 		"failed to connect to %s: %s\n",
 		path, strerror(errno));
 
 	if (ret == -2 || !vsocket->reconnect) {
+		//无重连，直接失败
 		close(fd);
 		return -1;
 	}
 
+	//有重连，申请reconn结构，并挂在reconn-list上
 	RTE_LOG(INFO, VHOST_CONFIG, "%s: reconnecting...\n", path);
 	reconn = malloc(sizeof(*reconn));
 	if (reconn == NULL) {
@@ -784,6 +811,7 @@ vhost_driver_callback_get(const char *path)
 	return vsocket ? vsocket->notify_ops : NULL;
 }
 
+//处理此path对应的socket(或监听，或连接到服务器）
 int
 rte_vhost_driver_start(const char *path)
 {
@@ -808,7 +836,9 @@ rte_vhost_driver_start(const char *path)
 	}
 
 	if (vsocket->is_server)
+		//监听地址，接受客户端连接
 		return vhost_user_start_server(vsocket);
 	else
+		//连接服务器，读取服务器输出
 		return vhost_user_start_client(vsocket);
 }

@@ -75,7 +75,7 @@ struct rte_vhost_mem_region {
  * Memory structure includes region and mapping information.
  */
 struct rte_vhost_memory {
-	uint32_t nregions;
+	uint32_t nregions;//regions数组大小
 	struct rte_vhost_mem_region regions[];
 };
 

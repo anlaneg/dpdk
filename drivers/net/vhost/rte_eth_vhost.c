@@ -1063,7 +1063,7 @@ eth_dev_vhost_create(struct rte_vdev_device *dev, char *iface_name,
 	rte_memcpy(data, eth_dev->data, sizeof(*data));
 	eth_dev->data = data;
 
-	data->nb_rx_queues = queues;
+	data->nb_rx_queues = queues;//收发队列数
 	data->nb_tx_queues = queues;
 	internal->max_queues = queues;
 	data->dev_link = pmd_link;
@@ -1073,18 +1073,22 @@ eth_dev_vhost_create(struct rte_vdev_device *dev, char *iface_name,
 
 	eth_dev->dev_ops = &ops;
 
+	//挂载收包，发包函数
 	/* finally assign rx and tx ops */
 	eth_dev->rx_pkt_burst = eth_vhost_rx;
 	eth_dev->tx_pkt_burst = eth_vhost_tx;
 
+	//创建vhost socket
 	if (rte_vhost_driver_register(iface_name, flags))
 		goto error;
 
+	//注册vhost socket处理函数
 	if (rte_vhost_driver_callback_register(iface_name, &vhost_ops) < 0) {
 		RTE_LOG(ERR, PMD, "Can't register callbacks\n");
 		goto error;
 	}
 
+	//监听socket做服务器，或者连接到服务器
 	if (rte_vhost_driver_start(iface_name) < 0) {
 		RTE_LOG(ERR, PMD, "Failed to start driver for %s\n",
 			iface_name);
@@ -1109,6 +1113,7 @@ error:
 	return -1;
 }
 
+//将value赋给extra-args
 static inline int
 open_iface(const char *key __rte_unused, const char *value, void *extra_args)
 {
@@ -1122,6 +1127,7 @@ open_iface(const char *key __rte_unused, const char *value, void *extra_args)
 	return 0;
 }
 
+//将value转为整数值，赋给extra_args
 static inline int
 open_int(const char *key __rte_unused, const char *value, void *extra_args)
 {
@@ -1137,6 +1143,7 @@ open_int(const char *key __rte_unused, const char *value, void *extra_args)
 	return 0;
 }
 
+//vdev 驱动探测
 static int
 rte_pmd_vhost_probe(struct rte_vdev_device *dev)
 {
@@ -1155,7 +1162,9 @@ rte_pmd_vhost_probe(struct rte_vdev_device *dev)
 	if (kvlist == NULL)
 		return -1;
 
+	//iface仅容许配置一次
 	if (rte_kvargs_count(kvlist, ETH_VHOST_IFACE_ARG) == 1) {
+		//用open_iface函数，设置iface-name为参数iface的取值。
 		ret = rte_kvargs_process(kvlist, ETH_VHOST_IFACE_ARG,
 					 &open_iface, &iface_name);
 		if (ret < 0)
@@ -1165,7 +1174,9 @@ rte_pmd_vhost_probe(struct rte_vdev_device *dev)
 		goto out_free;
 	}
 
+	//queues仅容许配置一次
 	if (rte_kvargs_count(kvlist, ETH_VHOST_QUEUES_ARG) == 1) {
+		//用open-int,将queue的参数转为整数，赋给queues
 		ret = rte_kvargs_process(kvlist, ETH_VHOST_QUEUES_ARG,
 					 &open_int, &queues);
 		if (ret < 0 || queues > RTE_MAX_QUEUES_PER_PORT)
@@ -1174,16 +1185,20 @@ rte_pmd_vhost_probe(struct rte_vdev_device *dev)
 	} else
 		queues = 1;
 
+	//client仅容许配置一次
 	if (rte_kvargs_count(kvlist, ETH_VHOST_CLIENT_ARG) == 1) {
+		//用open-int,将client的参数转为整数，赋给client-mode
 		ret = rte_kvargs_process(kvlist, ETH_VHOST_CLIENT_ARG,
 					 &open_int, &client_mode);
 		if (ret < 0)
 			goto out_free;
 
 		if (client_mode)
+			//标记clinet
 			flags |= RTE_VHOST_USER_CLIENT;
 	}
 
+	//取zero-copy参数
 	if (rte_kvargs_count(kvlist, ETH_VHOST_DEQUEUE_ZERO_COPY) == 1) {
 		ret = rte_kvargs_process(kvlist, ETH_VHOST_DEQUEUE_ZERO_COPY,
 					 &open_int, &dequeue_zero_copy);
@@ -1191,9 +1206,11 @@ rte_pmd_vhost_probe(struct rte_vdev_device *dev)
 			goto out_free;
 
 		if (dequeue_zero_copy)
+			//标记dequeue-zero-copy
 			flags |= RTE_VHOST_USER_DEQUEUE_ZERO_COPY;
 	}
 
+	//设置numa_node
 	if (dev->device.numa_node == SOCKET_ID_ANY)
 		dev->device.numa_node = rte_socket_id();
 
@@ -1231,11 +1248,13 @@ rte_pmd_vhost_remove(struct rte_vdev_device *dev)
 	return 0;
 }
 
+//vhost驱动
 static struct rte_vdev_driver pmd_vhost_drv = {
 	.probe = rte_pmd_vhost_probe,
 	.remove = rte_pmd_vhost_remove,
 };
 
+//注册vhost驱动
 RTE_PMD_REGISTER_VDEV(net_vhost, pmd_vhost_drv);
 RTE_PMD_REGISTER_ALIAS(net_vhost, eth_vhost);
 RTE_PMD_REGISTER_PARAM_STRING(net_vhost,

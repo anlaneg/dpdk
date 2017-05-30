@@ -43,6 +43,7 @@
 struct rte_bus_list rte_bus_list =
 	TAILQ_HEAD_INITIALIZER(rte_bus_list);
 
+//注册bus
 void
 rte_bus_register(struct rte_bus *bus)
 {

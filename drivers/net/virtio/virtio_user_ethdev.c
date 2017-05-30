@@ -567,6 +567,7 @@ static struct rte_vdev_driver virtio_user_driver = {
 	.remove = virtio_user_pmd_remove,
 };
 
+//注册virtio_user驱动
 RTE_PMD_REGISTER_VDEV(net_virtio_user, virtio_user_driver);
 RTE_PMD_REGISTER_ALIAS(net_virtio_user, virtio_user);
 RTE_PMD_REGISTER_PARAM_STRING(net_virtio_user,

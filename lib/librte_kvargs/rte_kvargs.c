@@ -44,6 +44,7 @@
  * key=value;key=value;... and insert them into the list.
  * strtok() is used so the params string will be copied to be modified.
  */
+//将abc=33,def=vaue,dafdas=ab解析成一个数组，存放在kvlist中
 static int
 rte_kvargs_tokenize(struct rte_kvargs *kvlist, const char *params)
 {
@@ -62,6 +63,7 @@ rte_kvargs_tokenize(struct rte_kvargs *kvlist, const char *params)
 	}
 
 	/* browse each key/value pair and add it in kvlist */
+	//类似这样的格式abc=1,dfer=45,dds=87
 	str = kvlist->str;
 	while ((str = strtok_r(str, RTE_KVARGS_PAIRS_DELIM, &ctx1)) != NULL) {
 
@@ -91,6 +93,7 @@ rte_kvargs_tokenize(struct rte_kvargs *kvlist, const char *params)
  * Determine whether a key is valid or not by looking
  * into a list of valid keys.
  */
+//检查key_match是否在valid数组之内
 static int
 is_valid_key(const char * const valid[], const char *key_match)
 {
@@ -107,6 +110,7 @@ is_valid_key(const char * const valid[], const char *key_match)
  * Determine whether all keys are valid or not by looking
  * into a list of valid keys.
  */
+//检查kvlist是否包含有无法的keys,如果有，返回-1,否则近回0
 static int
 check_for_valid_keys(struct rte_kvargs *kvlist,
 		const char * const valid[])
@@ -118,6 +122,7 @@ check_for_valid_keys(struct rte_kvargs *kvlist,
 		pair = &kvlist->pairs[i];
 		ret = is_valid_key(valid, pair->key);
 		if (!ret) {
+			//我们看到了一个假的参数，报错
 			RTE_LOG(ERR, PMD,
 				"Error parsing device, invalid key <%s>\n",
 				pair->key);
@@ -132,6 +137,7 @@ check_for_valid_keys(struct rte_kvargs *kvlist,
  * E.g. given a list = { rx = 0, rx = 1, tx = 2 } the number of args for
  * arg "rx" will be 2.
  */
+//计算key-match在kvlist中出现的次数
 unsigned
 rte_kvargs_count(const struct rte_kvargs *kvlist, const char *key_match)
 {
@@ -151,6 +157,8 @@ rte_kvargs_count(const struct rte_kvargs *kvlist, const char *key_match)
 /*
  * For each matching key, call the given handler function.
  */
+//查找参数key-match,取其对应的值，并执行handler
+//如果key-match为NULL，则kvlist中所有参数需要挨个执行
 int
 rte_kvargs_process(const struct rte_kvargs *kvlist,
 		const char *key_match,
@@ -186,6 +194,7 @@ rte_kvargs_free(struct rte_kvargs *kvlist)
  * an allocated structure that contains a key/value list. Also
  * check if only valid keys were used.
  */
+//解析参数，检查是否为有效参数，有效时返回kvlist,否则为NULL
 struct rte_kvargs *
 rte_kvargs_parse(const char *args, const char * const valid_keys[])
 {

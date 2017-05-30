@@ -517,6 +517,7 @@ vhost_user_set_mem_table(struct virtio_net *dev, struct VhostUserMsg *pmsg)
 						sizeof(struct guest_page));
 	}
 
+	//按要求申请可包含nregions块的内存
 	dev->mem = rte_zmalloc("vhost-mem-table", sizeof(struct rte_vhost_memory) +
 		sizeof(struct rte_vhost_mem_region) * memory.nregions, 0);
 	if (dev->mem == NULL) {
@@ -527,6 +528,7 @@ vhost_user_set_mem_table(struct virtio_net *dev, struct VhostUserMsg *pmsg)
 	}
 	dev->mem->nregions = memory.nregions;
 
+	//初始化对方发送过来的地址
 	for (i = 0; i < memory.nregions; i++) {
 		fd  = pmsg->fds[i];
 		reg = &dev->mem->regions[i];
@@ -941,9 +943,11 @@ vhost_user_check_and_alloc_queue_pair(struct virtio_net *dev, VhostUserMsg *msg)
 	if (dev->virtqueue[vring_idx])
 		return 0;
 
+	//申请队列
 	return alloc_vring_queue(dev, vring_idx);
 }
 
+//消息处理
 int
 vhost_user_msg_handler(int vid, int fd)
 {
@@ -966,6 +970,7 @@ vhost_user_msg_handler(int vid, int fd)
 		}
 	}
 
+	//读取vhost消息
 	ret = read_vhost_message(fd, &msg);
 	if (ret <= 0 || msg.request >= VHOST_USER_MAX) {
 		if (ret < 0)
@@ -992,22 +997,23 @@ vhost_user_msg_handler(int vid, int fd)
 		return -1;
 	}
 
+	//按请求处理消息
 	switch (msg.request) {
-	case VHOST_USER_GET_FEATURES:
+	case VHOST_USER_GET_FEATURES://获取功能
 		msg.payload.u64 = vhost_user_get_features(dev);
 		msg.size = sizeof(msg.payload.u64);
-		send_vhost_message(fd, &msg);
+		send_vhost_message(fd, &msg);//响应消息
 		break;
-	case VHOST_USER_SET_FEATURES:
+	case VHOST_USER_SET_FEATURES://设置功能
 		vhost_user_set_features(dev, msg.payload.u64);
 		break;
 
-	case VHOST_USER_GET_PROTOCOL_FEATURES:
+	case VHOST_USER_GET_PROTOCOL_FEATURES://获取协议功能
 		msg.payload.u64 = VHOST_USER_PROTOCOL_FEATURES;
 		msg.size = sizeof(msg.payload.u64);
 		send_vhost_message(fd, &msg);
 		break;
-	case VHOST_USER_SET_PROTOCOL_FEATURES:
+	case VHOST_USER_SET_PROTOCOL_FEATURES://设置协议功能
 		vhost_user_set_protocol_features(dev, msg.payload.u64);
 		break;
 

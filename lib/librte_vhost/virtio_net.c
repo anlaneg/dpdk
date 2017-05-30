@@ -582,6 +582,7 @@ virtio_dev_merge_rx(struct virtio_net *dev, uint16_t queue_id,
 	return pkt_idx;
 }
 
+//vhost报文入队处理
 uint16_t
 rte_vhost_enqueue_burst(int vid, uint16_t queue_id,
 	struct rte_mbuf **pkts, uint16_t count)
@@ -821,7 +822,7 @@ copy_desc_to_mbuf(struct virtio_net *dev, struct vring_desc *descs,
 					desc->addr + desc_offset, cpy_len)))) {
 			cur->data_len = cpy_len;
 			cur->data_off = 0;
-			cur->buf_addr = (void *)(uintptr_t)desc_addr;
+			cur->buf_addr = (void *)(uintptr_t)desc_addr;//报文指向这一段内存
 			cur->buf_physaddr = hpa;
 
 			/*
@@ -830,6 +831,7 @@ copy_desc_to_mbuf(struct virtio_net *dev, struct vring_desc *descs,
 			 */
 			mbuf_avail = cpy_len;
 		} else {
+			//将内存copy到cur上，实现报文交换
 			rte_memcpy(rte_pktmbuf_mtod_offset(cur, void *,
 							   mbuf_offset),
 				(void *)((uintptr_t)(desc_addr + desc_offset)),
@@ -1113,6 +1115,7 @@ rte_vhost_dequeue_burst(int vid, uint16_t queue_id,
 			idx = desc_indexes[i];
 		}
 
+		//申请mbuf
 		pkts[i] = rte_pktmbuf_alloc(mbuf_pool);
 		if (unlikely(pkts[i] == NULL)) {
 			RTE_LOG(ERR, VHOST_DATA,

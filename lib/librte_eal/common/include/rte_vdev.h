@@ -46,6 +46,7 @@ struct rte_vdev_device {
 	struct rte_device device;               /**< Inherit core device */
 };
 
+//获取虚设备名称
 static inline const char *
 rte_vdev_device_name(const struct rte_vdev_device *dev)
 {
@@ -54,6 +55,7 @@ rte_vdev_device_name(const struct rte_vdev_device *dev)
 	return NULL;
 }
 
+//取vdev设备参数
 static inline const char *
 rte_vdev_device_args(const struct rte_vdev_device *dev)
 {
@@ -103,6 +105,7 @@ void rte_vdev_register(struct rte_vdev_driver *driver);
  */
 void rte_vdev_unregister(struct rte_vdev_driver *driver);
 
+//vdev注册
 #define RTE_PMD_REGISTER_VDEV(nm, vdrv)\
 RTE_INIT(vdrvinitfn_ ##vdrv);\
 static const char *vdrvinit_ ## nm ## _alias;\
