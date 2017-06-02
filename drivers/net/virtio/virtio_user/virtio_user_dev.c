@@ -175,6 +175,7 @@ int virtio_user_stop_device(struct virtio_user_dev *dev)
 	return 0;
 }
 
+//由mac串来解析 mac地址，并填充到dev上
 static inline void
 parse_mac(struct virtio_user_dev *dev, const char *mac)
 {
@@ -207,6 +208,7 @@ is_vhost_user_by_type(const char *path)
 	return S_ISSOCK(sb.st_mode);
 }
 
+//初始化notify fd
 static int
 virtio_user_dev_init_notify(struct virtio_user_dev *dev)
 {
@@ -215,6 +217,7 @@ virtio_user_dev_init_notify(struct virtio_user_dev *dev)
 	int kickfd;
 
 	for (i = 0; i < VIRTIO_MAX_VIRTQUEUES; ++i) {
+		//队列对，初始化为无效值
 		if (i >= dev->max_queue_pairs * 2) {
 			dev->kickfds[i] = -1;
 			dev->callfds[i] = -1;
@@ -239,6 +242,7 @@ virtio_user_dev_init_notify(struct virtio_user_dev *dev)
 		dev->kickfds[i] = kickfd;
 	}
 
+	//如果创建失败，则关闭掉已打开的fd
 	if (i < VIRTIO_MAX_VIRTQUEUES) {
 		for (j = 0; j <= i; ++j) {
 			close(dev->callfds[j]);
@@ -287,8 +291,10 @@ virtio_user_dev_setup(struct virtio_user_dev *dev)
 	dev->tapfds = NULL;
 
 	if (is_vhost_user_by_type(dev->path)) {
+		//如果dev->path是socket，则采用user层的操作
 		dev->ops = &ops_user;
 	} else {
+		//否则kernel层操作
 		dev->ops = &ops_kernel;
 
 		dev->vhostfds = malloc(dev->max_queue_pairs * sizeof(int));
@@ -298,15 +304,18 @@ virtio_user_dev_setup(struct virtio_user_dev *dev)
 			return -1;
 		}
 
+		//均先初始化为无效值
 		for (q = 0; q < dev->max_queue_pairs; ++q) {
 			dev->vhostfds[q] = -1;
 			dev->tapfds[q] = -1;
 		}
 	}
 
+	//完成连接
 	if (dev->ops->setup(dev) < 0)
 		return -1;
 
+	//生成通知用的eventfd
 	if (virtio_user_dev_init_notify(dev) < 0)
 		return -1;
 
@@ -348,7 +357,7 @@ virtio_user_dev_init(struct virtio_user_dev *dev, char *path, int queues,
 
 	if (*ifname) {
 		dev->ifname = *ifname;
-		*ifname = NULL;
+		*ifname = NULL;//内存传递
 	}
 
 	if (virtio_user_dev_setup(dev) < 0) {

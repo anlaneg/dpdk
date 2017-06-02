@@ -54,6 +54,7 @@
 #define VIRTIO_MIN_MTU 68
 #define VIRTIO_MAX_MTU 65535
 
+//消息类型与字符串映射表
 static const char *vhost_message_str[VHOST_USER_MAX] = {
 	[VHOST_USER_NONE] = "VHOST_USER_NONE",
 	[VHOST_USER_GET_FEATURES] = "VHOST_USER_GET_FEATURES",
@@ -88,6 +89,7 @@ get_blk_size(int fd)
 	return ret == -1 ? (uint64_t)-1 : (uint64_t)stat.st_blksize;
 }
 
+//解掉对内存reg->mmap_addr的去映射
 static void
 free_mem_region(struct virtio_net *dev)
 {
@@ -106,6 +108,7 @@ free_mem_region(struct virtio_net *dev)
 	}
 }
 
+//移除映射的内存
 void
 vhost_backend_cleanup(struct virtio_net *dev)
 {
@@ -134,10 +137,11 @@ static int
 vhost_user_reset_owner(struct virtio_net *dev)
 {
 	if (dev->flags & VIRTIO_DEV_RUNNING) {
-		dev->flags &= ~VIRTIO_DEV_RUNNING;
+		dev->flags &= ~VIRTIO_DEV_RUNNING;//将状态置为down,通知destroy_device
 		dev->notify_ops->destroy_device(dev->vid);
 	}
 
+	//设置置为reset状态
 	cleanup_device(dev, 0);
 	reset_device(dev);
 	return 0;
@@ -146,6 +150,7 @@ vhost_user_reset_owner(struct virtio_net *dev)
 /*
  * The features that we support are requested.
  */
+//获取dev当前指定的功能
 static uint64_t
 vhost_user_get_features(struct virtio_net *dev)
 {
@@ -158,6 +163,7 @@ vhost_user_get_features(struct virtio_net *dev)
 /*
  * We receive the negotiated features supported by us and the virtio device.
  */
+//功能协商
 static int
 vhost_user_set_features(struct virtio_net *dev, uint64_t features)
 {
@@ -165,13 +171,16 @@ vhost_user_set_features(struct virtio_net *dev, uint64_t features)
 
 	rte_vhost_driver_get_features(dev->ifname, &vhost_features);
 	if (features & ~vhost_features)
-		return -1;
+		return -1;//设置的功能是我们当前没有的功能，返失败
 
+	//设备已开始运行，但功能将发生变化，通知功能变化
 	if ((dev->flags & VIRTIO_DEV_RUNNING) && dev->features != features) {
 		if (dev->notify_ops->features_changed)
+			//通知功能发生变化
 			dev->notify_ops->features_changed(dev->vid, features);
 	}
 
+	//依据功能变更vhost_hlen
 	dev->features = features;
 	if (dev->features &
 		((1 << VIRTIO_NET_F_MRG_RXBUF) | (1ULL << VIRTIO_F_VERSION_1))) {
@@ -179,6 +188,7 @@ vhost_user_set_features(struct virtio_net *dev, uint64_t features)
 	} else {
 		dev->vhost_hlen = sizeof(struct virtio_net_hdr);
 	}
+
 	LOG_DEBUG(VHOST_CONFIG,
 		"(%d) mergeable RX buffers %s, virtio 1 %s\n",
 		dev->vid,
@@ -504,6 +514,7 @@ vhost_user_set_mem_table(struct virtio_net *dev, struct VhostUserMsg *pmsg)
 	uint32_t i;
 	int fd;
 
+	//如果已有内存，刚将原有的释放
 	if (dev->mem) {
 		free_mem_region(dev);
 		rte_free(dev->mem);
@@ -621,6 +632,7 @@ virtio_is_ready(struct virtio_net *dev)
 	if (dev->nr_vring == 0)
 		return 0;
 
+	//检查是否所有vr都ready了
 	for (i = 0; i < dev->nr_vring; i++) {
 		vq = dev->virtqueue[i];
 
@@ -745,6 +757,7 @@ vhost_user_set_vring_enable(struct virtio_net *dev,
 		enable, state->index);
 
 	if (dev->notify_ops->vring_state_changed)
+		//通知vring状态发生变化
 		dev->notify_ops->vring_state_changed(dev->vid, state->index, enable);
 
 	dev->virtqueue[state->index]->enabled = enable;
@@ -756,6 +769,7 @@ static void
 vhost_user_set_protocol_features(struct virtio_net *dev,
 				 uint64_t protocol_features)
 {
+	//如果设置我们不支持的协议功能，直接返回
 	if (protocol_features & ~VHOST_USER_PROTOCOL_FEATURES)
 		return;
 
@@ -865,17 +879,21 @@ read_vhost_message(int sockfd, struct VhostUserMsg *msg)
 {
 	int ret;
 
+	//读取消息，并解析消息中包含的fd(最多容许8个）
 	ret = read_fd_message(sockfd, (char *)msg, VHOST_USER_HDR_SIZE,
 		msg->fds, VHOST_MEMORY_MAX_NREGIONS);
 	if (ret <= 0)
 		return ret;
 
 	if (msg && msg->size) {
+		//消息过长，超过已认识的payload
 		if (msg->size > sizeof(msg->payload)) {
 			RTE_LOG(ERR, VHOST_CONFIG,
 				"invalid msg size: %d\n", msg->size);
 			return -1;
 		}
+
+		//读取消息负载
 		ret = read(sockfd, &msg->payload, msg->size);
 		if (ret <= 0)
 			return ret;
@@ -900,7 +918,7 @@ send_vhost_message(int sockfd, struct VhostUserMsg *msg)
 	msg->flags &= ~VHOST_USER_VERSION_MASK;
 	msg->flags &= ~VHOST_USER_NEED_REPLY;
 	msg->flags |= VHOST_USER_VERSION;
-	msg->flags |= VHOST_USER_REPLY_MASK;
+	msg->flags |= VHOST_USER_REPLY_MASK;//标记是响应
 
 	ret = send_fd_message(sockfd, (char *)msg,
 		VHOST_USER_HDR_SIZE + msg->size, NULL, 0);
@@ -934,12 +952,14 @@ vhost_user_check_and_alloc_queue_pair(struct virtio_net *dev, VhostUserMsg *msg)
 		return 0;
 	}
 
+	//校验传入的vring_idx是否合法
 	if (vring_idx >= VHOST_MAX_VRING) {
 		RTE_LOG(ERR, VHOST_CONFIG,
 			"invalid vring index: %u\n", vring_idx);
 		return -1;
 	}
 
+	//如果vring_idx合法，且已创建，则直接返回，否则申请队列
 	if (dev->virtqueue[vring_idx])
 		return 0;
 
@@ -990,6 +1010,7 @@ vhost_user_msg_handler(int vid, int fd)
 	RTE_LOG(INFO, VHOST_CONFIG, "read message %s\n",
 		vhost_message_str[msg.request]);
 
+	//校验队列索引，如果未创建，则创建它
 	ret = vhost_user_check_and_alloc_queue_pair(dev, &msg);
 	if (ret < 0) {
 		RTE_LOG(ERR, VHOST_CONFIG,
@@ -1024,7 +1045,7 @@ vhost_user_msg_handler(int vid, int fd)
 		vhost_user_reset_owner(dev);
 		break;
 
-	case VHOST_USER_SET_MEM_TABLE:
+	case VHOST_USER_SET_MEM_TABLE://设置内存表
 		ret = vhost_user_set_mem_table(dev, &msg);
 		break;
 

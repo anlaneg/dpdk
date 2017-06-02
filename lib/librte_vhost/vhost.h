@@ -191,7 +191,7 @@ struct virtio_net {
 	struct ether_addr	mac;
 	uint16_t		mtu;
 
-	struct vhost_device_ops const *notify_ops;//此设备的操作集
+	struct vhost_device_ops const *notify_ops;//此设备的操作集(来源于vsocket)
 
 	uint32_t		nr_guest_pages;
 	uint32_t		max_guest_pages;

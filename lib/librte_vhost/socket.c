@@ -60,7 +60,7 @@ TAILQ_HEAD(vhost_user_connection_list, vhost_user_connection);
  * vhost_user_socket struct will be created.
  */
 struct vhost_user_socket {
-	struct vhost_user_connection_list conn_list;
+	struct vhost_user_connection_list conn_list;//有这个socket上有多少个连接
 	pthread_mutex_t conn_mutex;
 	char *path;//server unix socket地址
 	int socket_fd;//unix socket对应的fd
@@ -76,8 +76,8 @@ struct vhost_user_socket {
 	 * It is also the final feature bits used for vhost-user
 	 * features negotiation.
 	 */
-	uint64_t supported_features;
-	uint64_t features;
+	uint64_t supported_features;//支持的功能
+	uint64_t features;//生效的功能
 
 	struct vhost_device_ops const *notify_ops;//操作集
 };
@@ -141,6 +141,7 @@ read_fd_message(int sockfd, char *buf, int buflen, int *fds, int fd_num)
 		return ret;
 	}
 
+	//消息被截断，收取失败
 	if (msgh.msg_flags & (MSG_TRUNC | MSG_CTRUNC)) {
 		RTE_LOG(ERR, VHOST_CONFIG, "truncted msg\n");
 		return -1;
@@ -150,6 +151,7 @@ read_fd_message(int sockfd, char *buf, int buflen, int *fds, int fd_num)
 		cmsg = CMSG_NXTHDR(&msgh, cmsg)) {
 		if ((cmsg->cmsg_level == SOL_SOCKET) &&
 			(cmsg->cmsg_type == SCM_RIGHTS)) {
+			//收到发送过来的文件描述符，将其保存在fds中
 			memcpy(fds, CMSG_DATA(cmsg), fdsize);
 			break;
 		}
@@ -158,6 +160,7 @@ read_fd_message(int sockfd, char *buf, int buflen, int *fds, int fd_num)
 	return ret;
 }
 
+//向对端响应消息
 int
 send_fd_message(int sockfd, char *buf, int buflen, int *fds, int fd_num)
 {
@@ -545,6 +548,7 @@ find_vhost_user_socket(const char *path)
 	return NULL;
 }
 
+//vsocket关掉某此功能
 int
 rte_vhost_driver_disable_features(const char *path, uint64_t features)
 {
@@ -559,6 +563,7 @@ rte_vhost_driver_disable_features(const char *path, uint64_t features)
 	return vsocket ? 0 : -1;
 }
 
+//vsocket开启指定功能
 int
 rte_vhost_driver_enable_features(const char *path, uint64_t features)
 {
@@ -567,6 +572,7 @@ rte_vhost_driver_enable_features(const char *path, uint64_t features)
 	pthread_mutex_lock(&vhost_user.mutex);
 	vsocket = find_vhost_user_socket(path);
 	if (vsocket) {
+		//要开启的功能vsocket不支持时，报错
 		if ((vsocket->supported_features & features) != features) {
 			/*
 			 * trying to enable features the driver doesn't
@@ -575,6 +581,7 @@ rte_vhost_driver_enable_features(const char *path, uint64_t features)
 			pthread_mutex_unlock(&vhost_user.mutex);
 			return -1;
 		}
+		//开启对应功能
 		vsocket->features |= features;
 	}
 	pthread_mutex_unlock(&vhost_user.mutex);
@@ -582,6 +589,7 @@ rte_vhost_driver_enable_features(const char *path, uint64_t features)
 	return vsocket ? 0 : -1;
 }
 
+//设置设备支持的功能，及当前功能
 int
 rte_vhost_driver_set_features(const char *path, uint64_t features)
 {
@@ -598,6 +606,7 @@ rte_vhost_driver_set_features(const char *path, uint64_t features)
 	return vsocket ? 0 : -1;
 }
 
+//获得的功能
 int
 rte_vhost_driver_get_features(const char *path, uint64_t *features)
 {
@@ -650,6 +659,7 @@ rte_vhost_driver_register(const char *path, uint64_t flags)
 	vsocket->path = strdup(path);
 	TAILQ_INIT(&vsocket->conn_list);
 	pthread_mutex_init(&vsocket->conn_mutex, NULL);
+
 	//是否开启出队zero copy
 	vsocket->dequeue_zero_copy = flags & RTE_VHOST_USER_DEQUEUE_ZERO_COPY;
 
@@ -665,6 +675,7 @@ rte_vhost_driver_register(const char *path, uint64_t flags)
 	 * rte_vhost_driver_set_features(), which will overwrite following
 	 * two values.
 	 */
+	//标记支持的功能
 	vsocket->supported_features = VIRTIO_NET_SUPPORTED_FEATURES;
 	vsocket->features           = VIRTIO_NET_SUPPORTED_FEATURES;
 
@@ -724,6 +735,7 @@ vhost_user_remove_reconnect(struct vhost_user_socket *vsocket)
 /**
  * Unregister the specified vhost socket
  */
+//关闭指定的vsocket
 int
 rte_vhost_driver_unregister(const char *path)
 {
@@ -740,13 +752,16 @@ rte_vhost_driver_unregister(const char *path)
 		if (!strcmp(vsocket->path, path)) {
 			//要解注册的就是这个vsocket
 			if (vsocket->is_server) {
+				//它是服务端，移除掉这个fd,不再管理它
 				fdset_del(&vhost_user.fdset, vsocket->socket_fd);
 				close(vsocket->socket_fd);
 				unlink(path);
 			} else if (vsocket->reconnect) {
+				//如果它处于重连队列，将其移除
 				vhost_user_remove_reconnect(vsocket);
 			}
 
+			//关闭掉此socket上的所有连接
 			pthread_mutex_lock(&vsocket->conn_mutex);
 			for (conn = TAILQ_FIRST(&vsocket->conn_list);
 			     conn != NULL;
@@ -767,9 +782,10 @@ rte_vhost_driver_unregister(const char *path)
 			free(vsocket->path);
 			free(vsocket);
 
+			//将最后一个设备的指针移动到此处，填补空缺
 			count = --vhost_user.vsocket_cnt;
 			vhost_user.vsockets[i] = vhost_user.vsockets[count];
-			vhost_user.vsockets[count] = NULL;
+			vhost_user.vsockets[count] = NULL;//最后一个置空
 			pthread_mutex_unlock(&vhost_user.mutex);
 
 			return 0;
@@ -783,6 +799,7 @@ rte_vhost_driver_unregister(const char *path)
 /*
  * Register ops so that we can add/remove device to data core.
  */
+//为指定path(通过path,可找到vsocket)注册notify_ops
 int
 rte_vhost_driver_callback_register(const char *path,
 	struct vhost_device_ops const * const ops)

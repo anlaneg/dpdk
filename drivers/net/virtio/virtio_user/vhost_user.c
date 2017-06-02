@@ -410,6 +410,7 @@ vhost_user_sock(struct virtio_user_dev *dev,
  *   - (-1) if fail;
  *   - (0) if succeed.
  */
+//连接到dev->path
 static int
 vhost_user_setup(struct virtio_user_dev *dev)
 {
@@ -417,6 +418,7 @@ vhost_user_setup(struct virtio_user_dev *dev)
 	int flag;
 	struct sockaddr_un un;
 
+	//创建unix socket,并置为exec时close
 	fd = socket(AF_UNIX, SOCK_STREAM, 0);
 	if (fd < 0) {
 		PMD_DRV_LOG(ERR, "socket() error, %s", strerror(errno));
@@ -427,6 +429,7 @@ vhost_user_setup(struct virtio_user_dev *dev)
 	if (fcntl(fd, F_SETFD, flag | FD_CLOEXEC) < 0)
 		PMD_DRV_LOG(WARNING, "fcntl failed, %s", strerror(errno));
 
+	//连接到dev->path
 	memset(&un, 0, sizeof(un));
 	un.sun_family = AF_UNIX;
 	snprintf(un.sun_path, sizeof(un.sun_path), "%s", dev->path);

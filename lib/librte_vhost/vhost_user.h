@@ -122,6 +122,7 @@ typedef struct VhostUserMsg {
 	int fds[VHOST_MEMORY_MAX_NREGIONS];
 } __attribute((packed)) VhostUserMsg;
 
+//即VhostUserMsg的头部(payload之前占用的字节）
 #define VHOST_USER_HDR_SIZE offsetof(VhostUserMsg, payload.u64)
 
 /* The version of the protocol we support */

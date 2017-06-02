@@ -62,10 +62,12 @@ rte_eth_vdev_allocate(struct rte_vdev_device *dev, size_t private_data_size)
 	if (!eth_dev)
 		return NULL;
 
+	//如果有私有数据，则为私有数据申请空间
 	if (private_data_size) {
 		eth_dev->data->dev_private = rte_zmalloc_socket(name,
 			private_data_size, RTE_CACHE_LINE_SIZE,
 			dev->device.numa_node);
+		//申请私有数据失败，释放eth_dev
 		if (!eth_dev->data->dev_private) {
 			rte_eth_dev_release_port(eth_dev);
 			return NULL;
@@ -75,7 +77,7 @@ rte_eth_vdev_allocate(struct rte_vdev_device *dev, size_t private_data_size)
 	eth_dev->device = &dev->device;
 	eth_dev->intr_handle = NULL;
 
-	eth_dev->data->kdrv = RTE_KDRV_NONE;
+	eth_dev->data->kdrv = RTE_KDRV_NONE;//未绑定驱动
 	eth_dev->data->numa_node = dev->device.numa_node;
 	eth_dev->data->drv_name = dev->device.driver->name;
 	return eth_dev;

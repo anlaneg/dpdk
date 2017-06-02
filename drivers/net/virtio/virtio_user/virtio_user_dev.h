@@ -44,14 +44,14 @@ struct virtio_user_dev {
 	int		vhostfd;
 
 	/* for vhost_kernel backend */
-	char		*ifname;
+	char		*ifname;//设备名称
 	int		*vhostfds;
 	int		*tapfds;
 
 	/* for both vhost_user and vhost_kernel */
 	int		callfds[VIRTIO_MAX_VIRTQUEUES];
 	int		kickfds[VIRTIO_MAX_VIRTQUEUES];
-	int		mac_specified;
+	int		mac_specified;//是否指定了mac地址
 	uint32_t	max_queue_pairs;
 	uint32_t	queue_pairs;
 	uint32_t	queue_size;
@@ -61,8 +61,8 @@ struct virtio_user_dev {
 	uint64_t	device_features; /* supported features by device */
 	uint8_t		status;
 	uint8_t		port_id;
-	uint8_t		mac_addr[ETHER_ADDR_LEN];
-	char		path[PATH_MAX];
+	uint8_t		mac_addr[ETHER_ADDR_LEN];//设备的mac地址
+	char		path[PATH_MAX];//unix socet位置
 	struct vring	vrings[VIRTIO_MAX_VIRTQUEUES];
 	struct virtio_user_backend_ops *ops;
 };

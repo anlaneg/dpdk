@@ -93,10 +93,10 @@
 #define MAX_LONG_OPT_SZ 64
 
 /* mask of enabled ports */
-static uint32_t enabled_port_mask = 0;
+static uint32_t enabled_port_mask = 0;//哪些port被开启了
 
 /* Promiscuous mode */
-static uint32_t promiscuous;
+static uint32_t promiscuous;//是否开启混杂
 
 /* number of devices/queues to support*/
 static uint32_t num_queues = 0;
@@ -112,7 +112,7 @@ typedef enum {
 	VM2VM_HARDWARE = 2,
 	VM2VM_LAST
 } vm2vm_type;
-static vm2vm_type vm2vm_mode = VM2VM_SOFTWARE;
+static vm2vm_type vm2vm_mode = VM2VM_SOFTWARE;//vm2vm间模式
 
 /* Enable stats. */
 static uint32_t enable_stats = 0;
@@ -136,7 +136,7 @@ static uint32_t burst_rx_delay_time = BURST_RX_WAIT_US;
 static uint32_t burst_rx_retry_num = BURST_RX_RETRIES;
 
 /* Socket file paths. Can be set by user */
-static char *socket_files;
+static char *socket_files;//保存一组socket文件名称
 static int nb_sockets;
 
 /* empty vmdq configuration structure. Filled in programatically */
@@ -175,8 +175,8 @@ static struct rte_eth_conf vmdq_conf_default = {
 	},
 };
 
-static unsigned lcore_ids[RTE_MAX_LCORE];
-static uint8_t ports[RTE_MAX_ETHPORTS];
+static unsigned lcore_ids[RTE_MAX_LCORE];//那些core被开启了
+static uint8_t ports[RTE_MAX_ETHPORTS];//那些port被开启了
 static unsigned num_ports = 0; /**< The number of ports specified in command line */
 static uint16_t num_pf_queues, num_vmdq_queues;
 static uint16_t vmdq_pool_base, vmdq_queue_base;
@@ -263,6 +263,7 @@ validate_num_devices(uint32_t max_nb_devices)
  * Initialises a given port using global settings and with the rx buffers
  * coming from the mbuf_pool passed as parameter
  */
+//物理口初始化
 static inline int
 port_init(uint8_t port)
 {
@@ -276,14 +277,16 @@ port_init(uint8_t port)
 	uint16_t q;
 
 	/* The max pool number from dev_info will be used to validate the pool number specified in cmd line */
-	rte_eth_dev_info_get (port, &dev_info);
+	rte_eth_dev_info_get (port, &dev_info);//获取设备信息
 
+	//收队列数比MAX_QUEUES要大，需要重新编译
 	if (dev_info.max_rx_queues > MAX_QUEUES) {
 		rte_exit(EXIT_FAILURE,
 			"please define MAX_QUEUES no less than %u in %s\n",
 			dev_info.max_rx_queues, __FILE__);
 	}
 
+	//默认的收发配置
 	rxconf = &dev_info.default_rxconf;
 	txconf = &dev_info.default_txconf;
 	rxconf->rx_drop_en = 1;
@@ -331,6 +334,7 @@ port_init(uint8_t port)
 
 	rx_rings = (uint16_t)dev_info.max_rx_queues;
 	/* Configure ethernet device. */
+	//配置设备
 	retval = rte_eth_dev_configure(port, rx_rings, tx_rings, &port_conf);
 	if (retval != 0) {
 		RTE_LOG(ERR, VHOST_PORT, "Failed to configure port %u: %s.\n",
@@ -339,6 +343,7 @@ port_init(uint8_t port)
 	}
 
 	/* Setup the queues. */
+	//配置收队列
 	for (q = 0; q < rx_rings; q ++) {
 		retval = rte_eth_rx_queue_setup(port, q, rx_ring_size,
 						rte_eth_dev_socket_id(port),
@@ -351,6 +356,8 @@ port_init(uint8_t port)
 			return retval;
 		}
 	}
+
+	//配置发队列
 	for (q = 0; q < tx_rings; q ++) {
 		retval = rte_eth_tx_queue_setup(port, q, tx_ring_size,
 						rte_eth_dev_socket_id(port),
@@ -364,6 +371,7 @@ port_init(uint8_t port)
 	}
 
 	/* Start the device. */
+	//设备开启
 	retval  = rte_eth_dev_start(port);
 	if (retval < 0) {
 		RTE_LOG(ERR, VHOST_PORT, "Failed to start port %u: %s\n",
@@ -432,6 +440,7 @@ parse_portmask(const char *portmask)
 /*
  * Parse num options at run time.
  */
+//转换q_arg,要求转换后的值小于等于max_valid_value
 static int
 parse_num_opt(const char *q_arg, uint32_t max_valid_value)
 {
@@ -481,6 +490,7 @@ us_vhost_usage(const char *prgname)
 /*
  * Parse the arguments given in the command line of the application.
  */
+//解析vhost自已的命令行
 static int
 us_vhost_parse_args(int argc, char **argv)
 {
@@ -927,6 +937,7 @@ do_drain_mbuf_table(struct mbuf_table *tx_q)
 	count = rte_eth_tx_burst(ports[0], tx_q->txq_id,
 				 tx_q->m_table, tx_q->len);
 	if (unlikely(count < tx_q->len))
+		//发失败的，直接释放掉
 		free_pkts(&tx_q->m_table[count], tx_q->len - count);
 
 	tx_q->len = 0;
@@ -1143,6 +1154,7 @@ switch_worker(void *arg __rte_unused)
 	tx_q = &lcore_tx_queue[lcore_id];
 	for (i = 0; i < rte_lcore_count(); i++) {
 		if (lcore_ids[i] == lcore_id) {
+			//当前线程绑定的core是lcore_id,自已在lcore_ids数组中的下标为i
 			tx_q->txq_id = i;
 			break;
 		}
@@ -1351,6 +1363,7 @@ unregister_drivers(int socket_num)
 	int i, ret;
 
 	for (i = 0; i < socket_num; i++) {
+		//销毁指定socket
 		ret = rte_vhost_driver_unregister(socket_files + i * PATH_MAX);
 		if (ret != 0)
 			RTE_LOG(ERR, VHOST_CONFIG,
@@ -1455,6 +1468,7 @@ main(int argc, char *argv[])
 			lcore_ids[core_id++] = lcore_id;
 	}
 
+	//core太多
 	if (rte_lcore_count() > RTE_MAX_LCORE)
 		rte_exit(EXIT_FAILURE,"Not enough cores\n");
 
@@ -1497,6 +1511,7 @@ main(int argc, char *argv[])
 				"Skipping disabled port %d\n", portid);
 			continue;
 		}
+		//初始化port
 		if (port_init(portid) != 0)
 			rte_exit(EXIT_FAILURE,
 				"Cannot initialize network ports\n");
@@ -1504,6 +1519,7 @@ main(int argc, char *argv[])
 
 	/* Enable stats if the user option is set. */
 	if (enable_stats) {
+		//显示状态线程
 		ret = pthread_create(&tid, NULL, (void *)print_stats, NULL);
 		if (ret != 0)
 			rte_exit(EXIT_FAILURE,
@@ -1522,14 +1538,17 @@ main(int argc, char *argv[])
 		rte_eal_remote_launch(switch_worker, NULL, lcore_id);
 
 	if (client_mode)
+		//标记创建为客户端
 		flags |= RTE_VHOST_USER_CLIENT;
 
 	if (dequeue_zero_copy)
+		//标记支持出队zero copy
 		flags |= RTE_VHOST_USER_DEQUEUE_ZERO_COPY;
 
 	/* Register vhost user driver to handle vhost messages. */
 	for (i = 0; i < nb_sockets; i++) {
 		char *file = socket_files + i * PATH_MAX;
+		//注册vsocket
 		ret = rte_vhost_driver_register(file, flags);
 		if (ret != 0) {
 			unregister_drivers(i);
@@ -1538,6 +1557,7 @@ main(int argc, char *argv[])
 		}
 
 		if (builtin_net_driver)
+			//指定支持的功能为0
 			rte_vhost_driver_set_features(file, VIRTIO_NET_FEATURES);
 
 		if (mergeable == 0) {
@@ -1566,6 +1586,7 @@ main(int argc, char *argv[])
 				1ULL << VIRTIO_NET_F_CTRL_RX);
 		}
 
+		//给这个文件注册操作
 		ret = rte_vhost_driver_callback_register(file,
 			&virtio_net_device_ops);
 		if (ret != 0) {
@@ -1573,6 +1594,7 @@ main(int argc, char *argv[])
 				"failed to register vhost driver callbacks.\n");
 		}
 
+		//处理事件
 		if (rte_vhost_driver_start(file) < 0) {
 			rte_exit(EXIT_FAILURE,
 				"failed to start vhost driver.\n");

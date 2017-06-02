@@ -85,6 +85,7 @@ cleanup_device(struct virtio_net *dev, int destroy)
 
 	vhost_backend_cleanup(dev);
 
+	//销毁队列
 	for (i = 0; i < dev->nr_vring; i++)
 		cleanup_vq(dev->virtqueue[i], destroy);
 }
@@ -109,6 +110,7 @@ free_device(struct virtio_net *dev)
 	rte_free(dev);
 }
 
+//初始化vq
 static void
 init_vring_queue(struct vhost_virtqueue *vq)
 {
@@ -220,6 +222,7 @@ vhost_new_device(void)
  * Invoked when there is the vhost-user connection is broken (when
  * the virtio device is being detached).
  */
+//销毁指定vdev
 void
 vhost_destroy_device(int vid)
 {
@@ -230,6 +233,7 @@ vhost_destroy_device(int vid)
 
 	if (dev->flags & VIRTIO_DEV_RUNNING) {
 		dev->flags &= ~VIRTIO_DEV_RUNNING;
+		//销毁dev
 		dev->notify_ops->destroy_device(vid);
 	}
 
@@ -314,6 +318,7 @@ rte_vhost_get_numa_node(int vid)
 #endif
 }
 
+//队列数向上不分收发队列，故除以2
 uint32_t
 rte_vhost_get_queue_num(int vid)
 {
@@ -325,6 +330,7 @@ rte_vhost_get_queue_num(int vid)
 	return dev->nr_vring / 2;
 }
 
+//ring数目
 uint16_t
 rte_vhost_get_vring_num(int vid)
 {

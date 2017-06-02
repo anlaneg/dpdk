@@ -287,6 +287,7 @@ const struct virtio_pci_ops virtio_user_ops = {
 	.notify_queue	= virtio_user_notify_queue,
 };
 
+//valid_支持的参数
 static const char *valid_args[] = {
 #define VIRTIO_USER_ARG_QUEUES_NUM     "queues"
 	VIRTIO_USER_ARG_QUEUES_NUM,
@@ -344,6 +345,7 @@ virtio_user_eth_dev_alloc(struct rte_vdev_device *vdev)
 	struct virtio_hw *hw;
 	struct virtio_user_dev *dev;
 
+	//私有数据为virtio_hw
 	eth_dev = rte_eth_vdev_allocate(vdev, sizeof(*hw));
 	if (!eth_dev) {
 		PMD_INIT_LOG(ERR, "cannot alloc rte_eth_dev");
@@ -391,6 +393,7 @@ virtio_user_eth_dev_free(struct rte_eth_dev *eth_dev)
  * EAL init time, see rte_eal_dev_init().
  * Returns 0 on success.
  */
+//vritio 探测
 static int
 virtio_user_pmd_probe(struct rte_vdev_device *dev)
 {
@@ -411,6 +414,7 @@ virtio_user_pmd_probe(struct rte_vdev_device *dev)
 		goto end;
 	}
 
+	//填充path
 	if (rte_kvargs_count(kvlist, VIRTIO_USER_ARG_PATH) == 1) {
 		if (rte_kvargs_process(kvlist, VIRTIO_USER_ARG_PATH,
 				       &get_string_arg, &path) < 0) {
@@ -425,6 +429,7 @@ virtio_user_pmd_probe(struct rte_vdev_device *dev)
 	}
 
 	if (rte_kvargs_count(kvlist, VIRTIO_USER_ARG_INTERFACE_NAME) == 1) {
+		//如果配置了iface,则path不能是socket
 		if (is_vhost_user_by_type(path)) {
 			PMD_INIT_LOG(ERR,
 				"arg %s applies only to vhost-kernel backend",
@@ -432,6 +437,7 @@ virtio_user_pmd_probe(struct rte_vdev_device *dev)
 			goto end;
 		}
 
+		//填充ifname
 		if (rte_kvargs_process(kvlist, VIRTIO_USER_ARG_INTERFACE_NAME,
 				       &get_string_arg, &ifname) < 0) {
 			PMD_INIT_LOG(ERR, "error to parse %s",
@@ -440,6 +446,7 @@ virtio_user_pmd_probe(struct rte_vdev_device *dev)
 		}
 	}
 
+	//填充mac_addr
 	if (rte_kvargs_count(kvlist, VIRTIO_USER_ARG_MAC) == 1) {
 		if (rte_kvargs_process(kvlist, VIRTIO_USER_ARG_MAC,
 				       &get_string_arg, &mac_addr) < 0) {
@@ -449,6 +456,7 @@ virtio_user_pmd_probe(struct rte_vdev_device *dev)
 		}
 	}
 
+	//填充queue_size
 	if (rte_kvargs_count(kvlist, VIRTIO_USER_ARG_QUEUE_SIZE) == 1) {
 		if (rte_kvargs_process(kvlist, VIRTIO_USER_ARG_QUEUE_SIZE,
 				       &get_integer_arg, &queue_size) < 0) {
@@ -458,6 +466,7 @@ virtio_user_pmd_probe(struct rte_vdev_device *dev)
 		}
 	}
 
+	//填充queues
 	if (rte_kvargs_count(kvlist, VIRTIO_USER_ARG_QUEUES_NUM) == 1) {
 		if (rte_kvargs_process(kvlist, VIRTIO_USER_ARG_QUEUES_NUM,
 				       &get_integer_arg, &queues) < 0) {
@@ -467,6 +476,7 @@ virtio_user_pmd_probe(struct rte_vdev_device *dev)
 		}
 	}
 
+	//填充cq
 	if (rte_kvargs_count(kvlist, VIRTIO_USER_ARG_CQ_NUM) == 1) {
 		if (rte_kvargs_process(kvlist, VIRTIO_USER_ARG_CQ_NUM,
 				       &get_integer_arg, &cq) < 0) {
@@ -483,6 +493,7 @@ virtio_user_pmd_probe(struct rte_vdev_device *dev)
 		goto end;
 	}
 
+	//配置的队列数量过大
 	if (queues > VIRTIO_MAX_VIRTQUEUE_PAIRS) {
 		PMD_INIT_LOG(ERR, "arg %s %" PRIu64 " exceeds the limit %u",
 			VIRTIO_USER_ARG_QUEUES_NUM, queues,
@@ -490,7 +501,9 @@ virtio_user_pmd_probe(struct rte_vdev_device *dev)
 		goto end;
 	}
 
+	//primary进程
 	if (rte_eal_process_type() == RTE_PROC_PRIMARY) {
+		//创建eth_dev
 		eth_dev = virtio_user_eth_dev_alloc(dev);
 		if (!eth_dev) {
 			PMD_INIT_LOG(ERR, "virtio_user fails to alloc device");
@@ -562,6 +575,7 @@ virtio_user_pmd_remove(struct rte_vdev_device *vdev)
 	return 0;
 }
 
+//virtio用户driver
 static struct rte_vdev_driver virtio_user_driver = {
 	.probe = virtio_user_pmd_probe,
 	.remove = virtio_user_pmd_remove,
