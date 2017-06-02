@@ -127,6 +127,7 @@ static bool phys_addrs_available = true;
 
 #define RANDOMIZE_VA_SPACE_FILE "/proc/sys/kernel/randomize_va_space"
 
+//检测物理地址是否有效
 static void
 test_phys_addrs_available(void)
 {
@@ -143,7 +144,7 @@ test_phys_addrs_available(void)
 			"Cannot obtain physical addresses: %s. "
 			"Only vfio will function.\n",
 			strerror(errno));
-		phys_addrs_available = false;
+		phys_addrs_available = false;//如果我们拿不再physaddr的物理地址，说明系统的物理机址是不可取的
 	}
 }
 
@@ -160,6 +161,7 @@ rte_mem_lock_page(const void *virt)
 /*
  * Get physical address of any mapped virtual address in the current process.
  */
+//取virtaddr对应的物理地址
 phys_addr_t
 rte_mem_virt2phy(const void *virtaddr)
 {
@@ -197,6 +199,7 @@ rte_mem_virt2phy(const void *virtaddr)
 		return RTE_BAD_PHYS_ADDR;
 
 	/* standard page size */
+	//通过/proc/self/pagemap文件读取指定页首地址对应的物理地址
 	page_size = getpagesize();
 
 	fd = open("/proc/self/pagemap", O_RDONLY);
@@ -232,9 +235,11 @@ rte_mem_virt2phy(const void *virtaddr)
 	 * the pfn (page frame number) are bits 0-54 (see
 	 * pagemap.txt in linux Documentation)
 	 */
+	//有效地址在0-54位，如果0-54位为0，则说明地址有误
 	if ((page & 0x7fffffffffffffULL) == 0)
 		return RTE_BAD_PHYS_ADDR;
 
+	//求出虚地址页首地址对应的物理机址，再由此算出具体一个虚地址对应的物理地址
 	physaddr = ((page & 0x7fffffffffffffULL) * page_size)
 		+ ((unsigned long)virtaddr % page_size);
 
@@ -979,6 +984,7 @@ rte_eal_hugepage_init(void)
 	int nr_hugefiles, nr_hugepages = 0;
 	void *addr;
 
+	//检测系统物理机址是否可取到
 	test_phys_addrs_available();
 
 	memset(used_hp, 0, sizeof(used_hp));
@@ -1329,6 +1335,7 @@ rte_eal_hugepage_attach(void)
 				"into secondary processes\n");
 	}
 
+	//检测系统是否可以取到物理地址
 	test_phys_addrs_available();
 
 	if (internal_config.xen_dom0_support) {

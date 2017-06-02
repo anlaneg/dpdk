@@ -39,11 +39,11 @@
 #include <rte_common.h>
 
 /* This marks a buffer as continuing via the next field. */
-#define VRING_DESC_F_NEXT       1
+#define VRING_DESC_F_NEXT       1 //buffer有下一个描述符
 /* This marks a buffer as write-only (otherwise read-only). */
-#define VRING_DESC_F_WRITE      2
+#define VRING_DESC_F_WRITE      2 //buffer是否为只写的
 /* This means the buffer contains a list of buffer descriptors. */
-#define VRING_DESC_F_INDIRECT   4
+#define VRING_DESC_F_INDIRECT   4 //包含了一组连续的buffer描述符
 
 /* The Host uses this in used->flags to advise the Guest: don't kick me
  * when you add a buffer.  It's unreliable, so it's simply an

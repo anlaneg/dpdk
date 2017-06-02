@@ -62,13 +62,13 @@ extern "C" {
  * addresses in QEMUs memory file.
  */
 struct rte_vhost_mem_region {
-	uint64_t guest_phys_addr;
-	uint64_t guest_user_addr;
-	uint64_t host_user_addr;
-	uint64_t size;
-	void	 *mmap_addr;
-	uint64_t mmap_size;
-	int fd;
+	uint64_t guest_phys_addr;//对端进程物理机址
+	uint64_t guest_user_addr;//对端进程用户态起始地址
+	uint64_t host_user_addr;//本进程实际内存起始地址
+	uint64_t size;//多大的内存
+	void	 *mmap_addr;//mmap返回的起始地址
+	uint64_t mmap_size;//mmap映射的内存大小
+	int fd;//映射自哪个文件
 };
 
 /**
