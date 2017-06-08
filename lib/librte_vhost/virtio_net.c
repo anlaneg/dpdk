@@ -981,7 +981,10 @@ mbuf_is_consumed(struct rte_mbuf *m)
 	return true;
 }
 
-//vhost批量进队
+//给定队列id后，首先检查队列中是否有内容，队列里存放的是描述符索引
+//通过出队，我们可以拿到描述符索引（desc_indexes)，然后取出描述符
+//(描述符，指出报文存放的首地址，报文的长度，标记位，报文过长时会被分片的下一片）
+//再由描述符定位到实际的报文
 uint16_t
 rte_vhost_dequeue_burst(int vid, uint16_t queue_id,
 	struct rte_mempool *mbuf_pool, struct rte_mbuf **pkts, uint16_t count)
@@ -995,18 +998,19 @@ rte_vhost_dequeue_burst(int vid, uint16_t queue_id,
 	uint16_t free_entries;
 	uint16_t avail_idx;
 
-	dev = get_device(vid);
+	dev = get_device(vid);//找到对应的virtio_net
 	if (!dev)
 		return 0;
 
 	//检查队列是否有效，类型及索引
+	//rx队列属于奇数
 	if (unlikely(!is_valid_virt_queue_idx(queue_id, 1, dev->nr_vring))) {
 		RTE_LOG(ERR, VHOST_DATA, "(%d) %s: invalid virtqueue idx %d.\n",
 			dev->vid, __func__, queue_id);
 		return 0;
 	}
 
-	//找到要自哪个队列向外取包文
+	//找到虚拟队列，若未启用，则返回0
 	vq = dev->virtqueue[queue_id];
 	if (unlikely(vq->enabled == 0))
 		return 0;
@@ -1074,7 +1078,7 @@ rte_vhost_dequeue_burst(int vid, uint16_t queue_id,
 	free_entries = *((volatile uint16_t *)&vq->avail->idx) -
 			vq->last_avail_idx;
 	if (free_entries == 0)
-		goto out;
+		goto out;//没有报文
 
 	LOG_DEBUG(VHOST_DATA, "(%d) %s\n", dev->vid, __func__);
 
@@ -1114,6 +1118,7 @@ rte_vhost_dequeue_burst(int vid, uint16_t queue_id,
 			rte_prefetch0(&vq->desc[desc_indexes[i + 1]]);
 
 		if (vq->desc[desc_indexes[i]].flags & VRING_DESC_F_INDIRECT) {
+			//取出vhost虚拟地址指向的描述信息
 			desc = (struct vring_desc *)(uintptr_t)
 				rte_vhost_gpa_to_vva(dev->mem,
 					vq->desc[desc_indexes[i]].addr);
@@ -1166,7 +1171,7 @@ rte_vhost_dequeue_burst(int vid, uint16_t queue_id,
 			TAILQ_INSERT_TAIL(&vq->zmbuf_list, zmbuf, next);
 		}
 	}
-	vq->last_avail_idx += i;
+	vq->last_avail_idx += i;//收到那个位置
 
 	if (likely(dev->dequeue_zero_copy == 0)) {
 		vq->last_used_idx += i;

@@ -85,7 +85,7 @@ TAILQ_HEAD(zcopy_mbuf_list, zcopy_mbuf);
  * Structure contains variables relevant to RX/TX virtqueues.
  */
 struct vhost_virtqueue {
-	struct vring_desc	*desc;//描述符信息
+	struct vring_desc	*desc;//存放描述信息
 	struct vring_avail	*avail;
 	struct vring_used	*used;
 	uint32_t		size;//队列大小（必须为2的N次方)
@@ -101,7 +101,7 @@ struct vhost_virtqueue {
 	int			callfd;
 	/* Currently unused as polling mode is enabled */
 	int			kickfd;
-	int			enabled;//队列是否启用
+	int			enabled;//队列是否被启用
 
 	/* Physical address of used ring, for logging */
 	uint64_t		log_guest_addr;

@@ -315,6 +315,7 @@ numa_realloc(struct virtio_net *dev, int index __rte_unused)
  * Converts QEMU virtual address to Vhost virtual address. This function is
  * used to convert the ring addresses to our address space.
  */
+//转换qemu虚地址到vhost虚地址
 static uint64_t
 qva_to_vva(struct virtio_net *dev, uint64_t qva)
 {
@@ -325,6 +326,7 @@ qva_to_vva(struct virtio_net *dev, uint64_t qva)
 	for (i = 0; i < dev->mem->nregions; i++) {
 		reg = &dev->mem->regions[i];
 
+		//如果qva在此范围以内，转换为本端地址
 		if (qva >= reg->guest_user_addr &&
 		    qva <  reg->guest_user_addr + reg->size) {
 			return qva - reg->guest_user_addr +
@@ -560,6 +562,7 @@ vhost_user_set_mem_table(struct virtio_net *dev, struct VhostUserMsg *pmsg)
 		 * to avoid failure, make sure in caller to keep length
 		 * aligned.
 		 */
+		//取此文件对应的块大小
 		alignment = get_blk_size(fd);
 		if (alignment == (uint64_t)-1) {
 			RTE_LOG(ERR, VHOST_CONFIG,
@@ -568,6 +571,7 @@ vhost_user_set_mem_table(struct virtio_net *dev, struct VhostUserMsg *pmsg)
 		}
 		mmap_size = RTE_ALIGN_CEIL(mmap_size, alignment);
 
+		//map fd对应的那一段内存
 		mmap_addr = mmap(NULL, mmap_size, PROT_READ | PROT_WRITE,
 				 MAP_SHARED | MAP_POPULATE, fd, 0);
 
@@ -577,10 +581,10 @@ vhost_user_set_mem_table(struct virtio_net *dev, struct VhostUserMsg *pmsg)
 			goto err_mmap;
 		}
 
-		reg->mmap_addr = mmap_addr;
-		reg->mmap_size = mmap_size;
+		reg->mmap_addr = mmap_addr;//map后地址
+		reg->mmap_size = mmap_size;//map的大小
 		reg->host_user_addr = (uint64_t)(uintptr_t)mmap_addr +
-				      mmap_offset;
+				      mmap_offset;//本进程map的开始地址
 
 		if (dev->dequeue_zero_copy)
 			add_guest_pages(dev, reg, alignment);
@@ -816,9 +820,12 @@ vhost_user_set_log_base(struct virtio_net *dev, struct VhostUserMsg *msg)
 	 * Free previously mapped log memory on occasionally
 	 * multiple VHOST_USER_SET_LOG_BASE.
 	 */
+	//前面有地址，这里释放掉
 	if (dev->log_addr) {
 		munmap((void *)(uintptr_t)dev->log_addr, dev->log_size);
 	}
+
+	//设置log_addr
 	dev->log_addr = (uint64_t)(uintptr_t)addr;
 	dev->log_base = dev->log_addr + off;
 	dev->log_size = size;
@@ -1128,7 +1135,7 @@ vhost_user_msg_handler(int vid, int fd)
 						"dequeue zero copy is enabled\n");
 			}
 
-			//添加设备
+			//vdev准备好了，调用添加设备，并将其状态置为running
 			if (dev->notify_ops->new_device(dev->vid) == 0)
 				dev->flags |= VIRTIO_DEV_RUNNING;
 		}
