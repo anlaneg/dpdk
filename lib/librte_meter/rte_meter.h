@@ -220,6 +220,8 @@ struct rte_meter_trtcm {
 	uint64_t pir_bytes_per_period; /* Number of bytes to add to P token bucket on each update */
 };
 
+//报文qos处理
+//可以参考此网页：http://www.cnblogs.com/yhp-smarthome/p/6901317.html （我没有细看）
 static inline enum rte_meter_color
 rte_meter_srtcm_color_blind_check(struct rte_meter_srtcm *m,
 	uint64_t time,
