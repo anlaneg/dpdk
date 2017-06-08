@@ -249,6 +249,7 @@ virtio_dev_rx(struct virtio_net *dev, uint16_t queue_id,
 	uint16_t used_idx;
 	uint32_t i, sz;
 
+	//队列合法性检查
 	LOG_DEBUG(VHOST_DATA, "(%d) %s\n", dev->vid, __func__);
 	if (unlikely(!is_valid_virt_queue_idx(queue_id, 0, dev->nr_vring))) {
 		RTE_LOG(ERR, VHOST_DATA, "(%d) %s: invalid virtqueue idx %d.\n",
@@ -256,39 +257,47 @@ virtio_dev_rx(struct virtio_net *dev, uint16_t queue_id,
 		return 0;
 	}
 
+	//取出队列
 	vq = dev->virtqueue[queue_id];
 	if (unlikely(vq->enabled == 0))
 		return 0;
 
+	//选择本次可以发送多少个报文（受用户要发送的包数，buffer中可用的空间,
+	//本函数数组最大长度）
 	avail_idx = *((volatile uint16_t *)&vq->avail->idx);
 	start_idx = vq->last_used_idx;
 	free_entries = avail_idx - start_idx;
 	count = RTE_MIN(count, free_entries);
 	count = RTE_MIN(count, (uint32_t)MAX_PKT_BURST);
 	if (count == 0)
+		//发送成功0个
 		return 0;
 
 	LOG_DEBUG(VHOST_DATA, "(%d) start_idx %d | end_idx %d\n",
 		dev->vid, start_idx, start_idx + count);
 
 	/* Retrieve all of the desc indexes first to avoid caching issues. */
+	//预取描述符idx(可预取32个）
 	rte_prefetch0(&vq->avail->ring[start_idx & (vq->size - 1)]);
+	//填充used->ring
 	for (i = 0; i < count; i++) {
 		used_idx = (start_idx + i) & (vq->size - 1);
 		desc_indexes[i] = vq->avail->ring[used_idx];
 		vq->used->ring[used_idx].id = desc_indexes[i];
 		vq->used->ring[used_idx].len = pkts[i]->pkt_len +
-					       dev->vhost_hlen;
+					       dev->vhost_hlen;//报文长度+vhost_hlen
 		vhost_log_used_vring(dev, vq,
 			offsetof(struct vring_used, ring[used_idx]),
 			sizeof(vq->used->ring[used_idx]));
 	}
 
+	//预取描述符
 	rte_prefetch0(&vq->desc[desc_indexes[0]]);
 	for (i = 0; i < count; i++) {
 		uint16_t desc_idx = desc_indexes[i];
 		int err;
 
+		//描述符要求按list写
 		if (vq->desc[desc_idx].flags & VRING_DESC_F_INDIRECT) {
 			descs = (struct vring_desc *)(uintptr_t)
 				rte_vhost_gpa_to_vva(dev->mem,
@@ -668,10 +677,13 @@ vhost_dequeue_offload(struct virtio_net_hdr *hdr, struct rte_mbuf *m)
 	struct tcp_hdr *tcp_hdr = NULL;
 
 	if (hdr->flags == 0 && hdr->gso_type == VIRTIO_NET_HDR_GSO_NONE)
+		//无offload flag,退出
 		return;
 
+	//解析4层协议，解析4层头
 	parse_ethernet(m, &l4_proto, &l4_hdr);
 	if (hdr->flags == VIRTIO_NET_HDR_F_NEEDS_CSUM) {
+		//checksum flags处理
 		if (hdr->csum_start == (m->l2_len + m->l3_len)) {
 			switch (hdr->csum_offset) {
 			case (offsetof(struct tcp_hdr, cksum)):
@@ -692,6 +704,7 @@ vhost_dequeue_offload(struct virtio_net_hdr *hdr, struct rte_mbuf *m)
 		}
 	}
 
+	//gso功能处理
 	if (l4_hdr && hdr->gso_type != VIRTIO_NET_HDR_GSO_NONE) {
 		switch (hdr->gso_type & ~VIRTIO_NET_HDR_GSO_ECN) {
 		case VIRTIO_NET_HDR_GSO_TCPV4:
@@ -754,6 +767,7 @@ put_zmbuf(struct zcopy_mbuf *zmbuf)
 	zmbuf->in_use = 0;
 }
 
+//将描述符中指明的报文内存放置在mbuf中，目前支持两种放置方式:1。内存copy；2。zero copy
 static inline int __attribute__((always_inline))
 copy_desc_to_mbuf(struct virtio_net *dev, struct vring_desc *descs,
 		  uint16_t max_desc, struct rte_mbuf *m, uint16_t desc_idx,
@@ -776,10 +790,12 @@ copy_desc_to_mbuf(struct virtio_net *dev, struct vring_desc *descs,
 			(desc->flags & VRING_DESC_F_INDIRECT))
 		return -1;
 
+	//将对端的地址转换为自已的地址
 	desc_addr = rte_vhost_gpa_to_vva(dev->mem, desc->addr);
 	if (unlikely(!desc_addr))
 		return -1;
 
+	//如果有offload，则预取virtio_net_hdr
 	if (virtio_net_with_host_offload(dev)) {
 		hdr = (struct virtio_net_hdr *)((uintptr_t)desc_addr);
 		rte_prefetch0(hdr);
@@ -790,12 +806,15 @@ copy_desc_to_mbuf(struct virtio_net *dev, struct vring_desc *descs,
 	 * for Tx: the first for storing the header, and others
 	 * for storing the data.
 	 */
+	//如上面所言，通常virtio驱动会至少使用2个desc buffer来做传输
+	//检查其是否有next标记
 	if (likely((desc->len == dev->vhost_hlen) &&
 		   (desc->flags & VRING_DESC_F_NEXT) != 0)) {
-		desc = &descs[desc->next];
+		desc = &descs[desc->next];//按标记要求，使用下一个描述符
 		if (unlikely(desc->flags & VRING_DESC_F_INDIRECT))
 			return -1;
 
+		//由于切换了desc，重新转换desc地址
 		desc_addr = rte_vhost_gpa_to_vva(dev->mem, desc->addr);
 		if (unlikely(!desc_addr))
 			return -1;
@@ -817,6 +836,8 @@ copy_desc_to_mbuf(struct virtio_net *dev, struct vring_desc *descs,
 	while (1) {
 		uint64_t hpa;
 
+		//mbuf有一个自已的长度，对方送过来的报文有一个自已的长度
+		//如果要把对方的报文放入mbuf，那个copy的长度只能是两者中最小的一个。
 		cpy_len = RTE_MIN(desc_avail, mbuf_avail);
 
 		/*
@@ -824,6 +845,7 @@ copy_desc_to_mbuf(struct virtio_net *dev, struct vring_desc *descs,
 		 * not continuous. In such case (gpa_to_hpa returns 0), data
 		 * will be copied even though zero copy is enabled.
 		 */
+		//如果开启了zero copy,直接让mbuf指向这段内存就可以了
 		if (unlikely(dev->dequeue_zero_copy && (hpa = gpa_to_hpa(dev,
 					desc->addr + desc_offset, cpy_len)))) {
 			cur->data_len = cpy_len;
@@ -837,7 +859,9 @@ copy_desc_to_mbuf(struct virtio_net *dev, struct vring_desc *descs,
 			 */
 			mbuf_avail = cpy_len;
 		} else {
-			//将内存copy到cur上，实现报文交换
+			//在dev->dequeue_zero_copy不为真时，
+			//需要将报文内容内容copy到cur上，以此来实现报文交换。
+			//rte_pktmbuf_mtod_offset函数实现在mbuf前空出一定的headroom,上层处理时方便使用
 			rte_memcpy(rte_pktmbuf_mtod_offset(cur, void *,
 							   mbuf_offset),
 				(void *)((uintptr_t)(desc_addr + desc_offset)),
@@ -846,18 +870,24 @@ copy_desc_to_mbuf(struct virtio_net *dev, struct vring_desc *descs,
 
 		mbuf_avail  -= cpy_len;
 		mbuf_offset += cpy_len;
-		desc_avail  -= cpy_len;
+		desc_avail  -= cpy_len;//desc中还有多少字节没有放入到mbuf
 		desc_offset += cpy_len;
 
 		/* This desc reaches to its end, get the next one */
+		//当desc_avail为0时，说明所有字节均已放入到mbuf中了，可以处理下一个desc了
 		if (desc_avail == 0) {
 			if ((desc->flags & VRING_DESC_F_NEXT) == 0)
+				//这个desc没有指明有下一个，处理结束，退出循环
 				break;
 
+			//走到这里时，desc指明还有一个新的段需要收取，这时极有可能是遇着巨帧报文了？
 			if (unlikely(desc->next >= max_desc ||
 				     ++nr_desc > max_desc))
+				//对方发送协议处理有误，出错处理
 				return -1;
+			//按要求取下一个描述符
 			desc = &descs[desc->next];
+			//不支持再有下一个描述符的情况
 			if (unlikely(desc->flags & VRING_DESC_F_INDIRECT))
 				return -1;
 
@@ -877,6 +907,7 @@ copy_desc_to_mbuf(struct virtio_net *dev, struct vring_desc *descs,
 		 * This mbuf reaches to its end, get a new one
 		 * to hold more data.
 		 */
+		//当这种情况发生时，mbuf的缓冲不够用了，为了缓存此报文需要申请mbuf
 		if (mbuf_avail == 0) {
 			cur = rte_pktmbuf_alloc(mbuf_pool);
 			if (unlikely(cur == NULL)) {
@@ -887,9 +918,9 @@ copy_desc_to_mbuf(struct virtio_net *dev, struct vring_desc *descs,
 			if (unlikely(dev->dequeue_zero_copy))
 				rte_mbuf_refcnt_update(cur, 1);
 
-			prev->next = cur;
+			prev->next = cur;//串在mbuf的next链上
 			prev->data_len = mbuf_offset;
-			m->nb_segs += 1;
+			m->nb_segs += 1;//段数量增加
 			m->pkt_len += mbuf_offset;
 			prev = cur;
 
@@ -1117,6 +1148,7 @@ rte_vhost_dequeue_burst(int vid, uint16_t queue_id,
 			//提前预取后面的
 			rte_prefetch0(&vq->desc[desc_indexes[i + 1]]);
 
+		//如果此分支进入，则接下来是一个list段
 		if (vq->desc[desc_indexes[i]].flags & VRING_DESC_F_INDIRECT) {
 			//取出vhost虚拟地址指向的描述信息
 			desc = (struct vring_desc *)(uintptr_t)
@@ -1126,7 +1158,7 @@ rte_vhost_dequeue_burst(int vid, uint16_t queue_id,
 				break;
 
 			rte_prefetch0(desc);
-			sz = vq->desc[desc_indexes[i]].len / sizeof(*desc);
+			sz = vq->desc[desc_indexes[i]].len / sizeof(*desc);//段的长度
 			idx = 0;
 		} else {
 			desc = vq->desc;
@@ -1142,6 +1174,7 @@ rte_vhost_dequeue_burst(int vid, uint16_t queue_id,
 			break;
 		}
 
+		//copy描述信息到pkts
 		err = copy_desc_to_mbuf(dev, desc, sz, pkts[i], idx, mbuf_pool);
 		if (unlikely(err)) {
 			rte_pktmbuf_free(pkts[i]);
@@ -1171,7 +1204,7 @@ rte_vhost_dequeue_burst(int vid, uint16_t queue_id,
 			TAILQ_INSERT_TAIL(&vq->zmbuf_list, zmbuf, next);
 		}
 	}
-	vq->last_avail_idx += i;//收到那个位置
+	vq->last_avail_idx += i;//记录本次收到那个位置了
 
 	if (likely(dev->dequeue_zero_copy == 0)) {
 		vq->last_used_idx += i;

@@ -460,7 +460,9 @@ struct rte_mbuf {
 		};
 	};
 
+	//总的报文长度
 	uint32_t pkt_len;         /**< Total pkt len: sum of all segments. */
+	//mbuf中的数据长度
 	uint16_t data_len;        /**< Amount of data in segment buffer. */
 	/** VLAN TCI (CPU order), valid if PKT_RX_VLAN_STRIPPED is set. */
 	uint16_t vlan_tci;
@@ -508,7 +510,7 @@ struct rte_mbuf {
 	};
 
 	struct rte_mempool *pool; /**< Pool from which mbuf was allocated. */
-	struct rte_mbuf *next;    /**< Next segment of scattered packet. */
+	struct rte_mbuf *next;    /**< Next segment of scattered packet. */ //指向下一个段
 
 	/* fields to support TX offloads */
 	RTE_STD_C11
@@ -516,12 +518,19 @@ struct rte_mbuf {
 		uint64_t tx_offload;       /**< combined for easy fetch */
 		__extension__
 		struct {
-			uint64_t l2_len:7;
+			uint64_t l2_len:7;//2层头长度
 			/**< L2 (MAC) Header Length for non-tunneling pkt.
 			 * Outer_L4_len + ... + Inner_L2_len for tunneling pkt.
 			 */
 			uint64_t l3_len:9; /**< L3 (IP) Header Length. */
 			uint64_t l4_len:8; /**< L4 (TCP/UDP) Header Length. */
+
+			//在不支持TSO的网卡上，TCP层向IP层发送数据会考虑mss，使得TCP向下发送的数据可以包含在一个IP分组中而不会造成分片，
+			//mss是在TCP初始建立连接时由网卡MTU确定并和对端协商的，所以在一个MTU＝1500的网卡上，TCP向下发送的数据不会大于
+			//min(mss_local, mss_remote)-ip头-tcp头。
+			//网卡支持TSO时，TCP层会逐渐增大mss（总是整数倍数增加），当TCP层向下发送大块数据时，仅仅计算TCP头，网卡接到到了
+			//IP层传下的大数 据包后自己重新分成若干个IP数据包，添加IP头，复制TCP头并且重新计算校验和等相关数据，这样就把一部
+			//分CPU相关的处理工作转移到由网卡来处理。
 			uint64_t tso_segsz:16; /**< TCP TSO segment size */
 
 			/* fields for TX offloading of tunnels */

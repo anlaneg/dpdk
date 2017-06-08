@@ -63,8 +63,8 @@ extern "C" {
  */
 struct rte_vhost_mem_region {
 	uint64_t guest_phys_addr;//对端进程物理机址
-	uint64_t guest_user_addr;//对端进程用户态起始地址
-	uint64_t host_user_addr;//本进程实际内存起始地址
+	uint64_t guest_user_addr;//对端进程起始地址
+	uint64_t host_user_addr; //本端进程起始地址
 	uint64_t size;//多大的内存
 	void	 *mmap_addr;//mmap返回的起始地址
 	uint64_t mmap_size;//mmap映射的内存大小
@@ -128,8 +128,10 @@ rte_vhost_gpa_to_vva(struct rte_vhost_memory *mem, uint64_t gpa)
 
 	for (i = 0; i < mem->nregions; i++) {
 		reg = &mem->regions[i];
+		//找到gpa属于那段地址
 		if (gpa >= reg->guest_phys_addr &&
 		    gpa <  reg->guest_phys_addr + reg->size) {
+			//转换为vva地址（对端物理地址相对于段首地址的偏移量＋自已与对端物理地址对应的虚地址）
 			return gpa - reg->guest_phys_addr +
 			       reg->host_user_addr;
 		}
