@@ -52,6 +52,7 @@
 static bool
 is_valid_virt_queue_idx(uint32_t idx, int is_tx, uint32_t nr_vring)
 {
+	//首先队列的idx必须是小于nr_vring的，其次，如果is_tx是发队列，则idx &1 必须为1(即必须为奇数）
 	return (is_tx ^ (idx & 1)) == 0 && idx < nr_vring;
 }
 
@@ -529,14 +530,17 @@ virtio_dev_merge_rx(struct virtio_net *dev, uint16_t queue_id,
 		return 0;
 	}
 
+	//取出指定queue
 	vq = dev->virtqueue[queue_id];
 	if (unlikely(vq->enabled == 0))
 		return 0;
 
+	//最多一次收32个报文
 	count = RTE_MIN((uint32_t)MAX_PKT_BURST, count);
 	if (count == 0)
 		return 0;
 
+	//预取一个cache line
 	rte_prefetch0(&vq->avail->ring[vq->last_avail_idx & (vq->size - 1)]);
 
 	vq->shadow_used_idx = 0;
@@ -765,7 +769,9 @@ copy_desc_to_mbuf(struct virtio_net *dev, struct vring_desc *descs,
 	/* A counter to avoid desc dead loop chain */
 	uint32_t nr_desc = 1;
 
+	//取出desc_idx位置的描述信息
 	desc = &descs[desc_idx];
+	//描述长度明显小于vhost_hlen是无效报文
 	if (unlikely((desc->len < dev->vhost_hlen)) ||
 			(desc->flags & VRING_DESC_F_INDIRECT))
 		return -1;
@@ -975,6 +981,7 @@ mbuf_is_consumed(struct rte_mbuf *m)
 	return true;
 }
 
+//vhost批量进队
 uint16_t
 rte_vhost_dequeue_burst(int vid, uint16_t queue_id,
 	struct rte_mempool *mbuf_pool, struct rte_mbuf **pkts, uint16_t count)
@@ -992,12 +999,14 @@ rte_vhost_dequeue_burst(int vid, uint16_t queue_id,
 	if (!dev)
 		return 0;
 
+	//检查队列是否有效，类型及索引
 	if (unlikely(!is_valid_virt_queue_idx(queue_id, 1, dev->nr_vring))) {
 		RTE_LOG(ERR, VHOST_DATA, "(%d) %s: invalid virtqueue idx %d.\n",
 			dev->vid, __func__, queue_id);
 		return 0;
 	}
 
+	//找到要自哪个队列向外取包文
 	vq = dev->virtqueue[queue_id];
 	if (unlikely(vq->enabled == 0))
 		return 0;
@@ -1061,6 +1070,7 @@ rte_vhost_dequeue_burst(int vid, uint16_t queue_id,
 		}
 	}
 
+	//获取有多少实体可收取
 	free_entries = *((volatile uint16_t *)&vq->avail->idx) -
 			vq->last_avail_idx;
 	if (free_entries == 0)
@@ -1069,11 +1079,12 @@ rte_vhost_dequeue_burst(int vid, uint16_t queue_id,
 	LOG_DEBUG(VHOST_DATA, "(%d) %s\n", dev->vid, __func__);
 
 	/* Prefetch available and used ring */
-	avail_idx = vq->last_avail_idx & (vq->size - 1);
+	avail_idx = vq->last_avail_idx & (vq->size - 1);//队列中的有效位置
 	used_idx  = vq->last_used_idx  & (vq->size - 1);
 	rte_prefetch0(&vq->avail->ring[avail_idx]);
 	rte_prefetch0(&vq->used->ring[used_idx]);
 
+	//最多只能收到三者的最小值，求出需要收取多少个
 	count = RTE_MIN(count, MAX_PKT_BURST);
 	count = RTE_MIN(count, free_entries);
 	LOG_DEBUG(VHOST_DATA, "(%d) about to dequeue %u buffers\n",
@@ -1083,13 +1094,15 @@ rte_vhost_dequeue_burst(int vid, uint16_t queue_id,
 	for (i = 0; i < count; i++) {
 		avail_idx = (vq->last_avail_idx + i) & (vq->size - 1);
 		used_idx  = (vq->last_used_idx  + i) & (vq->size - 1);
-		desc_indexes[i] = vq->avail->ring[avail_idx];
+		desc_indexes[i] = vq->avail->ring[avail_idx];//读取描述符索引
 
+		//将读取到的索引存入vq->used->ring中
 		if (likely(dev->dequeue_zero_copy == 0))
 			update_used_ring(dev, vq, used_idx, desc_indexes[i]);
 	}
 
 	/* Prefetch descriptor index. */
+	//预取描述符索引（一个cache line,即可以预取4个desc)
 	rte_prefetch0(&vq->desc[desc_indexes[0]]);
 	for (i = 0; i < count; i++) {
 		struct vring_desc *desc;
@@ -1097,6 +1110,7 @@ rte_vhost_dequeue_burst(int vid, uint16_t queue_id,
 		int err;
 
 		if (likely(i + 1 < count))
+			//提前预取后面的
 			rte_prefetch0(&vq->desc[desc_indexes[i + 1]]);
 
 		if (vq->desc[desc_indexes[i]].flags & VRING_DESC_F_INDIRECT) {

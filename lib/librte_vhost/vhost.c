@@ -126,7 +126,7 @@ init_vring_queue(struct vhost_virtqueue *vq)
 	 * always set the vq to enabled; this is to keep compatibility
 	 * with the old QEMU, whereas there is no SET_VRING_ENABLE message.
 	 */
-	vq->enabled = 1;
+	vq->enabled = 1;//总是设置vq是开启的
 
 	TAILQ_INIT(&vq->zmbuf_list);
 }

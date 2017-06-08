@@ -1699,7 +1699,9 @@ struct rte_eth_dev_sriov {
 struct rte_eth_dev_data {
 	char name[RTE_ETH_NAME_MAX_LEN]; /**< Unique identifier name */
 
+	//收队列指针数组
 	void **rx_queues; /**< Array of pointers to RX queues. */
+	//发队列指针数组
 	void **tx_queues; /**< Array of pointers to TX queues. */
 	uint16_t nb_rx_queues; /**< Number of RX queues. */
 	uint16_t nb_tx_queues; /**< Number of TX queues. */

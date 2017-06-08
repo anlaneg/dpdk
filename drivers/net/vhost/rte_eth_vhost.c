@@ -46,6 +46,10 @@
 
 #include "rte_eth_vhost.h"
 
+//队列分两种类型（收队列，发队列）故给定一个qid
+//如果它是收，则qid*VIRTIO_QNUM + VIRTIO_RXQ
+//如果它是发，则qid*VIRTIO_QNUM + VIRTIO_TXO
+//这样向上就封装成无论收或者发都有一个0号队列（并各自计数）
 enum {VIRTIO_RXQ, VIRTIO_TXQ, VIRTIO_QNUM};
 
 #define ETH_VHOST_IFACE_ARG		"iface"
@@ -104,9 +108,9 @@ struct vhost_queue {
 	rte_atomic32_t allow_queuing;
 	rte_atomic32_t while_queuing;
 	struct pmd_internal *internal;
-	struct rte_mempool *mb_pool;
+	struct rte_mempool *mb_pool;//vq使用那个pool上的mbuf
 	uint8_t port;
-	uint16_t virtqueue_id;
+	uint16_t virtqueue_id;//虚队列编号
 	struct vhost_stats stats;
 };
 
@@ -824,6 +828,8 @@ eth_dev_close(struct rte_eth_dev *dev)
 	dev->data->dev_private = NULL;
 }
 
+//vhost收队列初始化（在那个socket_id上申请ring)
+//注：队列大小及配置参数将被忽略
 static int
 eth_rx_queue_setup(struct rte_eth_dev *dev, uint16_t rx_queue_id,
 		   uint16_t nb_rx_desc __rte_unused,
@@ -833,6 +839,7 @@ eth_rx_queue_setup(struct rte_eth_dev *dev, uint16_t rx_queue_id,
 {
 	struct vhost_queue *vq;
 
+	//申请vq，并初始化
 	vq = rte_zmalloc_socket(NULL, sizeof(struct vhost_queue),
 			RTE_CACHE_LINE_SIZE, socket_id);
 	if (vq == NULL) {
@@ -847,6 +854,8 @@ eth_rx_queue_setup(struct rte_eth_dev *dev, uint16_t rx_queue_id,
 	return 0;
 }
 
+//vhost发队列初始化
+//注：队列大小及配置参数将被忽略
 static int
 eth_tx_queue_setup(struct rte_eth_dev *dev, uint16_t tx_queue_id,
 		   uint16_t nb_tx_desc __rte_unused,
@@ -1214,6 +1223,7 @@ rte_pmd_vhost_probe(struct rte_vdev_device *dev)
 	if (dev->device.numa_node == SOCKET_ID_ANY)
 		dev->device.numa_node = rte_socket_id();
 
+	//创建vhost设备
 	eth_dev_vhost_create(dev, iface_name, queues, dev->device.numa_node,
 		flags);
 

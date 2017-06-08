@@ -85,13 +85,13 @@ TAILQ_HEAD(zcopy_mbuf_list, zcopy_mbuf);
  * Structure contains variables relevant to RX/TX virtqueues.
  */
 struct vhost_virtqueue {
-	struct vring_desc	*desc;
+	struct vring_desc	*desc;//描述符信息
 	struct vring_avail	*avail;
 	struct vring_used	*used;
-	uint32_t		size;
+	uint32_t		size;//队列大小（必须为2的N次方)
 
-	uint16_t		last_avail_idx;
-	uint16_t		last_used_idx;
+	uint16_t		last_avail_idx;//队列上一次收取位置
+	uint16_t		last_used_idx;//队列上一次发送位置
 #define VIRTIO_INVALID_EVENTFD		(-1)
 #define VIRTIO_UNINITIALIZED_EVENTFD	(-2)
 
@@ -101,7 +101,7 @@ struct vhost_virtqueue {
 	int			callfd;
 	/* Currently unused as polling mode is enabled */
 	int			kickfd;
-	int			enabled;
+	int			enabled;//队列是否启用
 
 	/* Physical address of used ring, for logging */
 	uint64_t		log_guest_addr;
@@ -182,7 +182,7 @@ struct virtio_net {
 	rte_atomic16_t		broadcast_rarp;
 	uint32_t		nr_vring;//队列数（收＋发）
 	int			dequeue_zero_copy;//是否入队是zero copy
-	struct vhost_virtqueue	*virtqueue[VHOST_MAX_QUEUE_PAIRS * 2];//vhost队列
+	struct vhost_virtqueue	*virtqueue[VHOST_MAX_QUEUE_PAIRS * 2];//设备的所有vhost队列（收＋发）
 #define IF_NAME_SZ (PATH_MAX > IFNAMSIZ ? PATH_MAX : IFNAMSIZ)
 	char			ifname[IF_NAME_SZ];//设备名称
 	uint64_t		log_size;
