@@ -57,7 +57,7 @@
  * If we encounter invalid IPV4 packet, then set destination port for it
  * to BAD_PORT value.
  */
-static inline __attribute__((always_inline)) void
+static __rte_always_inline void
 rfc1812_process(struct ipv4_hdr *ipv4_hdr, uint16_t *dp, uint32_t ptype)
 {
 	uint8_t ihl;
@@ -314,7 +314,7 @@ process_packet(struct rte_mbuf *pkt, uint16_t *dst_port)
 	_mm_storeu_si128((__m128i *)eth_hdr, te);
 }
 
-static inline __attribute__((always_inline)) void
+static __rte_always_inline void
 send_packetsx4(struct lcore_conf *qconf, uint8_t port, struct rte_mbuf *m[],
 		uint32_t num)
 {
@@ -349,12 +349,15 @@ send_packetsx4(struct lcore_conf *qconf, uint8_t port, struct rte_mbuf *m[],
 	case 0:
 		qconf->tx_mbufs[port].m_table[len + j] = m[j];
 		j++;
+		/* fall-through */
 	case 3:
 		qconf->tx_mbufs[port].m_table[len + j] = m[j];
 		j++;
+		/* fall-through */
 	case 2:
 		qconf->tx_mbufs[port].m_table[len + j] = m[j];
 		j++;
+		/* fall-through */
 	case 1:
 		qconf->tx_mbufs[port].m_table[len + j] = m[j];
 		j++;
@@ -376,12 +379,15 @@ send_packetsx4(struct lcore_conf *qconf, uint8_t port, struct rte_mbuf *m[],
 		case 0:
 			qconf->tx_mbufs[port].m_table[j] = m[n + j];
 			j++;
+			/* fall-through */
 		case 3:
 			qconf->tx_mbufs[port].m_table[j] = m[n + j];
 			j++;
+			/* fall-through */
 		case 2:
 			qconf->tx_mbufs[port].m_table[j] = m[n + j];
 			j++;
+			/* fall-through */
 		case 1:
 			qconf->tx_mbufs[port].m_table[j] = m[n + j];
 			j++;
@@ -395,7 +401,7 @@ send_packetsx4(struct lcore_conf *qconf, uint8_t port, struct rte_mbuf *m[],
 /**
  * Send packets burst from pkts_burst to the ports in dst_port array
  */
-static inline __attribute__((always_inline)) void
+static __rte_always_inline void
 send_packets_multi(struct lcore_conf *qconf, struct rte_mbuf **pkts_burst,
 		uint16_t dst_port[MAX_PKT_BURST], int nb_rx)
 {
@@ -464,10 +470,12 @@ send_packets_multi(struct lcore_conf *qconf, struct rte_mbuf **pkts_burst,
 		process_packet(pkts_burst[j], dst_port + j);
 		GROUP_PORT_STEP(dlp, dst_port, lp, pnum, j);
 		j++;
+		/* fall-through */
 	case 2:
 		process_packet(pkts_burst[j], dst_port + j);
 		GROUP_PORT_STEP(dlp, dst_port, lp, pnum, j);
 		j++;
+		/* fall-through */
 	case 1:
 		process_packet(pkts_burst[j], dst_port + j);
 		GROUP_PORT_STEP(dlp, dst_port, lp, pnum, j);
