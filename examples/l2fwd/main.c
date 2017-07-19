@@ -210,7 +210,7 @@ l2fwd_simple_forward(struct rte_mbuf *m, unsigned portid)
 	int sent;
 	struct rte_eth_dev_tx_buffer *buffer;
 
-	dst_port = l2fwd_dst_ports[portid];
+	dst_port = l2fwd_dst_ports[portid];//portid对应的dst_port
 
 	if (mac_updating)
 		l2fwd_mac_updating(m, dst_port);
@@ -304,6 +304,7 @@ l2fwd_main_loop(void)
 		 */
 		for (i = 0; i < qconf->n_rx_port; i++) {
 
+			//收取portid的报文
 			portid = qconf->rx_port_list[i];
 			nb_rx = rte_eth_rx_burst((uint8_t) portid, 0,
 						 pkts_burst, MAX_PKT_BURST);
@@ -313,7 +314,7 @@ l2fwd_main_loop(void)
 			for (j = 0; j < nb_rx; j++) {
 				m = pkts_burst[j];
 				rte_prefetch0(rte_pktmbuf_mtod(m, void *));
-				l2fwd_simple_forward(m, portid);
+				l2fwd_simple_forward(m, portid);//发送portid的报文
 			}
 		}
 	}
