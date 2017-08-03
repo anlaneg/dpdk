@@ -39,7 +39,15 @@
 #include "rte_flow_driver.h"
 #include "rte_flow.h"
 
+//rte_flow_ops定义了一组函数，本接口用于实现这组函数与port_id的直接关联
+//校验网卡是否支持此条规则
+//下发一条规则
+//删除下发的一条规则
+//删除下发的所有规则
+//查询是否下发了某条规则
+
 /* Get generic flow operations structure from a port. */
+//给定port-id，取此port-id上对应的flow操作符（通过dev_ops->filter_ctrl拿到相应函数)
 const struct rte_flow_ops *
 rte_flow_ops_get(uint8_t port_id, struct rte_flow_error *error)
 {
@@ -71,6 +79,7 @@ rte_flow_validate(uint8_t port_id,
 		  const struct rte_flow_action actions[],
 		  struct rte_flow_error *error)
 {
+	//获取到flow_ops的操作集，然后用使用操作集中的validate进行校验
 	const struct rte_flow_ops *ops = rte_flow_ops_get(port_id, error);
 	struct rte_eth_dev *dev = &rte_eth_devices[port_id];
 
@@ -87,7 +96,7 @@ rte_flow_validate(uint8_t port_id,
 struct rte_flow *
 rte_flow_create(uint8_t port_id,
 		const struct rte_flow_attr *attr,
-		const struct rte_flow_item pattern[],
+		const struct rte_flow_item pattern[],//匹配项
 		const struct rte_flow_action actions[],
 		struct rte_flow_error *error)
 {

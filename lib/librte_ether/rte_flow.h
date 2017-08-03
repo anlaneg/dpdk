@@ -59,8 +59,9 @@ extern "C" {
  * Flow rule attributes.
  *
  * Priorities are set on two levels: per group and per rule within groups.
- *
+ * 可在组及组内规则上分别设置优先级
  * Lower values denote higher priority, the highest priority for both levels
+ * 值越小，优先级越高。
  * is 0, so that a rule with priority 0 in group 8 is always matched after a
  * rule with priority 8 in group 0.
  *
@@ -107,11 +108,13 @@ struct rte_flow_attr {
  *   IPV6, ICMP, UDP, TCP, SCTP, VXLAN and so on), usually associated with a
  *   specification structure. These must be stacked in the same order as the
  *   protocol layers to match, starting from the lowest.
+ *   匹配报文中的数据
  *
  * - Matching meta-data or affecting pattern processing (END, VOID, INVERT,
  *   PF, VF, PORT and so on), often without a specification structure. Since
  *   they do not match packet contents, these can be specified anywhere
  *   within item lists without affecting others.
+ *   匹配元数据（openflow的那种方式要好些，给定寄存器，由用户来设置必要的值）
  *
  * See the description of individual types for more information. Those
  * marked with [META] fall into the second category.
@@ -125,7 +128,7 @@ enum rte_flow_item_type {
 	 *
 	 * No associated specification structure.
 	 */
-	RTE_FLOW_ITEM_TYPE_END,
+	RTE_FLOW_ITEM_TYPE_END,//标明flow-item结束
 
 	/**
 	 * [META]
@@ -135,7 +138,7 @@ enum rte_flow_item_type {
 	 *
 	 * No associated specification structure.
 	 */
-	RTE_FLOW_ITEM_TYPE_VOID,
+	RTE_FLOW_ITEM_TYPE_VOID,//占位用
 
 	/**
 	 * [META]
@@ -145,7 +148,7 @@ enum rte_flow_item_type {
 	 *
 	 * No associated specification structure.
 	 */
-	RTE_FLOW_ITEM_TYPE_INVERT,
+	RTE_FLOW_ITEM_TYPE_INVERT,//反向匹配，例如处理未命中的报文
 
 	/**
 	 * Matches any protocol in place of the current layer, a single ANY
@@ -168,7 +171,7 @@ enum rte_flow_item_type {
 	 *
 	 * No associated specification structure.
 	 */
-	RTE_FLOW_ITEM_TYPE_PF,
+	RTE_FLOW_ITEM_TYPE_PF,//区配输出至pf
 
 	/**
 	 * [META]
@@ -183,7 +186,7 @@ enum rte_flow_item_type {
 	 *
 	 * See struct rte_flow_item_vf.
 	 */
-	RTE_FLOW_ITEM_TYPE_VF,
+	RTE_FLOW_ITEM_TYPE_VF,//匹配输出至vf
 
 	/**
 	 * [META]
@@ -198,7 +201,7 @@ enum rte_flow_item_type {
 	 *
 	 * See struct rte_flow_item_port.
 	 */
-	RTE_FLOW_ITEM_TYPE_PORT,
+	RTE_FLOW_ITEM_TYPE_PORT,//匹配in_port
 
 	/**
 	 * Matches a byte string of a given length at a given offset.
@@ -399,6 +402,7 @@ static const struct rte_flow_item_port rte_flow_item_port_mask = {
  *
  * This type does not support ranges (struct rte_flow_item.last).
  */
+//比较原始的匹配方式，将报文看做是字节流，(offset,length,data)
 struct rte_flow_item_raw {
 	uint32_t relative:1; /**< Look for pattern after the previous item. */
 	uint32_t search:1; /**< Search pattern from offset (see also limit). */
@@ -746,18 +750,22 @@ struct rte_flow_item {
  * Each possible action is represented by a type. Some have associated
  * configuration structures. Several actions combined in a list can be
  * affected to a flow rule. That list is not ordered.
+ * 每个action配置跟在type后面，所有action被组织成一个list,来影响一条流规则。
  *
  * They fall in three categories:
  *
  * - Terminating actions (such as QUEUE, DROP, RSS, PF, VF) that prevent
  *   processing matched packets by subsequent flow rules, unless overridden
  *   with PASSTHRU.
+ *   终结类action
  *
  * - Non terminating actions (PASSTHRU, DUP) that leave matched packets up
  *   for additional processing by subsequent flow rules.
+ *   非终结类action
  *
  * - Other non terminating meta actions that do not affect the fate of
  *   packets (END, VOID, MARK, FLAG, COUNT).
+ *   其它的非终结action,但不影响报文的fate(命运，面对的问题？）
  *
  * When several actions are combined in a flow rule, they should all have
  * different types (e.g. dropping a packet twice is not possible).
@@ -777,7 +785,7 @@ enum rte_flow_action_type {
 	 *
 	 * No associated configuration structure.
 	 */
-	RTE_FLOW_ACTION_TYPE_END,
+	RTE_FLOW_ACTION_TYPE_END,//action处理结束
 
 	/**
 	 * [META]
@@ -787,7 +795,7 @@ enum rte_flow_action_type {
 	 *
 	 * No associated configuration structure.
 	 */
-	RTE_FLOW_ACTION_TYPE_VOID,
+	RTE_FLOW_ACTION_TYPE_VOID,//action占位
 
 	/**
 	 * Leaves packets up for additional processing by subsequent flow
@@ -807,7 +815,7 @@ enum rte_flow_action_type {
 	 *
 	 * See struct rte_flow_action_mark.
 	 */
-	RTE_FLOW_ACTION_TYPE_MARK,
+	RTE_FLOW_ACTION_TYPE_MARK,//在报文上附加一个interger值。
 
 	/**
 	 * [META]
@@ -817,14 +825,14 @@ enum rte_flow_action_type {
 	 *
 	 * No associated configuration structure.
 	 */
-	RTE_FLOW_ACTION_TYPE_FLAG,
+	RTE_FLOW_ACTION_TYPE_FLAG,//设置报文的标记位
 
 	/**
 	 * Assigns packets to a given queue index.
 	 *
 	 * See struct rte_flow_action_queue.
 	 */
-	RTE_FLOW_ACTION_TYPE_QUEUE,
+	RTE_FLOW_ACTION_TYPE_QUEUE,//设置报文到某个队列
 
 	/**
 	 * Drops packets.
@@ -833,7 +841,7 @@ enum rte_flow_action_type {
 	 *
 	 * No associated configuration structure.
 	 */
-	RTE_FLOW_ACTION_TYPE_DROP,
+	RTE_FLOW_ACTION_TYPE_DROP,//丢包
 
 	/**
 	 * [META]
@@ -845,7 +853,7 @@ enum rte_flow_action_type {
 	 *
 	 * No associated configuration structure.
 	 */
-	RTE_FLOW_ACTION_TYPE_COUNT,
+	RTE_FLOW_ACTION_TYPE_COUNT,//对此规则进行计数
 
 	/**
 	 * Duplicates packets to a given queue index.
@@ -855,7 +863,7 @@ enum rte_flow_action_type {
 	 *
 	 * See struct rte_flow_action_dup.
 	 */
-	RTE_FLOW_ACTION_TYPE_DUP,
+	RTE_FLOW_ACTION_TYPE_DUP,//复制报文到一个给定的队列
 
 	/**
 	 * Similar to QUEUE, except RSS is additionally performed on packets
@@ -872,7 +880,7 @@ enum rte_flow_action_type {
 	 *
 	 * No associated configuration structure.
 	 */
-	RTE_FLOW_ACTION_TYPE_PF,
+	RTE_FLOW_ACTION_TYPE_PF,//输出到pf
 
 	/**
 	 * Redirects packets to the virtual function (VF) of the current
@@ -880,7 +888,7 @@ enum rte_flow_action_type {
 	 *
 	 * See struct rte_flow_action_vf.
 	 */
-	RTE_FLOW_ACTION_TYPE_VF,
+	RTE_FLOW_ACTION_TYPE_VF,//输出到vr
 };
 
 /**
