@@ -66,13 +66,7 @@ struct vdev_driver_list vdev_driver_list =
 void
 rte_vdev_register(struct rte_vdev_driver *driver)
 {
-<<<<<<< HEAD
-	//注册vdev_bus
-	rte_vdev_bus_register();
-
 	//注册vdev驱动
-=======
->>>>>>> upstream/master
 	TAILQ_INSERT_TAIL(&vdev_driver_list, driver, next);
 }
 
@@ -83,32 +77,15 @@ rte_vdev_unregister(struct rte_vdev_driver *driver)
 	TAILQ_REMOVE(&vdev_driver_list, driver, next);
 }
 
-<<<<<<< HEAD
-/*
- * Parse "driver" devargs without adding a dependency on rte_kvargs.h
- */
-//解析"driver="后的值
-static char *parse_driver_arg(const char *args)
-=======
 static int
 vdev_parse(const char *name, void *addr)
->>>>>>> upstream/master
 {
 	struct rte_vdev_driver **out = addr;
 	struct rte_vdev_driver *driver = NULL;
 
-<<<<<<< HEAD
-	c = args;
-
-	do {
-		//取driver=后的参数
-		if (strncmp(c, "driver=", 7) == 0) {
-			c += 7;
-=======
 	TAILQ_FOREACH(driver, &vdev_driver_list, next) {
 		if (strncmp(driver->driver.name, name,
 			    strlen(driver->driver.name)) == 0)
->>>>>>> upstream/master
 			break;
 		if (driver->driver.alias &&
 		    strncmp(driver->driver.alias, name,
@@ -129,63 +106,18 @@ vdev_probe_all_drivers(struct rte_vdev_device *dev)
 	struct rte_vdev_driver *driver;
 	int ret;
 
-<<<<<<< HEAD
 	//取出driver名称
-	drv_name = parse_driver_arg(rte_vdev_device_args(dev));
-	name = drv_name ? drv_name : rte_vdev_device_name(dev);
-=======
 	name = rte_vdev_device_name(dev);
->>>>>>> upstream/master
 
 	RTE_LOG(DEBUG, EAL, "Search driver %s to probe device %s\n", name,
 		rte_vdev_device_name(dev));
 
-<<<<<<< HEAD
-	TAILQ_FOREACH(driver, &vdev_driver_list, next) {
-		/*
-		 * search a driver prefix in virtual device name.
-		 * For example, if the driver is pcap PMD, driver->name
-		 * will be "net_pcap", but "name" will be "net_pcapN".
-		 * So use strncmp to compare.
-		 */
-		//尝试name前缀匹配或者全匹配
-		if (!strncmp(driver->driver.name, name,
-			    strlen(driver->driver.name))) {
-
-			//找到相应驱动，进行探测
-			dev->device.driver = &driver->driver;
-			ret = driver->probe(dev);
-			if (ret)
-				//探测失败，置空
-				dev->device.driver = NULL;
-			goto out;
-		}
-	}
-
-	/* Give new names precedence over aliases. */
-	//按别名探测
-	TAILQ_FOREACH(driver, &vdev_driver_list, next) {
-		if (driver->driver.alias &&
-		    !strncmp(driver->driver.alias, name,
-			    strlen(driver->driver.alias))) {
-			dev->device.driver = &driver->driver;
-			ret = driver->probe(dev);
-			if (ret)
-				dev->device.driver = NULL;
-			break;
-		}
-	}
-
-out:
-	free(drv_name);
-=======
 	if (vdev_parse(name, &driver))
 		return -1;
 	dev->device.driver = &driver->driver;
 	ret = driver->probe(dev);
 	if (ret)
 		dev->device.driver = NULL;
->>>>>>> upstream/master
 	return ret;
 }
 
@@ -337,19 +269,10 @@ vdev_scan(void)
 	/* for virtual devices we scan the devargs_list populated via cmdline */
 	TAILQ_FOREACH(devargs, &devargs_list, next) {
 
-<<<<<<< HEAD
-		//只扫描vdev设备
-		if (devargs->type != RTE_DEVTYPE_VIRTUAL)
-			continue;
-
-		//检查是否已创建此设备，如果创建，则跳过
-		dev = find_vdev(devargs->virt.drv_name);
-=======
 		if (devargs->bus != &rte_vdev_bus)
 			continue;
 
 		dev = find_vdev(devargs->name);
->>>>>>> upstream/master
 		if (dev)
 			continue;
 
@@ -392,19 +315,11 @@ vdev_probe(void)
 	return 0;
 }
 
-<<<<<<< HEAD
-//vdev bus定义
-static struct rte_bus rte_vdev_bus = {
-	.scan = vdev_scan,
-	.probe = vdev_probe,
-};
-=======
 static struct rte_device *
 vdev_find_device(const struct rte_device *start, rte_dev_cmp_t cmp,
 		 const void *data)
 {
 	struct rte_vdev_device *dev;
->>>>>>> upstream/master
 
 	TAILQ_FOREACH(dev, &vdev_device_list, next) {
 		if (start && &dev->device == start) {

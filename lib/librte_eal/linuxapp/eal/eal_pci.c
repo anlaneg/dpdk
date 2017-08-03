@@ -321,12 +321,8 @@ pci_scan_one(const char *dirname, const struct rte_pci_addr *addr)
 			dev->max_vfs = (uint16_t)tmp;
 	}
 
-<<<<<<< HEAD
-	/* get numa node */
-	//获取numa节点
-=======
 	/* get numa node, default to 0 if not present */
->>>>>>> upstream/master
+	//获取numa节点
 	snprintf(filename, sizeof(filename), "%s/numa_node",
 		 dirname);
 
@@ -339,13 +335,7 @@ pci_scan_one(const char *dirname, const struct rte_pci_addr *addr)
 		dev->device.numa_node = 0;
 	}
 
-<<<<<<< HEAD
-	//格式化addr到dev->name
-	rte_pci_device_name(addr, dev->name, sizeof(dev->name));
-	dev->device.name = dev->name;
-=======
 	pci_name_set(dev);
->>>>>>> upstream/master
 
 	/* parse resources */
 	snprintf(filename, sizeof(filename), "%s/resource", dirname);

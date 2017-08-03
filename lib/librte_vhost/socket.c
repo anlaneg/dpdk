@@ -673,18 +673,14 @@ rte_vhost_driver_register(const char *path, uint64_t flags)
 		goto out;
 	}
 	TAILQ_INIT(&vsocket->conn_list);
-<<<<<<< HEAD
-	pthread_mutex_init(&vsocket->conn_mutex, NULL);
-
-	//是否开启出队zero copy
-=======
 	ret = pthread_mutex_init(&vsocket->conn_mutex, NULL);
 	if (ret) {
 		RTE_LOG(ERR, VHOST_CONFIG,
 			"error: failed to init connection mutex\n");
 		goto out_free;
 	}
->>>>>>> upstream/master
+
+	//是否开启出队zero copy
 	vsocket->dequeue_zero_copy = flags & RTE_VHOST_USER_DEQUEUE_ZERO_COPY;
 
 	/*

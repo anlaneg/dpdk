@@ -174,17 +174,12 @@ vhost_user_set_features(struct virtio_net *dev, uint64_t features)
 	uint64_t vhost_features = 0;
 
 	rte_vhost_driver_get_features(dev->ifname, &vhost_features);
-<<<<<<< HEAD
-	if (features & ~vhost_features)
-		return -1;//设置的功能是我们当前没有的功能，返失败
-=======
 	if (features & ~vhost_features) {
 		RTE_LOG(ERR, VHOST_CONFIG,
 			"(%d) received invalid negotiated features.\n",
 			dev->vid);
-		return -1;
+		return -1;//设置的功能是我们当前没有的功能，返失败
 	}
->>>>>>> upstream/master
 
 	//设备已开始运行，但功能将发生变化，通知功能变化
 	if ((dev->flags & VIRTIO_DEV_RUNNING) && dev->features != features) {
@@ -782,13 +777,9 @@ vhost_user_set_vring_enable(struct virtio_net *dev,
 		enable, msg->payload.state.index);
 
 	if (dev->notify_ops->vring_state_changed)
-<<<<<<< HEAD
 		//通知vring状态发生变化
-		dev->notify_ops->vring_state_changed(dev->vid, state->index, enable);
-=======
 		dev->notify_ops->vring_state_changed(dev->vid,
 				msg->payload.state.index, enable);
->>>>>>> upstream/master
 
 	dev->virtqueue[msg->payload.state.index]->enabled = enable;
 

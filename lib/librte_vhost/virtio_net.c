@@ -115,17 +115,13 @@ update_shadow_used_ring(struct vhost_virtqueue *vq,
 static void
 virtio_enqueue_offload(struct rte_mbuf *m_buf, struct virtio_net_hdr *net_hdr)
 {
-<<<<<<< HEAD
 	//入队时，将mbuf上的标记，转到net_hdr中
-	if (m_buf->ol_flags & PKT_TX_L4_MASK) {
-=======
 	uint64_t csum_l4 = m_buf->ol_flags & PKT_TX_L4_MASK;
 
 	if (m_buf->ol_flags & PKT_TX_TCP_SEG)
 		csum_l4 |= PKT_TX_TCP_CKSUM;
 
 	if (csum_l4) {
->>>>>>> upstream/master
 		net_hdr->flags = VIRTIO_NET_HDR_F_NEEDS_CSUM;
 		net_hdr->csum_start = m_buf->l2_len + m_buf->l3_len;
 

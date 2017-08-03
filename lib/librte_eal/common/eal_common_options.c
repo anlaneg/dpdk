@@ -1182,12 +1182,8 @@ eal_adjust_config(struct internal_config *internal_cfg)
 		internal_config.process_type = eal_proc_type_detect();
 
 	/* default master lcore is the first one */
-<<<<<<< HEAD
 	//如果未指定master core，则选择第一个开启的core做为master core
-	if (!master_lcore_parsed)
-=======
 	if (!master_lcore_parsed) {
->>>>>>> upstream/master
 		cfg->master_lcore = rte_get_next_lcore(-1, 0, 0);
 		lcore_config[cfg->master_lcore].core_role = ROLE_RTE;
 	}

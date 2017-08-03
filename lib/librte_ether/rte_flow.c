@@ -43,14 +43,12 @@
 #include "rte_flow_driver.h"
 #include "rte_flow.h"
 
-<<<<<<< HEAD
 //rte_flow_ops定义了一组函数，本接口用于实现这组函数与port_id的直接关联
 //校验网卡是否支持此条规则
 //下发一条规则
 //删除下发的一条规则
 //删除下发的所有规则
 //查询是否下发了某条规则
-=======
 /**
  * Flow elements description tables.
  */
@@ -113,7 +111,6 @@ static const struct rte_flow_desc_data rte_flow_desc_action[] = {
 	MK_FLOW_ACTION(PF, 0),
 	MK_FLOW_ACTION(VF, sizeof(struct rte_flow_action_vf)),
 };
->>>>>>> upstream/master
 
 /* Get generic flow operations structure from a port. */
 //给定port-id，取此port-id上对应的flow操作符（通过dev_ops->filter_ctrl拿到相应函数)

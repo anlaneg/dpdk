@@ -199,20 +199,15 @@ eal_thread_loop(__attribute__((unused)) void *arg)
 		lcore_config[lcore_id].ret = ret;
 		rte_wmb();
 
-<<<<<<< HEAD
-		//工作完成，置自已为finish状态
-		lcore_config[lcore_id].state = FINISHED;
-
-		//让我们愉快的进行下一轮玩耍吧！
-=======
 		/* when a service core returns, it should go directly to WAIT
 		 * state, because the application will not lcore_wait() for it.
 		 */
 		if (lcore_config[lcore_id].core_role == ROLE_SERVICE)
 			lcore_config[lcore_id].state = WAIT;
 		else
+			//工作完成，置自已为finish状态
 			lcore_config[lcore_id].state = FINISHED;
->>>>>>> upstream/master
+		//让我们愉快的进行下一轮玩耍吧！
 	}
 
 	/* never reached */

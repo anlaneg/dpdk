@@ -46,9 +46,6 @@ struct rte_vdev_device {
 	struct rte_device device;               /**< Inherit core device */
 };
 
-<<<<<<< HEAD
-//获取虚设备名称
-=======
 /**
  * @internal
  * Helper macro for drivers that need to convert to struct rte_vdev_device.
@@ -56,7 +53,7 @@ struct rte_vdev_device {
 #define RTE_DEV_TO_VDEV(ptr) \
 	container_of(ptr, struct rte_vdev_device, device)
 
->>>>>>> upstream/master
+//获取虚设备名称
 static inline const char *
 rte_vdev_device_name(const struct rte_vdev_device *dev)
 {
