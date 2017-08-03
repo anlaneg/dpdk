@@ -62,7 +62,7 @@ rte_delay_us_block(unsigned int us)
 uint64_t
 rte_get_tsc_hz(void)
 {
-	return eal_tsc_resolution_hz;
+	return eal_tsc_resolution_hz;//认为每秒rdtsc增加数
 }
 
 static uint64_t
@@ -73,7 +73,7 @@ estimate_tsc_freq(void)
 	/* assume that the sleep(1) will sleep for 1 second */
 	uint64_t start = rte_rdtsc();
 	sleep(1);
-	return rte_rdtsc() - start;
+	return rte_rdtsc() - start;//通过sleep(1)秒来获得时钟增加的量
 }
 
 void
