@@ -361,8 +361,13 @@ sfc_dev_filter_set(struct rte_eth_dev *dev, enum sfc_dev_filter_mode mode,
 	if (*toggle != enabled) {
 		*toggle = enabled;
 
-		if ((sa->state == SFC_ADAPTER_STARTED) &&
-		    (sfc_set_rx_mode(sa) != 0)) {
+		if (port->isolated) {
+			sfc_warn(sa, "isolated mode is active on the port");
+			sfc_warn(sa, "the change is to be applied on the next "
+				     "start provided that isolated mode is "
+				     "disabled prior the next start");
+		} else if ((sa->state == SFC_ADAPTER_STARTED) &&
+			   (sfc_set_rx_mode(sa) != 0)) {
 			*toggle = !(enabled);
 			sfc_warn(sa, "Failed to %s %s mode",
 				 ((enabled) ? "enable" : "disable"), desc);
@@ -661,6 +666,85 @@ sfc_xstats_get_names(struct rte_eth_dev *dev,
 }
 
 static int
+sfc_xstats_get_by_id(struct rte_eth_dev *dev, const uint64_t *ids,
+		     uint64_t *values, unsigned int n)
+{
+	struct sfc_adapter *sa = dev->data->dev_private;
+	struct sfc_port *port = &sa->port;
+	uint64_t *mac_stats;
+	unsigned int nb_supported = 0;
+	unsigned int nb_written = 0;
+	unsigned int i;
+	int ret;
+	int rc;
+
+	if (unlikely(values == NULL) ||
+	    unlikely((ids == NULL) && (n < port->mac_stats_nb_supported)))
+		return port->mac_stats_nb_supported;
+
+	rte_spinlock_lock(&port->mac_stats_lock);
+
+	rc = sfc_port_update_mac_stats(sa);
+	if (rc != 0) {
+		SFC_ASSERT(rc > 0);
+		ret = -rc;
+		goto unlock;
+	}
+
+	mac_stats = port->mac_stats_buf;
+
+	for (i = 0; (i < EFX_MAC_NSTATS) && (nb_written < n); ++i) {
+		if (!EFX_MAC_STAT_SUPPORTED(port->mac_stats_mask, i))
+			continue;
+
+		if ((ids == NULL) || (ids[nb_written] == nb_supported))
+			values[nb_written++] = mac_stats[i];
+
+		++nb_supported;
+	}
+
+	ret = nb_written;
+
+unlock:
+	rte_spinlock_unlock(&port->mac_stats_lock);
+
+	return ret;
+}
+
+static int
+sfc_xstats_get_names_by_id(struct rte_eth_dev *dev,
+			   struct rte_eth_xstat_name *xstats_names,
+			   const uint64_t *ids, unsigned int size)
+{
+	struct sfc_adapter *sa = dev->data->dev_private;
+	struct sfc_port *port = &sa->port;
+	unsigned int nb_supported = 0;
+	unsigned int nb_written = 0;
+	unsigned int i;
+
+	if (unlikely(xstats_names == NULL) ||
+	    unlikely((ids == NULL) && (size < port->mac_stats_nb_supported)))
+		return port->mac_stats_nb_supported;
+
+	for (i = 0; (i < EFX_MAC_NSTATS) && (nb_written < size); ++i) {
+		if (!EFX_MAC_STAT_SUPPORTED(port->mac_stats_mask, i))
+			continue;
+
+		if ((ids == NULL) || (ids[nb_written] == nb_supported)) {
+			char *name = xstats_names[nb_written++].name;
+
+			strncpy(name, efx_mac_stat_name(sa->nic, i),
+				sizeof(xstats_names[0].name));
+			name[sizeof(xstats_names[0].name) - 1] = '\0';
+		}
+
+		++nb_supported;
+	}
+
+	return nb_written;
+}
+
+static int
 sfc_flow_ctrl_get(struct rte_eth_dev *dev, struct rte_eth_fc_conf *fc_conf)
 {
 	struct sfc_adapter *sa = dev->data->dev_private;
@@ -826,9 +910,16 @@ sfc_mac_addr_set(struct rte_eth_dev *dev, struct ether_addr *mac_addr)
 {
 	struct sfc_adapter *sa = dev->data->dev_private;
 	const efx_nic_cfg_t *encp = efx_nic_cfg_get(sa->nic);
+	struct sfc_port *port = &sa->port;
 	int rc;
 
 	sfc_adapter_lock(sa);
+
+	if (port->isolated) {
+		sfc_err(sa, "isolated mode is active on the port");
+		sfc_err(sa, "will not set MAC address");
+		goto unlock;
+	}
 
 	if (sa->state != SFC_ADAPTER_STARTED) {
 		sfc_info(sa, "the port is not started");
@@ -883,6 +974,12 @@ sfc_set_mc_addr_list(struct rte_eth_dev *dev, struct ether_addr *mc_addr_set,
 	uint8_t *mc_addrs = port->mcast_addrs;
 	int rc;
 	unsigned int i;
+
+	if (port->isolated) {
+		sfc_err(sa, "isolated mode is active on the port");
+		sfc_err(sa, "will not set multicast address list");
+		return -ENOTSUP;
+	}
 
 	if (mc_addrs == NULL)
 		return -ENOBUFS;
@@ -1091,8 +1188,9 @@ sfc_dev_rss_hash_conf_get(struct rte_eth_dev *dev,
 			  struct rte_eth_rss_conf *rss_conf)
 {
 	struct sfc_adapter *sa = dev->data->dev_private;
+	struct sfc_port *port = &sa->port;
 
-	if (sa->rss_support != EFX_RX_SCALE_EXCLUSIVE)
+	if ((sa->rss_support != EFX_RX_SCALE_EXCLUSIVE) || port->isolated)
 		return -ENOTSUP;
 
 	if (sa->rss_channels == 0)
@@ -1121,8 +1219,12 @@ sfc_dev_rss_hash_update(struct rte_eth_dev *dev,
 			struct rte_eth_rss_conf *rss_conf)
 {
 	struct sfc_adapter *sa = dev->data->dev_private;
+	struct sfc_port *port = &sa->port;
 	unsigned int efx_hash_types;
 	int rc = 0;
+
+	if (port->isolated)
+		return -ENOTSUP;
 
 	if (sa->rss_support != EFX_RX_SCALE_EXCLUSIVE) {
 		sfc_err(sa, "RSS is not available");
@@ -1188,9 +1290,10 @@ sfc_dev_rss_reta_query(struct rte_eth_dev *dev,
 		       uint16_t reta_size)
 {
 	struct sfc_adapter *sa = dev->data->dev_private;
+	struct sfc_port *port = &sa->port;
 	int entry;
 
-	if (sa->rss_support != EFX_RX_SCALE_EXCLUSIVE)
+	if ((sa->rss_support != EFX_RX_SCALE_EXCLUSIVE) || port->isolated)
 		return -ENOTSUP;
 
 	if (sa->rss_channels == 0)
@@ -1220,10 +1323,14 @@ sfc_dev_rss_reta_update(struct rte_eth_dev *dev,
 			uint16_t reta_size)
 {
 	struct sfc_adapter *sa = dev->data->dev_private;
+	struct sfc_port *port = &sa->port;
 	unsigned int *rss_tbl_new;
 	uint16_t entry;
 	int rc;
 
+
+	if (port->isolated)
+		return -ENOTSUP;
 
 	if (sa->rss_support != EFX_RX_SCALE_EXCLUSIVE) {
 		sfc_err(sa, "RSS is not available");
@@ -1378,6 +1485,8 @@ static const struct eth_dev_ops sfc_eth_dev_ops = {
 	.rxq_info_get			= sfc_rx_queue_info_get,
 	.txq_info_get			= sfc_tx_queue_info_get,
 	.fw_version_get			= sfc_fw_version_get,
+	.xstats_get_by_id		= sfc_xstats_get_by_id,
+	.xstats_get_names_by_id		= sfc_xstats_get_names_by_id,
 };
 
 /**

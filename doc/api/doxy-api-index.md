@@ -33,14 +33,14 @@ API {#index}
   OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 -->
 
-There are many libraries, so their headers may be grouped by topics:
+The public API headers are grouped by topics:
 
 - **device**:
   [dev]                (@ref rte_dev.h),
   [ethdev]             (@ref rte_ethdev.h),
   [ethctrl]            (@ref rte_eth_ctrl.h),
   [rte_flow]           (@ref rte_flow.h),
-  [rte_flow_driver]    (@ref rte_flow_driver.h),
+  [rte_tm]             (@ref rte_tm.h),
   [cryptodev]          (@ref rte_cryptodev.h),
   [eventdev]           (@ref rte_eventdev.h),
   [devargs]            (@ref rte_devargs.h),
@@ -77,6 +77,7 @@ There are many libraries, so their headers may be grouped by topics:
   [SIMD]               (@ref rte_vect.h),
   [byte order]         (@ref rte_byteorder.h),
   [CPU flags]          (@ref rte_cpuflags.h),
+  [CPU pause]          (@ref rte_pause.h),
   [I/O access]         (@ref rte_io.h)
 
 - **CPU multicore**:
@@ -84,6 +85,7 @@ There are many libraries, so their headers may be grouped by topics:
   [launch]             (@ref rte_launch.h),
   [lcore]              (@ref rte_lcore.h),
   [per-lcore]          (@ref rte_per_lcore.h),
+  [service cores]      (@ref rte_service.h),
   [power/freq]         (@ref rte_power.h)
 
 - **layers**:
@@ -94,6 +96,7 @@ There are many libraries, so their headers may be grouped by topics:
   [SCTP]               (@ref rte_sctp.h),
   [TCP]                (@ref rte_tcp.h),
   [UDP]                (@ref rte_udp.h),
+  [GRO]                (@ref rte_gro.h),
   [frag/reass]         (@ref rte_ip_frag.h),
   [LPM IPv4 route]     (@ref rte_lpm.h),
   [LPM IPv6 route]     (@ref rte_lpm6.h),

@@ -61,6 +61,7 @@ extern "C" {
 enum rte_lcore_role_t {
 	ROLE_RTE,
 	ROLE_OFF,
+	ROLE_SERVICE,
 };
 
 /**
@@ -78,9 +79,16 @@ enum rte_proc_type_t {
  * The global RTE configuration structure.
  */
 struct rte_config {
+<<<<<<< HEAD
 	uint32_t master_lcore;       /**< Id of the master lcore */ //master线程用那个逻辑core
 	uint32_t lcore_count;        /**< Number of available logical cores. */ //有多少个逻辑core（-c指定后，更新为有多少有效core)
 	enum rte_lcore_role_t lcore_role[RTE_MAX_LCORE]; /**< State of cores. */ //记录用户启用了那些core,未用哪些core
+=======
+	uint32_t master_lcore;       /**< Id of the master lcore */
+	uint32_t lcore_count;        /**< Number of available logical cores. */
+	uint32_t service_lcore_count;/**< Number of available service cores. */
+	enum rte_lcore_role_t lcore_role[RTE_MAX_LCORE]; /**< State of cores. */
+>>>>>>> upstream/master
 
 	/** Primary or secondary configuration */
 	enum rte_proc_type_t process_type;
@@ -185,6 +193,8 @@ int rte_eal_iopl_init(void);
  *
  *     EPROTO indicates that the PCI bus is either not present, or is not
  *            readable by the eal.
+ *
+ *     ENOEXEC indicates that a service core failed to launch successfully.
  */
 int rte_eal_init(int argc, char **argv);
 
@@ -285,6 +295,9 @@ static inline int rte_gettid(void)
 
 #define RTE_INIT(func) \
 static void __attribute__((constructor, used)) func(void)
+
+#define RTE_INIT_PRIO(func, prio) \
+static void __attribute__((constructor(prio), used)) func(void)
 
 #ifdef __cplusplus
 }

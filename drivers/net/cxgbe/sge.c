@@ -57,7 +57,6 @@
 #include <rte_alarm.h>
 #include <rte_ether.h>
 #include <rte_ethdev.h>
-#include <rte_atomic.h>
 #include <rte_malloc.h>
 #include <rte_random.h>
 #include <rte_dev.h>
@@ -415,7 +414,11 @@ static unsigned int refill_fl_usembufs(struct adapter *adap, struct sge_fl *q,
 		}
 
 		rte_mbuf_refcnt_set(mbuf, 1);
-		mbuf->data_off = RTE_PKTMBUF_HEADROOM;
+		mbuf->data_off =
+			(uint16_t)(RTE_PTR_ALIGN((char *)mbuf->buf_addr +
+						 RTE_PKTMBUF_HEADROOM,
+						 adap->sge.fl_align) -
+				   (char *)mbuf->buf_addr);
 		mbuf->next = NULL;
 		mbuf->nb_segs = 1;
 		mbuf->port = rxq->rspq.port_id;

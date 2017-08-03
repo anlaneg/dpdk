@@ -38,6 +38,7 @@
 #include <stdbool.h>
 #include <sys/queue.h>
 
+#include <rte_pci.h>
 #include <rte_ethdev.h>
 #include <rte_memory.h>
 #include <rte_lcore.h>
@@ -96,9 +97,16 @@ struct bnxt_vlan_table_entry {
 	uint16_t		vid;
 } __attribute__((packed));
 
+struct bnxt_vlan_antispoof_table_entry {
+	uint16_t		tpid;
+	uint16_t		vid;
+	uint16_t		mask;
+} __attribute__((packed));
+
 struct bnxt_child_vf_info {
 	void			*req_buf;
 	struct bnxt_vlan_table_entry	*vlan_table;
+	struct bnxt_vlan_antispoof_table_entry	*vlan_as_table;
 	STAILQ_HEAD(, bnxt_filter_info)	filter;
 	uint32_t		func_cfg_flags;
 	uint32_t		l2_rx_mask;
@@ -109,6 +117,7 @@ struct bnxt_child_vf_info {
 	uint8_t			mac_spoof_en;
 	uint8_t			vlan_spoof_en;
 	bool			random_mac;
+	bool			persist_stats;
 };
 
 struct bnxt_pf_info {
@@ -162,6 +171,7 @@ struct bnxt_cos_queue_info {
 	uint8_t	profile;
 };
 
+#define BNXT_HWRM_SHORT_REQ_LEN		sizeof(struct hwrm_short_input)
 struct bnxt {
 	void				*bar0;
 
@@ -173,6 +183,7 @@ struct bnxt {
 #define BNXT_FLAG_VF		(1 << 1)
 #define BNXT_FLAG_PORT_STATS	(1 << 2)
 #define BNXT_FLAG_JUMBO		(1 << 3)
+#define BNXT_FLAG_SHORT_CMD	(1 << 4)
 #define BNXT_PF(bp)		(!((bp)->flags & BNXT_FLAG_VF))
 #define BNXT_VF(bp)		((bp)->flags & BNXT_FLAG_VF)
 #define BNXT_NPAR_ENABLED(bp)	((bp)->port_partition_type)
@@ -217,6 +228,8 @@ struct bnxt {
 	uint16_t			hwrm_cmd_seq;
 	void				*hwrm_cmd_resp_addr;
 	phys_addr_t			hwrm_cmd_resp_dma_addr;
+	void				*hwrm_short_cmd_req_addr;
+	phys_addr_t			hwrm_short_cmd_req_dma_addr;
 	rte_spinlock_t			hwrm_lock;
 	uint16_t			max_req_len;
 	uint16_t			max_resp_len;

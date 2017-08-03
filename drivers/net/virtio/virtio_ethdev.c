@@ -424,7 +424,7 @@ virtio_init_queue(struct rte_eth_dev *dev, uint16_t vtpci_queue_idx)
 		}
 	}
 
-	memset(mz->addr, 0, sizeof(mz->len));
+	memset(mz->addr, 0, mz->len);
 
 	vq->vq_ring_mem = mz->phys_addr;
 	vq->vq_ring_virt_mem = mz->addr;
@@ -1229,7 +1229,8 @@ virtio_interrupt_handler(void *param)
 	if (isr & VIRTIO_PCI_ISR_CONFIG) {
 		if (virtio_dev_link_update(dev, 0) == 0)
 			_rte_eth_dev_callback_process(dev,
-						      RTE_ETH_EVENT_INTR_LSC, NULL);
+						      RTE_ETH_EVENT_INTR_LSC,
+						      NULL, NULL);
 	}
 
 }
@@ -1658,37 +1659,26 @@ virtio_dev_configure(struct rte_eth_dev *dev)
 {
 	const struct rte_eth_rxmode *rxmode = &dev->data->dev_conf.rxmode;
 	struct virtio_hw *hw = dev->data->dev_private;
-	uint64_t req_features;
 	int ret;
 
 	PMD_INIT_LOG(DEBUG, "configure");
-	req_features = VIRTIO_PMD_DEFAULT_GUEST_FEATURES;
-	if (rxmode->hw_ip_checksum)
-		req_features |= (1ULL << VIRTIO_NET_F_GUEST_CSUM);
-	if (rxmode->enable_lro)
-		req_features |=
-			(1ULL << VIRTIO_NET_F_GUEST_TSO4) |
-			(1ULL << VIRTIO_NET_F_GUEST_TSO6);
 
-	/* if request features changed, reinit the device */
-	if (req_features != hw->req_guest_features) {
-		ret = virtio_init_device(dev, req_features);
+	if (dev->data->dev_conf.intr_conf.rxq) {
+		ret = virtio_init_device(dev, hw->req_guest_features);
 		if (ret < 0)
 			return ret;
 	}
 
-	if (rxmode->hw_ip_checksum &&
-		!vtpci_with_feature(hw, VIRTIO_NET_F_GUEST_CSUM)) {
+	/* Virtio does L4 checksum but not L3! */
+	if (rxmode->hw_ip_checksum) {
 		PMD_DRV_LOG(NOTICE,
-			"rx ip checksum not available on this host");
+			    "virtio does not support IP checksum");
 		return -ENOTSUP;
 	}
 
-	if (rxmode->enable_lro &&
-		(!vtpci_with_feature(hw, VIRTIO_NET_F_GUEST_TSO4) ||
-			!vtpci_with_feature(hw, VIRTIO_NET_F_GUEST_TSO4))) {
+	if (rxmode->enable_lro) {
 		PMD_DRV_LOG(NOTICE,
-			"lro not available on this host");
+			    "virtio does not support Large Receive Offload");
 		return -ENOTSUP;
 	}
 
@@ -1914,8 +1904,6 @@ virtio_dev_info_get(struct rte_eth_dev *dev, struct rte_eth_dev_info *dev_info)
 	}
 	tso_mask = (1ULL << VIRTIO_NET_F_GUEST_TSO4) |
 		(1ULL << VIRTIO_NET_F_GUEST_TSO6);
-	if ((host_features & tso_mask) == tso_mask)
-		dev_info->rx_offload_capa |= DEV_RX_OFFLOAD_TCP_LRO;
 
 	dev_info->tx_offload_capa = 0;
 	if (hw->guest_features & (1ULL << VIRTIO_NET_F_CSUM)) {

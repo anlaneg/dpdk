@@ -48,6 +48,9 @@ int bnxt_hwrm_cfa_l2_clear_rx_mask(struct bnxt *bp,
 int bnxt_hwrm_cfa_l2_set_rx_mask(struct bnxt *bp, struct bnxt_vnic_info *vnic,
 				 uint16_t vlan_count,
 				 struct bnxt_vlan_table_entry *vlan_table);
+int bnxt_hwrm_cfa_vlan_antispoof_cfg(struct bnxt *bp, uint16_t fid,
+			uint16_t vlan_count,
+			struct bnxt_vlan_antispoof_table_entry *vlan_table);
 int bnxt_hwrm_clear_filter(struct bnxt *bp,
 			   struct bnxt_filter_info *filter);
 int bnxt_hwrm_set_filter(struct bnxt *bp,
@@ -142,10 +145,11 @@ int bnxt_hwrm_port_qstats(struct bnxt *bp);
 int bnxt_hwrm_port_clr_stats(struct bnxt *bp);
 int bnxt_hwrm_port_led_cfg(struct bnxt *bp, bool led_on);
 int bnxt_hwrm_port_led_qcaps(struct bnxt *bp);
-int bnxt_hwrm_func_cfg_vf_set_flags(struct bnxt *bp, uint16_t vf);
+int bnxt_hwrm_func_cfg_vf_set_flags(struct bnxt *bp, uint16_t vf,
+					uint32_t flags);
 void vf_vnic_set_rxmask_cb(struct bnxt_vnic_info *vnic, void *flagp);
 int bnxt_set_rx_mask_no_vlan(struct bnxt *bp, struct bnxt_vnic_info *vnic);
-int bnxt_vf_default_vnic_count(struct bnxt *bp, uint16_t vf);
+int bnxt_vf_vnic_count(struct bnxt *bp, uint16_t vf);
 int bnxt_hwrm_func_vf_vnic_query_and_config(struct bnxt *bp, uint16_t vf,
 	void (*vnic_cb)(struct bnxt_vnic_info *, void *), void *cbdata,
 	int (*hwrm_cb)(struct bnxt *bp, struct bnxt_vnic_info *vnic));

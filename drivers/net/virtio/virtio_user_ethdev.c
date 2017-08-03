@@ -35,7 +35,6 @@
 #include <sys/types.h>
 #include <unistd.h>
 #include <fcntl.h>
-#include <sys/types.h>
 #include <sys/socket.h>
 
 #include <rte_malloc.h>
@@ -390,7 +389,7 @@ virtio_user_eth_dev_free(struct rte_eth_dev *eth_dev)
 }
 
 /* Dev initialization routine. Invoked once for each virtio vdev at
- * EAL init time, see rte_eal_dev_init().
+ * EAL init time, see rte_bus_probe().
  * Returns 0 on success.
  */
 //vritio 探测
@@ -569,7 +568,6 @@ virtio_user_pmd_remove(struct rte_vdev_device *vdev)
 	virtio_user_dev_uninit(dev);
 
 	rte_free(eth_dev->data->dev_private);
-	rte_free(eth_dev->data);
 	rte_eth_dev_release_port(eth_dev);
 
 	return 0;

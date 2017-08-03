@@ -2,7 +2,7 @@
  *   BSD LICENSE
  *
  *   Copyright (c) 2015-2016 Freescale Semiconductor, Inc. All rights reserved.
- *   Copyright (c) 2016 NXP. All rights reserved.
+ *   Copyright 2016 NXP.
  *
  *   Redistribution and use in source and binary forms, with or without
  *   modification, are permitted provided that the following conditions
@@ -40,7 +40,6 @@
 #include <errno.h>
 #include <sys/ioctl.h>
 #include <sys/stat.h>
-#include <sys/types.h>
 #include <sys/mman.h>
 #include <sys/vfs.h>
 #include <libgen.h>
@@ -55,7 +54,6 @@
 #include <rte_cycles.h>
 #include <rte_kvargs.h>
 #include <rte_dev.h>
-#include <rte_ethdev.h>
 #include <rte_bus.h>
 
 #include "rte_fslmc.h"
@@ -80,6 +78,17 @@ static uint32_t *msi_intr_vaddr;
 void *(*rte_mcp_ptr_list);
 static uint32_t mcp_id;
 static int is_dma_done;
+static struct rte_fslmc_object_list fslmc_obj_list =
+	TAILQ_HEAD_INITIALIZER(fslmc_obj_list);
+
+/*register a fslmc bus based dpaa2 driver */
+void
+rte_fslmc_object_register(struct rte_dpaa2_object *object)
+{
+	RTE_VERIFY(object);
+
+	TAILQ_INSERT_TAIL(&fslmc_obj_list, object, next);
+}
 
 static int vfio_connect_container(struct fslmc_vfio_group *vfio_group)
 {
@@ -177,29 +186,6 @@ static int vfio_map_irq_region(struct fslmc_vfio_group *group)
 	return -errno;
 }
 
-int vfio_dmamap_mem_region(uint64_t vaddr,
-			   uint64_t iova,
-			   uint64_t size)
-{
-	struct fslmc_vfio_group *group;
-	struct vfio_iommu_type1_dma_map dma_map = {
-		.argsz = sizeof(dma_map),
-		.flags = VFIO_DMA_MAP_FLAG_READ | VFIO_DMA_MAP_FLAG_WRITE,
-	};
-
-	dma_map.vaddr = vaddr;
-	dma_map.size = size;
-	dma_map.iova = iova;
-
-	/* SET DMA MAP for IOMMU */
-	group = &vfio_groups[0];
-	if (ioctl(group->container->fd, VFIO_IOMMU_MAP_DMA, &dma_map)) {
-		FSLMC_VFIO_LOG(ERR, "VFIO_IOMMU_MAP_DMA (errno = %d)", errno);
-		return -1;
-	}
-	return 0;
-}
-
 int rte_fslmc_vfio_dmamap(void)
 {
 	int ret;
@@ -214,17 +200,18 @@ int rte_fslmc_vfio_dmamap(void)
 
 	if (is_dma_done)
 		return 0;
-	is_dma_done = 1;
+
+	memseg = rte_eal_get_physmem_layout();
+	if (memseg == NULL) {
+		FSLMC_VFIO_LOG(ERR, "Cannot get physical layout.");
+		return -ENODEV;
+	}
 
 	for (i = 0; i < RTE_MAX_MEMSEG; i++) {
-		memseg = rte_eal_get_physmem_layout();
-		if (memseg == NULL) {
-			FSLMC_VFIO_LOG(ERR, "Cannot get physical layout.");
-			return -ENODEV;
-		}
-
-		if (memseg[i].addr == NULL && memseg[i].len == 0)
+		if (memseg[i].addr == NULL && memseg[i].len == 0) {
+			FSLMC_VFIO_LOG(DEBUG, "Total %d segments found.", i);
 			break;
+		}
 
 		dma_map.size = memseg[i].len;
 		dma_map.vaddr = memseg[i].addr_64;
@@ -254,11 +241,19 @@ int rte_fslmc_vfio_dmamap(void)
 		}
 	}
 
+	/* Verifying that at least single segment is available */
+	if (i <= 0) {
+		FSLMC_VFIO_LOG(ERR, "No Segments found for VFIO Mapping");
+		return -1;
+	}
+
 	/* TODO - This is a W.A. as VFIO currently does not add the mapping of
 	 * the interrupt region to SMMU. This should be removed once the
 	 * support is added in the Kernel.
 	 */
 	vfio_map_irq_region(group);
+
+	is_dma_done = 1;
 
 	return 0;
 }
@@ -348,6 +343,40 @@ fslmc_bus_add_device(struct rte_dpaa2_device *dev)
 	}
 }
 
+#define IRQ_SET_BUF_LEN  (sizeof(struct vfio_irq_set) + sizeof(int))
+
+int rte_dpaa2_intr_enable(struct rte_intr_handle *intr_handle,
+			  uint32_t index)
+{
+	struct vfio_irq_set *irq_set;
+	char irq_set_buf[IRQ_SET_BUF_LEN];
+	int *fd_ptr, fd, ret;
+
+	/* Prepare vfio_irq_set structure and SET the IRQ in VFIO */
+	/* Give the eventfd to VFIO */
+	fd = eventfd(0, 0);
+	irq_set = (struct vfio_irq_set *)irq_set_buf;
+	irq_set->argsz = sizeof(irq_set_buf);
+	irq_set->count = 1;
+	irq_set->flags = VFIO_IRQ_SET_DATA_EVENTFD |
+			 VFIO_IRQ_SET_ACTION_TRIGGER;
+	irq_set->index = index;
+	irq_set->start = 0;
+	fd_ptr = (int *)&irq_set->data;
+	*fd_ptr = fd;
+
+	ret = ioctl(intr_handle->vfio_dev_fd, VFIO_DEVICE_SET_IRQS, irq_set);
+	if (ret < 0) {
+		FSLMC_VFIO_LOG(ERR, "Unable to set IRQ in VFIO, ret: %d\n",
+			       ret);
+		return -1;
+	}
+
+	/* Set the FD and update the flags */
+	intr_handle->fd = fd;
+	return 0;
+}
+
 /* Following function shall fetch total available list of MC devices
  * from VFIO container & populate private list of devices and other
  * data structures
@@ -363,7 +392,6 @@ int fslmc_vfio_process_group(void)
 	char path[PATH_MAX];
 	int64_t v_addr;
 	int ndev_count;
-	int dpio_count = 0, dpbp_count = 0;
 	struct fslmc_vfio_group *group = &vfio_groups[0];
 	static int process_once;
 
@@ -498,22 +526,22 @@ int fslmc_vfio_process_group(void)
 			dev->dev_type = (strcmp(object_type, "dpseci")) ?
 				DPAA2_MC_DPNI_DEVID : DPAA2_MC_DPSECI_DEVID;
 
-			FSLMC_VFIO_LOG(DEBUG, "DPAA2: Added [%s-%d]",
-				      object_type, object_id);
+			sprintf(dev->name, "%s.%d", object_type, object_id);
+			dev->device.name = dev->name;
 
 			fslmc_bus_add_device(dev);
-		}
-		if (!strcmp(object_type, "dpio")) {
-			ret = dpaa2_create_dpio_device(vdev,
-						       &device_info,
+			FSLMC_VFIO_LOG(DEBUG, "DPAA2: Added %s", dev->name);
+		} else {
+			/* Parse all other objects */
+			struct rte_dpaa2_object *object;
+
+			TAILQ_FOREACH(object, &fslmc_obj_list, next) {
+				if (!strcmp(object_type, object->name))
+					object->create(vdev, &device_info,
 						       object_id);
-			if (!ret)
-				dpio_count++;
-		}
-		if (!strcmp(object_type, "dpbp")) {
-			ret = dpaa2_create_dpbp_device(object_id);
-			if (!ret)
-				dpbp_count++;
+				else
+					continue;
+			}
 		}
 	}
 	closedir(d);
@@ -522,8 +550,6 @@ int fslmc_vfio_process_group(void)
 	if (ret)
 		FSLMC_VFIO_LOG(DEBUG, "Error in affining qbman swp %d", ret);
 
-	FSLMC_VFIO_LOG(DEBUG, "DPAA2: Added dpbp_count = %d dpio_count=%d",
-		      dpbp_count, dpio_count);
 	return 0;
 
 FAILURE:

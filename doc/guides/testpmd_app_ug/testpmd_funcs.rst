@@ -380,6 +380,20 @@ For example::
    testpmd> read txd 0 0 4
         0x00000001 - 0x24C3C440 / 0x000F0000 - 0x2330003C
 
+ddp get list
+~~~~~~~~~~~~
+
+Get loaded dynamic device personalization (DDP) package info list::
+
+   testpmd> ddp get list (port_id)
+
+ddp get info
+~~~~~~~~~~~~
+
+Display information about dynamic device personalization (DDP) profile::
+
+   testpmd> ddp get info (profile_patch)
+
 show vf stats
 ~~~~~~~~~~~~~
 
@@ -884,6 +898,40 @@ Display the status of TCP Segmentation Offload::
 
    testpmd> tso show (port_id)
 
+gro
+~~~
+
+Enable or disable GRO in ``csum`` forwarding engine::
+
+   testpmd> gro (on|off) (port_id)
+
+If enabled, the csum forwarding engine will perform GRO on the TCP/IPv4
+packets received from the given port.
+
+If disabled, packets received from the given port won't be performed
+GRO. By default, GRO is disabled for all ports.
+
+.. note::
+
+   When enable GRO for a port, TCP/IPv4 packets received from the port
+   will be performed GRO. After GRO, the merged packets are multi-segments.
+   But csum forwarding engine doesn't support to calculate TCP checksum
+   for multi-segment packets in SW. So please select TCP HW checksum
+   calculation for the port which GROed packets are transmitted to.
+
+gro set
+~~~~~~~
+
+Set max flow number and max packet number per-flow for GRO::
+
+   testpmd> gro set (max_flow_num) (max_item_num_per_flow) (port_id)
+
+The product of ``max_flow_num`` and ``max_item_num_per_flow`` is the max
+number of packets a GRO table can store.
+
+If current packet number is greater than or equal to the max value, GRO
+will stop processing incoming packets.
+
 mac_addr add
 ~~~~~~~~~~~~
 
@@ -1210,6 +1258,20 @@ Add an E-tag forwarding filter on a port::
 
 Delete an E-tag forwarding filter on a port::
    testpmd> E-tag set filter del e-tag-id (value) port (port_id)
+
+ddp add
+~~~~~~~
+
+Load a dynamic device personalization (DDP) package::
+
+   testpmd> ddp add (port_id) (package_path[,output_path])
+
+ddp del
+~~~~~~~
+
+Delete a dynamic device personalization package::
+
+   testpmd> ddp del (port_id) (package_path)
 
 ptype mapping
 ~~~~~~~~~~~~~
@@ -1736,6 +1798,23 @@ link status ISR will be queried every polling interval to check if their link st
 For example, to set the link status monitoring polling period of bonded device (port 5) to 150ms::
 
    testpmd> set bonding mon_period 5 150
+
+
+set bonding lacp dedicated_queue
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Enable dedicated tx/rx queues on bonding devices slaves to handle LACP control plane traffic
+when in mode 4 (link-aggregration-802.3ad)::
+
+   testpmd> set bonding lacp dedicated_queues (port_id) (enable|disable)
+
+
+set bonding agg_mode
+~~~~~~~~~~~~~~~~~~~~
+
+Enable one of the specific aggregators mode when in mode 4 (link-aggregration-802.3ad)::
+
+   testpmd> set bonding agg_mode (port_id) (bandwidth|count|stable)
 
 
 show bonding config
@@ -2612,6 +2691,10 @@ This section lists supported pattern items and their attributes, if any.
 - ``gre``: match GRE header.
 
   - ``protocol {unsigned}``: protocol type.
+
+- ``fuzzy``: fuzzy pattern match, expect faster than default.
+
+  - ``thresh {unsigned}``: accuracy threshold.
 
 Actions list
 ^^^^^^^^^^^^

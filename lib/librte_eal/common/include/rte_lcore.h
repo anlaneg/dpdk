@@ -61,6 +61,7 @@ extern "C" {
  * Structure storing internal configuration (per-lcore)
  */
 struct lcore_config {
+<<<<<<< HEAD
 	unsigned detected;         /**< true if lcore was detected */ //是否被检测到
 	pthread_t thread_id;       /**< pthread identifier */ //绑定的线程
 	int pipe_master2slave[2];  /**< communication pipe with master */ //master通信用
@@ -73,6 +74,21 @@ struct lcore_config {
 	unsigned core_id;          /**< core number on socket for this lcore */ //物理core id
 	int core_index;            /**< relative index, starting from 0 */ //core编号，如果不存在将为-1(最终按用户mask后的顺序）
 	rte_cpuset_t cpuset;       /**< cpu set which the lcore affinity to */ //仅包含此core的cpuset
+=======
+	unsigned detected;         /**< true if lcore was detected */
+	pthread_t thread_id;       /**< pthread identifier */
+	int pipe_master2slave[2];  /**< communication pipe with master */
+	int pipe_slave2master[2];  /**< communication pipe with master */
+	lcore_function_t * volatile f;         /**< function to call */
+	void * volatile arg;       /**< argument of function */
+	volatile int ret;          /**< return value of function */
+	volatile enum rte_lcore_state_t state; /**< lcore state */
+	unsigned socket_id;        /**< physical socket id for this lcore */
+	unsigned core_id;          /**< core number on socket for this lcore */
+	int core_index;            /**< relative index, starting from 0 */
+	rte_cpuset_t cpuset;       /**< cpu set which the lcore affinity to */
+	uint8_t core_role;         /**< role of core eg: OFF, RTE, SERVICE */
+>>>>>>> upstream/master
 };
 
 /**
@@ -176,7 +192,7 @@ rte_lcore_is_enabled(unsigned lcore_id)
 	struct rte_config *cfg = rte_eal_get_configuration();
 	if (lcore_id >= RTE_MAX_LCORE)
 		return 0;
-	return cfg->lcore_role[lcore_id] != ROLE_OFF;
+	return cfg->lcore_role[lcore_id] == ROLE_RTE;
 }
 
 /**

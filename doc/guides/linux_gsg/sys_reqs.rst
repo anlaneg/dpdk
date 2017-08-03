@@ -43,14 +43,14 @@ BIOS Setting Prerequisite on x86
 
 For the majority of platforms, no special BIOS settings are needed to use basic DPDK functionality.
 However, for additional HPET timer and power management functionality,
-and high performance of small packets on 40G NIC, BIOS setting changes may be needed.
+and high performance of small packets, BIOS setting changes may be needed.
 Consult the section on :ref:`Enabling Additional Functionality <Enabling_Additional_Functionality>`
 for more information on the required changes.
 
 Compilation of the DPDK
 -----------------------
 
-**Required Tools:**
+**Required Tools and Libraries:**
 
 .. note::
 
@@ -83,6 +83,8 @@ Compilation of the DPDK
 
        x86_x32 ABI is currently supported with distribution packages only on Ubuntu
        higher than 13.10 or recent Debian distribution. The only supported  compiler is gcc 4.9+.
+
+*   libnuma-devel - library for handling NUMA (Non Uniform Memory Access).
 
 *   Python, version 2.7+ or 3.2+, to use various helper scripts included in the DPDK package.
 
@@ -128,8 +130,6 @@ System Software
     the vendor supplied kernel configurations can be used to run most DPDK applications.
 
     For other kernel builds, options which should be enabled for DPDK include:
-
-    *   UIO support
 
     *   HUGETLBFS
 

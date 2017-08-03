@@ -145,7 +145,7 @@ tun_alloc(struct pmd_internals *pmd)
 
 	fd = open(TUN_TAP_DEV_PATH, O_RDWR);
 	if (fd < 0) {
-		RTE_LOG(ERR, PMD, "Unable to create TAP interface");
+		RTE_LOG(ERR, PMD, "Unable to create TAP interface\n");
 		goto error;
 	}
 
@@ -569,7 +569,7 @@ tap_link_set_down(struct rte_eth_dev *dev)
 	struct ifreq ifr = { .ifr_flags = IFF_UP };
 
 	dev->data->dev_link.link_status = ETH_LINK_DOWN;
-	return tap_ioctl(pmd, SIOCSIFFLAGS, &ifr, 0, LOCAL_AND_REMOTE);
+	return tap_ioctl(pmd, SIOCSIFFLAGS, &ifr, 0, LOCAL_ONLY);
 }
 
 static int
@@ -735,6 +735,12 @@ tap_dev_close(struct rte_eth_dev *dev)
 		internals->rxq[i].fd = -1;
 		internals->txq[i].fd = -1;
 	}
+
+	if (internals->remote_if_index) {
+		/* Restore initial remote state */
+		ioctl(internals->ioctl_sock, SIOCSIFFLAGS,
+				&internals->remote_initial_flags);
+	}
 }
 
 static void
@@ -794,7 +800,7 @@ tap_promisc_enable(struct rte_eth_dev *dev)
 
 	dev->data->promiscuous = 1;
 	tap_ioctl(pmd, SIOCSIFFLAGS, &ifr, 1, LOCAL_AND_REMOTE);
-	if (pmd->remote_if_index)
+	if (pmd->remote_if_index && !pmd->flow_isolate)
 		tap_flow_implicit_create(pmd, TAP_REMOTE_PROMISC);
 }
 
@@ -806,7 +812,7 @@ tap_promisc_disable(struct rte_eth_dev *dev)
 
 	dev->data->promiscuous = 0;
 	tap_ioctl(pmd, SIOCSIFFLAGS, &ifr, 0, LOCAL_AND_REMOTE);
-	if (pmd->remote_if_index)
+	if (pmd->remote_if_index && !pmd->flow_isolate)
 		tap_flow_implicit_destroy(pmd, TAP_REMOTE_PROMISC);
 }
 
@@ -818,7 +824,7 @@ tap_allmulti_enable(struct rte_eth_dev *dev)
 
 	dev->data->all_multicast = 1;
 	tap_ioctl(pmd, SIOCSIFFLAGS, &ifr, 1, LOCAL_AND_REMOTE);
-	if (pmd->remote_if_index)
+	if (pmd->remote_if_index && !pmd->flow_isolate)
 		tap_flow_implicit_create(pmd, TAP_REMOTE_ALLMULTI);
 }
 
@@ -830,7 +836,7 @@ tap_allmulti_disable(struct rte_eth_dev *dev)
 
 	dev->data->all_multicast = 0;
 	tap_ioctl(pmd, SIOCSIFFLAGS, &ifr, 0, LOCAL_AND_REMOTE);
-	if (pmd->remote_if_index)
+	if (pmd->remote_if_index && !pmd->flow_isolate)
 		tap_flow_implicit_destroy(pmd, TAP_REMOTE_ALLMULTI);
 }
 
@@ -843,7 +849,7 @@ tap_mac_set(struct rte_eth_dev *dev, struct ether_addr *mac_addr)
 
 	if (is_zero_ether_addr(mac_addr)) {
 		RTE_LOG(ERR, PMD, "%s: can't set an empty MAC address\n",
-			dev->data->name);
+			dev->device->name);
 		return;
 	}
 	/* Check the actual current MAC address on the tap netdevice */
@@ -863,18 +869,18 @@ tap_mac_set(struct rte_eth_dev *dev, struct ether_addr *mac_addr)
 	if (tap_ioctl(pmd, SIOCSIFHWADDR, &ifr, 1, mode) < 0)
 		return;
 	rte_memcpy(&pmd->eth_addr, mac_addr, ETHER_ADDR_LEN);
-	if (pmd->remote_if_index) {
+	if (pmd->remote_if_index && !pmd->flow_isolate) {
 		/* Replace MAC redirection rule after a MAC change */
 		if (tap_flow_implicit_destroy(pmd, TAP_REMOTE_LOCAL_MAC) < 0) {
 			RTE_LOG(ERR, PMD,
 				"%s: Couldn't delete MAC redirection rule\n",
-				dev->data->name);
+				dev->device->name);
 			return;
 		}
 		if (tap_flow_implicit_create(pmd, TAP_REMOTE_LOCAL_MAC) < 0)
 			RTE_LOG(ERR, PMD,
 				"%s: Couldn't add MAC redirection rule\n",
-				dev->data->name);
+				dev->device->name);
 	}
 }
 
@@ -937,12 +943,12 @@ tap_rx_queue_setup(struct rte_eth_dev *dev,
 	rxq->trigger_seen = 1; /* force initial burst */
 	rxq->in_port = dev->data->port_id;
 	rxq->nb_rx_desc = nb_desc;
-	iovecs = rte_zmalloc_socket(dev->data->name, sizeof(*iovecs), 0,
+	iovecs = rte_zmalloc_socket(dev->device->name, sizeof(*iovecs), 0,
 				    socket_id);
 	if (!iovecs) {
 		RTE_LOG(WARNING, PMD,
 			"%s: Couldn't allocate %d RX descriptors\n",
-			dev->data->name, nb_desc);
+			dev->device->name, nb_desc);
 		return -ENOMEM;
 	}
 	rxq->iovecs = iovecs;
@@ -962,7 +968,7 @@ tap_rx_queue_setup(struct rte_eth_dev *dev,
 		if (!*tmp) {
 			RTE_LOG(WARNING, PMD,
 				"%s: couldn't allocate memory for queue %d\n",
-				dev->data->name, rx_queue_id);
+				dev->device->name, rx_queue_id);
 			ret = -ENOMEM;
 			goto error;
 		}
@@ -1160,23 +1166,6 @@ static const struct eth_dev_ops ops = {
 	.filter_ctrl            = tap_dev_filter_ctrl,
 };
 
-static int
-tap_kernel_support(struct pmd_internals *pmd)
-{
-	struct utsname utsname;
-	int ver[3];
-
-	if (uname(&utsname) == -1 ||
-	    sscanf(utsname.release, "%d.%d.%d",
-		   &ver[0], &ver[1], &ver[2]) != 3)
-		return 0;
-	if (KERNEL_VERSION(ver[0], ver[1], ver[2]) >= FLOWER_KERNEL_VERSION)
-		pmd->flower_support = 1;
-	if (KERNEL_VERSION(ver[0], ver[1], ver[2]) >=
-	    FLOWER_VLAN_KERNEL_VERSION)
-		pmd->flower_vlan_support = 1;
-	return 1;
-}
 
 static int
 eth_dev_tap_create(struct rte_vdev_device *vdev, char *tap_name,
@@ -1265,21 +1254,6 @@ eth_dev_tap_create(struct rte_vdev_device *vdev, char *tap_name,
 	if (tap_ioctl(pmd, SIOCSIFHWADDR, &ifr, 0, LOCAL_ONLY) < 0)
 		goto error_exit;
 
-	tap_kernel_support(pmd);
-	if (!pmd->flower_support) {
-		if (remote_iface[0]) {
-			RTE_LOG(ERR, PMD,
-				"%s: kernel does not support TC rules, required for remote feature.",
-				pmd->name);
-			goto error_exit;
-		} else {
-			RTE_LOG(INFO, PMD,
-				"%s: kernel too old for Flow API support.\n",
-				pmd->name);
-			return 0;
-		}
-	}
-
 	/*
 	 * Set up everything related to rte_flow:
 	 * - netlink socket
@@ -1290,22 +1264,22 @@ eth_dev_tap_create(struct rte_vdev_device *vdev, char *tap_name,
 	 */
 	pmd->nlsk_fd = nl_init(0);
 	if (pmd->nlsk_fd == -1) {
-		RTE_LOG(WARNING, PMD, "%s: failed to create netlink socket.",
+		RTE_LOG(WARNING, PMD, "%s: failed to create netlink socket.\n",
 			pmd->name);
 		goto disable_rte_flow;
 	}
 	pmd->if_index = if_nametoindex(pmd->name);
 	if (!pmd->if_index) {
-		RTE_LOG(ERR, PMD, "%s: failed to get if_index.", pmd->name);
+		RTE_LOG(ERR, PMD, "%s: failed to get if_index.\n", pmd->name);
 		goto disable_rte_flow;
 	}
 	if (qdisc_create_multiq(pmd->nlsk_fd, pmd->if_index) < 0) {
-		RTE_LOG(ERR, PMD, "%s: failed to create multiq qdisc.",
+		RTE_LOG(ERR, PMD, "%s: failed to create multiq qdisc.\n",
 			pmd->name);
 		goto disable_rte_flow;
 	}
 	if (qdisc_create_ingress(pmd->nlsk_fd, pmd->if_index) < 0) {
-		RTE_LOG(ERR, PMD, "%s: failed to create ingress qdisc.",
+		RTE_LOG(ERR, PMD, "%s: failed to create ingress qdisc.\n",
 			pmd->name);
 		goto disable_rte_flow;
 	}
@@ -1314,14 +1288,19 @@ eth_dev_tap_create(struct rte_vdev_device *vdev, char *tap_name,
 	if (strlen(remote_iface)) {
 		pmd->remote_if_index = if_nametoindex(remote_iface);
 		if (!pmd->remote_if_index) {
-			RTE_LOG(ERR, PMD, "%s: failed to get %s if_index.",
+			RTE_LOG(ERR, PMD, "%s: failed to get %s if_index.\n",
 				pmd->name, remote_iface);
 			goto error_remote;
 		}
 		snprintf(pmd->remote_iface, RTE_ETH_NAME_MAX_LEN,
 			 "%s", remote_iface);
+
+		/* Save state of remote device */
+		tap_ioctl(pmd, SIOCGIFFLAGS, &pmd->remote_initial_flags, 0, REMOTE_ONLY);
+
+		/* Replicate remote MAC address */
 		if (tap_ioctl(pmd, SIOCGIFHWADDR, &ifr, 0, REMOTE_ONLY) < 0) {
-			RTE_LOG(ERR, PMD, "%s: failed to get %s MAC address.",
+			RTE_LOG(ERR, PMD, "%s: failed to get %s MAC address.\n",
 				pmd->name, pmd->remote_iface);
 			goto error_remote;
 		}
@@ -1329,7 +1308,7 @@ eth_dev_tap_create(struct rte_vdev_device *vdev, char *tap_name,
 			   ETHER_ADDR_LEN);
 		/* The desired MAC is already in ifreq after SIOCGIFHWADDR. */
 		if (tap_ioctl(pmd, SIOCSIFHWADDR, &ifr, 0, LOCAL_ONLY) < 0) {
-			RTE_LOG(ERR, PMD, "%s: failed to get %s MAC address.",
+			RTE_LOG(ERR, PMD, "%s: failed to get %s MAC address.\n",
 				pmd->name, remote_iface);
 			goto error_remote;
 		}
@@ -1342,7 +1321,7 @@ eth_dev_tap_create(struct rte_vdev_device *vdev, char *tap_name,
 		qdisc_flush(pmd->nlsk_fd, pmd->remote_if_index);
 		if (qdisc_create_ingress(pmd->nlsk_fd,
 					 pmd->remote_if_index) < 0) {
-			RTE_LOG(ERR, PMD, "%s: failed to create ingress qdisc.",
+			RTE_LOG(ERR, PMD, "%s: failed to create ingress qdisc.\n",
 				pmd->remote_iface);
 			goto error_remote;
 		}
@@ -1352,7 +1331,7 @@ eth_dev_tap_create(struct rte_vdev_device *vdev, char *tap_name,
 		    tap_flow_implicit_create(pmd, TAP_REMOTE_BROADCAST) < 0 ||
 		    tap_flow_implicit_create(pmd, TAP_REMOTE_BROADCASTV6) < 0) {
 			RTE_LOG(ERR, PMD,
-				"%s: failed to create implicit rules.",
+				"%s: failed to create implicit rules.\n",
 				pmd->name);
 			goto error_remote;
 		}
@@ -1367,7 +1346,6 @@ disable_rte_flow:
 		RTE_LOG(ERR, PMD, "Remote feature requires flow support.\n");
 		goto error_exit;
 	}
-	pmd->flower_support = 0;
 	return 0;
 
 error_remote:
@@ -1532,7 +1510,7 @@ rte_pmd_tap_remove(struct rte_vdev_device *dev)
 		return 0;
 
 	internals = eth_dev->data->dev_private;
-	if (internals->flower_support && internals->nlsk_fd) {
+	if (internals->nlsk_fd) {
 		tap_flow_flush(eth_dev, NULL);
 		tap_flow_implicit_flush(internals, NULL);
 		nl_final(internals->nlsk_fd);

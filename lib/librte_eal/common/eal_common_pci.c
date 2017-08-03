@@ -74,15 +74,48 @@ const char *pci_get_sysfs_path(void)
 static struct rte_devargs *pci_devargs_lookup(struct rte_pci_device *dev)
 {
 	struct rte_devargs *devargs;
+	struct rte_pci_addr addr;
+	struct rte_bus *pbus;
 
+	pbus = rte_bus_find_by_name("pci");
 	TAILQ_FOREACH(devargs, &devargs_list, next) {
+<<<<<<< HEAD
 		if (devargs->type != RTE_DEVTYPE_BLACKLISTED_PCI &&
 			devargs->type != RTE_DEVTYPE_WHITELISTED_PCI)
 			continue;//虚设备暂跳过
 		if (!rte_eal_compare_pci_addr(&dev->addr, &devargs->pci.addr))
+=======
+		if (devargs->bus != pbus)
+			continue;
+		devargs->bus->parse(devargs->name, &addr);
+		if (!rte_eal_compare_pci_addr(&dev->addr, &addr))
+>>>>>>> upstream/master
 			return devargs;
 	}
 	return NULL;
+}
+
+void
+pci_name_set(struct rte_pci_device *dev)
+{
+	struct rte_devargs *devargs;
+
+	/* Each device has its internal, canonical name set. */
+	rte_pci_device_name(&dev->addr,
+			dev->name, sizeof(dev->name));
+	devargs = pci_devargs_lookup(dev);
+	dev->device.devargs = devargs;
+	/* In blacklist mode, if the device is not blacklisted, no
+	 * rte_devargs exists for it.
+	 */
+	if (devargs != NULL)
+		/* If an rte_devargs exists, the generic rte_device uses the
+		 * given name as its namea
+		 */
+		dev->device.name = dev->device.devargs->name;
+	else
+		/* Otherwise, it uses the internal, canonical form. */
+		dev->device.name = dev->name;
 }
 
 /* map a particular resource from a file */
@@ -185,13 +218,15 @@ rte_pci_probe_one_driver(struct rte_pci_driver *dr,
 	loc = &dev->addr;
 
 	/* The device is not blacklisted; Check if driver supports it */
-	if (!rte_pci_match(dr, dev)) {
+	if (!rte_pci_match(dr, dev))
 		/* Match of device and driver failed */
+<<<<<<< HEAD
 		//此driver不匹配此device
 		RTE_LOG(DEBUG, EAL, "Driver (%s) doesn't match the device\n",
 			dr->driver.name);
+=======
+>>>>>>> upstream/master
 		return 1;
-	}
 
 	//设备被识别
 	RTE_LOG(INFO, EAL, "PCI device "PCI_PRI_FMT" on NUMA socket %i\n",
@@ -201,14 +236,22 @@ rte_pci_probe_one_driver(struct rte_pci_driver *dr,
 	/* no initialization when blacklisted, return without error */
 	//设备被列在黑名单里，不初始化
 	if (dev->device.devargs != NULL &&
-		dev->device.devargs->type ==
-			RTE_DEVTYPE_BLACKLISTED_PCI) {
+		dev->device.devargs->policy ==
+			RTE_DEV_BLACKLISTED) {
 		RTE_LOG(INFO, EAL, "  Device is blacklisted, not"
 			" initializing\n");
 		return 1;
 	}
 
+<<<<<<< HEAD
 	//指名驱动适配成功
+=======
+	if (dev->device.numa_node < 0) {
+		RTE_LOG(WARNING, EAL, "  Invalid NUMA socket, default to 0\n");
+		dev->device.numa_node = 0;
+	}
+
+>>>>>>> upstream/master
 	RTE_LOG(INFO, EAL, "  probe driver: %x:%x %s\n", dev->id.vendor_id,
 		dev->id.device_id, dr->driver.name);
 
@@ -228,6 +271,7 @@ rte_pci_probe_one_driver(struct rte_pci_driver *dr,
 	ret = dr->probe(dr, dev);
 	if (ret) {
 		dev->driver = NULL;
+		dev->device.driver = NULL;
 		if ((dr->drv_flags & RTE_PCI_DRV_NEED_MAPPING) &&
 			/* Don't unmap if device is unsupported and
 			 * driver needs mapped resources.
@@ -312,7 +356,7 @@ pci_probe_all_drivers(struct rte_pci_device *dev)
 
 /*
  * Find the pci device specified by pci address, then invoke probe function of
- * the driver of the devive.
+ * the driver of the device.
  */
 int
 rte_pci_probe_one(const struct rte_pci_addr *addr)
@@ -399,26 +443,38 @@ rte_pci_probe(void)
 	int probe_all = 0;
 	int ret = 0;
 
+<<<<<<< HEAD
 	//白名单计数为0，则需要探测所有
 	if (rte_eal_devargs_type_count(RTE_DEVTYPE_WHITELISTED_PCI) == 0)
+=======
+	if (rte_pci_bus.bus.conf.scan_mode != RTE_BUS_SCAN_WHITELIST)
+>>>>>>> upstream/master
 		probe_all = 1;
 
 	//遍历扫描出来的所有设备
 	FOREACH_DEVICE_ON_PCIBUS(dev) {
 		probed++;
 
+<<<<<<< HEAD
 		/* set devargs in PCI structure */
 		//取出用户配置的设备（仅关心白名单，黑名单）
 		devargs = pci_devargs_lookup(dev);
 		if (devargs != NULL)
 			dev->device.devargs = devargs;
 
+=======
+		devargs = dev->device.devargs;
+>>>>>>> upstream/master
 		/* probe all or only whitelisted devices */
 		if (probe_all)
 			ret = pci_probe_all_drivers(dev);
 		else if (devargs != NULL &&
+<<<<<<< HEAD
 			devargs->type == RTE_DEVTYPE_WHITELISTED_PCI)
 			//用户配置了此设备，且为白名单
+=======
+			devargs->policy == RTE_DEV_WHITELISTED)
+>>>>>>> upstream/master
 			ret = pci_probe_all_drivers(dev);
 
 		//黑名单或者虚拟设备时，将被跳过
@@ -469,6 +525,20 @@ rte_pci_dump(FILE *f)
 	}
 }
 
+static int
+pci_parse(const char *name, void *addr)
+{
+	struct rte_pci_addr *out = addr;
+	struct rte_pci_addr pci_addr;
+	bool parse;
+
+	parse = (eal_parse_pci_BDF(name, &pci_addr) == 0 ||
+		 eal_parse_pci_DomBDF(name, &pci_addr) == 0);
+	if (parse && addr != NULL)
+		*out = pci_addr;
+	return parse == false;
+}
+
 /* register a driver */
 //pci驱动注册
 void
@@ -508,15 +578,65 @@ rte_pci_remove_device(struct rte_pci_device *pci_dev)
 	TAILQ_REMOVE(&rte_pci_bus.device_list, pci_dev, next);
 }
 
+static struct rte_device *
+pci_find_device(const struct rte_device *start, rte_dev_cmp_t cmp,
+		const void *data)
+{
+	struct rte_pci_device *dev;
+
+	FOREACH_DEVICE_ON_PCIBUS(dev) {
+		if (start && &dev->device == start) {
+			start = NULL; /* starting point found */
+			continue;
+		}
+		if (cmp(&dev->device, data) == 0)
+			return &dev->device;
+	}
+
+	return NULL;
+}
+
+static int
+pci_plug(struct rte_device *dev)
+{
+	return pci_probe_all_drivers(RTE_DEV_TO_PCI(dev));
+}
+
+static int
+pci_unplug(struct rte_device *dev)
+{
+	struct rte_pci_device *pdev;
+	int ret;
+
+	pdev = RTE_DEV_TO_PCI(dev);
+	ret = rte_pci_detach_dev(pdev);
+	rte_pci_remove_device(pdev);
+	free(pdev);
+	return ret;
+}
+
 struct rte_pci_bus rte_pci_bus = {
 	.bus = {
+<<<<<<< HEAD
 		.scan = rte_pci_scan,//扫描函数
 		.probe = rte_pci_probe,//探测
+=======
+		.scan = rte_pci_scan,
+		.probe = rte_pci_probe,
+		.find_device = pci_find_device,
+		.plug = pci_plug,
+		.unplug = pci_unplug,
+		.parse = pci_parse,
+>>>>>>> upstream/master
 	},
 	//保存读到的pci设备
 	.device_list = TAILQ_HEAD_INITIALIZER(rte_pci_bus.device_list),
 	.driver_list = TAILQ_HEAD_INITIALIZER(rte_pci_bus.driver_list),
 };
 
+<<<<<<< HEAD
 //加载pci bus
 RTE_REGISTER_BUS(PCI_BUS_NAME, rte_pci_bus.bus);
+=======
+RTE_REGISTER_BUS(pci, rte_pci_bus.bus);
+>>>>>>> upstream/master

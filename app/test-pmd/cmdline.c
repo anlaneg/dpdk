@@ -36,7 +36,6 @@
 #include <errno.h>
 #include <stdio.h>
 #include <stdint.h>
-#include <stdarg.h>
 #include <string.h>
 #include <termios.h>
 #include <unistd.h>
@@ -76,6 +75,7 @@
 #include <rte_devargs.h>
 #include <rte_eth_ctrl.h>
 #include <rte_flow.h>
+#include <rte_gro.h>
 
 #include <cmdline_rdline.h>
 #include <cmdline_parse.h>
@@ -87,6 +87,7 @@
 #include <cmdline.h>
 #ifdef RTE_LIBRTE_PMD_BOND
 #include <rte_eth_bond.h>
+#include <rte_eth_bond_8023ad.h>
 #endif
 #ifdef RTE_LIBRTE_IXGBE_PMD
 #include <rte_pmd_ixgbe.h>
@@ -221,6 +222,9 @@ static void cmd_help_long_parsed(void *parsed_result,
 			"ddp get list (port_id)\n"
 			"    Get ddp profile info list\n\n"
 
+			"ddp get info (profile_path)\n"
+			"    Get ddp profile information.\n\n"
+
 			"show vf stats (port_id) (vf_id)\n"
 			"    Display a VF's statistics.\n\n"
 
@@ -281,18 +285,15 @@ static void cmd_help_long_parsed(void *parsed_result,
 			"set tx loopback (port_id) (on|off)\n"
 			"    Enable or disable tx loopback.\n\n"
 
-#ifdef RTE_LIBRTE_IXGBE_PMD
 			"set all queues drop (port_id) (on|off)\n"
 			"    Set drop enable bit for all queues.\n\n"
 
 			"set vf split drop (port_id) (vf_id) (on|off)\n"
 			"    Set split drop enable bit for a VF from the PF.\n\n"
-#endif
 
 			"set vf mac antispoof (port_id) (vf_id) (on|off).\n"
 			"    Set MAC antispoof for a VF from the PF.\n\n"
 
-#ifdef RTE_LIBRTE_IXGBE_PMD
 			"set macsec offload (port_id) on encrypt (on|off) replay-protect (on|off)\n"
 			"    Enable MACsec offload.\n\n"
 
@@ -304,7 +305,6 @@ static void cmd_help_long_parsed(void *parsed_result,
 
 			"set macsec sa (tx|rx) (port_id) (idx) (an) (pn) (key)\n"
 			"    Configure MACsec secure association (SA).\n\n"
-#endif
 
 			"set vf broadcast (port_id) (vf_id) (on|off)\n"
 			"    Set VF broadcast for a VF from the PF.\n\n"
@@ -422,6 +422,14 @@ static void cmd_help_long_parsed(void *parsed_result,
 
 			"tso show (portid)"
 			"    Display the status of TCP Segmentation Offload.\n\n"
+
+			"gro (on|off) (port_id)"
+			"    Enable or disable Generic Receive Offload in io"
+			" forward engine.\n\n"
+
+			"gro set (max_flow_num) (max_item_num_per_flow) (port_id)\n"
+			"    Set max flow number and max packet number per-flow"
+			" for GRO.\n\n"
 
 			"set fwd (%s)\n"
 			"    Set packet forwarding mode.\n\n"
@@ -571,11 +579,18 @@ static void cmd_help_long_parsed(void *parsed_result,
 			"set bonding mac_addr (port_id) (address)\n"
 			"	Set the MAC address of a bonded device.\n\n"
 
+			"set bonding mode IEEE802.3AD aggregator policy (port_id) (agg_name)"
+			"	Set Aggregation mode for IEEE802.3AD (mode 4)"
+
 			"set bonding xmit_balance_policy (port_id) (l2|l23|l34)\n"
 			"	Set the transmit balance policy for bonded device running in balance mode.\n\n"
 
 			"set bonding mon_period (port_id) (value)\n"
 			"	Set the bonding link status monitoring polling period in ms.\n\n"
+
+			"set bonding lacp dedicated_queues <port_id> (enable|disable)\n"
+			"	Enable/disable dedicated queues for LACP control traffic.\n\n"
+
 #endif
 			"set link-up port (port_id)\n"
 			"	Set link up for a port.\n\n"
@@ -604,8 +619,11 @@ static void cmd_help_long_parsed(void *parsed_result,
 			"E-tag set filter del e-tag-id (value) port (port_id)\n"
 			"    Delete an E-tag forwarding filter on a port\n\n"
 
-			"ddp add (port_id) (profile_path)\n"
+			"ddp add (port_id) (profile_path[,output_path])\n"
 			"    Load a profile package on a port\n\n"
+
+			"ddp del (port_id) (profile_path)\n"
+			"    Delete a profile package from a port\n\n"
 
 			"ptype mapping get (port_id) (valid_only)\n"
 			"    Get ptype mapping on a port\n\n"
@@ -3831,6 +3849,120 @@ cmdline_parse_inst_t cmd_tunnel_tso_show = {
 	},
 };
 
+/* *** SET GRO FOR A PORT *** */
+struct cmd_gro_result {
+	cmdline_fixed_string_t cmd_keyword;
+	cmdline_fixed_string_t mode;
+	uint8_t port_id;
+};
+
+static void
+cmd_enable_gro_parsed(void *parsed_result,
+		__attribute__((unused)) struct cmdline *cl,
+		__attribute__((unused)) void *data)
+{
+	struct cmd_gro_result *res;
+
+	res = parsed_result;
+	setup_gro(res->mode, res->port_id);
+}
+
+cmdline_parse_token_string_t cmd_gro_keyword =
+	TOKEN_STRING_INITIALIZER(struct cmd_gro_result,
+			cmd_keyword, "gro");
+cmdline_parse_token_string_t cmd_gro_mode =
+	TOKEN_STRING_INITIALIZER(struct cmd_gro_result,
+			mode, "on#off");
+cmdline_parse_token_num_t cmd_gro_pid =
+	TOKEN_NUM_INITIALIZER(struct cmd_gro_result,
+			port_id, UINT8);
+
+cmdline_parse_inst_t cmd_enable_gro = {
+	.f = cmd_enable_gro_parsed,
+	.data = NULL,
+	.help_str = "gro (on|off) (port_id)",
+	.tokens = {
+		(void *)&cmd_gro_keyword,
+		(void *)&cmd_gro_mode,
+		(void *)&cmd_gro_pid,
+		NULL,
+	},
+};
+
+/* *** SET MAX FLOW NUMBER AND ITEM NUM PER FLOW FOR GRO *** */
+struct cmd_gro_set_result {
+	cmdline_fixed_string_t gro;
+	cmdline_fixed_string_t mode;
+	uint16_t flow_num;
+	uint16_t item_num_per_flow;
+	uint8_t port_id;
+};
+
+static void
+cmd_gro_set_parsed(void *parsed_result,
+		       __attribute__((unused)) struct cmdline *cl,
+		       __attribute__((unused)) void *data)
+{
+	struct cmd_gro_set_result *res = parsed_result;
+
+	if (port_id_is_invalid(res->port_id, ENABLED_WARN))
+		return;
+	if (test_done == 0) {
+		printf("Before set GRO flow_num and item_num_per_flow,"
+				" please stop forwarding first\n");
+		return;
+	}
+
+	if (!strcmp(res->mode, "set")) {
+		if (res->flow_num == 0)
+			printf("Invalid flow number. Revert to default value:"
+					" %u.\n", GRO_DEFAULT_FLOW_NUM);
+		else
+			gro_ports[res->port_id].param.max_flow_num =
+				res->flow_num;
+
+		if (res->item_num_per_flow == 0)
+			printf("Invalid item number per-flow. Revert"
+					" to default value:%u.\n",
+					GRO_DEFAULT_ITEM_NUM_PER_FLOW);
+		else
+			gro_ports[res->port_id].param.max_item_per_flow =
+				res->item_num_per_flow;
+	}
+}
+
+cmdline_parse_token_string_t cmd_gro_set_gro =
+	TOKEN_STRING_INITIALIZER(struct cmd_gro_set_result,
+				gro, "gro");
+cmdline_parse_token_string_t cmd_gro_set_mode =
+	TOKEN_STRING_INITIALIZER(struct cmd_gro_set_result,
+				mode, "set");
+cmdline_parse_token_num_t cmd_gro_set_flow_num =
+	TOKEN_NUM_INITIALIZER(struct cmd_gro_set_result,
+				flow_num, UINT16);
+cmdline_parse_token_num_t cmd_gro_set_item_num_per_flow =
+	TOKEN_NUM_INITIALIZER(struct cmd_gro_set_result,
+				item_num_per_flow, UINT16);
+cmdline_parse_token_num_t cmd_gro_set_portid =
+	TOKEN_NUM_INITIALIZER(struct cmd_gro_set_result,
+				port_id, UINT8);
+
+cmdline_parse_inst_t cmd_gro_set = {
+	.f = cmd_gro_set_parsed,
+	.data = NULL,
+	.help_str = "gro set <max_flow_num> <max_item_num_per_flow> "
+		"<port_id>: set max flow number and max packet number per-flow "
+		"for GRO",
+	.tokens = {
+		(void *)&cmd_gro_set_gro,
+		(void *)&cmd_gro_set_mode,
+		(void *)&cmd_gro_set_flow_num,
+		(void *)&cmd_gro_set_item_num_per_flow,
+		(void *)&cmd_gro_set_portid,
+		NULL,
+	},
+};
+
 /* *** ENABLE/DISABLE FLUSH ON RX STREAMS *** */
 struct cmd_set_flush_rx {
 	cmdline_fixed_string_t set;
@@ -4301,6 +4433,85 @@ cmdline_parse_inst_t cmd_set_bonding_mode = {
 		}
 };
 
+/* *** SET BONDING SLOW_QUEUE SW/HW *** */
+struct cmd_set_bonding_lacp_dedicated_queues_result {
+	cmdline_fixed_string_t set;
+	cmdline_fixed_string_t bonding;
+	cmdline_fixed_string_t lacp;
+	cmdline_fixed_string_t dedicated_queues;
+	uint8_t port_id;
+	cmdline_fixed_string_t mode;
+};
+
+static void cmd_set_bonding_lacp_dedicated_queues_parsed(void *parsed_result,
+		__attribute__((unused))  struct cmdline *cl,
+		__attribute__((unused)) void *data)
+{
+	struct cmd_set_bonding_lacp_dedicated_queues_result *res = parsed_result;
+	portid_t port_id = res->port_id;
+	struct rte_port *port;
+
+	port = &ports[port_id];
+
+	/** Check if the port is not started **/
+	if (port->port_status != RTE_PORT_STOPPED) {
+		printf("Please stop port %d first\n", port_id);
+		return;
+	}
+
+	if (!strcmp(res->mode, "enable")) {
+		if (rte_eth_bond_8023ad_dedicated_queues_enable(port_id) == 0)
+			printf("Dedicate queues for LACP control packets"
+					" enabled\n");
+		else
+			printf("Enabling dedicate queues for LACP control "
+					"packets on port %d failed\n", port_id);
+	} else if (!strcmp(res->mode, "disable")) {
+		if (rte_eth_bond_8023ad_dedicated_queues_disable(port_id) == 0)
+			printf("Dedicated queues for LACP control packets "
+					"disabled\n");
+		else
+			printf("Disabling dedicated queues for LACP control "
+					"traffic on port %d failed\n", port_id);
+	}
+}
+
+cmdline_parse_token_string_t cmd_setbonding_lacp_dedicated_queues_set =
+TOKEN_STRING_INITIALIZER(struct cmd_set_bonding_lacp_dedicated_queues_result,
+		set, "set");
+cmdline_parse_token_string_t cmd_setbonding_lacp_dedicated_queues_bonding =
+TOKEN_STRING_INITIALIZER(struct cmd_set_bonding_lacp_dedicated_queues_result,
+		bonding, "bonding");
+cmdline_parse_token_string_t cmd_setbonding_lacp_dedicated_queues_lacp =
+TOKEN_STRING_INITIALIZER(struct cmd_set_bonding_lacp_dedicated_queues_result,
+		lacp, "lacp");
+cmdline_parse_token_string_t cmd_setbonding_lacp_dedicated_queues_dedicated_queues =
+TOKEN_STRING_INITIALIZER(struct cmd_set_bonding_lacp_dedicated_queues_result,
+		dedicated_queues, "dedicated_queues");
+cmdline_parse_token_num_t cmd_setbonding_lacp_dedicated_queues_port_id =
+TOKEN_NUM_INITIALIZER(struct cmd_set_bonding_lacp_dedicated_queues_result,
+		port_id, UINT8);
+cmdline_parse_token_string_t cmd_setbonding_lacp_dedicated_queues_mode =
+TOKEN_STRING_INITIALIZER(struct cmd_set_bonding_lacp_dedicated_queues_result,
+		mode, "enable#disable");
+
+cmdline_parse_inst_t cmd_set_lacp_dedicated_queues = {
+		.f = cmd_set_bonding_lacp_dedicated_queues_parsed,
+		.help_str = "set bonding lacp dedicated_queues <port_id> "
+			"enable|disable: "
+			"Enable/disable dedicated queues for LACP control traffic for port_id",
+		.data = NULL,
+		.tokens = {
+			(void *)&cmd_setbonding_lacp_dedicated_queues_set,
+			(void *)&cmd_setbonding_lacp_dedicated_queues_bonding,
+			(void *)&cmd_setbonding_lacp_dedicated_queues_lacp,
+			(void *)&cmd_setbonding_lacp_dedicated_queues_dedicated_queues,
+			(void *)&cmd_setbonding_lacp_dedicated_queues_port_id,
+			(void *)&cmd_setbonding_lacp_dedicated_queues_mode,
+			NULL
+		}
+};
+
 /* *** SET BALANCE XMIT POLICY *** */
 struct cmd_set_bonding_balance_xmit_policy_result {
 	cmdline_fixed_string_t set;
@@ -4381,7 +4592,7 @@ static void cmd_show_bonding_config_parsed(void *parsed_result,
 		__attribute__((unused)) void *data)
 {
 	struct cmd_show_bonding_config_result *res = parsed_result;
-	int bonding_mode;
+	int bonding_mode, agg_mode;
 	uint8_t slaves[RTE_MAX_ETHPORTS];
 	int num_slaves, num_active_slaves;
 	int primary_id;
@@ -4420,6 +4631,23 @@ static void cmd_show_bonding_config_parsed(void *parsed_result,
 			}
 			printf("\n");
 		}
+	}
+
+	if (bonding_mode == BONDING_MODE_8023AD) {
+		agg_mode = rte_eth_bond_8023ad_agg_selection_get(port_id);
+		printf("\tIEEE802.3AD Aggregator Mode: ");
+		switch (agg_mode) {
+		case AGG_BANDWIDTH:
+			printf("bandwidth");
+			break;
+		case AGG_STABLE:
+			printf("stable");
+			break;
+		case AGG_COUNT:
+			printf("count");
+			break;
+		}
+		printf("\n");
 	}
 
 	num_slaves = rte_eth_bond_slaves_get(port_id, slaves, RTE_MAX_ETHPORTS);
@@ -4568,7 +4796,7 @@ static void cmd_add_bonding_slave_parsed(void *parsed_result,
 	portid_t master_port_id = res->port_id;
 	portid_t slave_port_id = res->slave_id;
 
-	/* Set the primary slave for a bonded device. */
+	/* add the slave for a bonded device. */
 	if (0 != rte_eth_bond_slave_add(master_port_id, slave_port_id)) {
 		printf("\t Failed to add slave %d to master port = %d.\n",
 				slave_port_id, master_port_id);
@@ -4626,7 +4854,7 @@ static void cmd_remove_bonding_slave_parsed(void *parsed_result,
 	portid_t master_port_id = res->port_id;
 	portid_t slave_port_id = res->slave_id;
 
-	/* Set the primary slave for a bonded device. */
+	/* remove the slave from a bonded device. */
 	if (0 != rte_eth_bond_slave_remove(master_port_id, slave_port_id)) {
 		printf("\t Failed to remove slave %d from master port = %d.\n",
 				slave_port_id, master_port_id);
@@ -4691,7 +4919,7 @@ static void cmd_create_bonded_device_parsed(void *parsed_result,
 		return;
 	}
 
-	snprintf(ethdev_name, RTE_ETH_NAME_MAX_LEN, "net_bond_testpmd_%d",
+	snprintf(ethdev_name, RTE_ETH_NAME_MAX_LEN, "net_bonding_testpmd_%d",
 			bond_dev_num++);
 
 	/* Create a new bonded device. */
@@ -4853,6 +5081,77 @@ cmdline_parse_inst_t cmd_set_bond_mon_period = {
 				NULL
 		}
 };
+
+
+
+struct cmd_set_bonding_agg_mode_policy_result {
+	cmdline_fixed_string_t set;
+	cmdline_fixed_string_t bonding;
+	cmdline_fixed_string_t agg_mode;
+	uint8_t port_num;
+	cmdline_fixed_string_t policy;
+};
+
+
+static void
+cmd_set_bonding_agg_mode(void *parsed_result,
+		__attribute__((unused)) struct cmdline *cl,
+		__attribute__((unused)) void *data)
+{
+	struct cmd_set_bonding_agg_mode_policy_result *res = parsed_result;
+	uint8_t policy = AGG_BANDWIDTH;
+
+	if (res->port_num >= nb_ports) {
+		printf("Port id %d must be less than %d\n",
+				res->port_num, nb_ports);
+		return;
+	}
+
+	if (!strcmp(res->policy, "bandwidth"))
+		policy = AGG_BANDWIDTH;
+	else if (!strcmp(res->policy, "stable"))
+		policy = AGG_STABLE;
+	else if (!strcmp(res->policy, "count"))
+		policy = AGG_COUNT;
+
+	rte_eth_bond_8023ad_agg_selection_set(res->port_num, policy);
+}
+
+
+cmdline_parse_token_string_t cmd_set_bonding_agg_mode_set =
+	TOKEN_STRING_INITIALIZER(struct cmd_set_bonding_agg_mode_policy_result,
+				set, "set");
+cmdline_parse_token_string_t cmd_set_bonding_agg_mode_bonding =
+	TOKEN_STRING_INITIALIZER(struct cmd_set_bonding_agg_mode_policy_result,
+				bonding, "bonding");
+
+cmdline_parse_token_string_t cmd_set_bonding_agg_mode_agg_mode =
+	TOKEN_STRING_INITIALIZER(struct cmd_set_bonding_agg_mode_policy_result,
+				agg_mode, "agg_mode");
+
+cmdline_parse_token_num_t cmd_set_bonding_agg_mode_portnum =
+	TOKEN_NUM_INITIALIZER(struct cmd_set_bonding_agg_mode_policy_result,
+				port_num, UINT8);
+
+cmdline_parse_token_string_t cmd_set_bonding_agg_mode_policy_string =
+	TOKEN_STRING_INITIALIZER(
+			struct cmd_set_bonding_balance_xmit_policy_result,
+		policy, "stable#bandwidth#count");
+
+cmdline_parse_inst_t cmd_set_bonding_agg_mode_policy = {
+	.f = cmd_set_bonding_agg_mode,
+	.data = (void *) 0,
+	.help_str = "set bonding mode IEEE802.3AD aggregator policy <port_id> <agg_name>",
+	.tokens = {
+			(void *)&cmd_set_bonding_agg_mode_set,
+			(void *)&cmd_set_bonding_agg_mode_bonding,
+			(void *)&cmd_set_bonding_agg_mode_agg_mode,
+			(void *)&cmd_set_bonding_agg_mode_portnum,
+			(void *)&cmd_set_bonding_agg_mode_policy_string,
+			NULL
+		}
+};
+
 
 #endif /* RTE_LIBRTE_PMD_BOND */
 
@@ -6742,7 +7041,6 @@ cmdline_parse_inst_t cmd_set_vf_macvlan_filter = {
 	},
 };
 
-#ifdef RTE_LIBRTE_IXGBE_PMD
 /* *** CONFIGURE VF TRAFFIC CONTROL *** */
 struct cmd_set_vf_traffic {
 	cmdline_fixed_string_t set;
@@ -6803,7 +7101,6 @@ cmdline_parse_inst_t cmd_set_vf_traffic = {
 		NULL,
 	},
 };
-#endif /* RTE_LIBRTE_IXGBE_PMD */
 
 /* *** CONFIGURE VF RECEIVE MODE *** */
 struct cmd_set_vf_rxmode {
@@ -11583,7 +11880,6 @@ cmdline_parse_inst_t cmd_set_all_queues_drop_en = {
 	},
 };
 
-#ifdef RTE_LIBRTE_IXGBE_PMD
 /* vf split drop enable configuration */
 
 /* Common result structure for vf split drop enable */
@@ -11634,14 +11930,16 @@ cmd_set_vf_split_drop_en_parsed(
 	__attribute__((unused)) void *data)
 {
 	struct cmd_vf_split_drop_en_result *res = parsed_result;
-	int ret;
+	int ret = -ENOTSUP;
 	int is_on = (strcmp(res->on_off, "on") == 0) ? 1 : 0;
 
 	if (port_id_is_invalid(res->port_id, ENABLED_WARN))
 		return;
 
+#ifdef RTE_LIBRTE_IXGBE_PMD
 	ret = rte_pmd_ixgbe_set_vf_split_drop_en(res->port_id, res->vf_id,
 			is_on);
+#endif
 	switch (ret) {
 	case 0:
 		break;
@@ -11650,6 +11948,9 @@ cmd_set_vf_split_drop_en_parsed(
 		break;
 	case -ENODEV:
 		printf("invalid port_id %d\n", res->port_id);
+		break;
+	case -ENOTSUP:
+		printf("not supported on port %d\n", res->port_id);
 		break;
 	default:
 		printf("programming error: (%s)\n", strerror(-ret));
@@ -11671,7 +11972,6 @@ cmdline_parse_inst_t cmd_set_vf_split_drop_en = {
 		NULL,
 	},
 };
-#endif
 
 /* vf mac address configuration */
 
@@ -11777,7 +12077,6 @@ cmdline_parse_inst_t cmd_set_vf_mac_addr = {
 	},
 };
 
-#ifdef RTE_LIBRTE_IXGBE_PMD
 /* MACsec configuration */
 
 /* Common result structure for MACsec offload enable */
@@ -11838,7 +12137,7 @@ cmd_set_macsec_offload_on_parsed(
 	__attribute__((unused)) void *data)
 {
 	struct cmd_macsec_offload_on_result *res = parsed_result;
-	int ret;
+	int ret = -ENOTSUP;
 	portid_t port_id = res->port_id;
 	int en = (strcmp(res->en_on_off, "on") == 0) ? 1 : 0;
 	int rp = (strcmp(res->rp_on_off, "on") == 0) ? 1 : 0;
@@ -11847,13 +12146,20 @@ cmd_set_macsec_offload_on_parsed(
 		return;
 
 	ports[port_id].tx_ol_flags |= TESTPMD_TX_OFFLOAD_MACSEC;
+#ifdef RTE_LIBRTE_IXGBE_PMD
 	ret = rte_pmd_ixgbe_macsec_enable(port_id, en, rp);
+#endif
+	RTE_SET_USED(en);
+	RTE_SET_USED(rp);
 
 	switch (ret) {
 	case 0:
 		break;
 	case -ENODEV:
 		printf("invalid port_id %d\n", port_id);
+		break;
+	case -ENOTSUP:
+		printf("not supported on port %d\n", port_id);
 		break;
 	default:
 		printf("programming error: (%s)\n", strerror(-ret));
@@ -11917,20 +12223,25 @@ cmd_set_macsec_offload_off_parsed(
 	__attribute__((unused)) void *data)
 {
 	struct cmd_macsec_offload_off_result *res = parsed_result;
-	int ret;
+	int ret = -ENOTSUP;
 	portid_t port_id = res->port_id;
 
 	if (port_id_is_invalid(port_id, ENABLED_WARN))
 		return;
 
 	ports[port_id].tx_ol_flags &= ~TESTPMD_TX_OFFLOAD_MACSEC;
+#ifdef RTE_LIBRTE_IXGBE_PMD
 	ret = rte_pmd_ixgbe_macsec_disable(port_id);
+#endif
 
 	switch (ret) {
 	case 0:
 		break;
 	case -ENODEV:
 		printf("invalid port_id %d\n", port_id);
+		break;
+	case -ENOTSUP:
+		printf("not supported on port %d\n", port_id);
 		break;
 	default:
 		printf("programming error: (%s)\n", strerror(-ret));
@@ -11999,19 +12310,26 @@ cmd_set_macsec_sc_parsed(
 	__attribute__((unused)) void *data)
 {
 	struct cmd_macsec_sc_result *res = parsed_result;
-	int ret;
+	int ret = -ENOTSUP;
 	int is_tx = (strcmp(res->tx_rx, "tx") == 0) ? 1 : 0;
 
+#ifdef RTE_LIBRTE_IXGBE_PMD
 	ret = is_tx ?
 		rte_pmd_ixgbe_macsec_config_txsc(res->port_id,
 				res->mac.addr_bytes) :
 		rte_pmd_ixgbe_macsec_config_rxsc(res->port_id,
 				res->mac.addr_bytes, res->pi);
+#endif
+	RTE_SET_USED(is_tx);
+
 	switch (ret) {
 	case 0:
 		break;
 	case -ENODEV:
 		printf("invalid port_id %d\n", res->port_id);
+		break;
+	case -ENOTSUP:
+		printf("not supported on port %d\n", res->port_id);
 		break;
 	default:
 		printf("programming error: (%s)\n", strerror(-ret));
@@ -12092,7 +12410,7 @@ cmd_set_macsec_sa_parsed(
 	__attribute__((unused)) void *data)
 {
 	struct cmd_macsec_sa_result *res = parsed_result;
-	int ret;
+	int ret = -ENOTSUP;
 	int is_tx = (strcmp(res->tx_rx, "tx") == 0) ? 1 : 0;
 	uint8_t key[16] = { 0 };
 	uint8_t xdgt0;
@@ -12114,11 +12432,16 @@ cmd_set_macsec_sa_parsed(
 		key[i] = (uint8_t) ((xdgt0 * 16) + xdgt1);
 	}
 
+#ifdef RTE_LIBRTE_IXGBE_PMD
 	ret = is_tx ?
 		rte_pmd_ixgbe_macsec_select_txsa(res->port_id,
 			res->idx, res->an, res->pn, key) :
 		rte_pmd_ixgbe_macsec_select_rxsa(res->port_id,
 			res->idx, res->an, res->pn, key);
+#endif
+	RTE_SET_USED(is_tx);
+	RTE_SET_USED(key);
+
 	switch (ret) {
 	case 0:
 		break;
@@ -12127,6 +12450,9 @@ cmd_set_macsec_sa_parsed(
 		break;
 	case -ENODEV:
 		printf("invalid port_id %d\n", res->port_id);
+		break;
+	case -ENOTSUP:
+		printf("not supported on port %d\n", res->port_id);
 		break;
 	default:
 		printf("programming error: (%s)\n", strerror(-ret));
@@ -12150,7 +12476,6 @@ cmdline_parse_inst_t cmd_set_macsec_sa = {
 		NULL,
 	},
 };
-#endif
 
 /* VF unicast promiscuous mode configuration */
 
@@ -12930,6 +13255,91 @@ cmd_ddp_add_parsed(
 	struct cmd_ddp_add_result *res = parsed_result;
 	uint8_t *buff;
 	uint32_t size;
+	char *filepath;
+	char *file_fld[2];
+	int file_num;
+	int ret = -ENOTSUP;
+
+	if (res->port_id > nb_ports) {
+		printf("Invalid port, range is [0, %d]\n", nb_ports - 1);
+		return;
+	}
+
+	if (!all_ports_stopped()) {
+		printf("Please stop all ports first\n");
+		return;
+	}
+
+	filepath = strdup(res->filepath);
+	if (filepath == NULL) {
+		printf("Failed to allocate memory\n");
+		return;
+	}
+	file_num = rte_strsplit(filepath, strlen(filepath), file_fld, 2, ',');
+
+	buff = open_ddp_package_file(file_fld[0], &size);
+	if (!buff) {
+		free((void *)filepath);
+		return;
+	}
+
+#ifdef RTE_LIBRTE_I40E_PMD
+	if (ret == -ENOTSUP)
+		ret = rte_pmd_i40e_process_ddp_package(res->port_id,
+					       buff, size,
+					       RTE_PMD_I40E_PKG_OP_WR_ADD);
+#endif
+
+	if (ret == -EEXIST)
+		printf("Profile has already existed.\n");
+	else if (ret < 0)
+		printf("Failed to load profile.\n");
+	else if (file_num == 2)
+		save_ddp_package_file(file_fld[1], buff, size);
+
+	close_ddp_package_file(buff);
+	free((void *)filepath);
+}
+
+cmdline_parse_inst_t cmd_ddp_add = {
+	.f = cmd_ddp_add_parsed,
+	.data = NULL,
+	.help_str = "ddp add <port_id> <profile_path[,output_path]>",
+	.tokens = {
+		(void *)&cmd_ddp_add_ddp,
+		(void *)&cmd_ddp_add_add,
+		(void *)&cmd_ddp_add_port_id,
+		(void *)&cmd_ddp_add_filepath,
+		NULL,
+	},
+};
+
+/* Delete dynamic device personalization*/
+struct cmd_ddp_del_result {
+	cmdline_fixed_string_t ddp;
+	cmdline_fixed_string_t del;
+	uint8_t port_id;
+	char filepath[];
+};
+
+cmdline_parse_token_string_t cmd_ddp_del_ddp =
+	TOKEN_STRING_INITIALIZER(struct cmd_ddp_del_result, ddp, "ddp");
+cmdline_parse_token_string_t cmd_ddp_del_del =
+	TOKEN_STRING_INITIALIZER(struct cmd_ddp_del_result, del, "del");
+cmdline_parse_token_num_t cmd_ddp_del_port_id =
+	TOKEN_NUM_INITIALIZER(struct cmd_ddp_del_result, port_id, UINT8);
+cmdline_parse_token_string_t cmd_ddp_del_filepath =
+	TOKEN_STRING_INITIALIZER(struct cmd_ddp_del_result, filepath, NULL);
+
+static void
+cmd_ddp_del_parsed(
+	void *parsed_result,
+	__attribute__((unused)) struct cmdline *cl,
+	__attribute__((unused)) void *data)
+{
+	struct cmd_ddp_del_result *res = parsed_result;
+	uint8_t *buff;
+	uint32_t size;
 	int ret = -ENOTSUP;
 
 	if (res->port_id > nb_ports) {
@@ -12950,26 +13360,153 @@ cmd_ddp_add_parsed(
 	if (ret == -ENOTSUP)
 		ret = rte_pmd_i40e_process_ddp_package(res->port_id,
 					       buff, size,
-					       RTE_PMD_I40E_PKG_OP_WR_ADD);
+					       RTE_PMD_I40E_PKG_OP_WR_DEL);
 #endif
 
-	if (ret < 0)
-		printf("Failed to load profile.\n");
-	else if (ret > 0)
-		printf("Profile has already existed.\n");
+	if (ret == -EACCES)
+		printf("Profile does not exist.\n");
+	else if (ret < 0)
+		printf("Failed to delete profile.\n");
 
 	close_ddp_package_file(buff);
 }
 
-cmdline_parse_inst_t cmd_ddp_add = {
-	.f = cmd_ddp_add_parsed,
+cmdline_parse_inst_t cmd_ddp_del = {
+	.f = cmd_ddp_del_parsed,
 	.data = NULL,
-	.help_str = "ddp add <port_id> <profile_path>",
+	.help_str = "ddp del <port_id> <profile_path>",
 	.tokens = {
-		(void *)&cmd_ddp_add_ddp,
-		(void *)&cmd_ddp_add_add,
-		(void *)&cmd_ddp_add_port_id,
-		(void *)&cmd_ddp_add_filepath,
+		(void *)&cmd_ddp_del_ddp,
+		(void *)&cmd_ddp_del_del,
+		(void *)&cmd_ddp_del_port_id,
+		(void *)&cmd_ddp_del_filepath,
+		NULL,
+	},
+};
+
+/* Get dynamic device personalization profile info */
+struct cmd_ddp_info_result {
+	cmdline_fixed_string_t ddp;
+	cmdline_fixed_string_t get;
+	cmdline_fixed_string_t info;
+	char filepath[];
+};
+
+cmdline_parse_token_string_t cmd_ddp_info_ddp =
+	TOKEN_STRING_INITIALIZER(struct cmd_ddp_info_result, ddp, "ddp");
+cmdline_parse_token_string_t cmd_ddp_info_get =
+	TOKEN_STRING_INITIALIZER(struct cmd_ddp_info_result, get, "get");
+cmdline_parse_token_string_t cmd_ddp_info_info =
+	TOKEN_STRING_INITIALIZER(struct cmd_ddp_info_result, info, "info");
+cmdline_parse_token_string_t cmd_ddp_info_filepath =
+	TOKEN_STRING_INITIALIZER(struct cmd_ddp_info_result, filepath, NULL);
+
+static void
+cmd_ddp_info_parsed(
+	void *parsed_result,
+	__attribute__((unused)) struct cmdline *cl,
+	__attribute__((unused)) void *data)
+{
+	struct cmd_ddp_info_result *res = parsed_result;
+	uint8_t *pkg;
+	uint32_t pkg_size;
+	int ret = -ENOTSUP;
+#ifdef RTE_LIBRTE_I40E_PMD
+	uint32_t i;
+	uint8_t *buff;
+	uint32_t buff_size;
+	struct rte_pmd_i40e_profile_info info;
+	uint32_t dev_num;
+	struct rte_pmd_i40e_ddp_device_id *devs;
+#endif
+
+	pkg = open_ddp_package_file(res->filepath, &pkg_size);
+	if (!pkg)
+		return;
+
+#ifdef RTE_LIBRTE_I40E_PMD
+	ret = rte_pmd_i40e_get_ddp_info(pkg, pkg_size,
+				(uint8_t *)&info, sizeof(info),
+				RTE_PMD_I40E_PKG_INFO_GLOBAL_HEADER);
+	if (!ret) {
+		printf("Global Track id:       0x%x\n", info.track_id);
+		printf("Global Version:        %d.%d.%d.%d\n",
+			info.version.major,
+			info.version.minor,
+			info.version.update,
+			info.version.draft);
+		printf("Global Package name:   %s\n\n", info.name);
+	}
+
+	ret = rte_pmd_i40e_get_ddp_info(pkg, pkg_size,
+				(uint8_t *)&info, sizeof(info),
+				RTE_PMD_I40E_PKG_INFO_HEADER);
+	if (!ret) {
+		printf("i40e Profile Track id: 0x%x\n", info.track_id);
+		printf("i40e Profile Version:  %d.%d.%d.%d\n",
+			info.version.major,
+			info.version.minor,
+			info.version.update,
+			info.version.draft);
+		printf("i40e Profile name:     %s\n\n", info.name);
+	}
+
+	ret = rte_pmd_i40e_get_ddp_info(pkg, pkg_size,
+				(uint8_t *)&buff_size, sizeof(buff_size),
+				RTE_PMD_I40E_PKG_INFO_GLOBAL_NOTES_SIZE);
+	if (!ret && buff_size) {
+		buff = (uint8_t *)malloc(buff_size);
+		if (buff) {
+			ret = rte_pmd_i40e_get_ddp_info(pkg, pkg_size,
+						buff, buff_size,
+						RTE_PMD_I40E_PKG_INFO_GLOBAL_NOTES);
+			if (!ret)
+				printf("Package Notes:\n%s\n\n", buff);
+			free(buff);
+		}
+	}
+
+	ret = rte_pmd_i40e_get_ddp_info(pkg, pkg_size,
+				(uint8_t *)&dev_num, sizeof(dev_num),
+				RTE_PMD_I40E_PKG_INFO_DEVID_NUM);
+	if (!ret && dev_num) {
+		devs = (struct rte_pmd_i40e_ddp_device_id *)malloc(dev_num *
+			sizeof(struct rte_pmd_i40e_ddp_device_id));
+		if (devs) {
+			ret = rte_pmd_i40e_get_ddp_info(pkg, pkg_size,
+						(uint8_t *)devs, dev_num *
+						sizeof(struct rte_pmd_i40e_ddp_device_id),
+						RTE_PMD_I40E_PKG_INFO_DEVID_LIST);
+			if (!ret) {
+				printf("List of supported devices:\n");
+				for (i = 0; i < dev_num; i++) {
+					printf("  %04X:%04X %04X:%04X\n",
+						devs[i].vendor_dev_id >> 16,
+						devs[i].vendor_dev_id & 0xFFFF,
+						devs[i].sub_vendor_dev_id >> 16,
+						devs[i].sub_vendor_dev_id & 0xFFFF);
+				}
+				printf("\n");
+			}
+			free(devs);
+		}
+	}
+	ret = 0;
+#endif
+	if (ret == -ENOTSUP)
+		printf("Function not supported in PMD driver\n");
+	close_ddp_package_file(pkg);
+}
+
+cmdline_parse_inst_t cmd_ddp_get_info = {
+	.f = cmd_ddp_info_parsed,
+	.data = NULL,
+	.help_str = "ddp get info <profile_path>",
+	.tokens = {
+		(void *)&cmd_ddp_info_ddp,
+		(void *)&cmd_ddp_info_get,
+		(void *)&cmd_ddp_info_info,
+		(void *)&cmd_ddp_info_filepath,
 		NULL,
 	},
 };
@@ -13694,6 +14231,8 @@ cmdline_parse_ctx_t main_ctx[] = {
 	(cmdline_parse_inst_t *) &cmd_set_bond_mac_addr,
 	(cmdline_parse_inst_t *) &cmd_set_balance_xmit_policy,
 	(cmdline_parse_inst_t *) &cmd_set_bond_mon_period,
+	(cmdline_parse_inst_t *) &cmd_set_lacp_dedicated_queues,
+	(cmdline_parse_inst_t *) &cmd_set_bonding_agg_mode_policy,
 #endif
 	(cmdline_parse_inst_t *)&cmd_vlan_offload,
 	(cmdline_parse_inst_t *)&cmd_vlan_tpid,
@@ -13710,6 +14249,8 @@ cmdline_parse_ctx_t main_ctx[] = {
 	(cmdline_parse_inst_t *)&cmd_tso_show,
 	(cmdline_parse_inst_t *)&cmd_tunnel_tso_set,
 	(cmdline_parse_inst_t *)&cmd_tunnel_tso_show,
+	(cmdline_parse_inst_t *)&cmd_enable_gro,
+	(cmdline_parse_inst_t *)&cmd_gro_set,
 	(cmdline_parse_inst_t *)&cmd_link_flow_control_set,
 	(cmdline_parse_inst_t *)&cmd_link_flow_control_set_rx,
 	(cmdline_parse_inst_t *)&cmd_link_flow_control_set_tx,
@@ -13805,7 +14346,6 @@ cmdline_parse_ctx_t main_ctx[] = {
 	(cmdline_parse_inst_t *)&cmd_set_vf_vlan_stripq,
 	(cmdline_parse_inst_t *)&cmd_set_vf_vlan_insert,
 	(cmdline_parse_inst_t *)&cmd_set_tx_loopback,
-#ifdef RTE_LIBRTE_IXGBE_PMD
 	(cmdline_parse_inst_t *)&cmd_set_all_queues_drop_en,
 	(cmdline_parse_inst_t *)&cmd_set_vf_split_drop_en,
 	(cmdline_parse_inst_t *)&cmd_set_macsec_offload_on,
@@ -13813,7 +14353,6 @@ cmdline_parse_ctx_t main_ctx[] = {
 	(cmdline_parse_inst_t *)&cmd_set_macsec_sc,
 	(cmdline_parse_inst_t *)&cmd_set_macsec_sa,
 	(cmdline_parse_inst_t *)&cmd_set_vf_traffic,
-#endif
 	(cmdline_parse_inst_t *)&cmd_set_vf_rxmode,
 	(cmdline_parse_inst_t *)&cmd_vf_rate_limit,
 	(cmdline_parse_inst_t *)&cmd_vf_rxvlan_filter,
@@ -13828,7 +14367,9 @@ cmdline_parse_ctx_t main_ctx[] = {
 	(cmdline_parse_inst_t *)&cmd_strict_link_prio,
 	(cmdline_parse_inst_t *)&cmd_tc_min_bw,
 	(cmdline_parse_inst_t *)&cmd_ddp_add,
+	(cmdline_parse_inst_t *)&cmd_ddp_del,
 	(cmdline_parse_inst_t *)&cmd_ddp_get_list,
+	(cmdline_parse_inst_t *)&cmd_ddp_get_info,
 	(cmdline_parse_inst_t *)&cmd_show_vf_stats,
 	(cmdline_parse_inst_t *)&cmd_clear_vf_stats,
 	(cmdline_parse_inst_t *)&cmd_ptype_mapping_get,

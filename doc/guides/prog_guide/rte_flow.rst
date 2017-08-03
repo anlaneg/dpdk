@@ -898,13 +898,62 @@ Matches a MPLS header.
 - Default ``mask`` matches label only.
 
 Item: ``GRE``
-^^^^^^^^^^^^^^
+^^^^^^^^^^^^^
 
 Matches a GRE header.
 
 - ``c_rsvd0_ver``: checksum, reserved 0 and version.
 - ``protocol``: protocol type.
 - Default ``mask`` matches protocol only.
+
+Item: ``FUZZY``
+^^^^^^^^^^^^^^^
+
+Fuzzy pattern match, expect faster than default.
+
+This is for device that support fuzzy match option. Usually a fuzzy match is
+fast but the cost is accuracy. i.e. Signature Match only match pattern's hash
+value, but it is possible two different patterns have the same hash value.
+
+Matching accuracy level can be configured by threshold. Driver can divide the
+range of threshold and map to different accuracy levels that device support.
+
+Threshold 0 means perfect match (no fuzziness), while threshold 0xffffffff
+means fuzziest match.
+
+.. _table_rte_flow_item_fuzzy:
+
+.. table:: FUZZY
+
+   +----------+---------------+--------------------------------------------------+
+   | Field    |   Subfield    | Value                                            |
+   +==========+===============+==================================================+
+   | ``spec`` | ``threshold`` | 0 as perfect match, 0xffffffff as fuzziest match |
+   +----------+---------------+--------------------------------------------------+
+   | ``last`` | ``threshold`` | upper range value                                |
+   +----------+---------------+--------------------------------------------------+
+   | ``mask`` | ``threshold`` | bit-mask apply to "spec" and "last"              |
+   +----------+---------------+--------------------------------------------------+
+
+Usage example, fuzzy match a TCPv4 packets:
+
+.. _table_rte_flow_item_fuzzy_example:
+
+.. table:: Fuzzy matching
+
+   +-------+----------+
+   | Index | Item     |
+   +=======+==========+
+   | 0     | FUZZY    |
+   +-------+----------+
+   | 1     | Ethernet |
+   +-------+----------+
+   | 2     | IPv4     |
+   +-------+----------+
+   | 3     | TCP      |
+   +-------+----------+
+   | 4     | END      |
+   +-------+----------+
 
 Actions
 ~~~~~~~
@@ -2093,8 +2142,8 @@ A few features are intentionally not supported:
 - "MAC VLAN" or "tunnel" perfect matching modes should be automatically set
   according to the created flow rules.
 
-- Signature mode of operation is not defined but could be handled through a
-  specific item type if needed.
+- Signature mode of operation is not defined but could be handled through
+  "FUZZY" item.
 
 .. _table_rte_flow_migration_fdir:
 
@@ -2121,8 +2170,8 @@ A few features are intentionally not supported:
    |   |                   +----------+-----+                       |
    |   |                   | ``mask`` | any |                       |
    +---+-------------------+----------+-----+                       |
-   | 3 | VF, PF (optional) | ``spec`` | any |                       |
-   |   |                   +----------+-----+                       |
+   | 3 | VF, PF, FUZZY     | ``spec`` | any |                       |
+   |   | (optional)        +----------+-----+                       |
    |   |                   | ``last`` | N/A |                       |
    |   |                   +----------+-----+                       |
    |   |                   | ``mask`` | any |                       |

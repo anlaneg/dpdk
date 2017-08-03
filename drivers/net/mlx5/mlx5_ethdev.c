@@ -119,6 +119,7 @@ struct ethtool_link_settings {
 #define ETHTOOL_LINK_MODE_100000baseCR4_Full_BIT 38
 #define ETHTOOL_LINK_MODE_100000baseLR4_ER4_Full_BIT 39
 #endif
+#define ETHTOOL_LINK_MODE_MASK_MAX_KERNEL_NU32 (SCHAR_MAX)
 
 /**
  * Return private structure associated with an Ethernet device.
@@ -715,15 +716,24 @@ mlx5_dev_supported_ptypes_get(struct rte_eth_dev *dev)
 {
 	static const uint32_t ptypes[] = {
 		/* refers to rxq_cq_to_pkt_type() */
+		RTE_PTYPE_L2_ETHER,
 		RTE_PTYPE_L3_IPV4_EXT_UNKNOWN,
 		RTE_PTYPE_L3_IPV6_EXT_UNKNOWN,
+		RTE_PTYPE_L4_NONFRAG,
+		RTE_PTYPE_L4_FRAG,
+		RTE_PTYPE_L4_TCP,
+		RTE_PTYPE_L4_UDP,
 		RTE_PTYPE_INNER_L3_IPV4_EXT_UNKNOWN,
 		RTE_PTYPE_INNER_L3_IPV6_EXT_UNKNOWN,
+		RTE_PTYPE_INNER_L4_NONFRAG,
+		RTE_PTYPE_INNER_L4_FRAG,
+		RTE_PTYPE_INNER_L4_TCP,
+		RTE_PTYPE_INNER_L4_UDP,
 		RTE_PTYPE_UNKNOWN
-
 	};
 
-	if (dev->rx_pkt_burst == mlx5_rx_burst)
+	if (dev->rx_pkt_burst == mlx5_rx_burst ||
+	    dev->rx_pkt_burst == mlx5_rx_burst_vec)
 		return ptypes;
 	return NULL;
 }
@@ -806,9 +816,12 @@ static int
 mlx5_link_update_unlocked_gs(struct rte_eth_dev *dev, int wait_to_complete)
 {
 	struct priv *priv = mlx5_get_priv(dev);
-	struct ethtool_link_settings edata = {
-		.cmd = ETHTOOL_GLINKSETTINGS,
-	};
+	__extension__ struct {
+		struct ethtool_link_settings edata;
+		uint32_t link_mode_data[3 *
+					ETHTOOL_LINK_MODE_MASK_MAX_KERNEL_NU32];
+	} ecmd;
+
 	struct ifreq ifr;
 	struct rte_eth_link dev_link;
 	uint64_t sc;
@@ -821,15 +834,23 @@ mlx5_link_update_unlocked_gs(struct rte_eth_dev *dev, int wait_to_complete)
 	memset(&dev_link, 0, sizeof(dev_link));
 	dev_link.link_status = ((ifr.ifr_flags & IFF_UP) &&
 				(ifr.ifr_flags & IFF_RUNNING));
-	ifr.ifr_data = (void *)&edata;
+	memset(&ecmd, 0, sizeof(ecmd));
+	ecmd.edata.cmd = ETHTOOL_GLINKSETTINGS;
+	ifr.ifr_data = (void *)&ecmd;
 	if (priv_ifreq(priv, SIOCETHTOOL, &ifr)) {
 		DEBUG("ioctl(SIOCETHTOOL, ETHTOOL_GLINKSETTINGS) failed: %s",
 		      strerror(errno));
 		return -1;
 	}
-	dev_link.link_speed = edata.speed;
-	sc = edata.link_mode_masks[0] |
-		((uint64_t)edata.link_mode_masks[1] << 32);
+	ecmd.edata.link_mode_masks_nwords = -ecmd.edata.link_mode_masks_nwords;
+	if (priv_ifreq(priv, SIOCETHTOOL, &ifr)) {
+		DEBUG("ioctl(SIOCETHTOOL, ETHTOOL_GLINKSETTINGS) failed: %s",
+		      strerror(errno));
+		return -1;
+	}
+	dev_link.link_speed = ecmd.edata.speed;
+	sc = ecmd.edata.link_mode_masks[0] |
+		((uint64_t)ecmd.edata.link_mode_masks[1] << 32);
 	priv->link_speed_capa = 0;
 	if (sc & ETHTOOL_LINK_MODE_Autoneg_BIT)
 		priv->link_speed_capa |= ETH_LINK_SPEED_AUTONEG;
@@ -865,7 +886,7 @@ mlx5_link_update_unlocked_gs(struct rte_eth_dev *dev, int wait_to_complete)
 		  ETHTOOL_LINK_MODE_100000baseCR4_Full_BIT |
 		  ETHTOOL_LINK_MODE_100000baseLR4_ER4_Full_BIT))
 		priv->link_speed_capa |= ETH_LINK_SPEED_100G;
-	dev_link.link_duplex = ((edata.duplex == DUPLEX_HALF) ?
+	dev_link.link_duplex = ((ecmd.edata.duplex == DUPLEX_HALF) ?
 				ETH_LINK_HALF_DUPLEX : ETH_LINK_FULL_DUPLEX);
 	dev_link.link_autoneg = !(dev->data->dev_conf.link_speeds &
 				  ETH_LINK_SPEED_FIXED);
@@ -923,8 +944,6 @@ mlx5_dev_set_mtu(struct rte_eth_dev *dev, uint16_t mtu)
 	struct priv *priv = dev->data->dev_private;
 	int ret = 0;
 	unsigned int i;
-	uint16_t (*rx_func)(void *, struct rte_mbuf **, uint16_t) =
-		mlx5_rx_burst;
 	unsigned int max_frame_len;
 	int rehash;
 	int restart = priv->started;
@@ -944,7 +963,7 @@ mlx5_dev_set_mtu(struct rte_eth_dev *dev, uint16_t mtu)
 	/* Temporarily replace RX handler with a fake one, assuming it has not
 	 * been copied elsewhere. */
 	dev->rx_pkt_burst = removed_rx_burst;
-	/* Make sure everyone has left mlx5_rx_burst() and uses
+	/* Make sure everyone has left dev->rx_pkt_burst() and uses
 	 * removed_rx_burst() instead. */
 	rte_wmb();
 	usleep(1000);
@@ -1018,17 +1037,13 @@ recover:
 		/* Double fault, disable RX. */
 		break;
 	}
-	/*
-	 * Use a safe RX burst function in case of error, otherwise mimic
-	 * mlx5_dev_start().
-	 */
+	/* Mimic mlx5_dev_start(). */
 	if (ret) {
 		ERROR("unable to reconfigure RX queues, RX disabled");
-		rx_func = removed_rx_burst;
 	} else if (restart &&
-		 !rehash &&
-		 !priv_create_hash_rxqs(priv) &&
-		 !priv_rehash_flows(priv)) {
+		   !rehash &&
+		   !priv_create_hash_rxqs(priv) &&
+		   !priv_rehash_flows(priv)) {
 		if (dev->data->dev_conf.fdir_conf.mode == RTE_FDIR_MODE_NONE)
 			priv_fdir_enable(priv);
 		priv_dev_interrupt_handler_install(priv, dev);
@@ -1036,7 +1051,12 @@ recover:
 	priv->mtu = mtu;
 	/* Burst functions can now be called again. */
 	rte_wmb();
-	dev->rx_pkt_burst = rx_func;
+	/*
+	 * Use a safe RX burst function in case of error, otherwise select RX
+	 * burst function again.
+	 */
+	if (!ret)
+		priv_select_rx_function(priv);
 out:
 	priv_unlock(priv);
 	assert(ret >= 0);
@@ -1185,7 +1205,7 @@ mlx5_ibv_device_to_pci_addr(const struct ibv_device *device,
 		/* Extract information. */
 		if (sscanf(line,
 			   "PCI_SLOT_NAME="
-			   "%" SCNx16 ":%" SCNx8 ":%" SCNx8 ".%" SCNx8 "\n",
+			   "%" SCNx32 ":%" SCNx8 ":%" SCNx8 ".%" SCNx8 "\n",
 			   &pci_addr->domain,
 			   &pci_addr->bus,
 			   &pci_addr->devid,
@@ -1262,7 +1282,8 @@ mlx5_dev_link_status_handler(void *arg)
 	ret = priv_dev_link_status_handler(priv, dev);
 	priv_unlock(priv);
 	if (ret)
-		_rte_eth_dev_callback_process(dev, RTE_ETH_EVENT_INTR_LSC, NULL);
+		_rte_eth_dev_callback_process(dev, RTE_ETH_EVENT_INTR_LSC, NULL,
+					      NULL);
 }
 
 /**
@@ -1284,7 +1305,8 @@ mlx5_dev_interrupt_handler(void *cb_arg)
 	ret = priv_dev_link_status_handler(priv, dev);
 	priv_unlock(priv);
 	if (ret)
-		_rte_eth_dev_callback_process(dev, RTE_ETH_EVENT_INTR_LSC, NULL);
+		_rte_eth_dev_callback_process(dev, RTE_ETH_EVENT_INTR_LSC, NULL,
+					      NULL);
 }
 
 /**
@@ -1584,9 +1606,16 @@ priv_select_tx_function(struct priv *priv)
 	priv->dev->tx_pkt_burst = mlx5_tx_burst;
 	/* Select appropriate TX function. */
 	if (priv->mps == MLX5_MPW_ENHANCED) {
-		priv->dev->tx_pkt_burst =
-			mlx5_tx_burst_empw;
-		DEBUG("selected Enhanced MPW TX function");
+		if (priv_check_vec_tx_support(priv) > 0) {
+			if (priv_check_raw_vec_tx_support(priv) > 0)
+				priv->dev->tx_pkt_burst = mlx5_tx_burst_raw_vec;
+			else
+				priv->dev->tx_pkt_burst = mlx5_tx_burst_vec;
+			DEBUG("selected Enhanced MPW TX vectorized function");
+		} else {
+			priv->dev->tx_pkt_burst = mlx5_tx_burst_empw;
+			DEBUG("selected Enhanced MPW TX function");
+		}
 	} else if (priv->mps && priv->txq_inline) {
 		priv->dev->tx_pkt_burst = mlx5_tx_burst_mpw_inline;
 		DEBUG("selected MPW inline TX function");
@@ -1605,5 +1634,11 @@ priv_select_tx_function(struct priv *priv)
 void
 priv_select_rx_function(struct priv *priv)
 {
-	priv->dev->rx_pkt_burst = mlx5_rx_burst;
+	if (priv_check_vec_rx_support(priv) > 0) {
+		priv_prep_vec_rx_function(priv);
+		priv->dev->rx_pkt_burst = mlx5_rx_burst_vec;
+		DEBUG("selected RX vectorized function");
+	} else {
+		priv->dev->rx_pkt_burst = mlx5_rx_burst;
+	}
 }

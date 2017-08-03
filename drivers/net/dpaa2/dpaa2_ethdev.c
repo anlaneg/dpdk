@@ -2,7 +2,7 @@
  *   BSD LICENSE
  *
  *   Copyright (c) 2016 Freescale Semiconductor, Inc. All rights reserved.
- *   Copyright (c) 2016 NXP. All rights reserved.
+ *   Copyright 2016 NXP.
  *
  *   Redistribution and use in source and binary forms, with or without
  *   modification, are permitted provided that the following conditions
@@ -42,7 +42,6 @@
 #include <rte_cycles.h>
 #include <rte_kvargs.h>
 #include <rte_dev.h>
-#include <rte_ethdev.h>
 #include <rte_fslmc.h>
 
 #include <fslmc_logs.h>
@@ -121,7 +120,7 @@ dpaa2_vlan_filter_set(struct rte_eth_dev *dev, uint16_t vlan_id, int on)
 	PMD_INIT_FUNC_TRACE();
 
 	if (dpni == NULL) {
-		RTE_LOG(ERR, PMD, "dpni is NULL");
+		RTE_LOG(ERR, PMD, "dpni is NULL\n");
 		return -1;
 	}
 
@@ -156,7 +155,7 @@ dpaa2_vlan_offload_set(struct rte_eth_dev *dev, int mask)
 			ret = dpni_enable_vlan_filter(dpni, CMD_PRI_LOW,
 						      priv->token, false);
 		if (ret < 0)
-			RTE_LOG(ERR, PMD, "Unable to set vlan filter ret = %d",
+			RTE_LOG(ERR, PMD, "Unable to set vlan filter = %d\n",
 				ret);
 	}
 }
@@ -273,8 +272,7 @@ dpaa2_alloc_rx_tx_queues(struct rte_eth_dev *dev)
 	}
 
 	vq_id = 0;
-	for (dist_idx = 0; dist_idx < priv->num_dist_per_tc[DPAA2_DEF_TC];
-	     dist_idx++) {
+	for (dist_idx = 0; dist_idx < priv->nb_rx_queues; dist_idx++) {
 		mcq = (struct dpaa2_queue *)priv->rx_vq[vq_id];
 		mcq->tc_index = DPAA2_DEF_TC;
 		mcq->flow_id = dist_idx;
@@ -362,6 +360,7 @@ dpaa2_dev_rx_queue_setup(struct rte_eth_dev *dev,
 {
 	struct dpaa2_dev_priv *priv = dev->data->dev_private;
 	struct fsl_mc_io *dpni = (struct fsl_mc_io *)priv->hw;
+	struct mc_soc_version mc_plat_info = {0};
 	struct dpaa2_queue *dpaa2_q;
 	struct dpni_queue cfg;
 	uint8_t options = 0;
@@ -384,15 +383,19 @@ dpaa2_dev_rx_queue_setup(struct rte_eth_dev *dev,
 	dpaa2_q = (struct dpaa2_queue *)priv->rx_vq[rx_queue_id];
 	dpaa2_q->mb_pool = mb_pool; /**< mbuf pool to populate RX ring. */
 
-	/*Get the tc id and flow id from given VQ id*/
-	flow_id = rx_queue_id % priv->num_dist_per_tc[dpaa2_q->tc_index];
+	/*Get the flow id from given VQ id*/
+	flow_id = rx_queue_id % priv->nb_rx_queues;
 	memset(&cfg, 0, sizeof(struct dpni_queue));
 
 	options = options | DPNI_QUEUE_OPT_USER_CTX;
 	cfg.user_context = (uint64_t)(dpaa2_q);
 
 	/*if ls2088 or rev2 device, enable the stashing */
-	if ((qbman_get_version() & 0xFFFF0000) > QMAN_REV_4000) {
+
+	if (mc_get_soc_version(dpni, CMD_PRI_LOW, &mc_plat_info))
+		PMD_INIT_LOG(ERR, "\tmc_get_soc_version failed\n");
+
+	if ((mc_plat_info.svr & 0xffff0000) != SVR_LS2080A) {
 		options |= DPNI_QUEUE_OPT_FLC;
 		cfg.flc.stash_control = true;
 		cfg.flc.value &= 0xFFFFFFFFFFFFFFC0;
@@ -458,13 +461,8 @@ dpaa2_dev_tx_queue_setup(struct rte_eth_dev *dev,
 	memset(&tx_conf_cfg, 0, sizeof(struct dpni_queue));
 	memset(&tx_flow_cfg, 0, sizeof(struct dpni_queue));
 
-	if (priv->num_tc == 1) {
-		tc_id = 0;
-		flow_id = tx_queue_id % priv->num_dist_per_tc[tc_id];
-	} else {
-		tc_id = tx_queue_id;
-		flow_id = 0;
-	}
+	tc_id = tx_queue_id;
+	flow_id = 0;
 
 	ret = dpni_set_queue(dpni, CMD_PRI_LOW, priv->token, DPNI_QUEUE_TX,
 			     tc_id, flow_id, options, &tx_flow_cfg);
@@ -490,11 +488,10 @@ dpaa2_dev_tx_queue_setup(struct rte_eth_dev *dev,
 	}
 	dpaa2_q->tc_index = tc_id;
 
-	if (priv->flags & DPAA2_TX_CGR_SUPPORT) {
+	if (!(priv->flags & DPAA2_TX_CGR_OFF)) {
 		struct dpni_congestion_notification_cfg cong_notif_cfg;
 
-		cong_notif_cfg.units = DPNI_CONGESTION_UNIT_BYTES;
-		/* Notify about congestion when the queue size is 32 KB */
+		cong_notif_cfg.units = DPNI_CONGESTION_UNIT_FRAMES;
 		cong_notif_cfg.threshold_entry = CONG_ENTER_TX_THRESHOLD;
 		/* Notify that the queue is not congested when the data in
 		 * the queue is below this thershold.
@@ -723,17 +720,17 @@ dpaa2_dev_promiscuous_enable(
 	PMD_INIT_FUNC_TRACE();
 
 	if (dpni == NULL) {
-		RTE_LOG(ERR, PMD, "dpni is NULL");
+		RTE_LOG(ERR, PMD, "dpni is NULL\n");
 		return;
 	}
 
 	ret = dpni_set_unicast_promisc(dpni, CMD_PRI_LOW, priv->token, true);
 	if (ret < 0)
-		RTE_LOG(ERR, PMD, "Unable to enable U promisc mode %d", ret);
+		RTE_LOG(ERR, PMD, "Unable to enable U promisc mode %d\n", ret);
 
 	ret = dpni_set_multicast_promisc(dpni, CMD_PRI_LOW, priv->token, true);
 	if (ret < 0)
-		RTE_LOG(ERR, PMD, "Unable to enable M promisc mode %d", ret);
+		RTE_LOG(ERR, PMD, "Unable to enable M promisc mode %d\n", ret);
 }
 
 static void
@@ -747,19 +744,20 @@ dpaa2_dev_promiscuous_disable(
 	PMD_INIT_FUNC_TRACE();
 
 	if (dpni == NULL) {
-		RTE_LOG(ERR, PMD, "dpni is NULL");
+		RTE_LOG(ERR, PMD, "dpni is NULL\n");
 		return;
 	}
 
 	ret = dpni_set_unicast_promisc(dpni, CMD_PRI_LOW, priv->token, false);
 	if (ret < 0)
-		RTE_LOG(ERR, PMD, "Unable to disable U promisc mode %d", ret);
+		RTE_LOG(ERR, PMD, "Unable to disable U promisc mode %d\n", ret);
 
 	if (dev->data->all_multicast == 0) {
 		ret = dpni_set_multicast_promisc(dpni, CMD_PRI_LOW,
 						 priv->token, false);
 		if (ret < 0)
-			RTE_LOG(ERR, PMD, "Unable to disable M promisc mode %d",
+			RTE_LOG(ERR, PMD,
+				"Unable to disable M promisc mode %d\n",
 				ret);
 	}
 }
@@ -775,13 +773,13 @@ dpaa2_dev_allmulticast_enable(
 	PMD_INIT_FUNC_TRACE();
 
 	if (dpni == NULL) {
-		RTE_LOG(ERR, PMD, "dpni is NULL");
+		RTE_LOG(ERR, PMD, "dpni is NULL\n");
 		return;
 	}
 
 	ret = dpni_set_multicast_promisc(dpni, CMD_PRI_LOW, priv->token, true);
 	if (ret < 0)
-		RTE_LOG(ERR, PMD, "Unable to enable multicast mode %d", ret);
+		RTE_LOG(ERR, PMD, "Unable to enable multicast mode %d\n", ret);
 }
 
 static void
@@ -794,7 +792,7 @@ dpaa2_dev_allmulticast_disable(struct rte_eth_dev *dev)
 	PMD_INIT_FUNC_TRACE();
 
 	if (dpni == NULL) {
-		RTE_LOG(ERR, PMD, "dpni is NULL");
+		RTE_LOG(ERR, PMD, "dpni is NULL\n");
 		return;
 	}
 
@@ -804,7 +802,7 @@ dpaa2_dev_allmulticast_disable(struct rte_eth_dev *dev)
 
 	ret = dpni_set_multicast_promisc(dpni, CMD_PRI_LOW, priv->token, false);
 	if (ret < 0)
-		RTE_LOG(ERR, PMD, "Unable to disable multicast mode %d", ret);
+		RTE_LOG(ERR, PMD, "Unable to disable multicast mode %d\n", ret);
 }
 
 static int
@@ -818,7 +816,7 @@ dpaa2_dev_mtu_set(struct rte_eth_dev *dev, uint16_t mtu)
 	PMD_INIT_FUNC_TRACE();
 
 	if (dpni == NULL) {
-		RTE_LOG(ERR, PMD, "dpni is NULL");
+		RTE_LOG(ERR, PMD, "dpni is NULL\n");
 		return -EINVAL;
 	}
 
@@ -857,15 +855,15 @@ dpaa2_dev_add_mac_addr(struct rte_eth_dev *dev,
 	PMD_INIT_FUNC_TRACE();
 
 	if (dpni == NULL) {
-		RTE_LOG(ERR, PMD, "dpni is NULL");
+		RTE_LOG(ERR, PMD, "dpni is NULL\n");
 		return -1;
 	}
 
 	ret = dpni_add_mac_addr(dpni, CMD_PRI_LOW,
 				priv->token, addr->addr_bytes);
 	if (ret)
-		RTE_LOG(ERR, PMD, "error: Adding the MAC ADDR failed:"
-			" err = %d", ret);
+		RTE_LOG(ERR, PMD,
+			"error: Adding the MAC ADDR failed: err = %d\n", ret);
 	return 0;
 }
 
@@ -884,15 +882,15 @@ dpaa2_dev_remove_mac_addr(struct rte_eth_dev *dev,
 	macaddr = &data->mac_addrs[index];
 
 	if (dpni == NULL) {
-		RTE_LOG(ERR, PMD, "dpni is NULL");
+		RTE_LOG(ERR, PMD, "dpni is NULL\n");
 		return;
 	}
 
 	ret = dpni_remove_mac_addr(dpni, CMD_PRI_LOW,
 				   priv->token, macaddr->addr_bytes);
 	if (ret)
-		RTE_LOG(ERR, PMD, "error: Removing the MAC ADDR failed:"
-			" err = %d", ret);
+		RTE_LOG(ERR, PMD,
+			"error: Removing the MAC ADDR failed: err = %d\n", ret);
 }
 
 static void
@@ -906,7 +904,7 @@ dpaa2_dev_set_mac_addr(struct rte_eth_dev *dev,
 	PMD_INIT_FUNC_TRACE();
 
 	if (dpni == NULL) {
-		RTE_LOG(ERR, PMD, "dpni is NULL");
+		RTE_LOG(ERR, PMD, "dpni is NULL\n");
 		return;
 	}
 
@@ -914,7 +912,8 @@ dpaa2_dev_set_mac_addr(struct rte_eth_dev *dev,
 					priv->token, addr->addr_bytes);
 
 	if (ret)
-		RTE_LOG(ERR, PMD, "error: Setting the MAC ADDR failed %d", ret);
+		RTE_LOG(ERR, PMD,
+			"error: Setting the MAC ADDR failed %d\n", ret);
 }
 static
 void dpaa2_dev_stats_get(struct rte_eth_dev *dev,
@@ -931,12 +930,12 @@ void dpaa2_dev_stats_get(struct rte_eth_dev *dev,
 	PMD_INIT_FUNC_TRACE();
 
 	if (!dpni) {
-		RTE_LOG(ERR, PMD, "dpni is NULL");
+		RTE_LOG(ERR, PMD, "dpni is NULL\n");
 		return;
 	}
 
 	if (!stats) {
-		RTE_LOG(ERR, PMD, "stats is NULL");
+		RTE_LOG(ERR, PMD, "stats is NULL\n");
 		return;
 	}
 
@@ -989,7 +988,7 @@ void dpaa2_dev_stats_reset(struct rte_eth_dev *dev)
 	PMD_INIT_FUNC_TRACE();
 
 	if (dpni == NULL) {
-		RTE_LOG(ERR, PMD, "dpni is NULL");
+		RTE_LOG(ERR, PMD, "dpni is NULL\n");
 		return;
 	}
 
@@ -1018,7 +1017,7 @@ dpaa2_dev_link_update(struct rte_eth_dev *dev,
 	PMD_INIT_FUNC_TRACE();
 
 	if (dpni == NULL) {
-		RTE_LOG(ERR, PMD, "error : dpni is NULL");
+		RTE_LOG(ERR, PMD, "dpni is NULL\n");
 		return 0;
 	}
 	memset(&old, 0, sizeof(old));
@@ -1026,7 +1025,7 @@ dpaa2_dev_link_update(struct rte_eth_dev *dev,
 
 	ret = dpni_get_link_state(dpni, CMD_PRI_LOW, priv->token, &state);
 	if (ret < 0) {
-		RTE_LOG(ERR, PMD, "error: dpni_get_link_state %d", ret);
+		RTE_LOG(ERR, PMD, "error: dpni_get_link_state %d\n", ret);
 		return -1;
 	}
 
@@ -1071,7 +1070,7 @@ dpaa2_dev_set_link_up(struct rte_eth_dev *dev)
 	dpni = (struct fsl_mc_io *)priv->hw;
 
 	if (dpni == NULL) {
-		RTE_LOG(ERR, PMD, "Device has not yet been configured");
+		RTE_LOG(ERR, PMD, "DPNI is NULL\n");
 		return ret;
 	}
 
@@ -1118,7 +1117,7 @@ dpaa2_dev_set_link_down(struct rte_eth_dev *dev)
 	dpni = (struct fsl_mc_io *)priv->hw;
 
 	if (dpni == NULL) {
-		RTE_LOG(ERR, PMD, "Device has not yet been configured");
+		RTE_LOG(ERR, PMD, "Device has not yet been configured\n");
 		return ret;
 	}
 
@@ -1172,13 +1171,13 @@ dpaa2_flow_ctrl_get(struct rte_eth_dev *dev, struct rte_eth_fc_conf *fc_conf)
 	dpni = (struct fsl_mc_io *)priv->hw;
 
 	if (dpni == NULL || fc_conf == NULL) {
-		RTE_LOG(ERR, PMD, "device not configured");
+		RTE_LOG(ERR, PMD, "device not configured\n");
 		return ret;
 	}
 
 	ret = dpni_get_link_state(dpni, CMD_PRI_LOW, priv->token, &state);
 	if (ret) {
-		RTE_LOG(ERR, PMD, "error: dpni_get_link_state %d", ret);
+		RTE_LOG(ERR, PMD, "error: dpni_get_link_state %d\n", ret);
 		return ret;
 	}
 
@@ -1228,7 +1227,7 @@ dpaa2_flow_ctrl_set(struct rte_eth_dev *dev, struct rte_eth_fc_conf *fc_conf)
 	dpni = (struct fsl_mc_io *)priv->hw;
 
 	if (dpni == NULL) {
-		RTE_LOG(ERR, PMD, "dpni is NULL");
+		RTE_LOG(ERR, PMD, "dpni is NULL\n");
 		return ret;
 	}
 
@@ -1238,7 +1237,7 @@ dpaa2_flow_ctrl_set(struct rte_eth_dev *dev, struct rte_eth_fc_conf *fc_conf)
 	 */
 	ret = dpni_get_link_state(dpni, CMD_PRI_LOW, priv->token, &state);
 	if (ret) {
-		RTE_LOG(ERR, PMD, "Unable to get link state (err=%d)", ret);
+		RTE_LOG(ERR, PMD, "Unable to get link state (err=%d)\n", ret);
 		return -1;
 	}
 
@@ -1257,6 +1256,7 @@ dpaa2_flow_ctrl_set(struct rte_eth_dev *dev, struct rte_eth_fc_conf *fc_conf)
 		 */
 		cfg.options |= DPNI_LINK_OPT_PAUSE;
 		cfg.options &= ~DPNI_LINK_OPT_ASYM_PAUSE;
+		break;
 	case RTE_FC_TX_PAUSE:
 		/* Enable RX flow control
 		 * OPT_PAUSE not set;
@@ -1282,14 +1282,15 @@ dpaa2_flow_ctrl_set(struct rte_eth_dev *dev, struct rte_eth_fc_conf *fc_conf)
 		cfg.options &= ~DPNI_LINK_OPT_ASYM_PAUSE;
 		break;
 	default:
-		RTE_LOG(ERR, PMD, "Incorrect Flow control flag (%d)",
+		RTE_LOG(ERR, PMD, "Incorrect Flow control flag (%d)\n",
 			fc_conf->mode);
 		return -1;
 	}
 
 	ret = dpni_set_link_cfg(dpni, CMD_PRI_LOW, priv->token, &cfg);
 	if (ret)
-		RTE_LOG(ERR, PMD, "Unable to set Link configuration (err=%d)",
+		RTE_LOG(ERR, PMD,
+			"Unable to set Link configuration (err=%d)\n",
 			ret);
 
 	/* Enable link */
@@ -1338,7 +1339,7 @@ dpaa2_dev_init(struct rte_eth_dev *eth_dev)
 	struct dpni_attr attr;
 	struct dpaa2_dev_priv *priv = eth_dev->data->dev_private;
 	struct dpni_buffer_layout layout;
-	int i, ret, hw_id;
+	int ret, hw_id;
 
 	PMD_INIT_FUNC_TRACE();
 
@@ -1384,22 +1385,20 @@ dpaa2_dev_init(struct rte_eth_dev *eth_dev)
 	}
 
 	priv->num_tc = attr.num_tcs;
-	for (i = 0; i < attr.num_tcs; i++) {
-		priv->num_dist_per_tc[i] = attr.num_queues;
-		break;
-	}
 
-	/* Distribution is per Tc only,
-	 * so choosing RX queues from default TC only
+	/* Resetting the "num_rx_vqueues" to equal number of queues in first TC
+	 * as only one TC is supported on Rx Side. Once Multiple TCs will be
+	 * in use for Rx processing then this will be changed or removed.
 	 */
-	priv->nb_rx_queues = priv->num_dist_per_tc[DPAA2_DEF_TC];
+	priv->nb_rx_queues = attr.num_queues;
 
-	if (attr.num_tcs == 1)
-		priv->nb_tx_queues = attr.num_queues;
-	else
-		priv->nb_tx_queues = attr.num_tcs;
+	/* TODO:Using hard coded value for number of TX queues due to dependency
+	 * in MC.
+	 */
+	priv->nb_tx_queues = 8;
 
-	PMD_INIT_LOG(DEBUG, "num_tc %d", priv->num_tc);
+	PMD_INIT_LOG(DEBUG, "num TC - RX %d", priv->num_tc);
+	PMD_INIT_LOG(DEBUG, "nb_tx_queues %d", priv->nb_tx_queues);
 	PMD_INIT_LOG(DEBUG, "nb_rx_queues %d", priv->nb_rx_queues);
 
 	priv->hw = dpni_dev;
@@ -1408,9 +1407,6 @@ dpaa2_dev_init(struct rte_eth_dev *eth_dev)
 	priv->max_mac_filters = attr.mac_filter_entries;
 	priv->max_vlan_filters = attr.vlan_filter_entries;
 	priv->flags = 0;
-
-	priv->flags |= DPAA2_TX_CGR_SUPPORT;
-	PMD_INIT_LOG(INFO, "Enable the tx congestion control support");
 
 	/* Allocate memory for hardware structure for queues */
 	ret = dpaa2_alloc_rx_tx_queues(eth_dev);
@@ -1486,7 +1482,7 @@ dpaa2_dev_uninit(struct rte_eth_dev *eth_dev)
 	PMD_INIT_FUNC_TRACE();
 
 	if (rte_eal_process_type() != RTE_PROC_PRIMARY)
-		return -EPERM;
+		return 0;
 
 	if (!dpni) {
 		PMD_INIT_LOG(WARNING, "Already closed or not started");
@@ -1533,21 +1529,16 @@ dpaa2_dev_uninit(struct rte_eth_dev *eth_dev)
 }
 
 static int
-rte_dpaa2_probe(struct rte_dpaa2_driver *dpaa2_drv __rte_unused,
+rte_dpaa2_probe(struct rte_dpaa2_driver *dpaa2_drv,
 		struct rte_dpaa2_device *dpaa2_dev)
 {
 	struct rte_eth_dev *eth_dev;
-	char ethdev_name[RTE_ETH_NAME_MAX_LEN];
-
 	int diag;
 
-	sprintf(ethdev_name, "dpni-%d", dpaa2_dev->object_id);
-
-	eth_dev = rte_eth_dev_allocate(ethdev_name);
-	if (eth_dev == NULL)
-		return -ENOMEM;
-
 	if (rte_eal_process_type() == RTE_PROC_PRIMARY) {
+		eth_dev = rte_eth_dev_allocate(dpaa2_dev->device.name);
+		if (!eth_dev)
+			return -ENODEV;
 		eth_dev->data->dev_private = rte_zmalloc(
 						"ethdev private structure",
 						sizeof(struct dpaa2_dev_priv),
@@ -1558,8 +1549,15 @@ rte_dpaa2_probe(struct rte_dpaa2_driver *dpaa2_drv __rte_unused,
 			rte_eth_dev_release_port(eth_dev);
 			return -ENOMEM;
 		}
+	} else {
+		eth_dev = rte_eth_dev_attach_secondary(dpaa2_dev->device.name);
+		if (!eth_dev)
+			return -ENODEV;
 	}
+
 	eth_dev->device = &dpaa2_dev->device;
+	eth_dev->device->driver = &dpaa2_drv->driver;
+
 	dpaa2_dev->eth_dev = eth_dev;
 	eth_dev->data->rx_mbuf_alloc_failed = 0;
 

@@ -40,8 +40,9 @@
 #include <stdio.h>
 #include <string.h>
 
-#include <rte_pci.h>
+#include <rte_dev.h>
 #include <rte_devargs.h>
+#include <rte_tailq.h>
 #include "eal_private.h"
 
 /** Global list of user devices */
@@ -80,24 +81,94 @@ rte_eal_parse_devargs_str(const char *devargs_str,
 	return 0;
 }
 
+static int
+bus_name_cmp(const struct rte_bus *bus, const void *name)
+{
+	return strncmp(bus->name, name, strlen(bus->name));
+}
+
+int
+rte_eal_devargs_parse(const char *dev, struct rte_devargs *da)
+{
+	struct rte_bus *bus = NULL;
+	const char *devname;
+	const size_t maxlen = sizeof(da->name);
+	size_t i;
+
+	if (dev == NULL || da == NULL)
+		return -EINVAL;
+	/* Retrieve eventual bus info */
+	do {
+		devname = dev;
+		bus = rte_bus_find(bus, bus_name_cmp, dev);
+		if (bus == NULL)
+			break;
+		devname = dev + strlen(bus->name) + 1;
+		if (rte_bus_find_by_device_name(devname) == bus)
+			break;
+	} while (1);
+	/* Store device name */
+	i = 0;
+	while (devname[i] != '\0' && devname[i] != ',') {
+		da->name[i] = devname[i];
+		i++;
+		if (i == maxlen) {
+			fprintf(stderr, "WARNING: Parsing \"%s\": device name should be shorter than %zu\n",
+				dev, maxlen);
+			da->name[i - 1] = '\0';
+			return -EINVAL;
+		}
+	}
+	da->name[i] = '\0';
+	if (bus == NULL) {
+		bus = rte_bus_find_by_device_name(da->name);
+		if (bus == NULL) {
+			fprintf(stderr, "ERROR: failed to parse device \"%s\"\n",
+				da->name);
+			return -EFAULT;
+		}
+	}
+	da->bus = bus;
+	/* Parse eventual device arguments */
+	if (devname[i] == ',')
+		da->args = strdup(&devname[i + 1]);
+	else
+		da->args = strdup("");
+	if (da->args == NULL) {
+		fprintf(stderr, "ERROR: not enough memory to parse arguments\n");
+		return -ENOMEM;
+	}
+	return 0;
+}
+
+int
+rte_eal_devargs_insert(struct rte_devargs *da)
+{
+	int ret;
+
+	ret = rte_eal_devargs_remove(da->bus->name, da->name);
+	if (ret < 0)
+		return ret;
+	TAILQ_INSERT_TAIL(&devargs_list, da, next);
+	return 0;
+}
+
 /* store a whitelist parameter for later parsing */
 int
 rte_eal_devargs_add(enum rte_devtype devtype, const char *devargs_str)
 {
 	struct rte_devargs *devargs = NULL;
-	char *buf = NULL;
-	int ret;
+	struct rte_bus *bus = NULL;
+	const char *dev = devargs_str;
 
-	/* use malloc instead of rte_malloc as it's called early at init */
-	devargs = malloc(sizeof(*devargs));
+	/* use calloc instead of rte_zmalloc as it's called early at init */
+	devargs = calloc(1, sizeof(*devargs));
 	if (devargs == NULL)
 		goto fail;
 
-	memset(devargs, 0, sizeof(*devargs));
-	devargs->type = devtype;
-
-	if (rte_eal_parse_devargs_str(devargs_str, &buf, &devargs->args))
+	if (rte_eal_devargs_parse(dev, devargs))
 		goto fail;
+<<<<<<< HEAD
 
 	switch (devargs->type) {
 	case RTE_DEVTYPE_WHITELISTED_PCI:
@@ -115,23 +186,61 @@ rte_eal_devargs_add(enum rte_devtype devtype, const char *devargs_str)
 		ret = snprintf(devargs->virt.drv_name,
 			       sizeof(devargs->virt.drv_name), "%s", buf);
 		if (ret < 0 || ret >= (int)sizeof(devargs->virt.drv_name))
+=======
+	devargs->type = devtype;
+	bus = devargs->bus;
+	if (devargs->type == RTE_DEVTYPE_BLACKLISTED_PCI)
+		devargs->policy = RTE_DEV_BLACKLISTED;
+	if (devargs->policy == RTE_DEV_WHITELISTED) {
+		if (bus->conf.scan_mode == RTE_BUS_SCAN_UNDEFINED) {
+			bus->conf.scan_mode = RTE_BUS_SCAN_WHITELIST;
+		} else if (bus->conf.scan_mode == RTE_BUS_SCAN_BLACKLIST) {
+			fprintf(stderr, "ERROR: incompatible device policy and bus scan mode\n");
 			goto fail;
-
-		break;
+		}
+	} else if (devargs->policy == RTE_DEV_BLACKLISTED) {
+		if (bus->conf.scan_mode == RTE_BUS_SCAN_UNDEFINED) {
+			bus->conf.scan_mode = RTE_BUS_SCAN_BLACKLIST;
+		} else if (bus->conf.scan_mode == RTE_BUS_SCAN_WHITELIST) {
+			fprintf(stderr, "ERROR: incompatible device policy and bus scan mode\n");
+>>>>>>> upstream/master
+			goto fail;
+		}
 	}
 
+<<<<<<< HEAD
 	free(buf);
 	TAILQ_INSERT_TAIL(&devargs_list, devargs, next);//将dev参数加入到链表
+=======
+	TAILQ_INSERT_TAIL(&devargs_list, devargs, next);
+>>>>>>> upstream/master
 	return 0;
 
 fail:
-	free(buf);
 	if (devargs) {
 		free(devargs->args);
 		free(devargs);
 	}
 
 	return -1;
+}
+
+int
+rte_eal_devargs_remove(const char *busname, const char *devname)
+{
+	struct rte_devargs *d;
+	void *tmp;
+
+	TAILQ_FOREACH_SAFE(d, &devargs_list, next, tmp) {
+		if (strcmp(d->bus->name, busname) == 0 &&
+		    strcmp(d->name, devname) == 0) {
+			TAILQ_REMOVE(&devargs_list, d, next);
+			free(d->args);
+			free(d);
+			return 0;
+		}
+	}
+	return 1;
 }
 
 /* count the number of devices of a specified type */
@@ -156,27 +265,10 @@ rte_eal_devargs_dump(FILE *f)
 {
 	struct rte_devargs *devargs;
 
-	fprintf(f, "User device white list:\n");
+	fprintf(f, "User device list:\n");
 	TAILQ_FOREACH(devargs, &devargs_list, next) {
-		if (devargs->type == RTE_DEVTYPE_WHITELISTED_PCI)
-			fprintf(f, "  PCI whitelist " PCI_PRI_FMT " %s\n",
-			       devargs->pci.addr.domain,
-			       devargs->pci.addr.bus,
-			       devargs->pci.addr.devid,
-			       devargs->pci.addr.function,
-			       devargs->args);
-		else if (devargs->type == RTE_DEVTYPE_BLACKLISTED_PCI)
-			fprintf(f, "  PCI blacklist " PCI_PRI_FMT " %s\n",
-			       devargs->pci.addr.domain,
-			       devargs->pci.addr.bus,
-			       devargs->pci.addr.devid,
-			       devargs->pci.addr.function,
-			       devargs->args);
-		else if (devargs->type == RTE_DEVTYPE_VIRTUAL)
-			fprintf(f, "  VIRTUAL %s %s\n",
-			       devargs->virt.drv_name,
-			       devargs->args);
-		else
-			fprintf(f, "  UNKNOWN %s\n", devargs->args);
+		fprintf(f, "  [%s]: %s %s\n",
+			(devargs->bus ? devargs->bus->name : "??"),
+			devargs->name, devargs->args);
 	}
 }

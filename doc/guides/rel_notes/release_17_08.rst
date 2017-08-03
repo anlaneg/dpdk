@@ -41,6 +41,32 @@ New Features
      Also, make sure to start the actual text at the margin.
      =========================================================
 
+* **Added Service Core functionality.**
+
+  The service core functionality added to EAL allows DPDK to run services such
+  as SW PMDs on lcores without the application manually running them. The
+  service core infrastructure allows flexibility of running multiple services
+  on the same service lcore, and provides the application with powerful APIs to
+  configure the mapping from service lcores to services.
+
+* **Added Generic Receive Offload API.**
+
+  Generic Receive Offload (GRO) API supports to reassemble TCP/IPv4
+  packets. GRO API assumes all inputted packets are with correct
+  checksums. GRO API doesn't update checksums for merged packets. If
+  inputted packets are IP fragmented, GRO API assumes they are complete
+  packets (i.e. with L4 headers).
+
+* **Added support for generic flow API (rte_flow) on igb NIC.**
+
+  This API provides a generic means to configure hardware to match specific
+  ingress or egress traffic, alter its behavior and query related counters
+  according to any number of user-defined rules.
+
+  * Generic flow API support for Ethernet, IPv4, UDP, TCP and
+    RAW pattern items with QUEUE actions. There are four
+    type of filter support for this feature on igb.
+
 * **Added Generic Flow API support to enic.**
 
   Flow API support for outer Ethernet, VLAN, IPv4, IPv6, UDP, TCP, SCTP, VxLAN
@@ -71,9 +97,108 @@ New Features
   Rx queues can be armed with an interrupt which will trigger on the
   next packet arrival.
 
+* **Updated mlx5 driver.**
+
+  Updated the mlx5 driver, include the following changes:
+
+  * Added vectorized Rx/Tx burst for x86.
+  * Added support for isolated mode from flow API.
+  * Re-worked flow drop action to implement in hardware classifier.
+  * Improved Rx interrupts management.
+
 * **Updated szedata2 PMD.**
 
   Added support for firmwares with multiple Ethernet ports per physical port.
+
+* **Updated dpaa2 PMD.**
+
+  Major enhancements include:
+  * Support MAC Filter configuration
+  * Support Segmented Buffers
+  * Support VLAN filter and strip functionality.
+  * Other enhancements to add support for more dev_ops.
+  * Optimized the packet receive path
+
+* **Reorganized the symmetric crypto operation structure.**
+
+  The crypto operation (``rte_crypto_sym_op``) has been reorganized as follows:
+
+  * Removed field ``rte_crypto_sym_op_sess_type``.
+  * Replaced pointer and physical address of IV with offset from the start
+    of the crypto operation.
+  * Moved length and offset of cipher IV to ``rte_crypto_cipher_xform``.
+  * Removed Additional Authentication Data (AAD) length.
+  * Removed digest length.
+  * Removed AAD pointer and physical address from ``auth`` structure.
+  * Added ``aead`` structure, containing parameters for AEAD algorithms.
+
+* **Reorganized the crypto operation structure.**
+
+  The crypto operation (``rte_crypto_op``) has been reorganized as follows:
+
+  * Added field ``rte_crypto_op_sess_type``.
+  * Enumerations ``rte_crypto_op_status`` and ``rte_crypto_op_type``
+    have been modified to be uint8_t values.
+  * Removed the field ``opaque_data``.
+  * Pointer to ``rte_crypto_sym_op`` has been replaced with a zero length array.
+
+* **Reorganized the crypto symmetric session structure.**
+
+  The crypto symmetric session structure (``rte_cryptodev_sym_session``) has
+  been reorganized as follows:
+
+  * ``dev_id`` field has been removed.
+  * ``driver_id`` field has been removed.
+  * Mempool pointer ``mp`` has been removed.
+  * Replaced ``private`` marker with array of pointers to private data sessions
+    ``sess_private_data``.
+
+* **Updated cryptodev library.**
+
+  * Added AEAD algorithm specific functions and structures, so it is not
+    necessary to use a combination of cipher and authentication
+    structures anymore.
+  * Added helper functions for crypto device driver identification.
+  * Added support for multi-device sessions, so a single session can be
+    used in multiple drivers.
+  * Added functions to initialize and free individual driver private data
+    with a same session.
+
+* **Updated dpaa2_sec crypto PMD.**
+
+  Added support for AES-GCM and AES-CTR
+
+* **Updated the AESNI MB PMD.**
+
+  The AESNI MB PMD has been updated with additional support for:
+
+    * 12-byte IV on AES Counter Mode, apart from the previous 16-byte IV.
+
+* **Updated the AES-NI GCM PMD.**
+
+  The AES-NI GCM PMD was migrated from the ISA-L library to the Multi Buffer
+  library, as the latter library has Scatter Gather List support
+  now. The migration entailed adding additional support for:
+
+  * 192-bit key.
+
+* **Updated the Cryptodev Scheduler PMD.**
+
+  Added a multicore based distribution mode, which distributes the enqueued
+  crypto operations among several slaves, running on different logical cores.
+
+* **Added NXP DPAA2 Eventdev PMD.**
+
+  Added the new dpaa2 eventdev driver for NXP DPAA2 devices. See the
+  "Event Device Drivers" document for more details on this new driver.
+
+* **Added dpdk-test-eventdev test application.**
+
+  The dpdk-test-eventdev tool is a Data Plane Development Kit (DPDK) application
+  that allows exercising various eventdev use cases.
+  This application has a generic framework to add new eventdev based test cases
+  to verify functionality and measure the performance parameters of DPDK
+  eventdev devices.
 
 
 Resolved Issues
@@ -144,6 +269,61 @@ API Changes
    Also, make sure to start the actual text at the margin.
    =========================================================
 
+* **Modified the _rte_eth_dev_callback_process function in the ethdev library.**
+
+  The function ``_rte_eth_dev_callback_process()`` has been modified. The return
+  value has been changed from void to int and an extra parameter ``void *ret_param``
+  has been added.
+
+* **Moved bypass functions from the rte_ethdev library to ixgbe PMD**
+
+  * The following rte_ethdev library functions were removed:
+
+    * ``rte_eth_dev_bypass_event_show``
+    * ``rte_eth_dev_bypass_event_store``
+    * ``rte_eth_dev_bypass_init``
+    * ``rte_eth_dev_bypass_state_set``
+    * ``rte_eth_dev_bypass_state_show``
+    * ``rte_eth_dev_bypass_ver_show``
+    * ``rte_eth_dev_bypass_wd_reset``
+    * ``rte_eth_dev_bypass_wd_timeout_show``
+    * ``rte_eth_dev_wd_timeout_store``
+
+  * The following ixgbe PMD functions were added:
+
+    * ``rte_pmd_ixgbe_bypass_event_show``
+    * ``rte_pmd_ixgbe_bypass_event_store``
+    * ``rte_pmd_ixgbe_bypass_init``
+    * ``rte_pmd_ixgbe_bypass_state_set``
+    * ``rte_pmd_ixgbe_bypass_state_show``
+    * ``rte_pmd_ixgbe_bypass_ver_show``
+    * ``rte_pmd_ixgbe_bypass_wd_reset``
+    * ``rte_pmd_ixgbe_bypass_wd_timeout_show``
+    * ``rte_pmd_ixgbe_bypass_wd_timeout_store``
+
+* **Reworked rte_cryptodev library.**
+
+  The rte_cryptodev library has been reworked and updated. The following changes
+  have been made to it:
+
+  * The crypto device type enumeration has been removed from cryptodev library.
+  * The function ``rte_crypto_count_devtype()`` has been removed, and replaced
+    by the new function ``rte_crypto_count_by_driver()``.
+  * Moved crypto device driver names definitions to the particular PMDs.
+    These names are not public anymore.
+  * ``rte_cryptodev_configure()`` does not create the session mempool
+    for the device anymore.
+  * ``rte_cryptodev_queue_pair_attach_sym_session()`` and
+    ``rte_cryptodev_queue_pair_dettach_sym_session()`` functions require
+    the new parameter ``device id``.
+  * Modified parameters of ``rte_cryptodev_sym_session_create()``, to accept
+    ``mempool``, instead of ``device id`` and ``rte_crypto_sym_xform``.
+  * Remove ``device id`` parameter from ``rte_cryptodev_sym_session_free()``.
+  * Added new field ``session_pool`` to ``rte_cryptodev_queue_pair_setup()``.
+  * Removed ``aad_size`` parameter from ``rte_cryptodev_sym_capability_check_auth()``.
+  * Added ``iv_size`` parameter to ``rte_cryptodev_sym_capability_check_auth()``.
+  * Removed ``RTE_CRYPTO_OP_STATUS_ENQUEUED`` from enum ``rte_crypto_op_status``.
+
 
 ABI Changes
 -----------
@@ -158,6 +338,33 @@ ABI Changes
    Also, make sure to start the actual text at the margin.
    =========================================================
 
+* **Reorganized the crypto operation structures.**
+
+  Some fields have been modified in the ``rte_crypto_op`` and ``rte_crypto_sym_op``
+  structures, as described in the `New Features`_ section.
+
+* **Reorganized the crypto symmetric session structure.**
+
+  Some fields have been modified in the ``rte_cryptodev_sym_session``
+  structure, as described in the `New Features`_ section.
+
+* **Reorganized the ``rte_crypto_sym_cipher_xform`` structure.**
+
+  * Added cipher IV length and offset parameters.
+  * Changed field size of key length from size_t to uint16_t.
+
+* **Reorganized the ``rte_crypto_sym_auth_xform`` structure.**
+
+  * Added authentication IV length and offset parameters.
+  * Changed field size of AAD length from uint32_t to uint16_t.
+  * Changed field size of digest length from uint32_t to uint16_t.
+  * Removed AAD length.
+  * Changed field size of key length from size_t to uint16_t.
+
+* Replaced ``dev_type`` enumeration with uint8_t ``driver_id`` in
+  ``rte_cryptodev_info`` and  ``rte_cryptodev`` structures.
+
+* Removed ``session_mp`` from ``rte_cryptodev_config``.
 
 
 Shared Library Versions
@@ -182,10 +389,11 @@ The libraries prepended with a plus sign were incremented in this version.
      librte_bitratestats.so.1
      librte_cfgfile.so.2
      librte_cmdline.so.2
-     librte_cryptodev.so.2
+   + librte_cryptodev.so.3
      librte_distributor.so.1
      librte_eal.so.4
-     librte_ethdev.so.6
+   + librte_ethdev.so.7
+   + librte_gro.so.1
      librte_hash.so.2
      librte_ip_frag.so.1
      librte_jobstats.so.1
@@ -230,3 +438,120 @@ Tested Platforms
    This section is a comment. do not overwrite or remove it.
    Also, make sure to start the actual text at the margin.
    =========================================================
+
+* Intel(R) platforms with Mellanox(R) NICs combinations
+
+   * Platform details:
+
+     * Intel(R) Xeon(R) CPU E5-2697A v4 @ 2.60GHz
+     * Intel(R) Xeon(R) CPU E5-2697 v3 @ 2.60GHz
+     * Intel(R) Xeon(R) CPU E5-2680 v2 @ 2.80GHz
+     * Intel(R) Xeon(R) CPU E5-2640 @ 2.50GHz
+
+   * OS:
+
+     * Red Hat Enterprise Linux Server release 7.3 (Maipo)
+     * Red Hat Enterprise Linux Server release 7.2 (Maipo)
+     * Ubuntu 16.10
+     * Ubuntu 16.04
+     * Ubuntu 14.04
+
+   * MLNX_OFED: 4.1-1.0.2.0
+
+   * NICs:
+
+     * Mellanox(R) ConnectX(R)-3 Pro 40G MCX354A-FCC_Ax (2x40G)
+
+       * Host interface: PCI Express 3.0 x8
+       * Device ID: 15b3:1007
+       * Firmware version: 2.40.5030
+
+     * Mellanox(R) ConnectX(R)-4 10G MCX4111A-XCAT (1x10G)
+
+       * Host interface: PCI Express 3.0 x8
+       * Device ID: 15b3:1013
+       * Firmware version: 12.18.2000
+
+     * Mellanox(R) ConnectX(R)-4 10G MCX4121A-XCAT (2x10G)
+
+       * Host interface: PCI Express 3.0 x8
+       * Device ID: 15b3:1013
+       * Firmware version: 12.18.2000
+
+     * Mellanox(R) ConnectX(R)-4 25G MCX4111A-ACAT (1x25G)
+
+       * Host interface: PCI Express 3.0 x8
+       * Device ID: 15b3:1013
+       * Firmware version: 12.18.2000
+
+     * Mellanox(R) ConnectX(R)-4 25G MCX4121A-ACAT (2x25G)
+
+       * Host interface: PCI Express 3.0 x8
+       * Device ID: 15b3:1013
+       * Firmware version: 12.18.2000
+
+     * Mellanox(R) ConnectX(R)-4 40G MCX4131A-BCAT/MCX413A-BCAT (1x40G)
+
+       * Host interface: PCI Express 3.0 x8
+       * Device ID: 15b3:1013
+       * Firmware version: 12.18.2000
+
+     * Mellanox(R) ConnectX(R)-4 40G MCX415A-BCAT (1x40G)
+
+       * Host interface: PCI Express 3.0 x16
+       * Device ID: 15b3:1013
+       * Firmware version: 12.18.2000
+
+     * Mellanox(R) ConnectX(R)-4 50G MCX4131A-GCAT/MCX413A-GCAT (1x50G)
+
+       * Host interface: PCI Express 3.0 x8
+       * Device ID: 15b3:1013
+       * Firmware version: 12.18.2000
+
+     * Mellanox(R) ConnectX(R)-4 50G MCX414A-BCAT (2x50G)
+
+       * Host interface: PCI Express 3.0 x8
+       * Device ID: 15b3:1013
+       * Firmware version: 12.18.2000
+
+     * Mellanox(R) ConnectX(R)-4 50G MCX415A-GCAT/MCX416A-BCAT/MCX416A-GCAT (2x50G)
+
+       * Host interface: PCI Express 3.0 x16
+       * Device ID: 15b3:1013
+       * Firmware version: 12.18.2000
+
+     * Mellanox(R) ConnectX(R)-4 50G MCX415A-CCAT (1x100G)
+
+       * Host interface: PCI Express 3.0 x16
+       * Device ID: 15b3:1013
+       * Firmware version: 12.18.2000
+
+     * Mellanox(R) ConnectX(R)-4 100G MCX416A-CCAT (2x100G)
+
+       * Host interface: PCI Express 3.0 x16
+       * Device ID: 15b3:1013
+       * Firmware version: 12.18.2000
+
+     * Mellanox(R) ConnectX(R)-4 Lx 10G MCX4121A-XCAT (2x10G)
+
+       * Host interface: PCI Express 3.0 x8
+       * Device ID: 15b3:1015
+       * Firmware version: 14.18.2000
+
+     * Mellanox(R) ConnectX(R)-4 Lx 25G MCX4121A-ACAT (2x25G)
+
+       * Host interface: PCI Express 3.0 x8
+       * Device ID: 15b3:1015
+       * Firmware version: 14.18.2000
+
+     * Mellanox(R) ConnectX(R)-5 100G MCX556A-ECAT (2x100G)
+
+       * Host interface: PCI Express 3.0 x16
+       * Device ID: 15b3:1017
+       * Firmware version: 16.19.1200
+
+     * Mellanox(R) ConnectX-5 Ex EN 100G MCX516A-CDAT (2x100G)
+
+       * Host interface: PCI Express 4.0 x16
+       * Device ID: 15b3:1019
+       * Firmware version: 16.19.1200

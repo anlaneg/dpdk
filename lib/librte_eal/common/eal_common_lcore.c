@@ -84,6 +84,7 @@ rte_eal_cpu_init(void)
 
 		/* By default, each detected core is enabled */
 		config->lcore_role[lcore_id] = ROLE_RTE;
+		lcore_config[lcore_id].core_role = ROLE_RTE;
 		lcore_config[lcore_id].core_id = eal_cpu_core_id(lcore_id);
 		lcore_config[lcore_id].socket_id = eal_cpu_socket_id(lcore_id);
 		//机器的numa id比假设的最大numa 要大，报错。

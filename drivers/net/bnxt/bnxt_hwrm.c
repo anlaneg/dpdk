@@ -33,8 +33,6 @@
 
 #include <unistd.h>
 
-#include <unistd.h>
-
 #include <rte_byteorder.h>
 #include <rte_common.h>
 #include <rte_cycles.h>
@@ -106,6 +104,30 @@ static int bnxt_hwrm_send_message_locked(struct bnxt *bp, void *msg,
 	uint32_t *data = msg;
 	uint8_t *bar;
 	uint8_t *valid;
+	uint16_t max_req_len = bp->max_req_len;
+	struct hwrm_short_input short_input = { 0 };
+
+	if (bp->flags & BNXT_FLAG_SHORT_CMD) {
+		void *short_cmd_req = bp->hwrm_short_cmd_req_addr;
+
+		memset(short_cmd_req, 0, bp->max_req_len);
+		memcpy(short_cmd_req, req, msg_len);
+
+		short_input.req_type = rte_cpu_to_le_16(req->req_type);
+		short_input.signature = rte_cpu_to_le_16(
+					HWRM_SHORT_REQ_SIGNATURE_SHORT_CMD);
+		short_input.size = rte_cpu_to_le_16(msg_len);
+		short_input.req_addr =
+			rte_cpu_to_le_64(bp->hwrm_short_cmd_req_dma_addr);
+
+		data = (uint32_t *)&short_input;
+		msg_len = sizeof(short_input);
+
+		/* Sync memory write before updating doorbell */
+		rte_wmb();
+
+		max_req_len = BNXT_HWRM_SHORT_REQ_LEN;
+	}
 
 	/* Write request msg to hwrm channel */
 	for (i = 0; i < msg_len; i += 4) {
@@ -115,7 +137,7 @@ static int bnxt_hwrm_send_message_locked(struct bnxt *bp, void *msg,
 	}
 
 	/* Zero the rest of the request space */
-	for (; i < bp->max_req_len; i += 4) {
+	for (; i < max_req_len; i += 4) {
 		bar = (uint8_t *)bp->bar0 + i;
 		rte_write32(0, bar);
 	}
@@ -244,8 +266,9 @@ int bnxt_hwrm_cfa_l2_set_rx_mask(struct bnxt *bp,
 		req.num_mc_entries = rte_cpu_to_le_32(vnic->mc_addr_cnt);
 		req.mc_tbl_addr = rte_cpu_to_le_64(vnic->mc_list_dma_addr);
 	}
-	if (vlan_count && vlan_table) {
-		mask |= HWRM_CFA_L2_SET_RX_MASK_INPUT_MASK_VLANONLY;
+	if (vlan_table) {
+		if (!(mask & HWRM_CFA_L2_SET_RX_MASK_INPUT_MASK_VLAN_NONVLAN))
+			mask |= HWRM_CFA_L2_SET_RX_MASK_INPUT_MASK_VLANONLY;
 		req.vlan_tag_tbl_addr = rte_cpu_to_le_16(
 			 rte_mem_virt2phy(vlan_table));
 		req.num_vlan_tags = rte_cpu_to_le_32((uint32_t)vlan_count);
@@ -260,12 +283,53 @@ int bnxt_hwrm_cfa_l2_set_rx_mask(struct bnxt *bp,
 	return rc;
 }
 
+int bnxt_hwrm_cfa_vlan_antispoof_cfg(struct bnxt *bp, uint16_t fid,
+			uint16_t vlan_count,
+			struct bnxt_vlan_antispoof_table_entry *vlan_table)
+{
+	int rc = 0;
+	struct hwrm_cfa_vlan_antispoof_cfg_input req = {.req_type = 0 };
+	struct hwrm_cfa_vlan_antispoof_cfg_output *resp =
+						bp->hwrm_cmd_resp_addr;
+
+	/*
+	 * Older HWRM versions did not support this command, and the set_rx_mask
+	 * list was used for anti-spoof. In 1.8.0, the TX path configuration was
+	 * removed from set_rx_mask call, and this command was added.
+	 *
+	 * This command is also present from 1.7.8.11 and higher,
+	 * as well as 1.7.8.0
+	 */
+	if (bp->fw_ver < ((1 << 24) | (8 << 16))) {
+		if (bp->fw_ver != ((1 << 24) | (7 << 16) | (8 << 8))) {
+			if (bp->fw_ver < ((1 << 24) | (7 << 16) | (8 << 8) |
+					(11)))
+				return 0;
+		}
+	}
+	HWRM_PREP(req, CFA_VLAN_ANTISPOOF_CFG, -1, resp);
+	req.fid = rte_cpu_to_le_16(fid);
+
+	req.vlan_tag_mask_tbl_addr =
+		rte_cpu_to_le_64(rte_mem_virt2phy(vlan_table));
+	req.num_vlan_entries = rte_cpu_to_le_32((uint32_t)vlan_count);
+
+	rc = bnxt_hwrm_send_message(bp, &req, sizeof(req));
+
+	HWRM_CHECK_RESULT;
+
+	return rc;
+}
+
 int bnxt_hwrm_clear_filter(struct bnxt *bp,
 			   struct bnxt_filter_info *filter)
 {
 	int rc = 0;
 	struct hwrm_cfa_l2_filter_free_input req = {.req_type = 0 };
 	struct hwrm_cfa_l2_filter_free_output *resp = bp->hwrm_cmd_resp_addr;
+
+	if (filter->fw_l2_filter_id == UINT64_MAX)
+		return 0;
 
 	HWRM_PREP(req, CFA_L2_FILTER_FREE, -1, resp);
 
@@ -288,6 +352,9 @@ int bnxt_hwrm_set_filter(struct bnxt *bp,
 	struct hwrm_cfa_l2_filter_alloc_input req = {.req_type = 0 };
 	struct hwrm_cfa_l2_filter_alloc_output *resp = bp->hwrm_cmd_resp_addr;
 	uint32_t enables = 0;
+
+	if (filter->fw_l2_filter_id != UINT64_MAX)
+		bnxt_hwrm_clear_filter(bp, filter);
 
 	HWRM_PREP(req, CFA_L2_FILTER_ALLOC, -1, resp);
 
@@ -367,6 +434,17 @@ int bnxt_hwrm_func_qcaps(struct bnxt *bp)
 				else
 					rte_mem_lock_page(
 						bp->pf.vf_info[i].vlan_table);
+				bp->pf.vf_info[i].vlan_as_table =
+					rte_zmalloc("VF VLAN AS table",
+						    getpagesize(),
+						    getpagesize());
+				if (bp->pf.vf_info[i].vlan_as_table == NULL)
+					RTE_LOG(ERR, PMD,
+					"Alloc VLAN AS table for VF %d fail\n",
+					i);
+				else
+					rte_mem_lock_page(
+					       bp->pf.vf_info[i].vlan_as_table);
 				STAILQ_INIT(&bp->pf.vf_info[i].filter);
 			}
 		}
@@ -457,7 +535,9 @@ int bnxt_hwrm_ver_get(struct bnxt *bp)
 	uint32_t fw_version;
 	uint16_t max_resp_len;
 	char type[RTE_MEMZONE_NAMESIZE];
+	uint32_t dev_caps_cfg;
 
+	bp->max_req_len = HWRM_MAX_REQ_LEN;
 	HWRM_PREP(req, VER_GET, -1, resp);
 
 	req.hwrm_intf_maj = HWRM_VERSION_MAJOR;
@@ -514,8 +594,10 @@ int bnxt_hwrm_ver_get(struct bnxt *bp)
 		RTE_LOG(ERR, PMD, "Unsupported request length\n");
 		rc = -EINVAL;
 	}
-	bp->max_req_len = resp->max_req_win_len;
+	bp->max_req_len = rte_le_to_cpu_16(resp->max_req_win_len);
 	max_resp_len = resp->max_resp_len;
+	dev_caps_cfg = rte_le_to_cpu_32(resp->dev_caps_cfg);
+
 	if (bp->max_resp_len != max_resp_len) {
 		sprintf(type, "bnxt_hwrm_%04x:%02x:%02x:%02x",
 			bp->pdev->addr.domain, bp->pdev->addr.bus,
@@ -538,6 +620,34 @@ int bnxt_hwrm_ver_get(struct bnxt *bp)
 			goto error;
 		}
 		bp->max_resp_len = max_resp_len;
+	}
+
+	if ((dev_caps_cfg &
+		HWRM_VER_GET_OUTPUT_DEV_CAPS_CFG_SHORT_CMD_SUPPORTED) &&
+	    (dev_caps_cfg &
+	     HWRM_VER_GET_OUTPUT_DEV_CAPS_CFG_SHORT_CMD_INPUTUIRED)) {
+		RTE_LOG(DEBUG, PMD, "Short command supported\n");
+
+		rte_free(bp->hwrm_short_cmd_req_addr);
+
+		bp->hwrm_short_cmd_req_addr = rte_malloc(type,
+							bp->max_req_len, 0);
+		if (bp->hwrm_short_cmd_req_addr == NULL) {
+			rc = -ENOMEM;
+			goto error;
+		}
+		rte_mem_lock_page(bp->hwrm_short_cmd_req_addr);
+		bp->hwrm_short_cmd_req_dma_addr =
+			rte_mem_virt2phy(bp->hwrm_short_cmd_req_addr);
+		if (bp->hwrm_short_cmd_req_dma_addr == 0) {
+			rte_free(bp->hwrm_short_cmd_req_addr);
+			RTE_LOG(ERR, PMD,
+				"Unable to map buffer to physical memory.\n");
+			rc = -ENOMEM;
+			goto error;
+		}
+
+		bp->flags |= BNXT_FLAG_SHORT_CMD;
 	}
 
 error:
@@ -572,6 +682,8 @@ static int bnxt_hwrm_port_phy_cfg(struct bnxt *bp, struct bnxt_link_info *conf)
 	struct hwrm_port_phy_cfg_input req = {0};
 	struct hwrm_port_phy_cfg_output *resp = bp->hwrm_cmd_resp_addr;
 	uint32_t enables = 0;
+	uint32_t link_speed_mask =
+		HWRM_PORT_PHY_CFG_INPUT_ENABLES_AUTO_LINK_SPEED_MASK;
 
 	HWRM_PREP(req, PORT_PHY_CFG, -1, resp);
 
@@ -583,14 +695,20 @@ static int bnxt_hwrm_port_phy_cfg(struct bnxt *bp, struct bnxt_link_info *conf)
 		 * any auto mode, even "none".
 		 */
 		if (!conf->link_speed) {
-			req.auto_mode |= conf->auto_mode;
-			enables = HWRM_PORT_PHY_CFG_INPUT_ENABLES_AUTO_MODE;
-			req.auto_link_speed_mask = conf->auto_link_speed_mask;
-			enables |=
-			   HWRM_PORT_PHY_CFG_INPUT_ENABLES_AUTO_LINK_SPEED_MASK;
-			req.auto_link_speed = bp->link_info.auto_link_speed;
-			enables |=
+			req.auto_mode = conf->auto_mode;
+			enables |= HWRM_PORT_PHY_CFG_INPUT_ENABLES_AUTO_MODE;
+			if (conf->auto_mode ==
+			    HWRM_PORT_PHY_CFG_INPUT_AUTO_MODE_SPEED_MASK) {
+				req.auto_link_speed_mask =
+					conf->auto_link_speed_mask;
+				enables |= link_speed_mask;
+			}
+			if (bp->link_info.auto_link_speed) {
+				req.auto_link_speed =
+					bp->link_info.auto_link_speed;
+				enables |=
 				HWRM_PORT_PHY_CFG_INPUT_ENABLES_AUTO_LINK_SPEED;
+			}
 		}
 		req.auto_duplex = conf->duplex;
 		enables |= HWRM_PORT_PHY_CFG_INPUT_ENABLES_AUTO_DUPLEX;
@@ -630,13 +748,10 @@ static int bnxt_hwrm_port_phy_qcfg(struct bnxt *bp,
 	HWRM_CHECK_RESULT;
 
 	link_info->phy_link_status = resp->link;
-	if (link_info->phy_link_status == HWRM_PORT_PHY_QCFG_OUTPUT_LINK_LINK) {
-		link_info->link_up = 1;
-		link_info->link_speed = rte_le_to_cpu_16(resp->link_speed);
-	} else {
-		link_info->link_up = 0;
-		link_info->link_speed = 0;
-	}
+	link_info->link_up =
+		(link_info->phy_link_status ==
+		 HWRM_PORT_PHY_QCFG_OUTPUT_LINK_LINK) ? 1 : 0;
+	link_info->link_speed = rte_le_to_cpu_16(resp->link_speed);
 	link_info->duplex = resp->duplex;
 	link_info->pause = resp->pause;
 	link_info->auto_pause = resp->auto_pause;
@@ -914,11 +1029,14 @@ int bnxt_hwrm_vnic_alloc(struct bnxt *bp, struct bnxt_vnic_info *vnic)
 				ETHER_CRC_LEN + VLAN_TAG_SIZE;
 	HWRM_PREP(req, VNIC_ALLOC, -1, resp);
 
+	if (vnic->func_default)
+		req.flags = HWRM_VNIC_ALLOC_INPUT_FLAGS_DEFAULT;
 	rc = bnxt_hwrm_send_message(bp, &req, sizeof(req));
 
 	HWRM_CHECK_RESULT;
 
 	vnic->fw_vnic_id = rte_le_to_cpu_16(resp->vnic_id);
+	RTE_LOG(DEBUG, PMD, "VNIC ID %x\n", vnic->fw_vnic_id);
 	return rc;
 }
 
@@ -984,6 +1102,11 @@ int bnxt_hwrm_vnic_cfg(struct bnxt *bp, struct bnxt_vnic_info *vnic)
 	uint32_t ctx_enable_flag = HWRM_VNIC_CFG_INPUT_ENABLES_RSS_RULE;
 	struct bnxt_plcmodes_cfg pmodes;
 
+	if (vnic->fw_vnic_id == INVALID_HW_RING_ID) {
+		RTE_LOG(DEBUG, PMD, "VNIC ID %x\n", vnic->fw_vnic_id);
+		return rc;
+	}
+
 	rc = bnxt_hwrm_vnic_plcmodes_qcfg(bp, vnic, &pmodes);
 	if (rc)
 		return rc;
@@ -1042,6 +1165,10 @@ int bnxt_hwrm_vnic_qcfg(struct bnxt *bp, struct bnxt_vnic_info *vnic,
 	struct hwrm_vnic_qcfg_input req = {.req_type = 0 };
 	struct hwrm_vnic_qcfg_output *resp = bp->hwrm_cmd_resp_addr;
 
+	if (vnic->fw_vnic_id == INVALID_HW_RING_ID) {
+		RTE_LOG(DEBUG, PMD, "VNIC QCFG ID %d\n", vnic->fw_vnic_id);
+		return rc;
+	}
 	HWRM_PREP(req, VNIC_QCFG, -1, resp);
 
 	req.enables =
@@ -1088,6 +1215,7 @@ int bnxt_hwrm_vnic_ctx_alloc(struct bnxt *bp, struct bnxt_vnic_info *vnic)
 	HWRM_CHECK_RESULT;
 
 	vnic->rss_rule = rte_le_to_cpu_16(resp->rss_cos_lb_ctx_id);
+	RTE_LOG(DEBUG, PMD, "VNIC RSS Rule %x\n", vnic->rss_rule);
 
 	return rc;
 }
@@ -1099,6 +1227,10 @@ int bnxt_hwrm_vnic_ctx_free(struct bnxt *bp, struct bnxt_vnic_info *vnic)
 	struct hwrm_vnic_rss_cos_lb_ctx_free_output *resp =
 						bp->hwrm_cmd_resp_addr;
 
+	if (vnic->rss_rule == 0xffff) {
+		RTE_LOG(DEBUG, PMD, "VNIC RSS Rule %x\n", vnic->rss_rule);
+		return rc;
+	}
 	HWRM_PREP(req, VNIC_RSS_COS_LB_CTX_FREE, -1, resp);
 
 	req.rss_cos_lb_ctx_id = rte_cpu_to_le_16(vnic->rss_rule);
@@ -1118,8 +1250,10 @@ int bnxt_hwrm_vnic_free(struct bnxt *bp, struct bnxt_vnic_info *vnic)
 	struct hwrm_vnic_free_input req = {.req_type = 0 };
 	struct hwrm_vnic_free_output *resp = bp->hwrm_cmd_resp_addr;
 
-	if (vnic->fw_vnic_id == INVALID_HW_RING_ID)
+	if (vnic->fw_vnic_id == INVALID_HW_RING_ID) {
+		RTE_LOG(DEBUG, PMD, "VNIC FREE ID %x\n", vnic->fw_vnic_id);
 		return rc;
+	}
 
 	HWRM_PREP(req, VNIC_FREE, -1, resp);
 
@@ -1529,8 +1663,11 @@ void bnxt_free_hwrm_resources(struct bnxt *bp)
 {
 	/* Release memzone */
 	rte_free(bp->hwrm_cmd_resp_addr);
+	rte_free(bp->hwrm_short_cmd_req_addr);
 	bp->hwrm_cmd_resp_addr = NULL;
+	bp->hwrm_short_cmd_req_addr = NULL;
 	bp->hwrm_cmd_resp_dma_addr = 0;
+	bp->hwrm_short_cmd_req_dma_addr = 0;
 }
 
 int bnxt_alloc_hwrm_resources(struct bnxt *bp)
@@ -1540,7 +1677,6 @@ int bnxt_alloc_hwrm_resources(struct bnxt *bp)
 
 	sprintf(type, "bnxt_hwrm_%04x:%02x:%02x:%02x", pdev->addr.domain,
 		pdev->addr.bus, pdev->addr.devid, pdev->addr.function);
-	bp->max_req_len = HWRM_MAX_REQ_LEN;
 	bp->max_resp_len = HWRM_MAX_RESP_LEN;
 	bp->hwrm_cmd_resp_addr = rte_malloc(type, bp->max_resp_len, 0);
 	rte_mem_lock_page(bp->hwrm_cmd_resp_addr);
@@ -1730,12 +1866,16 @@ static int bnxt_valid_link_speed(uint32_t link_speed, uint8_t port_id)
 	return 0;
 }
 
-static uint16_t bnxt_parse_eth_link_speed_mask(uint32_t link_speed)
+static uint16_t
+bnxt_parse_eth_link_speed_mask(struct bnxt *bp, uint32_t link_speed)
 {
 	uint16_t ret = 0;
 
-	if (link_speed == ETH_LINK_SPEED_AUTONEG)
+	if (link_speed == ETH_LINK_SPEED_AUTONEG) {
+		if (bp->link_info.support_speeds)
+			return bp->link_info.support_speeds;
 		link_speed = BNXT_SUPPORTED_SPEEDS;
+	}
 
 	if (link_speed & ETH_LINK_SPEED_100M)
 		ret |= HWRM_PORT_PHY_CFG_INPUT_AUTO_LINK_SPEED_MASK_100MB;
@@ -1827,7 +1967,7 @@ int bnxt_get_hwrm_link_config(struct bnxt *bp, struct rte_eth_link *link)
 			"Get link config failed with rc %d\n", rc);
 		goto exit;
 	}
-	if (link_info->link_up)
+	if (link_info->link_speed)
 		link->link_speed =
 			bnxt_parse_hw_link_speed(link_info->link_speed);
 	else
@@ -1836,7 +1976,7 @@ int bnxt_get_hwrm_link_config(struct bnxt *bp, struct rte_eth_link *link)
 	link->link_status = link_info->link_up;
 	link->link_autoneg = link_info->auto_mode ==
 		HWRM_PORT_PHY_QCFG_OUTPUT_AUTO_MODE_NONE ?
-		ETH_LINK_SPEED_FIXED : ETH_LINK_SPEED_AUTONEG;
+		ETH_LINK_FIXED : ETH_LINK_AUTONEG;
 exit:
 	return rc;
 }
@@ -1869,7 +2009,8 @@ int bnxt_set_hwrm_link_config(struct bnxt *bp, bool link_up)
 		link_req.auto_mode =
 				HWRM_PORT_PHY_CFG_INPUT_AUTO_MODE_SPEED_MASK;
 		link_req.auto_link_speed_mask =
-			bnxt_parse_eth_link_speed_mask(dev_conf->link_speeds);
+			bnxt_parse_eth_link_speed_mask(bp,
+						       dev_conf->link_speeds);
 	} else {
 		link_req.phy_flags |= HWRM_PORT_PHY_CFG_INPUT_FLAGS_FORCE;
 		link_req.link_speed = speed;
@@ -1886,7 +2027,6 @@ port_phy_cfg:
 			"Set link config failed with rc %d\n", rc);
 	}
 
-	rte_delay_ms(BNXT_LINK_WAIT_INTERVAL);
 error:
 	return rc;
 }
@@ -1965,8 +2105,7 @@ static int bnxt_hwrm_pf_func_cfg(struct bnxt *bp, int tx_rings)
 			HWRM_FUNC_CFG_INPUT_ENABLES_NUM_VNICS |
 			HWRM_FUNC_CFG_INPUT_ENABLES_NUM_HW_RING_GRPS);
 	req.flags = rte_cpu_to_le_32(bp->pf.func_cfg_flags);
-	req.mtu = rte_cpu_to_le_16(bp->eth_dev->data->mtu + ETHER_HDR_LEN +
-				   ETHER_CRC_LEN + VLAN_TAG_SIZE);
+	req.mtu = rte_cpu_to_le_16(BNXT_MAX_MTU);
 	req.mru = rte_cpu_to_le_16(bp->eth_dev->data->mtu + ETHER_HDR_LEN +
 				   ETHER_CRC_LEN + VLAN_TAG_SIZE);
 	req.num_rsscos_ctxs = rte_cpu_to_le_16(bp->max_rsscos_ctx);
@@ -2223,6 +2362,7 @@ int bnxt_hwrm_allocate_vfs(struct bnxt *bp, int num_vfs)
 
 		reserve_resources_from_vf(bp, &req, i);
 		bp->pf.active_vfs++;
+		bnxt_hwrm_func_clr_stats(bp, bp->pf.vf_info[i].fid);
 	}
 
 	/*
@@ -2308,7 +2448,8 @@ int bnxt_hwrm_tunnel_dst_port_free(struct bnxt *bp, uint16_t port,
 	return rc;
 }
 
-int bnxt_hwrm_func_cfg_vf_set_flags(struct bnxt *bp, uint16_t vf)
+int bnxt_hwrm_func_cfg_vf_set_flags(struct bnxt *bp, uint16_t vf,
+					uint32_t flags)
 {
 	struct hwrm_func_cfg_output *resp = bp->hwrm_cmd_resp_addr;
 	struct hwrm_func_cfg_input req = {0};
@@ -2316,7 +2457,7 @@ int bnxt_hwrm_func_cfg_vf_set_flags(struct bnxt *bp, uint16_t vf)
 
 	HWRM_PREP(req, FUNC_CFG, -1, resp);
 	req.fid = rte_cpu_to_le_16(bp->pf.vf_info[vf].fid);
-	req.flags = rte_cpu_to_le_32(bp->pf.vf_info[vf].func_cfg_flags);
+	req.flags = rte_cpu_to_le_32(flags);
 	rc = bnxt_hwrm_send_message(bp, &req, sizeof(req));
 	HWRM_CHECK_RESULT;
 
@@ -2683,12 +2824,12 @@ int bnxt_hwrm_port_led_cfg(struct bnxt *bp, bool led_on)
 	return rc;
 }
 
-static void bnxt_vnic_count(struct bnxt_vnic_info *vnic, void *cbdata)
+static void
+bnxt_vnic_count(struct bnxt_vnic_info *vnic __rte_unused, void *cbdata)
 {
 	uint32_t *count = cbdata;
 
-	if (vnic->func_default)
-		*count = *count + 1;
+	*count = *count + 1;
 }
 
 static int bnxt_vnic_count_hwrm_stub(struct bnxt *bp __rte_unused,
@@ -2697,7 +2838,7 @@ static int bnxt_vnic_count_hwrm_stub(struct bnxt *bp __rte_unused,
 	return 0;
 }
 
-int bnxt_vf_default_vnic_count(struct bnxt *bp, uint16_t vf)
+int bnxt_vf_vnic_count(struct bnxt *bp, uint16_t vf)
 {
 	uint32_t count = 0;
 
@@ -2780,7 +2921,7 @@ int bnxt_hwrm_func_vf_vnic_query_and_config(struct bnxt *bp, uint16_t vf,
 		rc = bnxt_hwrm_vnic_qcfg(bp, &vnic, bp->pf.first_vf_id + vf);
 		if (rc)
 			break;
-		if (vnic.mru == 4)	/* Indicates unallocated */
+		if (vnic.mru <= 4)	/* Indicates unallocated */
 			continue;
 
 		vnic_cb(&vnic, cbdata);

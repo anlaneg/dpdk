@@ -34,16 +34,12 @@ Deprecation Notices
 * The struct ``rte_pci_driver`` is planned to be removed from
   ``rte_cryptodev_driver`` and ``rte_eventdev_driver`` in 17.08.
 
-* ethdev: An API change is planned for 17.08 for the function
-  ``_rte_eth_dev_callback_process``. In 17.08 the function will return an ``int``
-  instead of ``void`` and a fourth parameter ``void *ret_param`` will be added.
-
 * The mbuf flags PKT_RX_VLAN_PKT and PKT_RX_QINQ_PKT are deprecated and
   are respectively replaced by PKT_RX_VLAN_STRIPPED and
   PKT_RX_QINQ_STRIPPED, that are better described. The old flags and
   their behavior will be kept until 17.05 and will be removed in 17.08.
 
-* ethdev: Tx offloads will no longer be enabled by default in 17.08.
+* ethdev: Tx offloads will no longer be enabled by default in 17.11.
   Instead, the ``rte_eth_txmode`` structure will be extended with
   bit field to enable each Tx offload.
   Besides of making the Rx/Tx configuration API more consistent for the
@@ -58,50 +54,18 @@ Deprecation Notices
   Target release for removal of the legacy API will be defined once most
   PMDs have switched to rte_flow.
 
-* cryptodev: All PMD names definitions will be moved to the individual PMDs
-  in 17.08.
-
-* cryptodev: The following changes will be done in in 17.08:
-
-  - the device type enumeration ``rte_cryptodev_type`` will be removed
-  - the following structures will be changed: ``rte_cryptodev_session``,
-    ``rte_cryptodev_sym_session``, ``rte_cryptodev_info``, ``rte_cryptodev``
-  - the function ``rte_cryptodev_count_devtype`` will be replaced by
-    ``rte_cryptodev_device_count_by_driver``
-
-* cryptodev: API changes are planned for 17.08 for the sessions management
-  to make it agnostic to the underlying devices, removing coupling with
-  crypto PMDs, so a single session can be used on multiple devices.
-
-  - ``struct rte_cryptodev_sym_session``, dev_id, dev_type will be removed,
-    _private field changed to the indirect array of private data pointers of
-    all supported devices
-
-  An API of followed functions will be changed to allow operate on multiple
-  devices with one session:
-
-  - ``rte_cryptodev_sym_session_create``
-  - ``rte_cryptodev_sym_session_free``
-  - ``rte_cryptodev_sym_session_pool_create``
-
-  While dev_id will not be stored in the ``struct rte_cryptodev_sym_session``,
-  directly, the change of followed API is required:
-
-  - ``rte_cryptodev_queue_pair_attach_sym_session``
-  - ``rte_cryptodev_queue_pair_detach_sym_session``
-
-* cryptodev: the structures ``rte_crypto_op``, ``rte_crypto_sym_op``
-  and ``rte_crypto_sym_xform`` will be restructured in 17.08,
-  for correctness and improvement.
-
-* crypto/scheduler: the following two functions are deprecated starting
-  from 17.05 and will be removed in 17.08:
-
-  - ``rte_crpytodev_scheduler_mode_get``, replaced by ``rte_cryptodev_scheduler_mode_get``
-  - ``rte_crpytodev_scheduler_mode_set``, replaced by ``rte_cryptodev_scheduler_mode_set``
-
 * librte_table: The ``key_mask`` parameter will be added to all the hash tables
   that currently do not have it, as well as to the hash compute function prototype.
   The non-"do-sig" versions of the hash tables will be removed
   (including the ``signature_offset`` parameter)
   and the "do-sig" versions renamed accordingly.
+
+* eal: the following function is deprecated starting from 17.08 and will
+  be removed in 17.11:
+
+  - ``rte_eal_parse_devargs_str``, replaced by ``rte_eal_devargs_parse``
+
+* cryptodev: the following function is deprecated starting from 17.08 and will
+  be removed in 17.11:
+
+  - ``rte_cryptodev_create_vdev``

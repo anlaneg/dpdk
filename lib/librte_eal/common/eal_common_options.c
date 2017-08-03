@@ -61,9 +61,11 @@ const char
 eal_short_options[] =
 	"b:" /* pci-blacklist */
 	"c:" /* coremask */
+	"s:" /* service coremask */
 	"d:" /* driver */
 	"h"  /* help */
 	"l:" /* corelist */
+	"S:" /* service corelist */
 	"m:" /* memory size */
 	"n:" /* memory channels */
 	"r:" /* memory ranks */
@@ -274,6 +276,77 @@ static int xdigit2val(unsigned char c)
 }
 
 static int
+eal_parse_service_coremask(const char *coremask)
+{
+	struct rte_config *cfg = rte_eal_get_configuration();
+	int i, j, idx = 0;
+	unsigned int count = 0;
+	char c;
+	int val;
+
+	if (coremask == NULL)
+		return -1;
+	/* Remove all blank characters ahead and after .
+	 * Remove 0x/0X if exists.
+	 */
+	while (isblank(*coremask))
+		coremask++;
+	if (coremask[0] == '0' && ((coremask[1] == 'x')
+		|| (coremask[1] == 'X')))
+		coremask += 2;
+	i = strlen(coremask);
+	while ((i > 0) && isblank(coremask[i - 1]))
+		i--;
+
+	if (i == 0)
+		return -1;
+
+	for (i = i - 1; i >= 0 && idx < RTE_MAX_LCORE; i--) {
+		c = coremask[i];
+		if (isxdigit(c) == 0) {
+			/* invalid characters */
+			return -1;
+		}
+		val = xdigit2val(c);
+		for (j = 0; j < BITS_PER_HEX && idx < RTE_MAX_LCORE;
+				j++, idx++) {
+			if ((1 << j) & val) {
+				/* handle master lcore already parsed */
+				uint32_t lcore = idx;
+				if (master_lcore_parsed &&
+						cfg->master_lcore == lcore) {
+					RTE_LOG(ERR, EAL,
+						"Error: lcore %u is master lcore, cannot use as service core\n",
+						idx);
+					return -1;
+				}
+
+				if (!lcore_config[idx].detected) {
+					RTE_LOG(ERR, EAL,
+						"lcore %u unavailable\n", idx);
+					return -1;
+				}
+				lcore_config[idx].core_role = ROLE_SERVICE;
+				count++;
+			}
+		}
+	}
+
+	for (; i >= 0; i--)
+		if (coremask[i] != '0')
+			return -1;
+
+	for (; idx < RTE_MAX_LCORE; idx++)
+		lcore_config[idx].core_index = -1;
+
+	if (count == 0)
+		return -1;
+
+	cfg->service_lcore_count = count;
+	return 0;
+}
+
+static int
 eal_parse_coremask(const char *coremask)
 {
 	struct rte_config *cfg = rte_eal_get_configuration();
@@ -357,6 +430,72 @@ eal_parse_coremask(const char *coremask)
 }
 
 //解析-l参数，当前支持样例 -l "2,3-9,10,21"这种形式
+static int
+eal_parse_service_corelist(const char *corelist)
+{
+	struct rte_config *cfg = rte_eal_get_configuration();
+	int i, idx = 0;
+	unsigned count = 0;
+	char *end = NULL;
+	int min, max;
+
+	if (corelist == NULL)
+		return -1;
+
+	/* Remove all blank characters ahead and after */
+	while (isblank(*corelist))
+		corelist++;
+	i = strlen(corelist);
+	while ((i > 0) && isblank(corelist[i - 1]))
+		i--;
+
+	/* Get list of cores */
+	min = RTE_MAX_LCORE;
+	do {
+		while (isblank(*corelist))
+			corelist++;
+		if (*corelist == '\0')
+			return -1;
+		errno = 0;
+		idx = strtoul(corelist, &end, 10);
+		if (errno || end == NULL)
+			return -1;
+		while (isblank(*end))
+			end++;
+		if (*end == '-') {
+			min = idx;
+		} else if ((*end == ',') || (*end == '\0')) {
+			max = idx;
+			if (min == RTE_MAX_LCORE)
+				min = idx;
+			for (idx = min; idx <= max; idx++) {
+				if (cfg->lcore_role[idx] != ROLE_SERVICE) {
+					/* handle master lcore already parsed */
+					uint32_t lcore = idx;
+					if (cfg->master_lcore == lcore &&
+							master_lcore_parsed) {
+						RTE_LOG(ERR, EAL,
+							"Error: lcore %u is master lcore, cannot use as service core\n",
+							idx);
+						return -1;
+					}
+					lcore_config[idx].core_role =
+							ROLE_SERVICE;
+					count++;
+				}
+			}
+			min = RTE_MAX_LCORE;
+		} else
+			return -1;
+		corelist = end + 1;
+	} while (*end != '\0');
+
+	if (count == 0)
+		return -1;
+
+	return 0;
+}
+
 static int
 eal_parse_corelist(const char *corelist)
 {
@@ -442,6 +581,13 @@ eal_parse_master_lcore(const char *arg)
 	if (cfg->master_lcore >= RTE_MAX_LCORE)
 		return -1;
 	master_lcore_parsed = 1;
+
+	/* ensure master core is not used as service core */
+	if (lcore_config[cfg->master_lcore].core_role == ROLE_SERVICE) {
+		RTE_LOG(ERR, EAL, "Error: Master lcore is used as a service core.\n");
+		return -1;
+	}
+
 	return 0;
 }
 
@@ -862,6 +1008,20 @@ eal_parse_common_option(int opt, const char *optarg,
 		}
 		core_parsed = 1;
 		break;
+	/* service coremask */
+	case 's':
+		if (eal_parse_service_coremask(optarg) < 0) {
+			RTE_LOG(ERR, EAL, "invalid service coremask\n");
+			return -1;
+		}
+		break;
+	/* service corelist */
+	case 'S':
+		if (eal_parse_service_corelist(optarg) < 0) {
+			RTE_LOG(ERR, EAL, "invalid service core list\n");
+			return -1;
+		}
+		break;
 	/* size of memory */
 	case 'm':
 		//使用的内存大小
@@ -1022,9 +1182,15 @@ eal_adjust_config(struct internal_config *internal_cfg)
 		internal_config.process_type = eal_proc_type_detect();
 
 	/* default master lcore is the first one */
+<<<<<<< HEAD
 	//如果未指定master core，则选择第一个开启的core做为master core
 	if (!master_lcore_parsed)
+=======
+	if (!master_lcore_parsed) {
+>>>>>>> upstream/master
 		cfg->master_lcore = rte_get_next_lcore(-1, 0, 0);
+		lcore_config[cfg->master_lcore].core_role = ROLE_RTE;
+	}
 
 	/* if no memory amounts were requested, this will result in 0 and
 	 * will be overridden later, right after eal_hugepage_info_init() */
@@ -1109,6 +1275,7 @@ eal_common_usage(void)
 	       "                      ',' is used for single number separator.\n"
 	       "                      '( )' can be omitted for single element group,\n"
 	       "                      '@' can be omitted if cpus and lcores have the same value\n"
+	       "  -s SERVICE COREMASK Hexadecimal bitmask of cores to be used as service cores\n"
 	       "  --"OPT_MASTER_LCORE" ID   Core ID that is used as master\n"
 	       "  -n CHANNELS         Number of memory channels\n"
 	       "  -m MB               Memory to allocate (see also --"OPT_SOCKET_MEM")\n"

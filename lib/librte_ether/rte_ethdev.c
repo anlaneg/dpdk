@@ -1,7 +1,7 @@
 /*-
  *   BSD LICENSE
  *
- *   Copyright(c) 2010-2016 Intel Corporation. All rights reserved.
+ *   Copyright(c) 2010-2017 Intel Corporation. All rights reserved.
  *   All rights reserved.
  *
  *   Redistribution and use in source and binary forms, with or without
@@ -73,7 +73,6 @@ static const char *MZ_RTE_ETH_DEV_DATA = "rte_eth_dev_data";
 struct rte_eth_dev rte_eth_devices[RTE_MAX_ETHPORTS];
 static struct rte_eth_dev_data *rte_eth_dev_data;
 static uint8_t eth_dev_last_created_port;
-static uint8_t nb_ports;
 
 /* spinlock for eth device callbacks */
 static rte_spinlock_t rte_eth_dev_cb_lock = RTE_SPINLOCK_INITIALIZER;
@@ -130,6 +129,7 @@ struct rte_eth_dev_callback {
 	TAILQ_ENTRY(rte_eth_dev_callback) next; /**< Callbacks list */
 	rte_eth_dev_cb_fn cb_fn;                /**< Callback address */
 	void *cb_arg;                           /**< Parameter for callback */
+	void *ret_param;                        /**< Return parameter */
 	enum rte_eth_event_type event;          /**< Interrupt event type */
 	uint32_t active;                        /**< Callback is executing */
 };
@@ -181,9 +181,11 @@ rte_eth_dev_allocated(const char *name)
 	unsigned i;
 
 	for (i = 0; i < RTE_MAX_ETHPORTS; i++) {
-		if ((rte_eth_devices[i].state == RTE_ETH_DEV_ATTACHED) &&
-		    strcmp(rte_eth_devices[i].data->name, name) == 0)
-			return &rte_eth_devices[i];
+		if (rte_eth_devices[i].state == RTE_ETH_DEV_ATTACHED &&
+				rte_eth_devices[i].device) {
+			if (!strcmp(rte_eth_devices[i].device->name, name))
+				return &rte_eth_devices[i];
+		}
 	}
 	return NULL;
 }
@@ -211,7 +213,6 @@ eth_dev_get(uint8_t port_id)
 	TAILQ_INIT(&(eth_dev->link_intr_cbs));
 
 	eth_dev_last_created_port = port_id;
-	nb_ports++;
 
 	return eth_dev;
 }
@@ -289,7 +290,6 @@ rte_eth_dev_release_port(struct rte_eth_dev *eth_dev)
 		return -EINVAL;
 
 	eth_dev->state = RTE_ETH_DEV_UNUSED;
-	nb_ports--;
 	return 0;
 }
 
@@ -297,7 +297,8 @@ int
 rte_eth_dev_is_valid_port(uint8_t port_id)
 {
 	if (port_id >= RTE_MAX_ETHPORTS ||
-	    rte_eth_devices[port_id].state != RTE_ETH_DEV_ATTACHED)
+	    (rte_eth_devices[port_id].state != RTE_ETH_DEV_ATTACHED &&
+	     rte_eth_devices[port_id].state != RTE_ETH_DEV_DEFERRED))
 		return 0;
 	else
 		return 1;
@@ -313,13 +314,21 @@ rte_eth_dev_socket_id(uint8_t port_id)
 uint8_t
 rte_eth_dev_count(void)
 {
-	return nb_ports;
+	uint8_t p;
+	uint8_t count;
+
+	count = 0;
+
+	RTE_ETH_FOREACH_DEV(p)
+		count++;
+
+	return count;
 }
 
 int
 rte_eth_dev_get_name_by_port(uint8_t port_id, char *name)
 {
-	char *tmp;
+	const char *tmp;
 
 	RTE_ETH_VALID_PORTID_OR_ERR_RET(port_id, -EINVAL);
 
@@ -330,7 +339,7 @@ rte_eth_dev_get_name_by_port(uint8_t port_id, char *name)
 
 	/* shouldn't check 'rte_eth_devices[i].data',
 	 * because it might be overwritten by VDEV PMD */
-	tmp = rte_eth_dev_data[port_id].name;
+	tmp = rte_eth_devices[port_id].device->name;
 	strcpy(name, tmp);
 	return 0;
 }
@@ -338,6 +347,7 @@ rte_eth_dev_get_name_by_port(uint8_t port_id, char *name)
 int
 rte_eth_dev_get_port_by_name(const char *name, uint8_t *port_id)
 {
+	int ret;
 	int i;
 
 	if (name == NULL) {
@@ -345,15 +355,14 @@ rte_eth_dev_get_port_by_name(const char *name, uint8_t *port_id)
 		return -EINVAL;
 	}
 
-	if (!nb_ports)
-		return -ENODEV;
-
 	RTE_ETH_FOREACH_DEV(i) {
-		if (!strncmp(name,
-			rte_eth_dev_data[i].name, strlen(name))) {
+		if (!rte_eth_devices[i].device)
+			continue;
 
+		ret = strncmp(name, rte_eth_devices[i].device->name,
+				strlen(name));
+		if (ret == 0) {
 			*port_id = i;
-
 			return 0;
 		}
 	}
@@ -367,16 +376,6 @@ rte_eth_dev_is_detachable(uint8_t port_id)
 
 	RTE_ETH_VALID_PORTID_OR_ERR_RET(port_id, -EINVAL);
 
-	switch (rte_eth_devices[port_id].data->kdrv) {
-	case RTE_KDRV_IGB_UIO:
-	case RTE_KDRV_UIO_GENERIC:
-	case RTE_KDRV_NIC_UIO:
-	case RTE_KDRV_NONE:
-	case RTE_KDRV_VFIO:
-		break;
-	default:
-		return -ENOTSUP;
-	}
 	dev_flags = rte_eth_devices[port_id].data->dev_flags;
 	if ((dev_flags & RTE_ETH_DEV_DETACHABLE) &&
 		(!(dev_flags & RTE_ETH_DEV_BONDED_SLAVE)))
@@ -446,12 +445,14 @@ rte_eth_dev_detach(uint8_t port_id, char *name)
 	if (rte_eth_dev_is_detachable(port_id))
 		goto err;
 
-	snprintf(name, sizeof(rte_eth_devices[port_id].data->name),
-		 "%s", rte_eth_devices[port_id].data->name);
-	ret = rte_eal_dev_detach(name);
+	snprintf(name, RTE_DEV_NAME_MAX_LEN, "%s",
+		 rte_eth_devices[port_id].device->name);
+
+	ret = rte_eal_dev_detach(rte_eth_devices[port_id].device);
 	if (ret < 0)
 		goto err;
 
+	rte_eth_devices[port_id].state = RTE_ETH_DEV_UNUSED;
 	return 0;
 
 err:
@@ -1988,6 +1989,7 @@ int
 rte_eth_dev_vlan_filter(uint8_t port_id, uint16_t vlan_id, int on)
 {
 	struct rte_eth_dev *dev;
+	int ret;
 
 	RTE_ETH_VALID_PORTID_OR_ERR_RET(port_id, -ENODEV);
 	dev = &rte_eth_devices[port_id];
@@ -2003,7 +2005,23 @@ rte_eth_dev_vlan_filter(uint8_t port_id, uint16_t vlan_id, int on)
 	}
 	RTE_FUNC_PTR_OR_ERR_RET(*dev->dev_ops->vlan_filter_set, -ENOTSUP);
 
-	return (*dev->dev_ops->vlan_filter_set)(dev, vlan_id, on);
+	ret = (*dev->dev_ops->vlan_filter_set)(dev, vlan_id, on);
+	if (ret == 0) {
+		struct rte_vlan_filter_conf *vfc;
+		int vidx;
+		int vbit;
+
+		vfc = &dev->data->vlan_filter_conf;
+		vidx = vlan_id / 64;
+		vbit = vlan_id % 64;
+
+		if (on)
+			vfc->ids[vidx] |= UINT64_C(1) << vbit;
+		else
+			vfc->ids[vidx] &= ~(UINT64_C(1) << vbit);
+	}
+
+	return ret;
 }
 
 int
@@ -2364,6 +2382,7 @@ get_mac_addr_index(uint8_t port_id, const struct ether_addr *addr)
 	struct rte_eth_dev *dev = &rte_eth_devices[port_id];
 	unsigned i;
 
+	RTE_ETH_VALID_PORTID_OR_ERR_RET(port_id, -ENODEV);
 	rte_eth_dev_info_get(port_id, &dev_info);
 
 	for (i = 0; i < dev_info.max_mac_addrs; i++)
@@ -2731,12 +2750,13 @@ rte_eth_dev_callback_unregister(uint8_t port_id,
 	return ret;
 }
 
-void
+int
 _rte_eth_dev_callback_process(struct rte_eth_dev *dev,
-	enum rte_eth_event_type event, void *cb_arg)
+	enum rte_eth_event_type event, void *cb_arg, void *ret_param)
 {
 	struct rte_eth_dev_callback *cb_lst;
 	struct rte_eth_dev_callback dev_cb;
+	int rc = 0;
 
 	rte_spinlock_lock(&rte_eth_dev_cb_lock);
 	TAILQ_FOREACH(cb_lst, &(dev->link_intr_cbs), next) {
@@ -2746,14 +2766,17 @@ _rte_eth_dev_callback_process(struct rte_eth_dev *dev,
 		cb_lst->active = 1;
 		if (cb_arg != NULL)
 			dev_cb.cb_arg = cb_arg;
+		if (ret_param != NULL)
+			dev_cb.ret_param = ret_param;
 
 		rte_spinlock_unlock(&rte_eth_dev_cb_lock);
-		dev_cb.cb_fn(dev->data->port_id, dev_cb.event,
-						dev_cb.cb_arg);
+		rc = dev_cb.cb_fn(dev->data->port_id, dev_cb.event,
+				dev_cb.cb_arg, dev_cb.ret_param);
 		rte_spinlock_lock(&rte_eth_dev_cb_lock);
 		cb_lst->active = 0;
 	}
 	rte_spinlock_unlock(&rte_eth_dev_cb_lock);
+	return rc;
 }
 
 int
@@ -3362,4 +3385,41 @@ rte_eth_dev_l2_tunnel_offload_set(uint8_t port_id,
 	RTE_FUNC_PTR_OR_ERR_RET(*dev->dev_ops->l2_tunnel_offload_set,
 				-ENOTSUP);
 	return (*dev->dev_ops->l2_tunnel_offload_set)(dev, l2_tunnel, mask, en);
+}
+
+static void
+rte_eth_dev_adjust_nb_desc(uint16_t *nb_desc,
+			   const struct rte_eth_desc_lim *desc_lim)
+{
+	if (desc_lim->nb_align != 0)
+		*nb_desc = RTE_ALIGN_CEIL(*nb_desc, desc_lim->nb_align);
+
+	if (desc_lim->nb_max != 0)
+		*nb_desc = RTE_MIN(*nb_desc, desc_lim->nb_max);
+
+	*nb_desc = RTE_MAX(*nb_desc, desc_lim->nb_min);
+}
+
+int
+rte_eth_dev_adjust_nb_rx_tx_desc(uint8_t port_id,
+				 uint16_t *nb_rx_desc,
+				 uint16_t *nb_tx_desc)
+{
+	struct rte_eth_dev *dev;
+	struct rte_eth_dev_info dev_info;
+
+	RTE_ETH_VALID_PORTID_OR_ERR_RET(port_id, -ENODEV);
+
+	dev = &rte_eth_devices[port_id];
+	RTE_FUNC_PTR_OR_ERR_RET(*dev->dev_ops->dev_infos_get, -ENOTSUP);
+
+	rte_eth_dev_info_get(port_id, &dev_info);
+
+	if (nb_rx_desc != NULL)
+		rte_eth_dev_adjust_nb_desc(nb_rx_desc, &dev_info.rx_desc_lim);
+
+	if (nb_tx_desc != NULL)
+		rte_eth_dev_adjust_nb_desc(nb_tx_desc, &dev_info.tx_desc_lim);
+
+	return 0;
 }

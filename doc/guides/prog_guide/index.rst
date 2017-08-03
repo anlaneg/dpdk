@@ -38,6 +38,7 @@ Programmer's Guide
     intro
     overview
     env_abstraction_layer
+    service_cores
     ring_lib
     mempool_lib
     mbuf_lib
@@ -57,6 +58,7 @@ Programmer's Guide
     multi_proc_support
     kernel_nic_interface
     thread_safety_dpdk_functions
+    eventdev
     qos_framework
     power_man
     packet_classif_access_ctrl
