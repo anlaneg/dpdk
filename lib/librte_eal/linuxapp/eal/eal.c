@@ -912,9 +912,15 @@ rte_eal_init(int argc, char **argv)
 		return -1;
 	}
 
+	if (eal_option_device_parse()) {
+		rte_errno = ENODEV;
+		return -1;
+	}
+
 	//扫描总线，识别相应总线的设备(一般我们关注的是rte_pci_scan函数，实现pci类型扫描
 	//除pci以外，还有vdev,fslmc等）
 	//当为pci总线时，此函数将扫出pci总线上所有设备，总创建相应的链表
+
 	if (rte_bus_scan()) {
 		rte_eal_init_alert("Cannot scan the buses for devices\n");
 		rte_errno = ENODEV;

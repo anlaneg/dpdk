@@ -291,7 +291,8 @@ cperf_latency_test_constructor(struct rte_mempool *sess_mp,
 
 	uint16_t priv_size = sizeof(struct priv_op_data) +
 			test_vector->cipher_iv.length +
-			test_vector->auth_iv.length;
+			test_vector->auth_iv.length +
+			test_vector->aead_iv.length;
 	ctx->crypto_op_pool = rte_crypto_op_pool_create(pool_name,
 			RTE_CRYPTO_OP_TYPE_SYMMETRIC, options->pool_sz,
 			512, priv_size, rte_socket_id());
@@ -432,7 +433,7 @@ cperf_latency_test_runner(void *arg)
 			/* Free memory for not enqueued operations */
 			if (ops_enqd != burst_size)
 				rte_mempool_put_bulk(ctx->crypto_op_pool,
-						(void **)&ops_processed[ops_enqd],
+						(void **)&ops[ops_enqd],
 						burst_size - ops_enqd);
 
 			for (i = 0; i < ops_enqd; i++) {

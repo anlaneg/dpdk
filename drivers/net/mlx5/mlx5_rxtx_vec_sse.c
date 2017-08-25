@@ -568,7 +568,8 @@ rxq_replenish_bulk_mbuf(struct rxq *rxq, uint16_t n)
 		return;
 	}
 	for (i = 0; i < n; ++i)
-		wq[i].addr = htonll(rte_pktmbuf_mtod(elts[i], uintptr_t));
+		wq[i].addr = htonll((uintptr_t)elts[i]->buf_addr +
+				    RTE_PKTMBUF_HEADROOM);
 	rxq->rq_ci += n;
 	rte_wmb();
 	*rxq->rq_db = htonl(rxq->rq_ci);
@@ -828,8 +829,9 @@ rxq_cq_to_ptype_oflags_v(struct rxq *rxq, __m128i cqes[4], __m128i op_err,
 	ptype = _mm_and_si128(ptype, ptype_mask);
 	pinfo = _mm_and_si128(pinfo, pinfo_mask);
 	pinfo = _mm_slli_epi32(pinfo, 16);
-	ptype = _mm_or_si128(ptype, pinfo);
-	ptype = _mm_srli_epi32(ptype, 10);
+	/* Make pinfo has merged fields for ol_flags calculation. */
+	pinfo = _mm_or_si128(ptype, pinfo);
+	ptype = _mm_srli_epi32(pinfo, 10);
 	ptype = _mm_packs_epi32(ptype, zero);
 	/* Errored packets will have RTE_PTYPE_ALL_MASK. */
 	op_err = _mm_srli_epi16(op_err, 8);
@@ -885,16 +887,28 @@ rxq_handle_pending_error(struct rxq *rxq, struct rte_mbuf **pkts,
 {
 	uint16_t n = 0;
 	unsigned int i;
+#ifdef MLX5_PMD_SOFT_COUNTERS
+	uint32_t err_bytes = 0;
+#endif
 
 	for (i = 0; i < pkts_n; ++i) {
 		struct rte_mbuf *pkt = pkts[i];
 
-		if (pkt->packet_type == RTE_PTYPE_ALL_MASK)
+		if (pkt->packet_type == RTE_PTYPE_ALL_MASK) {
+#ifdef MLX5_PMD_SOFT_COUNTERS
+			err_bytes += PKT_LEN(pkt);
+#endif
 			rte_pktmbuf_free_seg(pkt);
-		else
+		} else {
 			pkts[n++] = pkt;
+		}
 	}
 	rxq->stats.idropped += (pkts_n - n);
+#ifdef MLX5_PMD_SOFT_COUNTERS
+	/* Correct counters of errored completions. */
+	rxq->stats.ipackets -= (pkts_n - n);
+	rxq->stats.ibytes -= err_bytes;
+#endif
 	rxq->pending_err = 0;
 	return n;
 }
@@ -1309,7 +1323,8 @@ priv_check_raw_vec_tx_support(struct priv *priv)
 int __attribute__((cold))
 priv_check_vec_tx_support(struct priv *priv)
 {
-	if (priv->txqs_n > MLX5_VPMD_MIN_TXQS ||
+	if (!priv->tx_vec_en ||
+	    priv->txqs_n > MLX5_VPMD_MIN_TXQS ||
 	    priv->mps != MLX5_MPW_ENHANCED ||
 	    priv->tso)
 		return -ENOTSUP;
@@ -1328,7 +1343,9 @@ priv_check_vec_tx_support(struct priv *priv)
 int __attribute__((cold))
 rxq_check_vec_support(struct rxq *rxq)
 {
-	if (rxq->sges_n != 0)
+	struct rxq_ctrl *ctrl = container_of(rxq, struct rxq_ctrl, rxq);
+
+	if (!ctrl->priv->rx_vec_en || rxq->sges_n != 0)
 		return -ENOTSUP;
 	return 1;
 }
@@ -1347,6 +1364,8 @@ priv_check_vec_rx_support(struct priv *priv)
 {
 	uint16_t i;
 
+	if (!priv->rx_vec_en)
+		return -ENOTSUP;
 	/* All the configured queues should support. */
 	for (i = 0; i < priv->rxqs_n; ++i) {
 		struct rxq *rxq = (*priv->rxqs)[i];
