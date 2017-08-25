@@ -87,6 +87,7 @@ TAILQ_HEAD(rte_pci_device_list, rte_pci_device);
 TAILQ_HEAD(rte_pci_driver_list, rte_pci_driver);
 
 /* PCI Bus iterators */
+//遍历pci上所有设备
 #define FOREACH_DEVICE_ON_PCIBUS(p)	\
 		TAILQ_FOREACH(p, &(rte_pci_bus.device_list), next)
 
@@ -120,6 +121,7 @@ struct rte_devargs;
 /**
  * A structure describing a PCI device.
  */
+//pci设备
 struct rte_pci_device {
 	TAILQ_ENTRY(rte_pci_device) next;       /**< Next probed PCI device. */
 	struct rte_device device;               /**< Inherit core device */
@@ -190,7 +192,7 @@ struct rte_pci_driver {
  */
 struct rte_pci_bus {
 	struct rte_bus bus;               /**< Inherit the generic class */
-	struct rte_pci_device_list device_list;  /**< List of PCI devices */ //串扫描到的pci设备
+	struct rte_pci_device_list device_list;  /**< List of PCI devices */ //串扫描到的pci设备（即总结上挂载的所有设备）
 	struct rte_pci_driver_list driver_list;  /**< List of PCI drivers */ //串注册的pci驱动
 };
 
@@ -473,6 +475,7 @@ void rte_pci_dump(FILE *f);
 void rte_pci_register(struct rte_pci_driver *driver);
 
 /** Helper for PCI device registration from driver (eth, crypto) instance */
+//注册pci驱动
 #define RTE_PMD_REGISTER_PCI(nm, pci_drv) \
 RTE_INIT(pciinitfn_ ##nm); \
 static void pciinitfn_ ##nm(void) \

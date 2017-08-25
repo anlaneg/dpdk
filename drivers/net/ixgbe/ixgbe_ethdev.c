@@ -1767,6 +1767,7 @@ eth_ixgbevf_dev_uninit(struct rte_eth_dev *eth_dev)
 	return 0;
 }
 
+//ixgbe驱动探测设备
 static int eth_ixgbe_pci_probe(struct rte_pci_driver *pci_drv __rte_unused,
 	struct rte_pci_device *pci_dev)
 {
@@ -1779,6 +1780,7 @@ static int eth_ixgbe_pci_remove(struct rte_pci_device *pci_dev)
 	return rte_eth_dev_pci_generic_remove(pci_dev, eth_ixgbe_dev_uninit);
 }
 
+//ixgbe驱动
 static struct rte_pci_driver rte_ixgbe_pmd = {
 	.id_table = pci_id_ixgbe_map,
 	.drv_flags = RTE_PCI_DRV_NEED_MAPPING | RTE_PCI_DRV_INTR_LSC,

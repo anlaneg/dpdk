@@ -87,6 +87,7 @@ rte_bus_scan(void)
 }
 
 /* Probe all devices of all buses */
+//各总线探测设备
 int
 rte_bus_probe(void)
 {
