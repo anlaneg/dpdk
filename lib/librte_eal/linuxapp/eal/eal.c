@@ -912,7 +912,15 @@ rte_eal_init(int argc, char **argv)
 		return -1;
 	}
 
-	//扫描总线，识别相应总线的设备
+	if (eal_option_device_parse()) {
+		rte_errno = ENODEV;
+		return -1;
+	}
+
+	//扫描总线，识别相应总线的设备(一般我们关注的是rte_pci_scan函数，实现pci类型扫描
+	//除pci以外，还有vdev,fslmc等）
+	//当为pci总线时，此函数将扫出pci总线上所有设备，总创建相应的链表
+
 	if (rte_bus_scan()) {
 		rte_eal_init_alert("Cannot scan the buses for devices\n");
 		rte_errno = ENODEV;
@@ -956,7 +964,7 @@ rte_eal_init(int argc, char **argv)
 	 * Launch a dummy function on all slave lcores, so that master lcore
 	 * knows they are all ready when this function returns.
 	 */
-	rte_eal_mp_remote_launch(sync_func, NULL, SKIP_MASTER);
+	rte_eal_mp_remote_launch(sync_func, NULL, SKIP_MASTER);//用于确保各slave均完成初始化并阻塞
 	rte_eal_mp_wait_lcore();//阻塞确保各slave完成工作
 
 	/* initialize services so vdevs register service during bus_probe. */

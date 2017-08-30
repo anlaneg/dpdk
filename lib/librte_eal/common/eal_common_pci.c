@@ -59,7 +59,7 @@ extern struct rte_pci_bus rte_pci_bus;
 
 #define SYSFS_PCI_DEVICES "/sys/bus/pci/devices"
 
-//pci扫描路径
+//pci扫描路径（例如/sys/bus/pci/devices)
 const char *pci_get_sysfs_path(void)
 {
 	const char *path = NULL;
@@ -444,7 +444,6 @@ rte_pci_probe(void)
 			ret = pci_probe_all_drivers(dev);
 
 		//黑名单或者虚拟设备时，将被跳过
-
 		if (ret < 0) {
 			//设备无法被使用，报错，继续尝试
 			RTE_LOG(ERR, EAL, "Requested device " PCI_PRI_FMT

@@ -24,6 +24,7 @@ General Project Administration
 M: Thomas Monjalon <thomas@monjalon.net>
 T: git://dpdk.org/dpdk
 F: MAINTAINERS
+F: devtools/check-dup-includes.sh
 F: devtools/check-maintainers.sh
 F: devtools/check-git-log.sh
 F: devtools/check-includes.sh
@@ -423,6 +424,7 @@ F: doc/guides/nics/features/bnx2x*.ini
 QLogic qede PMD
 M: Rasesh Mody <rasesh.mody@cavium.com>
 M: Harish Patil <harish.patil@cavium.com>
+M: Shahed Shaikh <shahed.shaikh@cavium.com>
 F: drivers/net/qede/
 F: doc/guides/nics/qede.rst
 F: doc/guides/nics/features/qede*.ini
@@ -637,6 +639,7 @@ F: doc/guides/sample_app_ug/ip_reassembly.rst
 Generic Receive Offload - EXPERIMENTAL
 M: Jiayu Hu <jiayu.hu@intel.com>
 F: lib/librte_gro/
+F: doc/guides/prog_guide/generic_receive_offload_lib.rst
 
 Distributor
 M: Bruce Richardson <bruce.richardson@intel.com>
@@ -755,6 +758,7 @@ F: lib/librte_kvargs/
 F: test/test/test_kvargs.c
 
 Power management
+M: David Hunt <david.hunt@intel.com>
 F: lib/librte_power/
 F: doc/guides/prog_guide/power_man.rst
 F: test/test/test_power*
@@ -824,6 +828,7 @@ M: Jerin Jacob <jerin.jacob@caviumnetworks.com>
 F: app/test-eventdev/
 F: doc/guides/tools/testeventdev.rst
 F: doc/guides/tools/img/eventdev_*
+F: test/test/test_event_ring.c
 
 Procinfo tool
 M: Maryam Tahhan <maryam.tahhan@intel.com>

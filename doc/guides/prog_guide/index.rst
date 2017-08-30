@@ -44,6 +44,7 @@ Programmer's Guide
     mbuf_lib
     poll_mode_drv
     rte_flow
+    traffic_management
     cryptodev_lib
     link_bonding_poll_mode_drv_lib
     timer_lib
@@ -54,6 +55,7 @@ Programmer's Guide
     packet_distrib_lib
     reorder_lib
     ip_fragment_reassembly_lib
+    generic_receive_offload_lib
     pdump_lib
     multi_proc_support
     kernel_nic_interface

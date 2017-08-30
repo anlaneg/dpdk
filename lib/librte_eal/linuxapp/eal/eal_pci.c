@@ -253,6 +253,7 @@ pci_scan_one(const char *dirname, const struct rte_pci_addr *addr)
 	char driver[PATH_MAX];
 	int ret;
 
+	//申请一个空的pci设备
 	dev = malloc(sizeof(*dev));
 	if (dev == NULL)
 		return -1;
@@ -491,6 +492,10 @@ rte_pci_scan(void)
 		if (e->d_name[0] == '.')
 			continue;
 
+		//anlang@anlang:~/workspace/anlaneg_dpdk$ ls  /sys/bus/pci/devices/
+		//0000:00:00.0  0000:00:16.0  0000:00:1f.0  0000:00:1f.4  0000:01:00.1
+		//0000:00:01.0  0000:00:16.3  0000:00:1f.2  0000:00:1f.6
+		//0000:00:14.0  0000:00:17.0  0000:00:1f.3  0000:01:00.0
 		//解析pci地址,domain,bus,driver-id,function
 		if (parse_pci_addr_format(e->d_name, sizeof(e->d_name), &addr) != 0)
 			continue;
@@ -498,6 +503,7 @@ rte_pci_scan(void)
 		snprintf(dirname, sizeof(dirname), "%s/%s",
 				pci_get_sysfs_path(), e->d_name);
 
+		//扫描具体的一个pci设备
 		if (pci_scan_one(dirname, &addr) < 0)
 			goto error;
 	}

@@ -97,8 +97,8 @@ default: all
 #
 
 #配置版本类信息显示相关
-.PHONY: config showconfigs showversion showversionum
-config showconfigs showversion showversionum:
+.PHONY: config defconfig showconfigs showversion showversionum
+config defconfig showconfigs showversion showversionum:
 	$(Q)$(MAKE) -f $(RTE_SDK)/mk/rte.sdkconfig.mk $@
 
 #代码阅读器相关

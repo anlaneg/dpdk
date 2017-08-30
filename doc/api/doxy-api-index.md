@@ -43,6 +43,9 @@ The public API headers are grouped by topics:
   [rte_tm]             (@ref rte_tm.h),
   [cryptodev]          (@ref rte_cryptodev.h),
   [eventdev]           (@ref rte_eventdev.h),
+  [metrics]            (@ref rte_metrics.h),
+  [bitrate]            (@ref rte_bitrate.h),
+  [latency]            (@ref rte_latencystats.h),
   [devargs]            (@ref rte_devargs.h),
   [PCI]                (@ref rte_pci.h)
 
@@ -86,6 +89,7 @@ The public API headers are grouped by topics:
   [lcore]              (@ref rte_lcore.h),
   [per-lcore]          (@ref rte_per_lcore.h),
   [service cores]      (@ref rte_service.h),
+  [keepalive]          (@ref rte_keepalive.h),
   [power/freq]         (@ref rte_power.h)
 
 - **layers**:
@@ -160,8 +164,4 @@ The public API headers are grouped by topics:
   [EAL config]         (@ref rte_eal.h),
   [common]             (@ref rte_common.h),
   [ABI compat]         (@ref rte_compat.h),
-  [keepalive]          (@ref rte_keepalive.h),
-  [device metrics]     (@ref rte_metrics.h),
-  [bitrate statistics] (@ref rte_bitrate.h),
-  [latency statistics] (@ref rte_latencystats.h),
   [version]            (@ref rte_version.h)
