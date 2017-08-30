@@ -33,6 +33,8 @@
 
 echo "#ifndef __RTE_CONFIG_H"
 echo "#define __RTE_CONFIG_H"
+# 采用一连中的sed替换，将CONFIG_XX=y,n,FF格式
+# 替换为 c 语言可识别的宏定义
 grep CONFIG_ $1 |
 grep -v '^[ \t]*#' |
 sed 's,CONFIG_\(.*\)=y.*$,#undef \1\

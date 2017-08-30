@@ -58,6 +58,9 @@ export Q
 
 # if we are building SDK, only includes SDK configuration
 ifneq ($(BUILDING_RTE_SDK),)
+  #将.config载入做为设置的变量，在sangfor做开发时，有好多的变量需要又在makefile中定义，
+  # 又在gcc 编译时通过-D方式做为宏定义传入，dpdk在这里也有这个问题，dpdk的处理是，采用
+  # config方式，生成.config（makefile用）文件与config.h（gcc编译用）来解决这个问题
   include $(RTE_OUTPUT)/.config
   # remove double-quotes from config names
   RTE_ARCH := $(CONFIG_RTE_ARCH:"%"=%)
@@ -107,6 +110,7 @@ export RTE_TOOLCHAIN
 
 # developer build automatically enabled in a git tree
 ifneq ($(wildcard $(RTE_SDK)/.git),)
+#如果在sdk目录发现.git目录，则自动认为是devel build
 RTE_DEVEL_BUILD ?= y
 endif
 

@@ -33,6 +33,7 @@ MAKEFLAGS += --no-print-directory
 
 # define Q to '@' or not. $(Q) is used to prefix all shell commands to
 # be executed silently.
+#如果命令行指定了V,则显示执行的命令
 Q=@
 ifeq '$V' '0'
 override V=
@@ -58,6 +59,7 @@ export BUILDING_RTE_SDK
 # We can specify the configuration template when doing the "make
 # config". For instance: make config T=x86_64-native-linuxapp-gcc
 #
+# 如果命令行执行T,则对应到配置模板上。
 RTE_CONFIG_TEMPLATE :=
 ifdef T
 ifeq ("$(origin T)", "command line")
@@ -70,6 +72,7 @@ export RTE_CONFIG_TEMPLATE
 # Default output is $(RTE_SRCDIR)/build
 # output files wil go in a separate directory
 #
+# 如果命令行指定了o,则指定输出，否则按默认输出
 ifdef O
 ifeq ("$(origin O)", "command line")
 RTE_OUTPUT := $(abspath $(O))
@@ -85,23 +88,32 @@ export BUILDDIR
 
 export ROOTDIRS-y ROOTDIRS- ROOTDIRS-n
 
+#定义首目标default
 .PHONY: default
 default: all
 
+#
+# 下面的代码对目标进行分类
+#
+
+#配置版本类信息显示相关
 .PHONY: config showconfigs showversion showversionum
 config showconfigs showversion showversionum:
 	$(Q)$(MAKE) -f $(RTE_SDK)/mk/rte.sdkconfig.mk $@
 
+#代码阅读器相关
 .PHONY: cscope gtags tags etags
 cscope gtags tags etags:
 	$(Q)$(RTE_SDK)/devtools/build-tags.sh $@ $T
 
+#测试相关
 .PHONY: test test-basic test-fast test-ring test-mempool test-perf coverage
 test test-basic test-fast test-ring test-mempool test-perf coverage:
 	$(Q)$(MAKE) -f $(RTE_SDK)/mk/rte.sdktest.mk $@
 
 test: test-build
 
+#安装相关
 .PHONY: install
 install:
 	$(Q)$(MAKE) -f $(RTE_SDK)/mk/rte.sdkinstall.mk pre_install
@@ -109,12 +121,14 @@ install:
 install-%:
 	$(Q)$(MAKE) -f $(RTE_SDK)/mk/rte.sdkinstall.mk $@
 
+#文档相关
 .PHONY: doc help
 doc: doc-all
 help: doc-help
 doc-%:
 	$(Q)$(MAKE) -f $(RTE_SDK)/mk/rte.sdkdoc.mk $*
 
+# 覆盖率相关
 .PHONY: gcov gcovclean
 gcov gcovclean:
 	$(Q)$(MAKE) -f $(RTE_SDK)/mk/rte.sdkgcov.mk $@
@@ -124,6 +138,7 @@ examples examples_clean:
 	$(Q)$(MAKE) -f $(RTE_SDK)/mk/rte.sdkexamples.mk $@
 
 # all other build targets
+# 其它类目标
 %:
 	$(Q)$(MAKE) -f $(RTE_SDK)/mk/rte.sdkconfig.mk checkconfig
 	$(Q)$(MAKE) -f $(RTE_SDK)/mk/rte.sdkbuild.mk $@

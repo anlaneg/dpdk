@@ -54,10 +54,12 @@ INSTALL_CONFIGS := $(sort $(filter-out %~,\
 	$(wildcard $(RTE_SRCDIR)/config/defconfig_*))))
 INSTALL_TARGETS := $(addsuffix _install,$(INSTALL_CONFIGS))
 
+#显示所有配置模板
 .PHONY: showconfigs
 showconfigs:
 	@$(foreach CONFIG, $(INSTALL_CONFIGS), echo $(CONFIG);)
 
+#未指定-T时报错用
 .PHONY: notemplate
 notemplate:
 	@printf "No template specified. "
@@ -68,6 +70,7 @@ notemplate:
 ifeq ($(RTE_CONFIG_TEMPLATE),)
 config: notemplate
 else
+#配置实际上仅要求rte_config.h已生成，且Makefile已生成
 config: $(RTE_OUTPUT)/include/rte_config.h $(RTE_OUTPUT)/Makefile
 	@echo "Configuration done"
 endif
@@ -83,6 +86,10 @@ else
 # Then for each of those identified duplicates as long as there are more than
 # just one left the last match is removed.
 $(RTE_OUTPUT)/.config: $(RTE_CONFIG_TEMPLATE) FORCE | $(RTE_OUTPUT)
+	#指定了配置模板，且配置对应的文件存在，用cpp处理模板文件，解开#include指令
+	# 采用awk处理生成的内容（#号开头的行被忽略），目的防止宏定义重复，如果同一变量已定义
+	# 则后面定义的生效。
+	# 然后检查.config_tmp与.config是否相等，如果不相等，则使用新的.config
 	$(Q)if [ "$(RTE_CONFIG_TEMPLATE)" != "" -a -f "$(RTE_CONFIG_TEMPLATE)" ]; then \
 		$(CPP) -undef -P -x assembler-with-cpp \
 		-ffreestanding \
@@ -110,6 +117,8 @@ SDK_RELPATH=$(shell $(RTE_SDK)/buildtools/relpath.sh $(abspath $(RTE_SRCDIR)) \
 				$(abspath $(RTE_OUTPUT)))
 OUTPUT_RELPATH=$(shell $(RTE_SDK)/buildtools/relpath.sh $(abspath $(RTE_OUTPUT)) \
 				$(abspath $(RTE_SRCDIR)))
+#生成output中的makefile文件
+# 用于在output目录下开启编译，并传入O
 $(RTE_OUTPUT)/Makefile: | $(RTE_OUTPUT)
 	$(Q)$(RTE_SDK)/buildtools/gen-build-mk.sh $(SDK_RELPATH) $(OUTPUT_RELPATH) \
 		> $(RTE_OUTPUT)/Makefile
@@ -121,6 +130,9 @@ $(RTE_OUTPUT)/include/rte_config.h: $(RTE_OUTPUT)/.config
 		$(RTE_OUTPUT)/lib \
 		$(RTE_OUTPUT)/hostlib $(RTE_OUTPUT)/kmod $(RTE_OUTPUT)/build
 	$(Q)mkdir -p $(RTE_OUTPUT)/include
+	#依据.config文件生成rte_config.h，简单的将其转换为
+	#undef XX
+	#define XX=yy
 	$(Q)$(RTE_SDK)/buildtools/gen-config-h.sh $(RTE_OUTPUT)/.config \
 		> $(RTE_OUTPUT)/include/rte_config.h
 
@@ -133,10 +145,12 @@ headerconfig: $(RTE_OUTPUT)/include/rte_config.h
 # is up to date
 .PHONY: checkconfig
 checkconfig:
+	#检查$(RTE_OUTPUT)/.config文件是否存在,不存在报错
 	@if [ ! -f $(RTE_OUTPUT)/.config ]; then \
 		echo "No .config in build directory"; \
 		exit 1; \
 	fi
+	#检查配置时，不要求生成.config文件
 	$(Q)$(MAKE) -f $(RTE_SDK)/mk/rte.sdkconfig.mk \
 		headerconfig NODOTCONF=1
 
