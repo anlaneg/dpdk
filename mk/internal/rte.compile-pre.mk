@@ -36,6 +36,7 @@
 SRCS-all := $(SRCS-y) $(SRCS-n) $(SRCS-)
 
 # convert source to obj file
+# 将$(1)中含有的%.c替换为.o,用于指定对应的object文件
 src2obj = $(strip $(patsubst %.c,%.o,\
 	$(patsubst %.S,%_s.o,$(1))))
 
@@ -45,35 +46,42 @@ dotfile = $(strip $(foreach f,$(1),\
 
 # convert source/obj files into dot-dep filename (does not
 # include .S files)
+# 将$(1)中含有%.c的替换为%.o.d的依赖文件名称
 src2dep = $(strip $(call dotfile,$(patsubst %.c,%.o.d, \
 		$(patsubst %.S,,$(1)))))
 obj2dep = $(strip $(call dotfile,$(patsubst %.o,%.o.d,$(1))))
 
 # convert source/obj files into dot-cmd filename
+# 将$(1)中含%.c的文件替换为%.o.cmd
 src2cmd = $(strip $(call dotfile,$(patsubst %.c,%.o.cmd, \
 		$(patsubst %.S,%_s.o.cmd,$(1)))))
 obj2cmd = $(strip $(call dotfile,$(patsubst %.o,%.o.cmd,$(1))))
 
+#转换为object,依据srcs-y,srcs-n,srcs-生成object-XX
 OBJS-y := $(call src2obj,$(SRCS-y))
 OBJS-n := $(call src2obj,$(SRCS-n))
 OBJS-  := $(call src2obj,$(SRCS-))
 OBJS-all := $(filter-out $(SRCS-all),$(OBJS-y) $(OBJS-n) $(OBJS-))
 
+#转换对应的依赖文件名称
 DEPS-y := $(call src2dep,$(SRCS-y))
 DEPS-n := $(call src2dep,$(SRCS-n))
 DEPS-  := $(call src2dep,$(SRCS-))
 DEPS-all := $(DEPS-y) $(DEPS-n) $(DEPS-)
 DEPSTMP-all := $(DEPS-all:%.d=%.d.tmp)
 
+#获得对应的cmds文件名称
 CMDS-y := $(call src2cmd,$(SRCS-y))
 CMDS-n := $(call src2cmd,$(SRCS-n))
 CMDS-  := $(call src2cmd,$(SRCS-))
 CMDS-all := $(CMDS-y) $(CMDS-n) $(CMDS-)
 
+#加载并引用依赖文件产生的目标（保证正确的.o依赖）
 -include $(DEPS-y) $(CMDS-y)
 
 # command to compile a .c file to generate an object
 ifeq ($(USE_HOST),1)
+#定义 .c文件到.o文件命令行
 C_TO_O = $(HOSTCC) -Wp,-MD,$(call obj2dep,$(@)).tmp $(HOST_CPPFLAGS) $(HOST_CFLAGS) \
 	$(CFLAGS_$(@)) $(HOST_EXTRA_CPPFLAGS) $(HOST_EXTRA_CFLAGS) -o $@ -c $<
 C_TO_O_STR = $(subst ','\'',$(C_TO_O)) #'# fix syntax highlight
@@ -96,6 +104,7 @@ PMDINFO_TO_O = if grep -q 'RTE_PMD_REGISTER_.*(.*)' $<; then \
 	$(PMDINFO_LD) && \
 	mv -f $@.o $@; fi
 C_TO_O_CMD = 'cmd_$@ = $(C_TO_O_STR)'
+#将C转换为O执行的脚本
 C_TO_O_DO = @set -e; \
 	echo $(C_TO_O_DISP); \
 	$(C_TO_O) && \
@@ -133,6 +142,7 @@ boolean = $(if $1,1,0)
 # Note: dep_$$@ is from the .d file and DEP_$$@ can be specified by
 # user (by default it is empty)
 #
+#定义c与o之间的依赖关系
 .SECONDEXPANSION:
 %.o: %.c $$(wildcard $$(dep_$$@)) $$(DEP_$$(@)) FORCE
 	@[ -d $(dir $@) ] || mkdir -p $(dir $@)
@@ -172,6 +182,7 @@ S_TO_O_DO = @set -e; \
 # Compile .S file if needed
 # Note: DEP_$$@ can be specified by user (by default it is empty)
 #
+# 定义.S与o之间的关系
 %_s.o: %.S $$(DEP_$$@) FORCE
 	@[ ! -d $(dir $@) ] || mkdir -p $(dir $@)
 	$(if $(D),\

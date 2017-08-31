@@ -115,6 +115,7 @@ RTE_DEVEL_BUILD ?= y
 endif
 
 # SRCDIR is the current source directory
+# 用于指向当前编译的目录
 ifdef S
 SRCDIR := $(abspath $(RTE_SRCDIR)/$(S))
 else

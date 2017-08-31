@@ -52,6 +52,7 @@ test: | lib buildtools drivers
 
 CLEANDIRS = $(addsuffix _clean,$(ROOTDIRS-y) $(ROOTDIRS-n) $(ROOTDIRS-))
 
+#指定build 依赖于多个目标（从GNUmakefile中可知：buildtools lib drivers app）
 .PHONY: build
 build: $(ROOTDIRS-y)
 	@echo "Build complete [$(RTE_TARGET)]"
@@ -72,10 +73,14 @@ test-build: test
 
 .SECONDEXPANSION:
 .PHONY: $(ROOTDIRS-y) $(ROOTDIRS-)
+#各目标处理
 $(ROOTDIRS-y) $(ROOTDIRS-):
+	#创建$(BUILDDIR)/$@目录，开始构造$@
 	@[ -d $(BUILDDIR)/$@ ] || mkdir -p $(BUILDDIR)/$@
 	@echo "== Build $@"
+	#进入$(BUILDDIR)/$@ 目录，采用$(RTE_SRCDIR)/$@/Makefile文件进行处理
 	$(Q)$(MAKE) S=$@ -f $(RTE_SRCDIR)/$@/Makefile -C $(BUILDDIR)/$@ all
+	#如果当前正在构造drivers,则再执行$(RTE_SDK)/mk/rte.combinedlib.mk
 	@if [ $@ = drivers ]; then \
 		$(MAKE) -f $(RTE_SDK)/mk/rte.combinedlib.mk; \
 	fi
