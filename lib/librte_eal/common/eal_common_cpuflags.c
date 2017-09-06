@@ -47,10 +47,12 @@ rte_cpu_check_supported(void)
 		exit(1);
 }
 
+//检查指定的体系的flag在当前cpu中是否已开启
 int
 rte_cpu_is_supported(void)
 {
 	/* This is generated at compile-time by the build system */
+	//此宏来源于编译rte.cpuflags.mk定义，用于表示cpu flags
 	static const enum rte_cpu_flag_t compile_time_flags[] = {
 			RTE_COMPILE_TIME_CPUFLAGS
 	};

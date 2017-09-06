@@ -141,8 +141,10 @@ eal_thread_dump_affinity(char *str, unsigned size)
 	int ret;
 	unsigned int out = 0;
 
+	//获取当前线程的cpuset
 	rte_thread_get_affinity(&cpuset);
 
+	//收集cpuset中的cpu列表
 	for (cpu = 0; cpu < RTE_MAX_LCORE; cpu++) {
 		if (!CPU_ISSET(cpu, &cpuset))
 			continue;

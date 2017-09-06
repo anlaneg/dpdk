@@ -73,7 +73,7 @@ struct lcore_config {
 	unsigned core_id;          /**< core number on socket for this lcore */ //物理core id
 	int core_index;            /**< relative index, starting from 0 */ //core编号，如果不存在将为-1(最终按用户mask后的顺序）
 	rte_cpuset_t cpuset;       /**< cpu set which the lcore affinity to */ //仅包含此core的cpuset
-	uint8_t core_role;         /**< role of core eg: OFF, RTE, SERVICE */
+	uint8_t core_role;         /**< role of core eg: OFF, RTE, SERVICE */ //指定core的角色，例如ROLE_SERVICE
 };
 
 /**

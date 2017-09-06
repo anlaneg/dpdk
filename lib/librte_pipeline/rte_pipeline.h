@@ -46,6 +46,8 @@ extern "C" {
  * a standard methodology (logically similar to OpenFlow) for rapid development
  * of complex packet processing pipelines out of ports, tables and actions.
  *
+ * 这个工具是DPDK包框架工具套件的一部分，提供了一个标准的方法论（逻辑同OpenFlow)
+ *
  * <B>Basic operation.</B> A pipeline is constructed by connecting its input
  * ports to its output ports through a chain of lookup tables. As result of
  * lookup operation into the current table, one of the table entries (or the
@@ -55,6 +57,8 @@ extern "C" {
  * table action handler, while the reserved actions define the next hop for the
  * current packet (either another table, an output port or packet drop) and are
  * handled transparently by the framework.
+ * pipeline 将input ports和output port之间通过一组查询连接起来
+ * 查询的结果会提供actions
  *
  * <B>Initialization and run-time flows.</B> Once all the pipeline elements
  * (input ports, tables, output ports) have been created, input ports connected

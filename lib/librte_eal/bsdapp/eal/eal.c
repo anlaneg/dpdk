@@ -331,6 +331,7 @@ eal_log_level_parse(int argc, char **argv)
 		if (opt == '?')
 			break;
 
+		//只处理log-level
 		ret = (opt == OPT_LOG_LEVEL_NUM) ?
 			eal_parse_common_option(opt, optarg, &internal_config) : 0;
 
@@ -503,6 +504,7 @@ rte_eal_init(int argc, char **argv)
 
 	/* checks if the machine is adequate */
 	if (!rte_cpu_is_supported()) {
+		//如果cpu没有开启，则报错
 		rte_eal_init_alert("unsupported cpu type.");
 		rte_errno = ENOTSUP;
 		return -1;

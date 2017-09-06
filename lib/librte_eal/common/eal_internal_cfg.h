@@ -49,11 +49,11 @@
  * mount points of hugepages
  */
 struct hugepage_info {
-	uint64_t hugepage_sz;   /**< size of a huge page */
-	const char *hugedir;    /**< dir where hugetlbfs is mounted */
+	uint64_t hugepage_sz;   /**< size of a huge page */ //每个大页的类型
+	const char *hugedir;    /**< dir where hugetlbfs is mounted */ //挂载目录名称
 	uint32_t num_pages[RTE_MAX_NUMA_NODES];
 				/**< number of hugepages of that size on each socket */
-	int lock_descriptor;    /**< file descriptor for hugepage dir */
+	int lock_descriptor;    /**< file descriptor for hugepage dir */ //大页目录对应的文件描述符，用于lock
 };
 
 /**
@@ -87,7 +87,7 @@ struct internal_config {
 	const char *hugepage_dir;         /**< specific hugetlbfs directory to use */ //采用那个大页目录
 
 	unsigned num_hugepage_sizes;      /**< how many sizes on this system */ //有多少种大页类型
-	struct hugepage_info hugepage_info[MAX_HUGEPAGE_SIZES];
+	struct hugepage_info hugepage_info[MAX_HUGEPAGE_SIZES];//每种大页的信息
 };
 extern struct internal_config internal_config; /**< Global EAL configuration. */
 

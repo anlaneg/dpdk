@@ -33,6 +33,7 @@
 # used to set the RTE_CPUFLAG_* environment variables giving details
 # of what instruction sets the target cpu supports.
 
+#-dM 输出预定义的宏
 AUTO_CPUFLAGS := $(shell $(CC) $(MACHINE_CFLAGS) $(WERROR_FLAGS) $(EXTRA_CFLAGS) -dM -E - < /dev/null)
 
 # adding flags to CPUFLAGS
@@ -140,4 +141,5 @@ empty:=
 space:= $(empty) $(empty)
 CPUFLAGSTMP1 := $(addprefix RTE_CPUFLAG_,$(CPUFLAGS))
 CPUFLAGSTMP2 := $(subst $(space),$(comma),$(CPUFLAGSTMP1))
+#将其构造成enum可用语法
 CPUFLAGS_LIST := -DRTE_COMPILE_TIME_CPUFLAGS=$(CPUFLAGSTMP2)

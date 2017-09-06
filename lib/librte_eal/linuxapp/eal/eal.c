@@ -334,6 +334,7 @@ eal_hugedirs_unlock(void)
 	for (i = 0; i < MAX_HUGEPAGE_SIZES; i++)
 	{
 		/* skip uninitialized */
+		//如果有锁，则解锁
 		if (internal_config.hugepage_info[i].lock_descriptor < 0)
 			continue;
 		/* unlock hugepage file */
@@ -553,7 +554,7 @@ eal_parse_args(int argc, char **argv)
 
 		ret = eal_parse_common_option(opt, optarg, &internal_config);
 		/* common parser is not happy */
-		if (ret < 0) {
+		if (ret < 0) {//失败处理
 			eal_usage(prgname);
 			ret = -1;
 			goto out;
@@ -899,6 +900,7 @@ rte_eal_init(int argc, char **argv)
 	if (eal_plugins_init() < 0)
 		rte_eal_init_alert("Cannot init plugins\n");
 
+	//设置master线程
 	eal_thread_init_master(rte_config.master_lcore);
 
 	ret = eal_thread_dump_affinity(cpuset, RTE_CPU_AFFINITY_STR_LEN);
@@ -920,7 +922,6 @@ rte_eal_init(int argc, char **argv)
 	//扫描总线，识别相应总线的设备(一般我们关注的是rte_pci_scan函数，实现pci类型扫描
 	//除pci以外，还有vdev,fslmc等）
 	//当为pci总线时，此函数将扫出pci总线上所有设备，总创建相应的链表
-
 	if (rte_bus_scan()) {
 		rte_eal_init_alert("Cannot scan the buses for devices\n");
 		rte_errno = ENODEV;
@@ -1015,6 +1016,7 @@ int rte_eal_has_hugepages(void)
 	return ! internal_config.no_hugetlbfs;
 }
 
+//检查module是否被加载
 int
 rte_eal_check_module(const char *module_name)
 {

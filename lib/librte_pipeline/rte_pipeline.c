@@ -191,6 +191,7 @@ rte_pipeline_port_out_free(struct rte_port_out *port);
  * Pipeline
  *
  */
+//检查pipeline参数
 static int
 rte_pipeline_check_params(struct rte_pipeline_params *params)
 {

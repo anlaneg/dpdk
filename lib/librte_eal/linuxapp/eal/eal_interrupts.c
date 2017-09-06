@@ -80,11 +80,11 @@ static RTE_DEFINE_PER_LCORE(int, _epfd) = -1; /**< epoll fd per thread */
  */
 union intr_pipefds{
 	struct {
-		int pipefd[2];
+		int pipefd[2];//创建用
 	};
 	struct {
-		int readfd;
-		int writefd;
+		int readfd;//读fd
+		int writefd;//写fd
 	};
 };
 
@@ -745,6 +745,7 @@ eal_intr_process_interrupts(struct epoll_event *events, int nfds)
 				rte_spinlock_unlock(&intr_lock);
 
 				/* call the actual callback */
+				//调用实际中的回调
 				active_cb.cb_fn(active_cb.cb_arg);
 
 				/*get the lock back. */
@@ -807,6 +808,7 @@ eal_intr_handle_interrupts(int pfd, unsigned totalfds)
  * @return
  *  never return;
  */
+//中断主线程
 static __attribute__((noreturn)) void *
 eal_intr_thread_main(__rte_unused void *arg)
 {
@@ -872,6 +874,7 @@ eal_intr_thread_main(__rte_unused void *arg)
 	}
 }
 
+//中断线程初始化
 int
 rte_eal_intr_init(void)
 {
@@ -892,7 +895,7 @@ rte_eal_intr_init(void)
 
 	/* create the host thread to wait/handle the interrupt */
 	ret = pthread_create(&intr_thread, NULL,
-			eal_intr_thread_main, NULL);
+			eal_intr_thread_main, NULL);//创建中断线程
 	if (ret != 0) {
 		rte_errno = ret;
 		RTE_LOG(ERR, EAL,

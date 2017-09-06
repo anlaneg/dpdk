@@ -333,6 +333,7 @@ static int xdigit2val(unsigned char c)
 	return val;
 }
 
+//指定service core
 static int
 eal_parse_service_coremask(const char *coremask)
 {
@@ -348,13 +349,13 @@ eal_parse_service_coremask(const char *coremask)
 	 * Remove 0x/0X if exists.
 	 */
 	while (isblank(*coremask))
-		coremask++;
+		coremask++;//跳过空字符
 	if (coremask[0] == '0' && ((coremask[1] == 'x')
 		|| (coremask[1] == 'X')))
-		coremask += 2;
+		coremask += 2;//跳过'0x'
 	i = strlen(coremask);
 	while ((i > 0) && isblank(coremask[i - 1]))
-		i--;
+		i--;//跳过结尾的空字符
 
 	if (i == 0)
 		return -1;
@@ -363,23 +364,23 @@ eal_parse_service_coremask(const char *coremask)
 		c = coremask[i];
 		if (isxdigit(c) == 0) {
 			/* invalid characters */
-			return -1;
+			return -1;//错误字符串
 		}
 		val = xdigit2val(c);
 		for (j = 0; j < BITS_PER_HEX && idx < RTE_MAX_LCORE;
 				j++, idx++) {
-			if ((1 << j) & val) {
+			if ((1 << j) & val) {//探测val的j位
 				/* handle master lcore already parsed */
 				uint32_t lcore = idx;
 				if (master_lcore_parsed &&
-						cfg->master_lcore == lcore) {
+						cfg->master_lcore == lcore) {//此core被占用了
 					RTE_LOG(ERR, EAL,
 						"Error: lcore %u is master lcore, cannot use as service core\n",
 						idx);
 					return -1;
 				}
 
-				if (!lcore_config[idx].detected) {
+				if (!lcore_config[idx].detected) {//此core没有被发现
 					RTE_LOG(ERR, EAL,
 						"lcore %u unavailable\n", idx);
 					return -1;
@@ -532,13 +533,14 @@ eal_parse_service_corelist(const char *corelist)
 					uint32_t lcore = idx;
 					if (cfg->master_lcore == lcore &&
 							master_lcore_parsed) {
+						//已成为master core,不能做为service core
 						RTE_LOG(ERR, EAL,
 							"Error: lcore %u is master lcore, cannot use as service core\n",
 							idx);
 						return -1;
 					}
 					lcore_config[idx].core_role =
-							ROLE_SERVICE;
+							ROLE_SERVICE;//指定为serivce core
 					count++;
 				}
 			}
@@ -830,11 +832,12 @@ eal_parse_lcores(const char *lcores)
 
 	/* Remove all blank characters ahead and after */
 	while (isblank(*lcores))
-		lcores++;
+		lcores++;//跳过前置空格
 
 	CPU_ZERO(&cpuset);
 
 	/* Reset lcore config */
+	//将role 重置
 	for (idx = 0; idx < RTE_MAX_LCORE; idx++) {
 		cfg->lcore_role[idx] = ROLE_OFF;
 		lcore_config[idx].core_index = -1;
@@ -844,7 +847,7 @@ eal_parse_lcores(const char *lcores)
 	/* Get list of cores */
 	do {
 		while (isblank(*lcores))
-			lcores++;
+			lcores++;//跳上次循环结束后，遇到的空格
 		if (*lcores == '\0')
 			goto err;
 
@@ -1077,6 +1080,7 @@ eal_parse_common_option(int opt, const char *optarg,
 		break;
 	/* service coremask */
 	case 's':
+		//mask 形式
 		if (eal_parse_service_coremask(optarg) < 0) {
 			RTE_LOG(ERR, EAL, "invalid service coremask\n");
 			return -1;
@@ -1084,6 +1088,7 @@ eal_parse_common_option(int opt, const char *optarg,
 		break;
 	/* service corelist */
 	case 'S':
+		//core list 形式
 		if (eal_parse_service_corelist(optarg) < 0) {
 			RTE_LOG(ERR, EAL, "invalid service core list\n");
 			return -1;
@@ -1307,7 +1312,7 @@ eal_check_common_options(struct internal_config *internal_cfg)
 		return -1;
 	}
 
-	//？？？？？？？？
+	//配置冲突
 	if (internal_cfg->no_hugetlbfs && internal_cfg->hugepage_unlink) {
 		RTE_LOG(ERR, EAL, "Option --"OPT_HUGE_UNLINK" cannot "
 			"be specified together with --"OPT_NO_HUGE"\n");

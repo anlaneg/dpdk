@@ -61,6 +61,7 @@ struct feature_entry {
 #define FEAT_DEF(name, leaf, subleaf, reg, bit) \
 	[RTE_CPUFLAG_##name] = {leaf, subleaf, reg, bit, #name },
 
+//x86_64 cpu功能表
 const struct feature_entry rte_cpu_feature_table[] = {
 	FEAT_DEF(SSE3, 0x00000001, 0, RTE_REG_ECX,  0)
 	FEAT_DEF(PCLMULQDQ, 0x00000001, 0, RTE_REG_ECX,  1)
@@ -183,6 +184,7 @@ rte_cpu_get_features(uint32_t leaf, uint32_t subleaf, cpuid_registers_t out)
 #endif
 }
 
+//检查cpu功能是否开启
 int
 rte_cpu_get_flag_enabled(enum rte_cpu_flag_t feature)
 {
