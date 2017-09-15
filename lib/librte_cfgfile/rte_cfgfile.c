@@ -42,13 +42,13 @@
 
 struct rte_cfgfile_section {
 	char name[CFG_NAME_LEN];
-	int num_entries;
+	int num_entries;//此段内有多少个配置项
 	struct rte_cfgfile_entry *entries[0];
 };
 
 struct rte_cfgfile {
 	int flags;
-	int num_sections;
+	int num_sections;//有多少个段
 	struct rte_cfgfile_section *sections[0];
 };
 
@@ -78,6 +78,7 @@ static const char valid_comment_chars[] = {
 	'@'
 };
 
+//对string执行strip
 static unsigned
 _strip(char *str, unsigned len)
 {
@@ -105,6 +106,7 @@ _strip(char *str, unsigned len)
 	return newlen;
 }
 
+//检查配置指明的配置字符是否合乎规定
 static int
 rte_cfgfile_check_params(const struct rte_cfgfile_parameters *params)
 {
@@ -133,6 +135,7 @@ rte_cfgfile_check_params(const struct rte_cfgfile_parameters *params)
 	return 0;
 }
 
+//加载配置文件
 struct rte_cfgfile *
 rte_cfgfile_load(const char *filename, int flags)
 {
@@ -167,6 +170,7 @@ rte_cfgfile_load_with_params(const char *filename, int flags,
 	memset(cfg->sections, 0, sizeof(cfg->sections[0]) * allocated_sections);
 
 	if (flags & CFG_FLAG_GLOBAL_SECTION) {
+		//如果有全局段，则直接将当前段置为0，用于处理
 		curr_section = 0;
 		allocated_entries = CFG_ALLOC_ENTRY_BATCH;
 		cfg->sections[curr_section] = malloc(
@@ -182,6 +186,7 @@ rte_cfgfile_load_with_params(const char *filename, int flags,
 				 sizeof(cfg->sections[0]->name), "GLOBAL");
 	}
 
+	//读配置文件
 	while (fgets(buffer, sizeof(buffer), f) != NULL) {
 		char *pos = NULL;
 		size_t len = strnlen(buffer, sizeof(buffer));
@@ -191,14 +196,17 @@ rte_cfgfile_load_with_params(const char *filename, int flags,
 					"Check if line too long\n", lineno);
 			goto error1;
 		}
+
+		//去除注释的字符
 		pos = memchr(buffer, params->comment_character, len);
 		if (pos != NULL) {
 			*pos = '\0';
-			len = pos -  buffer;
+			len = pos -  buffer;//有效字符串长度
 		}
 
 		len = _strip(buffer, len);
 		if (buffer[0] != '[' && memchr(buffer, '=', len) == NULL)
+			//非段（section)开始，且非vlaue开始，不处理
 			continue;
 
 		if (buffer[0] == '[') {
@@ -210,7 +218,7 @@ rte_cfgfile_load_with_params(const char *filename, int flags,
 				goto error1;
 			}
 			*end = '\0';
-			_strip(&buffer[1], end - &buffer[1]);
+			_strip(&buffer[1], end - &buffer[1]);//section 名称
 
 			/* close off old section and add start new one */
 			if (curr_section >= 0)
@@ -221,6 +229,8 @@ rte_cfgfile_load_with_params(const char *filename, int flags,
 			/* resize overall struct if we don't have room for more
 			sections */
 			if (curr_section == allocated_sections) {
+				//allocated_sections 用来减少内存的申请次数
+				//如果进入此分支，则预申请的section已用完。需要realloc
 				allocated_sections += CFG_ALLOC_SECTION_BATCH;
 				struct rte_cfgfile *n_cfg = realloc(cfg,
 					sizeof(*cfg) + sizeof(cfg->sections[0])
@@ -230,35 +240,40 @@ rte_cfgfile_load_with_params(const char *filename, int flags,
 					printf("Error - no more memory\n");
 					goto error1;
 				}
-				cfg = n_cfg;
+				cfg = n_cfg;//扩大空间成功
 			}
 
 			/* allocate space for new section */
+			//allocated_entries用来减少内存的申请次数，一次预申请多个entry
 			allocated_entries = CFG_ALLOC_ENTRY_BATCH;
 			curr_entry = -1;
 			cfg->sections[curr_section] = malloc(
 				sizeof(*cfg->sections[0]) +
 				sizeof(cfg->sections[0]->entries[0]) *
-				allocated_entries);
+				allocated_entries);//entry预申请多个
 			if (cfg->sections[curr_section] == NULL) {
 				printf("Error - no more memory\n");
 				goto error1;
 			}
 
+			//设置当前分析的section名称
 			snprintf(cfg->sections[curr_section]->name,
 					sizeof(cfg->sections[0]->name),
 					"%s", &buffer[1]);
 		} else {
+			//处理value行
 			/* value line */
 			if (curr_section < 0) {
+				//未遇到section前，遇到value行，报错
 				printf("Error line %d - value outside of"
 					"section\n", lineno);
 				goto error1;
 			}
 
 			struct rte_cfgfile_section *sect =
-				cfg->sections[curr_section];
+				cfg->sections[curr_section];//取当前section
 			int n;
+			//将value行，拆分，并进行数量校验
 			char *split[2] = {NULL};
 			n = rte_strsplit(buffer, sizeof(buffer), split, 2, '=');
 			if (flags & CFG_FLAG_EMPTY_VALUES) {
@@ -277,6 +292,7 @@ rte_cfgfile_load_with_params(const char *filename, int flags,
 
 			curr_entry++;
 			if (curr_entry == allocated_entries) {
+				//entry预申请空间用光了
 				allocated_entries += CFG_ALLOC_ENTRY_BATCH;
 				struct rte_cfgfile_section *n_sect = realloc(
 					sect, sizeof(*sect) +
@@ -297,6 +313,7 @@ rte_cfgfile_load_with_params(const char *filename, int flags,
 				goto error1;
 			}
 
+			//填充entry的名称及value
 			struct rte_cfgfile_entry *entry = sect->entries[
 				curr_entry];
 			snprintf(entry->name, sizeof(entry->name), "%s",
@@ -354,6 +371,7 @@ int rte_cfgfile_close(struct rte_cfgfile *cfg)
 	return 0;
 }
 
+//返回名称为sectionname的段，有多少个
 int
 rte_cfgfile_num_sections(struct rte_cfgfile *cfg, const char *sectionname,
 size_t length)
@@ -367,6 +385,7 @@ size_t length)
 	return num_sections;
 }
 
+//填充配置文件的sections
 int
 rte_cfgfile_sections(struct rte_cfgfile *cfg, char *sections[],
 	int max_sections)
@@ -380,6 +399,7 @@ rte_cfgfile_sections(struct rte_cfgfile *cfg, char *sections[],
 	return i;
 }
 
+//取对应sectionname对应的配置
 static const struct rte_cfgfile_section *
 _get_section(struct rte_cfgfile *cfg, const char *sectionname)
 {
@@ -398,6 +418,7 @@ rte_cfgfile_has_section(struct rte_cfgfile *cfg, const char *sectionname)
 	return _get_section(cfg, sectionname) != NULL;
 }
 
+//有多少个section entries
 int
 rte_cfgfile_section_num_entries(struct rte_cfgfile *cfg,
 	const char *sectionname)
@@ -409,6 +430,7 @@ rte_cfgfile_section_num_entries(struct rte_cfgfile *cfg,
 }
 
 
+//copy一份entry，并返回
 int
 rte_cfgfile_section_entries(struct rte_cfgfile *cfg, const char *sectionname,
 		struct rte_cfgfile_entry *entries, int max_entries)

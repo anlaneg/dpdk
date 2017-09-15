@@ -91,6 +91,7 @@ rte_malloc_socket(const char *type, size_t size, unsigned align, int socket_arg)
 	ret = malloc_heap_alloc(&mcfg->malloc_heaps[socket], type,
 				size, 0, align == 0 ? 1 : align, 0);
 	if (ret != NULL || socket_arg != SOCKET_ID_ANY)
+		//如果指明需要在socket上申请，但没有申请到，则直接返回失败
 		return ret;
 
 	//在期望的numa节点上无法申请到内存，尝试其它numa节点

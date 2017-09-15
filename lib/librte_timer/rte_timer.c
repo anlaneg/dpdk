@@ -58,7 +58,7 @@ LIST_HEAD(rte_timer_list, rte_timer);
 
 struct priv_timer {
 	struct rte_timer pending_head;  /**< dummy timer instance to head up list */
-	rte_spinlock_t list_lock;       /**< lock to protect list access */
+	rte_spinlock_t list_lock;       /**< lock to protect list access */ //链操作时需要加的锁
 
 	/** per-core variable that true if a timer was updated on this
 	 *  core since last reset of the variable */
@@ -67,10 +67,11 @@ struct priv_timer {
 	/** track the current depth of the skiplist */
 	unsigned curr_skiplist_depth;
 
+	//用来做轮循，记录上一次我们在此timer上使用了哪个core
 	unsigned prev_lcore;              /**< used for lcore round robin */
 
 	/** running timer on this lcore now */
-	struct rte_timer *running_tim;
+	struct rte_timer *running_tim;//记录正在本core上运行的timer
 
 #ifdef RTE_LIBRTE_TIMER_DEBUG
 	/** per-lcore statistics */
@@ -93,6 +94,7 @@ static struct priv_timer priv_timer[RTE_MAX_LCORE];
 #endif
 
 /* Init the timer library. */
+//timer库初始化
 void
 rte_timer_subsystem_init(void)
 {
@@ -101,6 +103,7 @@ rte_timer_subsystem_init(void)
 	/* since priv_timer is static, it's zeroed by default, so only init some
 	 * fields.
 	 */
+	//每core一个
 	for (lcore_id = 0; lcore_id < RTE_MAX_LCORE; lcore_id ++) {
 		rte_spinlock_init(&priv_timer[lcore_id].list_lock);
 		priv_timer[lcore_id].prev_lcore = lcore_id;
@@ -166,6 +169,7 @@ timer_set_config_state(struct rte_timer *tim,
 /*
  * if timer is pending, mark timer as running
  */
+//为了防止两个线程同时在操作一个timer,故由原子赋值来进行变更
 static int
 timer_set_running_state(struct rte_timer *tim)
 {
@@ -180,15 +184,15 @@ timer_set_running_state(struct rte_timer *tim)
 
 		/* timer is not pending anymore */
 		if (prev_status.state != RTE_TIMER_PENDING)
-			return -1;
+			return -1;//如果timer未变为pending状态，则timer可能加入还未完成，不处理
 
 		/* here, we know that timer is stopped or pending,
 		 * mark it atomically as being configured */
-		status.state = RTE_TIMER_RUNNING;
-		status.owner = (int16_t)lcore_id;
+		status.state = RTE_TIMER_RUNNING;//标记为running状态
+		status.owner = (int16_t)lcore_id;//标记lcore_id现在处理此timer
 		success = rte_atomic32_cmpset(&tim->status.u32,
 					      prev_status.u32,
-					      status.u32);
+					      status.u32);//原子写状态
 	}
 
 	return 0;
@@ -244,6 +248,7 @@ timer_get_prev_entries(uint64_t time_val, unsigned tim_lcore,
 	while(lvl != 0) {
 		lvl--;
 		prev[lvl] = prev[lvl+1];
+		//有下一个元素，且下一个元素的过期时间小于time_val,则需要继续后移
 		while (prev[lvl]->sl_next[lvl] &&
 				prev[lvl]->sl_next[lvl]->expire <= time_val)
 			prev[lvl] = prev[lvl]->sl_next[lvl];
@@ -276,6 +281,7 @@ timer_get_prev_entries_for_node(struct rte_timer *tim, unsigned tim_lcore,
  * timer must be in config state
  * timer must not be in a list
  */
+//将timer加入到tim_lcore上
 static void
 timer_add(struct rte_timer *tim, unsigned tim_lcore, int local_is_locked)
 {
@@ -286,6 +292,7 @@ timer_add(struct rte_timer *tim, unsigned tim_lcore, int local_is_locked)
 	/* if timer needs to be scheduled on another core, we need to
 	 * lock the list; if it is on local core, we need to lock if
 	 * we are not called from rte_timer_manage() */
+	//如对应core未加锁，则加锁（当前core可能与tim_lcore不同）
 	if (tim_lcore != lcore_id || !local_is_locked)
 		rte_spinlock_lock(&priv_timer[tim_lcore].list_lock);
 
@@ -362,6 +369,7 @@ timer_del(struct rte_timer *tim, union rte_timer_status prev_status,
 }
 
 /* Reset and start the timer associated with the timer handle (private func) */
+//重新设置定义器tim
 static int
 __rte_timer_reset(struct rte_timer *tim, uint64_t expire,
 		  uint64_t period, unsigned tim_lcore,
@@ -374,6 +382,7 @@ __rte_timer_reset(struct rte_timer *tim, uint64_t expire,
 
 	/* round robin for tim_lcore */
 	if (tim_lcore == (unsigned)LCORE_ID_ANY) {
+		//容许在任意core上出现，轮循出一个core
 		if (lcore_id < RTE_MAX_LCORE) {
 			/* EAL thread with valid lcore_id */
 			tim_lcore = rte_get_next_lcore(
@@ -388,6 +397,7 @@ __rte_timer_reset(struct rte_timer *tim, uint64_t expire,
 
 	/* wait that the timer is in correct status before update,
 	 * and mark it as being configured */
+	//将timer置为config模式
 	ret = timer_set_config_state(tim, &prev_status);
 	if (ret < 0)
 		return -1;
@@ -523,7 +533,7 @@ void rte_timer_manage(void)
 	/* optimize for the case where per-cpu list is empty */
 	if (priv_timer[lcore_id].pending_head.sl_next[0] == NULL)
 		return;
-	cur_time = rte_get_timer_cycles();
+	cur_time = rte_get_timer_cycles();//当前时间
 
 #ifdef RTE_ARCH_X86_64
 	/* on 64-bit the value cached in the pending_head.expired will be
@@ -540,7 +550,7 @@ void rte_timer_manage(void)
 	if (priv_timer[lcore_id].pending_head.sl_next[0] == NULL ||
 	    priv_timer[lcore_id].pending_head.sl_next[0]->expire > cur_time) {
 		rte_spinlock_unlock(&priv_timer[lcore_id].list_lock);
-		return;
+		return;//无过期的timer或者无timer,解锁后，立即返回
 	}
 
 	/* save start of list of expired timers */
@@ -565,14 +575,14 @@ void rte_timer_manage(void)
 	for ( ; tim != NULL; tim = next_tim) {
 		next_tim = tim->sl_next[0];
 
-		ret = timer_set_running_state(tim);
+		ret = timer_set_running_state(tim);//将timer置为run状态
 		if (likely(ret == 0)) {
 			pprev = &tim->sl_next[0];
 		} else {
 			/* another core is trying to re-config this one,
 			 * remove it from local expired list
 			 */
-			*pprev = next_tim;
+			*pprev = next_tim;//将此timer自expired list中移除
 		}
 	}
 
@@ -584,13 +594,14 @@ void rte_timer_manage(void)
 	rte_spinlock_unlock(&priv_timer[lcore_id].list_lock);
 
 	/* now scan expired list and call callbacks */
+	//遍历过期的timer
 	for (tim = run_first_tim; tim != NULL; tim = next_tim) {
 		next_tim = tim->sl_next[0];
 		priv_timer[lcore_id].updated = 0;
-		priv_timer[lcore_id].running_tim = tim;
+		priv_timer[lcore_id].running_tim = tim;//记录正在本core上运行的timer
 
 		/* execute callback function with list unlocked */
-		tim->f(tim, tim->arg);
+		tim->f(tim, tim->arg);//执行timer回调
 
 		__TIMER_STAT_ADD(pending, -1);
 		/* the timer was stopped or reloaded by the callback
@@ -599,6 +610,7 @@ void rte_timer_manage(void)
 			continue;
 
 		if (tim->period == 0) {
+			//单次定时器处理
 			/* remove from done list and mark timer as stopped */
 			status.state = RTE_TIMER_STOP;
 			status.owner = RTE_TIMER_NO_OWNER;
@@ -606,6 +618,7 @@ void rte_timer_manage(void)
 			tim->status.u32 = status.u32;
 		}
 		else {
+			//周期性定时器，重新加入
 			/* keep it in list and mark timer as pending */
 			rte_spinlock_lock(&priv_timer[lcore_id].list_lock);
 			status.state = RTE_TIMER_PENDING;

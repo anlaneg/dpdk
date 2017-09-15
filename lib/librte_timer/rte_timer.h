@@ -126,10 +126,10 @@ typedef void (*rte_timer_cb_t)(struct rte_timer *, void *);
  */
 struct rte_timer
 {
-	uint64_t expire;       /**< Time when timer expire. */
+	uint64_t expire;       /**< Time when timer expire. */ //过期时间
 	struct rte_timer *sl_next[MAX_SKIPLIST_DEPTH];
 	volatile union rte_timer_status status; /**< Status of timer. */
-	uint64_t period;       /**< Period of timer (0 if not periodic). */
+	uint64_t period;       /**< Period of timer (0 if not periodic). */ //是否为周期性定时器
 	rte_timer_cb_t f;      /**< Callback function. */
 	void *arg;             /**< Argument to callback function. */
 };

@@ -77,16 +77,16 @@
 
 struct rte_port_in {
 	/* Input parameters */
-	struct rte_port_in_ops ops;
+	struct rte_port_in_ops ops;//h_port的创建，释放操作函数
 	rte_pipeline_port_in_action_handler f_action;
 	void *arg_ah;
 	uint32_t burst_size;
 
 	/* The table to which this port is connected */
-	uint32_t table_id;
+	uint32_t table_id;//此in-port连接到那个表
 
 	/* Handle to low-level port */
-	void *h_port;
+	void *h_port;//port对应的底层句柄
 
 	/* List of enabled ports */
 	struct rte_port_in *next;
@@ -111,10 +111,10 @@ struct rte_port_out {
 struct rte_table {
 	/* Input parameters */
 	struct rte_table_ops ops;
-	rte_pipeline_table_action_handler_hit f_action_hit;
-	rte_pipeline_table_action_handler_miss f_action_miss;
+	rte_pipeline_table_action_handler_hit f_action_hit;//表命中时action
+	rte_pipeline_table_action_handler_miss f_action_miss;//表missing时action
 	void *arg_ah;
-	struct rte_pipeline_table_entry *default_entry;
+	struct rte_pipeline_table_entry *default_entry;//默认表项
 	uint32_t entry_size;
 
 	uint32_t table_next_id;
@@ -134,12 +134,12 @@ struct rte_table {
 
 struct rte_pipeline {
 	/* Input parameters */
-	char name[RTE_PIPELINE_MAX_NAME_SZ];
-	int socket_id;
+	char name[RTE_PIPELINE_MAX_NAME_SZ];//pipeline名称
+	int socket_id;//内存位于哪个socket
 	uint32_t offset_port_id;
 
 	/* Internal tables */
-	struct rte_port_in ports_in[RTE_PIPELINE_PORT_IN_MAX];
+	struct rte_port_in ports_in[RTE_PIPELINE_PORT_IN_MAX];//保存in-port
 	struct rte_port_out ports_out[RTE_PIPELINE_PORT_OUT_MAX];
 	struct rte_table tables[RTE_PIPELINE_TABLE_MAX];
 
@@ -149,7 +149,7 @@ struct rte_pipeline {
 	uint32_t num_tables;
 
 	/* List of enabled ports */
-	uint64_t enabled_port_in_mask;
+	uint64_t enabled_port_in_mask;//开启的port（用一个bit表示一个port)
 	struct rte_port_in *port_in_next;
 
 	/* Pipeline run structures */
@@ -167,14 +167,20 @@ rte_mask_get_next(uint64_t mask, uint32_t pos)
 {
 	uint64_t mask_rot = (mask << ((63 - pos) & 0x3F)) |
 			(mask >> ((pos + 1) & 0x3F));
+	//记算后继0的数目，与clzll相对。
 	return (__builtin_ctzll(mask_rot) - (63 - pos)) & 0x3F;
 }
 
 static inline uint32_t
 rte_mask_get_prev(uint64_t mask, uint32_t pos)
 {
+	//pos最大到64，故采用ox3f进行与。
+	//右移pos位后，mask的0－pos位的数据将被清除
+	//左移 64-pos位后，mask的64-pos位数据将被清除
+	//两者相或，则相当于实现了循环移位。
 	uint64_t mask_rot = (mask >> (pos & 0x3F)) |
 			(mask << ((64 - pos) & 0x3F));
+	//记算前导0的数目，并算上pos偏移，即可知道下一个'1'在那个位置
 	return ((63 - __builtin_clzll(mask_rot)) + pos) & 0x3F;
 }
 
@@ -220,6 +226,7 @@ rte_pipeline_check_params(struct rte_pipeline_params *params)
 	return 0;
 }
 
+//创建一个pipeline对象
 struct rte_pipeline *
 rte_pipeline_create(struct rte_pipeline_params *params)
 {
@@ -229,6 +236,7 @@ rte_pipeline_create(struct rte_pipeline_params *params)
 	/* Check input parameters */
 	status = rte_pipeline_check_params(params);
 	if (status != 0) {
+		//参数有误，创建失败
 		RTE_LOG(ERR, PIPELINE,
 			"%s: Pipeline params check failed (%d)\n",
 			__func__, status);
@@ -236,10 +244,12 @@ rte_pipeline_create(struct rte_pipeline_params *params)
 	}
 
 	/* Allocate memory for the pipeline on requested socket */
+	//在指定socket上申请内存
 	p = rte_zmalloc_socket("PIPELINE", sizeof(struct rte_pipeline),
 			RTE_CACHE_LINE_SIZE, params->socket_id);
 
 	if (p == NULL) {
+		//申请内存失败
 		RTE_LOG(ERR, PIPELINE,
 			"%s: Pipeline memory allocation failed\n", __func__);
 		return NULL;
@@ -305,6 +315,7 @@ rte_pipeline_free(struct rte_pipeline *p)
  * Table
  *
  */
+//表创建参数检查
 static int
 rte_table_check_params(struct rte_pipeline *p,
 		struct rte_pipeline_table_params *params,
@@ -356,6 +367,7 @@ rte_table_check_params(struct rte_pipeline *p,
 	return 0;
 }
 
+//pipeline创建table
 int
 rte_pipeline_table_create(struct rte_pipeline *p,
 		struct rte_pipeline_table_params *params,
@@ -376,6 +388,7 @@ rte_pipeline_table_create(struct rte_pipeline *p,
 	table = &p->tables[id];
 
 	/* Allocate space for the default table entry */
+	//表项大小
 	entry_size = sizeof(struct rte_pipeline_table_entry) +
 		params->action_data_size;
 	default_entry = (struct rte_pipeline_table_entry *) rte_zmalloc_socket(
@@ -389,7 +402,7 @@ rte_pipeline_table_create(struct rte_pipeline *p,
 	/* Create the table */
 	h_table = params->ops->f_create(params->arg_create, p->socket_id,
 		entry_size);
-	if (h_table == NULL) {
+	if (h_table == NULL) {//创建表失败
 		rte_free(default_entry);
 		RTE_LOG(ERR, PIPELINE, "%s: Table creation failed\n", __func__);
 		return -EINVAL;
@@ -407,7 +420,7 @@ rte_pipeline_table_create(struct rte_pipeline *p,
 	table->entry_size = entry_size;
 
 	/* Clear the lookup miss actions (to be set later through API) */
-	table->default_entry = default_entry;
+	table->default_entry = default_entry;//设置默认表项的空间
 	table->default_entry->action = RTE_PIPELINE_ACTION_DROP;
 
 	/* Initialize table internal data structure */
@@ -760,6 +773,7 @@ rte_pipeline_port_in_check_params(struct rte_pipeline *p,
 	}
 
 	/* burst_size */
+	//burst大小需要在0到64以内
 	if ((params->burst_size == 0) ||
 		(params->burst_size > RTE_PORT_IN_BURST_SIZE_MAX)) {
 		RTE_LOG(ERR, PIPELINE, "%s: invalid value for burst_size\n",
@@ -777,6 +791,7 @@ rte_pipeline_port_in_check_params(struct rte_pipeline *p,
 	return 0;
 }
 
+//out-port参数检查
 static int
 rte_pipeline_port_out_check_params(struct rte_pipeline *p,
 		struct rte_pipeline_port_out_params *params,
@@ -860,7 +875,7 @@ rte_pipeline_port_in_create(struct rte_pipeline *p,
 	}
 
 	/* Commit current table to the pipeline */
-	p->num_ports_in++;
+	p->num_ports_in++;//in-port数增加了
 	*port_id = id;
 
 	/* Save input parameters */
@@ -884,6 +899,7 @@ rte_pipeline_port_in_free(struct rte_port_in *port)
 		port->ops.f_free(port->h_port);
 }
 
+//创建port-out
 int
 rte_pipeline_port_out_create(struct rte_pipeline *p,
 		struct rte_pipeline_port_out_params *params,
@@ -931,6 +947,7 @@ rte_pipeline_port_out_free(struct rte_port_out *port)
 		port->ops.f_free(port->h_port);
 }
 
+//设置port_id in方向从属于table_id
 int
 rte_pipeline_port_in_connect_to_table(struct rte_pipeline *p,
 		uint32_t port_id,
@@ -965,6 +982,7 @@ rte_pipeline_port_in_connect_to_table(struct rte_pipeline *p,
 	return 0;
 }
 
+//在pipeline中使能port_in
 int
 rte_pipeline_port_in_enable(struct rte_pipeline *p, uint32_t port_id)
 {
@@ -991,17 +1009,19 @@ rte_pipeline_port_in_enable(struct rte_pipeline *p, uint32_t port_id)
 	/* Return if current input port is already enabled */
 	port_mask = 1LLU << port_id;
 	if (p->enabled_port_in_mask & port_mask)
-		return 0;
+		return 0;//已开启，则不再设置
 
 	p->enabled_port_in_mask |= port_mask;
 
 	/* Add current input port to the pipeline chain of enabled ports */
+	//port_id前后被使能的两个port
 	port_prev_id = rte_mask_get_prev(p->enabled_port_in_mask, port_id);
 	port_next_id = rte_mask_get_next(p->enabled_port_in_mask, port_id);
 
 	port_prev = &p->ports_in[port_prev_id];
 	port_next = &p->ports_in[port_next_id];
 
+	//按顺序组成一个链表
 	port_prev->next = port;
 	port->next = port_next;
 
@@ -1099,6 +1119,7 @@ rte_pipeline_check(struct rte_pipeline *p)
 	}
 
 	/* Check that all input ports are connected */
+	//确保所有的port_in均被关联到table
 	for (port_in_id = 0; port_in_id < p->num_ports_in; port_in_id++) {
 		struct rte_port_in *port_in = &p->ports_in[port_in_id];
 

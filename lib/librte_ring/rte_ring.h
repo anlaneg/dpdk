@@ -829,6 +829,7 @@ rte_ring_mc_dequeue(struct rte_ring *r, void **obj_p)
  *   - -ENOENT: Not enough entries in the ring to dequeue, no object is
  *     dequeued.
  */
+//出队，单消费者
 static __rte_always_inline int
 rte_ring_sc_dequeue(struct rte_ring *r, void **obj_p)
 {

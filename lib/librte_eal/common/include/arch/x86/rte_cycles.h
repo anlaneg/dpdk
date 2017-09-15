@@ -48,6 +48,7 @@ extern int rte_cycles_vmware_tsc_map;
 #endif
 #include <rte_common.h>
 
+//取cpu计数器
 static inline uint64_t
 rte_rdtsc(void)
 {
@@ -84,6 +85,7 @@ rte_rdtsc_precise(void)
 	return rte_rdtsc();
 }
 
+//取当前tsc计数
 static inline uint64_t
 rte_get_tsc_cycles(void) { return rte_rdtsc(); }
 

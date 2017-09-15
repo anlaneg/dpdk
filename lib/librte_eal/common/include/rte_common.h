@@ -390,6 +390,7 @@ rte_log2_u32(uint32_t v)
 	((tp)((uint64_t)-1 >> (sizeof(uint64_t) * CHAR_BIT - (ln))))
 
 /** Number of elements in the array. */
+//数组长度
 #define	RTE_DIM(a)	(sizeof (a) / sizeof ((a)[0]))
 
 /**

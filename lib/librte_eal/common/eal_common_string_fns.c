@@ -54,14 +54,17 @@ rte_strsplit(char *string, int stringlen,
 			break;
 		if (tokstart) {
 			tokstart = 0;
+			//将string中的内容全部给tokens,然后再检查分隔符
 			tokens[tok++] = &string[i];
 		}
+
+		//发现delim符，置为'\0'，将上一个tokens中的string置为结束
 		if (string[i] == delim) {
 			string[i] = '\0';
 			tokstart = 1;
 		}
 	}
-	return tok;
+	return tok;//分割为多少组
 
 einval_error:
 	errno = EINVAL;

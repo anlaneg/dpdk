@@ -69,7 +69,7 @@ struct rte_cfgfile_entry {
 /** Configuration file operation optional arguments */
 struct rte_cfgfile_parameters {
 	/** Config file comment character; one of '!', '#', '%', ';', '@' */
-	char comment_character;
+	char comment_character;//配置文件注释字符串
 };
 
 /**@{ cfgfile load operation flags */

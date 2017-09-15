@@ -109,7 +109,7 @@ struct rte_pipeline_params {
 
 	/** CPU socket ID where memory for the pipeline and its elements (ports
 	and tables) should be allocated */
-	int socket_id;
+	int socket_id;//采用那个socket上的内存
 
 	/** Offset within packet meta-data to port_id to be used by action
 	"Send packet to output port read from packet meta-data". Has to be
@@ -245,6 +245,7 @@ enum rte_pipeline_action {
  * associated meta-data. As all the currently defined reserved actions are
  * mutually exclusive, only one reserved action can be set per table entry.
  */
+//pipeline表实体头
 struct rte_pipeline_table_entry {
 	/** Reserved action */
 	enum rte_pipeline_action action;

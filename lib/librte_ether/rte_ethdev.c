@@ -304,6 +304,7 @@ rte_eth_dev_is_valid_port(uint8_t port_id)
 		return 1;
 }
 
+//获取dev属于那个numa-node
 int
 rte_eth_dev_socket_id(uint8_t port_id)
 {
@@ -1305,6 +1306,7 @@ rte_eth_dev_atomic_read_link_status(struct rte_eth_dev *dev,
 	return 0;
 }
 
+//取链路状态
 void
 rte_eth_link_get(uint8_t port_id, struct rte_eth_link *eth_link)
 {

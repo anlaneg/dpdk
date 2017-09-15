@@ -73,6 +73,7 @@ rte_srand(uint64_t seedval)
  * @return
  *   A pseudo-random value between 0 and (1<<64)-1.
  */
+//合并为64bit的整数
 static inline uint64_t
 rte_rand(void)
 {
