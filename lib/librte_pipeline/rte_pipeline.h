@@ -213,16 +213,16 @@ int rte_pipeline_flush(struct rte_pipeline *p);
 /** Reserved actions */
 enum rte_pipeline_action {
 	/** Drop the packet */
-	RTE_PIPELINE_ACTION_DROP = 0,
+	RTE_PIPELINE_ACTION_DROP = 0,//丢包
 
 	/** Send packet to output port */
-	RTE_PIPELINE_ACTION_PORT,
+	RTE_PIPELINE_ACTION_PORT,//输出到指定port
 
 	/** Send packet to output port read from packet meta-data */
 	RTE_PIPELINE_ACTION_PORT_META,
 
 	/** Send packet to table */
-	RTE_PIPELINE_ACTION_TABLE,
+	RTE_PIPELINE_ACTION_TABLE,//跳转到表x
 
 	/** Number of reserved actions */
 	RTE_PIPELINE_ACTIONS
@@ -339,7 +339,7 @@ typedef int (*rte_pipeline_table_action_handler_miss)(
     NULL). */
 struct rte_pipeline_table_params {
 	/** Table operations (specific to each table type) */
-	struct rte_table_ops *ops;
+	struct rte_table_ops *ops;//表操作函数
 	/** Opaque param to be passed to the table create operation when
 	invoked */
 	void *arg_create;

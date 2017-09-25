@@ -110,7 +110,7 @@ struct rte_port_out {
 
 struct rte_table {
 	/* Input parameters */
-	struct rte_table_ops ops;
+	struct rte_table_ops ops;//表操作函数
 	rte_pipeline_table_action_handler_hit f_action_hit;//表命中时action
 	rte_pipeline_table_action_handler_miss f_action_miss;//表missing时action
 	void *arg_ah;
@@ -118,7 +118,7 @@ struct rte_table {
 	uint32_t entry_size;
 
 	uint32_t table_next_id;
-	uint32_t table_next_id_valid;
+	uint32_t table_next_id_valid;//table_next_id是否包含有效值
 
 	/* Handle to the low-level table object */
 	void *h_table;
@@ -421,7 +421,7 @@ rte_pipeline_table_create(struct rte_pipeline *p,
 
 	/* Clear the lookup miss actions (to be set later through API) */
 	table->default_entry = default_entry;//设置默认表项的空间
-	table->default_entry->action = RTE_PIPELINE_ACTION_DROP;
+	table->default_entry->action = RTE_PIPELINE_ACTION_DROP;//默认是drop
 
 	/* Initialize table internal data structure */
 	table->h_table = h_table;
@@ -440,6 +440,7 @@ rte_pipeline_table_free(struct rte_table *table)
 	rte_free(table->default_entry);
 }
 
+//添加默认表项
 int
 rte_pipeline_table_default_entry_add(struct rte_pipeline *p,
 	uint32_t table_id,
@@ -462,6 +463,7 @@ rte_pipeline_table_default_entry_add(struct rte_pipeline *p,
 	}
 
 	if (table_id >= p->num_tables) {
+		//表索引检查
 		RTE_LOG(ERR, PIPELINE,
 			"%s: table_id %d out of range\n", __func__, table_id);
 		return -EINVAL;
@@ -472,24 +474,28 @@ rte_pipeline_table_default_entry_add(struct rte_pipeline *p,
 	if ((default_entry->action == RTE_PIPELINE_ACTION_TABLE) &&
 		table->table_next_id_valid &&
 		(default_entry->table_id != table->table_next_id)) {
+		//下一跳表编号，无效
 		RTE_LOG(ERR, PIPELINE,
 			"%s: Tree-like topologies not allowed\n", __func__);
 		return -EINVAL;
 	}
 
 	/* Set the lookup miss actions */
+	//如果default的行为是跳转至某表，则更新table_next_id为default表项值
 	if ((default_entry->action == RTE_PIPELINE_ACTION_TABLE) &&
 		(table->table_next_id_valid == 0)) {
 		table->table_next_id = default_entry->table_id;
 		table->table_next_id_valid = 1;
 	}
 
+	//设置表的失配项
 	memcpy(table->default_entry, default_entry, table->entry_size);
 
 	*default_entry_ptr = table->default_entry;
 	return 0;
 }
 
+//删除默认表项
 int
 rte_pipeline_table_default_entry_delete(struct rte_pipeline *p,
 		uint32_t table_id,
@@ -517,12 +523,14 @@ rte_pipeline_table_default_entry_delete(struct rte_pipeline *p,
 		memcpy(entry, table->default_entry, table->entry_size);
 
 	/* Clear the lookup miss actions */
+	//当默认项不存在时，默认是drop动作
 	memset(table->default_entry, 0, table->entry_size);
 	table->default_entry->action = RTE_PIPELINE_ACTION_DROP;
 
 	return 0;
 }
 
+//添加表项
 int
 rte_pipeline_table_entry_add(struct rte_pipeline *p,
 		uint32_t table_id,
@@ -557,7 +565,7 @@ rte_pipeline_table_entry_add(struct rte_pipeline *p,
 		return -EINVAL;
 	}
 
-	table = &p->tables[table_id];
+	table = &p->tables[table_id];//取表
 
 	if (table->ops.f_add == NULL) {
 		RTE_LOG(ERR, PIPELINE, "%s: f_add function pointer NULL\n",
@@ -567,23 +575,26 @@ rte_pipeline_table_entry_add(struct rte_pipeline *p,
 
 	if ((entry->action == RTE_PIPELINE_ACTION_TABLE) &&
 		table->table_next_id_valid &&
-		(entry->table_id != table->table_next_id)) {
+		(entry->table_id != table->table_next_id)) {//跳向指定表时，表必须与next_id相等
 		RTE_LOG(ERR, PIPELINE,
 			"%s: Tree-like topologies not allowed\n", __func__);
 		return -EINVAL;
 	}
 
 	/* Add entry */
+	//如果表项的action是跳表，则next_id与entry的table_id相等
 	if ((entry->action == RTE_PIPELINE_ACTION_TABLE) &&
 		(table->table_next_id_valid == 0)) {
 		table->table_next_id = entry->table_id;
 		table->table_next_id_valid = 1;
 	}
 
+	//加入表项
 	return (table->ops.f_add)(table->h_table, key, (void *) entry,
 		key_found, (void **) entry_ptr);
 }
 
+//表项删除
 int
 rte_pipeline_table_entry_delete(struct rte_pipeline *p,
 		uint32_t table_id,
@@ -623,6 +634,7 @@ rte_pipeline_table_entry_delete(struct rte_pipeline *p,
 	return (table->ops.f_delete)(table->h_table, key, key_found, entry);
 }
 
+//批量表项添加
 int rte_pipeline_table_entry_add_bulk(struct rte_pipeline *p,
 	uint32_t table_id,
 	void **keys,
@@ -658,7 +670,7 @@ int rte_pipeline_table_entry_add_bulk(struct rte_pipeline *p,
 		return -EINVAL;
 	}
 
-	table = &p->tables[table_id];
+	table = &p->tables[table_id];//按索引取表
 
 	if (table->ops.f_add_bulk == NULL) {
 		RTE_LOG(ERR, PIPELINE, "%s: f_add_bulk function pointer NULL\n",
@@ -685,10 +697,12 @@ int rte_pipeline_table_entry_add_bulk(struct rte_pipeline *p,
 		}
 	}
 
+	//调用add_bulk批量加入entries
 	return (table->ops.f_add_bulk)(table->h_table, keys, (void **) entries,
 		n_keys, key_found, (void **) entries_ptr);
 }
 
+//批量删除
 int rte_pipeline_table_entry_delete_bulk(struct rte_pipeline *p,
 	uint32_t table_id,
 	void **keys,
