@@ -101,7 +101,7 @@ cmdline_stdin_new(cmdline_parse_ctx_t *ctx, const char *prompt)
 	tcsetattr(0, TCSANOW, &term);
 	setbuf(stdin, NULL);
 
-	cl = cmdline_new(ctx, prompt, 0, 1);
+	cl = cmdline_new(ctx, prompt, 0, 1);//标准输入，标准输出
 
 	if (cl)
 		memcpy(&cl->oldterm, &oldterm, sizeof(term));

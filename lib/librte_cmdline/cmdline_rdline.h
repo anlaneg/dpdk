@@ -100,9 +100,9 @@ extern "C" {
 #define RDLINE_HISTORY_MAX_LINE 64
 
 enum rdline_status {
-	RDLINE_INIT,
-	RDLINE_RUNNING,
-	RDLINE_EXITED
+	RDLINE_INIT,//初始状态
+	RDLINE_RUNNING,//运行状态
+	RDLINE_EXITED //退出状态
 };
 
 struct rdline;
@@ -129,14 +129,14 @@ struct rdline {
 	unsigned int kill_size;
 
 	/* history */
-	struct cirbuf history;
+	struct cirbuf history;//命令行历史
 	char history_buf[RDLINE_HISTORY_BUF_SIZE];
 	int history_cur_line;
 
 	/* callbacks and func pointers */
 	rdline_write_char_t *write_char;
 	rdline_validate_t *validate;
-	rdline_complete_t *complete;
+	rdline_complete_t *complete;//补全回调
 
 	/* vt100 parser */
 	struct cmdline_vt100 vt100;

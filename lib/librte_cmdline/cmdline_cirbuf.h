@@ -69,11 +69,11 @@ extern "C" {
  * This structure is the header of a cirbuf type.
  */
 struct cirbuf {
-	unsigned int maxlen;    /**< total len of the fifo (number of elements) */
-	unsigned int start;     /**< indice of the first elt */
-	unsigned int end;       /**< indice of the last elt */
-	unsigned int len;       /**< current len of fifo */
-	char *buf;
+	unsigned int maxlen;    /**< total len of the fifo (number of elements) */ //缓冲区长度
+	unsigned int start;     /**< indice of the first elt */ //数据存放起始位置
+	unsigned int end;       /**< indice of the last elt */ //数据消费起始位置
+	unsigned int len;       /**< current len of fifo */ //当前占用的长度
+	char *buf;//缓冲区
 };
 
 #ifdef RTE_LIBRTE_CMDLINE_DEBUG
@@ -98,6 +98,7 @@ int cirbuf_init(struct cirbuf *cbuf, char *buf, unsigned int start, unsigned int
 /**
  * Return 1 if the circular buffer is empty
  */
+//必须为空
 #define CIRBUF_IS_EMPTY(cirbuf) ((cirbuf)->len == 0)
 
 /**

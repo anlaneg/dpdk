@@ -69,7 +69,7 @@
 #include "cmdline_vt100.h"
 
 const char *cmdline_vt100_commands[] = {
-	vt100_up_arr,
+	vt100_up_arr,//方向的映射
 	vt100_down_arr,
 	vt100_right_arr,
 	vt100_left_arr,
@@ -106,6 +106,7 @@ vt100_init(struct cmdline_vt100 *vt)
 }
 
 
+//匹配按键索引
 static int
 match_command(char *buf, unsigned int size)
 {
@@ -146,7 +147,7 @@ vt100_parser(struct cmdline_vt100 *vt, char ch)
 	switch (vt->state) {
 	case CMDLINE_VT100_INIT:
 		if (c == 033) {
-			vt->state = CMDLINE_VT100_ESCAPE;
+			vt->state = CMDLINE_VT100_ESCAPE;//转义状态
 		}
 		else {
 			vt->bufpos = 0;

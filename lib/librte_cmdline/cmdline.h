@@ -76,12 +76,12 @@ extern "C" {
 #endif
 
 struct cmdline {
-	int s_in;
-	int s_out;
+	int s_in;//输入fd
+	int s_out;//输出fd
 	cmdline_parse_ctx_t *ctx;
 	struct rdline rdl;
-	char prompt[RDLINE_PROMPT_SIZE];
-	struct termios oldterm;
+	char prompt[RDLINE_PROMPT_SIZE];//命令行提示符
+	struct termios oldterm;//启动前版本的term设备
 };
 
 struct cmdline *cmdline_new(cmdline_parse_ctx_t *ctx, const char *prompt, int s_in, int s_out);

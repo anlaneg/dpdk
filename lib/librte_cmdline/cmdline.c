@@ -82,13 +82,14 @@ cmdline_valid_buffer(struct rdline *rdl, const char *buf,
 {
 	struct cmdline *cl = rdl->opaque;
 	int ret;
+	//解析命令行
 	ret = cmdline_parse(cl, buf);
 	if (ret == CMDLINE_PARSE_AMBIGUOUS)
-		cmdline_printf(cl, "Ambiguous command\n");
+		cmdline_printf(cl, "Ambiguous command\n");//歧义的命令
 	else if (ret == CMDLINE_PARSE_NOMATCH)
-		cmdline_printf(cl, "Command not found\n");
+		cmdline_printf(cl, "Command not found\n");//未知的命令
 	else if (ret == CMDLINE_PARSE_BAD_ARGS)
-		cmdline_printf(cl, "Bad arguments\n");
+		cmdline_printf(cl, "Bad arguments\n");//命令参数有误
 }
 
 static int
@@ -117,7 +118,7 @@ cmdline_write_char(struct rdline *rdl, char c)
 	return ret;
 }
 
-
+//设置提示述符
 void
 cmdline_set_prompt(struct cmdline *cl, const char *prompt)
 {
@@ -137,7 +138,7 @@ cmdline_new(cmdline_parse_ctx_t *ctx, const char *prompt, int s_in, int s_out)
 
 	cl = malloc(sizeof(struct cmdline));
 	if (cl == NULL)
-		return NULL;
+		return NULL;//申请内存失败
 	memset(cl, 0, sizeof(struct cmdline));
 	cl->s_in = s_in;
 	cl->s_out = s_out;
@@ -210,6 +211,7 @@ cmdline_printf(const struct cmdline *cl, const char *fmt, ...)
 #endif
 }
 
+//命令行字符串输入
 int
 cmdline_in(struct cmdline *cl, const char *buf, int size)
 {
@@ -236,8 +238,9 @@ cmdline_in(struct cmdline *cl, const char *buf, int size)
 				same = 0;
 			buflen = strnlen(buffer, RDLINE_BUF_SIZE);
 			if (buflen > 1 && !same)
+				//将命令加入到历史中
 				rdline_add_history(&cl->rdl, buffer);
-			rdline_newline(&cl->rdl, cl->prompt);
+			rdline_newline(&cl->rdl, cl->prompt);//显示新行，显示提示符
 		}
 		else if (ret == RDLINE_RES_EOF)
 			return -1;
@@ -272,16 +275,16 @@ cmdline_poll(struct cmdline *cl)
 	pfd.events = POLLIN;
 	pfd.revents = 0;
 
-	status = poll(&pfd, 1, 0);
+	status = poll(&pfd, 1, 0);//自标准输入中检测事件
 	if (status < 0)
 		return status;
 	else if (status > 0) {
 		c = -1;
-		read_status = read(cl->s_in, &c, 1);
+		read_status = read(cl->s_in, &c, 1);//读一个字符
 		if (read_status < 0)
 			return read_status;
 
-		status = cmdline_in(cl, &c, 1);
+		status = cmdline_in(cl, &c, 1);//输入一个字符
 		if (status < 0 && cl->rdl.status != RDLINE_EXITED)
 			return status;
 	}

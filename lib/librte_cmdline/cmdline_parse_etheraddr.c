@@ -91,6 +91,7 @@ struct cmdline_token_ops cmdline_token_etheraddr_ops = {
 #endif
 
 
+//字符串转以太网地址
 static struct ether_addr *
 my_ether_aton(const char *a)
 {
@@ -134,6 +135,7 @@ my_ether_aton(const char *a)
 	return (struct ether_addr *)&ether_addr;
 }
 
+//解析mac地址
 int
 cmdline_parse_etheraddr(__attribute__((unused)) cmdline_parse_token_hdr_t *tk,
 	const char *buf, void *res, unsigned ressize)
@@ -148,6 +150,7 @@ cmdline_parse_etheraddr(__attribute__((unused)) cmdline_parse_token_hdr_t *tk,
 	if (!buf || ! *buf)
 		return -1;
 
+	//找出token结束位置
 	while (!cmdline_isendoftoken(buf[token_len]))
 		token_len++;
 
@@ -166,6 +169,7 @@ cmdline_parse_etheraddr(__attribute__((unused)) cmdline_parse_token_hdr_t *tk,
 	return token_len;
 }
 
+//返回帮助信息
 int
 cmdline_get_help_etheraddr(__attribute__((unused)) cmdline_parse_token_hdr_t *tk,
 			       char *dstbuf, unsigned int size)

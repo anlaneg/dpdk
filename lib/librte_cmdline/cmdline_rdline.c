@@ -221,6 +221,7 @@ rdline_redisplay(struct rdline *rdl)
 	display_right_buffer(rdl, 1);
 }
 
+//输入一个字符'c'
 int
 rdline_char_in(struct rdline *rdl, char c)
 {
@@ -406,7 +407,7 @@ rdline_char_in(struct rdline *rdl, char c)
 			break;
 
 		/* autocomplete */
-		case CMDLINE_KEY_TAB:
+		case CMDLINE_KEY_TAB://收到按tab键，进行补全
 		case CMDLINE_KEY_HELP:
 			cirbuf_align_left(&rdl->left);
 			rdl->left_buf[CIRBUF_GET_LEN(&rdl->left)] = '\0';
@@ -470,6 +471,8 @@ rdline_char_in(struct rdline *rdl, char c)
 			if (rdl->history_cur_line != -1)
 				rdline_remove_first_history_item(rdl);
 
+			//收到回车键，校验命令行，检查是否可以进行命令解析
+			//进行cmdline_valid_buffer函数调用
 			if (rdl->validate)
 				rdl->validate(rdl, rdl->left_buf, CIRBUF_GET_LEN(&rdl->left)+2);
 			/* user may have stopped rdline */

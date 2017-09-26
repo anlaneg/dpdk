@@ -84,6 +84,7 @@
 
 /* isblank() needs _XOPEN_SOURCE >= 600 || _ISOC99_SOURCE, so use our
  * own. */
+//空字符检测
 static int
 isblank2(char c)
 {
@@ -93,6 +94,7 @@ isblank2(char c)
 	return 0;
 }
 
+//行尾字符检测
 static int
 isendofline(char c)
 {
@@ -102,6 +104,7 @@ isendofline(char c)
 	return 0;
 }
 
+//'#'号字符
 static int
 iscomment(char c)
 {
@@ -110,9 +113,11 @@ iscomment(char c)
 	return 0;
 }
 
+//检查token是否结束
 int
 cmdline_isendoftoken(char c)
 {
+	//字符串结束，或者注释开始，或者空格，或者换行
 	if (!c || iscomment(c) || isblank2(c) || isendofline(c))
 		return 1;
 	return 0;
@@ -139,6 +144,7 @@ nb_common_chars(const char * s1, const char * s2)
 	return i;
 }
 
+//调用命令行处理函数
 /** Retrieve either static or dynamic token at a given index. */
 static cmdline_parse_token_hdr_t *
 get_token(cmdline_parse_inst_t *inst, unsigned int index)
@@ -150,7 +156,7 @@ get_token(cmdline_parse_inst_t *inst, unsigned int index)
 		return inst->tokens[index];
 	/* generate dynamic token */
 	token_p = NULL;
-	inst->f(&token_p, NULL, &inst->tokens[index]);
+	inst->f(&token_p, NULL, &inst->tokens[index]);//执行命令行回调
 	return token_p;
 }
 
@@ -170,7 +176,7 @@ match_inst(cmdline_parse_inst_t *inst, const char *buf,
 
 	/* check if we match all tokens of inst */
 	while (!nb_match_token || i < nb_match_token) {
-		token_p = get_token(inst, i);
+		token_p = get_token(inst, i);//检查是否可完成匹配
 		if (!token_p)
 			break;
 		memcpy(&token_hdr, token_p, sizeof(token_hdr));
@@ -526,6 +532,7 @@ cmdline_complete(struct cmdline *cl, const char *buf, int *state,
 			}
 			(*state)++;
 			if (token_p && token_hdr.ops->get_help) {
+				//提取帮助信息
 				token_hdr.ops->get_help(token_p, tmpbuf,
 							sizeof(tmpbuf));
 				help_str = inst->help_str;

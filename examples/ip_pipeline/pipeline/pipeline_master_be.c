@@ -118,6 +118,7 @@ pipeline_run(void *pipeline)
 	}
 
 	/* Run startup script file */
+	//脚本处理
 	if (p->script_file_done == 0) {
 		struct app_params *app = p->app;
 		int fd = open(app->script_file, O_RDONLY);
@@ -139,10 +140,12 @@ pipeline_run(void *pipeline)
 	}
 
 	/* Command Line Interface (CLI) */
+	//命令行处理
 	status = cmdline_poll(p->cl);
 	if (status < 0)
 		rte_panic("CLI poll error (%" PRId32 ")\n", status);
 	else if (status == RDLINE_EXITED) {
+		//退出
 		cmdline_stdin_exit(p->cl);
 		rte_exit(0, "Bye!\n");
 	}
