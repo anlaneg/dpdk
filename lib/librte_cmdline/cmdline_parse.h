@@ -89,7 +89,7 @@ extern "C" {
  */
 struct cmdline_token_hdr {
 	struct cmdline_token_ops *ops;
-	unsigned int offset;
+	unsigned int offset;//需要填充的结构体中成员的偏移量（结构体在解析中给出）
 };
 typedef struct cmdline_token_hdr cmdline_parse_token_hdr_t;
 
@@ -117,8 +117,10 @@ struct cmdline_token_ops {
 	int (*parse)(cmdline_parse_token_hdr_t *, const char *, void *,
 		unsigned int);
 	/** return the num of possible choices for this token */
+	//返回可能的选择
 	int (*complete_get_nb)(cmdline_parse_token_hdr_t *);
 	/** return the elt x for this token (token, idx, dstbuf, size) */
+	//返回具体的某一个可能的选择（即选择的字面值）
 	int (*complete_get_elt)(cmdline_parse_token_hdr_t *, int, char *,
 		unsigned int);
 	/** get help for this token (token, dstbuf, size) */

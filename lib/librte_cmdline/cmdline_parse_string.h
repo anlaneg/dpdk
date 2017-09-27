@@ -107,6 +107,7 @@ int cmdline_get_help_string(cmdline_parse_token_hdr_t *tk, char *dstbuf,
 */
 #define TOKEN_STRING_MULTI ""
 
+//指明字符串token(采用字符串类型解析函数）
 #define TOKEN_STRING_INITIALIZER(structure, field, string)  \
 {                                                           \
 	/* hdr */                                               \

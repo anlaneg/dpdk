@@ -305,6 +305,7 @@ inet_pton6(const char *src, unsigned char *dst)
 	return 1;
 }
 
+//ip地址解析
 int
 cmdline_parse_ipaddr(cmdline_parse_token_hdr_t *tk, const char *buf, void *res,
 	unsigned ressize)
@@ -352,6 +353,7 @@ cmdline_parse_ipaddr(cmdline_parse_token_hdr_t *tk, const char *buf, void *res,
 	}
 
 	/* convert the IP addr */
+	//如果支持ipv4地址，则进行ipv4地址解析
 	if ((tk2->ipaddr_data.flags & CMDLINE_IPADDR_V4) &&
 	    my_inet_pton(AF_INET, ip_str, &ipaddr.addr.ipv4) == 1 &&
 		prefixlen <= V4PREFIXMAX) {
@@ -360,6 +362,7 @@ cmdline_parse_ipaddr(cmdline_parse_token_hdr_t *tk, const char *buf, void *res,
 			memcpy(res, &ipaddr, sizeof(ipaddr));
 		return token_len;
 	}
+	//如果支持ipv6地址，则进行ipv6地址解析
 	if ((tk2->ipaddr_data.flags & CMDLINE_IPADDR_V6) &&
 	    my_inet_pton(AF_INET6, ip_str, &ipaddr.addr.ipv6) == 1) {
 		ipaddr.family = AF_INET6;

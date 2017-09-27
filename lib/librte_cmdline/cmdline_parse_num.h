@@ -84,7 +84,7 @@ struct cmdline_token_num_data {
 
 struct cmdline_token_num {
 	struct cmdline_token_hdr hdr;
-	struct cmdline_token_num_data num_data;
+	struct cmdline_token_num_data num_data;//整数的类型
 };
 typedef struct cmdline_token_num cmdline_parse_token_num_t;
 

@@ -163,6 +163,7 @@ pipeline_msg_req_port_in_disable_handler(struct pipeline *p,
 	return rsp;
 }
 
+//未知消息响应
 void *
 pipeline_msg_req_invalid_handler(__rte_unused struct pipeline *p,
 	void *msg)

@@ -76,6 +76,7 @@
 #define debug_printf(args...) do {} while(0)
 #endif
 
+//数字类型解析
 struct cmdline_token_ops cmdline_token_num_ops = {
 	.parse = cmdline_parse_num,
 	.complete_get_nb = NULL,
@@ -150,6 +151,7 @@ check_res_size(struct cmdline_token_num_data *nd, unsigned ressize)
 }
 
 /* parse an int */
+//解析数字
 int
 cmdline_parse_num(cmdline_parse_token_hdr_t *tk, const char *srcbuf, void *res,
 	unsigned ressize)
@@ -173,10 +175,11 @@ cmdline_parse_num(cmdline_parse_token_hdr_t *tk, const char *srcbuf, void *res,
 
 	/* check that we have enough room in res */
 	if (res) {
-		if (check_res_size(&nd, ressize) < 0)
+		if (check_res_size(&nd, ressize) < 0) //参数检查
 			return -1;
 	}
 
+	//小型的数字识别器代码
 	while ( st != ERROR && c && ! cmdline_isendoftoken(c) ) {
 		debug_printf("%c %x -> ", c, c);
 		switch (st) {
@@ -379,6 +382,7 @@ cmdline_parse_num(cmdline_parse_token_hdr_t *tk, const char *srcbuf, void *res,
 
 
 /* parse an int */
+//数字解析帮助信息
 int
 cmdline_get_help_num(cmdline_parse_token_hdr_t *tk, char *dstbuf, unsigned int size)
 {
