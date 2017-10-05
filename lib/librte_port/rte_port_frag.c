@@ -69,17 +69,17 @@ struct rte_port_ring_reader_frag {
 	/* Input parameters */
 	struct rte_ring *ring;
 	uint32_t mtu;
-	uint32_t metadata_size;
+	uint32_t metadata_size;//mbuf中的一些数据，每个分片都需要和源报文保持一致的数据
 	struct rte_mempool *pool_direct;
 	struct rte_mempool *pool_indirect;
 
 	/* Internal buffers */
-	struct rte_mbuf *pkts[RTE_PORT_IN_BURST_SIZE_MAX];
+	struct rte_mbuf *pkts[RTE_PORT_IN_BURST_SIZE_MAX];//从ring中读取的报文，还未分片
 	struct rte_mbuf *frags[RTE_PORT_FRAG_MAX_FRAGS_PER_PACKET];
 	uint32_t n_pkts;
 	uint32_t pos_pkts;
-	uint32_t n_frags;
-	uint32_t pos_frags;
+	uint32_t n_frags;//当前分片数目
+	uint32_t pos_frags;//当前缓存读取位置
 
 	frag_op f_frag;
 } __rte_cache_aligned;
@@ -135,24 +135,28 @@ rte_port_ring_reader_frag_create(void *params, int socket_id, int is_ipv4)
 	port->n_frags = 0;
 	port->pos_frags = 0;
 
+	//挂载分片函数
 	port->f_frag = (is_ipv4) ?
 			rte_ipv4_fragment_packet : rte_ipv6_fragment_packet;
 
 	return port;
 }
 
+//ipv4 分片 port
 static void *
 rte_port_ring_reader_ipv4_frag_create(void *params, int socket_id)
 {
 	return rte_port_ring_reader_frag_create(params, socket_id, 1);
 }
 
+//ipv6 分片port
 static void *
 rte_port_ring_reader_ipv6_frag_create(void *params, int socket_id)
 {
 	return rte_port_ring_reader_frag_create(params, socket_id, 0);
 }
 
+//对端将需要分片的报文，入了ring,我们自ring中提取报文并分片，抽象出来的port完成分片
 static int
 rte_port_ring_reader_frag_rx(void *port,
 		struct rte_mbuf **pkts,
@@ -166,6 +170,7 @@ rte_port_ring_reader_frag_rx(void *port,
 
 	/* Get packets from the "frag" buffer */
 	if (p->n_frags >= n_pkts) {
+		//缓存的frags比要收取的pkts要多，直接传递缓存的
 		memcpy(pkts, &p->frags[p->pos_frags], n_pkts * sizeof(void *));
 		p->pos_frags += n_pkts;
 		p->n_frags -= n_pkts;
@@ -173,9 +178,10 @@ rte_port_ring_reader_frag_rx(void *port,
 		return n_pkts;
 	}
 
+	//先将剩余的写入
 	memcpy(pkts, &p->frags[p->pos_frags], p->n_frags * sizeof(void *));
-	n_pkts_out = p->n_frags;
-	p->n_frags = 0;
+	n_pkts_out = p->n_frags;//已写入x个报文
+	p->n_frags = 0;//缓存数为0
 
 	/* Look to "pkts" buffer to get more packets */
 	for ( ; ; ) {
@@ -185,31 +191,35 @@ rte_port_ring_reader_frag_rx(void *port,
 
 		/* If "pkts" buffer is empty, read packet burst from ring */
 		if (p->n_pkts == 0) {
+			//自ring中出一个报文
 			p->n_pkts = rte_ring_sc_dequeue_burst(p->ring,
 				(void **) p->pkts, RTE_PORT_IN_BURST_SIZE_MAX,
 				NULL);
 			RTE_PORT_RING_READER_FRAG_STATS_PKTS_IN_ADD(p, p->n_pkts);
 			if (p->n_pkts == 0)
-				return n_pkts_out;
+				return n_pkts_out;//ring中无报文，返回
 			p->pos_pkts = 0;
 		}
 
 		/* Read next packet from "pkts" buffer */
+		//提取一个报文
 		pkt = p->pkts[p->pos_pkts++];
 		p->n_pkts--;
 
 		/* If not jumbo, pass current packet to output */
+		//不需要分片，直接传入到output
 		if (pkt->pkt_len <= p->mtu) {
 			pkts[n_pkts_out++] = pkt;
 
 			n_pkts_to_provide = n_pkts - n_pkts_out;
 			if (n_pkts_to_provide == 0)
-				return n_pkts;
+				return n_pkts;//已达到需要的，返回
 
 			continue;
 		}
 
 		/* Fragment current packet into the "frags" buffer */
+		//对此报文进行分片，并将分好的片，缓存在p->frags中
 		status = p->f_frag(
 			pkt,
 			p->frags,
@@ -219,16 +229,19 @@ rte_port_ring_reader_frag_rx(void *port,
 			p->pool_indirect
 		);
 
+		//分片失败
 		if (status < 0) {
 			rte_pktmbuf_free(pkt);
 			RTE_PORT_RING_READER_FRAG_STATS_PKTS_DROP_ADD(p, 1);
 			continue;
 		}
 
+		//记录分了多少片
 		p->n_frags = (uint32_t) status;
 		p->pos_frags = 0;
 
 		/* Copy meta-data from input jumbo packet to its fragments */
+		//从src copy 元数据到每个分片
 		for (i = 0; i < p->n_frags; i++) {
 			uint8_t *src =
 			  RTE_MBUF_METADATA_UINT8_PTR(pkt, sizeof(struct rte_mbuf));
@@ -259,6 +272,7 @@ rte_port_ring_reader_frag_rx(void *port,
 	}
 }
 
+//分片port资源释放
 static int
 rte_port_ring_reader_frag_free(void *port)
 {
@@ -272,6 +286,7 @@ rte_port_ring_reader_frag_free(void *port)
 	return 0;
 }
 
+//分片状态读取
 static int
 rte_port_frag_reader_stats_read(void *port,
 		struct rte_port_in_stats *stats, int clear)
@@ -291,6 +306,7 @@ rte_port_frag_reader_stats_read(void *port,
 /*
  * Summary of port operations
  */
+//分片功能抽象成port
 struct rte_port_in_ops rte_port_ring_reader_ipv4_frag_ops = {
 	.f_create = rte_port_ring_reader_ipv4_frag_create,
 	.f_free = rte_port_ring_reader_frag_free,

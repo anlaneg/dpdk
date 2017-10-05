@@ -138,8 +138,8 @@ rte_ipv4_frag_reassemble_packet(struct rte_ip_frag_tbl *tbl,
 
 	psd = (unaligned_uint64_t *)&ip_hdr->src_addr;
 	/* use first 8 bytes only */
-	key.src_dst[0] = psd[0];
-	key.id = ip_hdr->packet_id;
+	key.src_dst[0] = psd[0];//填充src-dst ip地址
+	key.id = ip_hdr->packet_id;//id
 	key.key_len = IPV4_KEYLEN;
 
 	ip_ofs *= IPV4_HDR_OFFSET_UNITS;

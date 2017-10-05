@@ -63,6 +63,7 @@ struct rte_port_ethdev_reader {
 	uint8_t port_id;
 };
 
+//创建逻辑port(对应的是某port的某队列）
 static void *
 rte_port_ethdev_reader_create(void *params, int socket_id)
 {
@@ -84,6 +85,7 @@ rte_port_ethdev_reader_create(void *params, int socket_id)
 		return NULL;
 	}
 
+	//设置port_id,queue_id
 	/* Initialization */
 	port->port_id = conf->port_id;
 	port->queue_id = conf->queue_id;
@@ -91,6 +93,7 @@ rte_port_ethdev_reader_create(void *params, int socket_id)
 	return port;
 }
 
+//自指定port的指定队列收取报文（最大收取n_pkts个）
 static int
 rte_port_ethdev_reader_rx(void *port, struct rte_mbuf **pkts, uint32_t n_pkts)
 {
@@ -99,10 +102,11 @@ rte_port_ethdev_reader_rx(void *port, struct rte_mbuf **pkts, uint32_t n_pkts)
 	uint16_t rx_pkt_cnt;
 
 	rx_pkt_cnt = rte_eth_rx_burst(p->port_id, p->queue_id, pkts, n_pkts);
-	RTE_PORT_ETHDEV_READER_STATS_PKTS_IN_ADD(p, rx_pkt_cnt);
+	RTE_PORT_ETHDEV_READER_STATS_PKTS_IN_ADD(p, rx_pkt_cnt);//增加统计计数
 	return rx_pkt_cnt;
 }
 
+//port资源释放
 static int
 rte_port_ethdev_reader_free(void *port)
 {
@@ -116,6 +120,7 @@ rte_port_ethdev_reader_free(void *port)
 	return 0;
 }
 
+//读取状态计数
 static int rte_port_ethdev_reader_stats_read(void *port,
 		struct rte_port_in_stats *stats, int clear)
 {
@@ -123,9 +128,11 @@ static int rte_port_ethdev_reader_stats_read(void *port,
 			port;
 
 	if (stats != NULL)
+		//copy计数
 		memcpy(stats, &p->stats, sizeof(p->stats));
 
 	if (clear)
+		//如果需要clear
 		memset(&p->stats, 0, sizeof(p->stats));
 
 	return 0;
@@ -152,13 +159,14 @@ struct rte_port_ethdev_writer {
 	struct rte_port_out_stats stats;
 
 	struct rte_mbuf *tx_buf[2 * RTE_PORT_IN_BURST_SIZE_MAX];
-	uint32_t tx_burst_sz;
-	uint16_t tx_buf_count;
-	uint64_t bsz_mask;
+	uint32_t tx_burst_sz;//burst大小
+	uint16_t tx_buf_count;//当前发送缓存中含有多少buf
+	uint64_t bsz_mask;//tx_buf_count为2的n次方,mask为其减1
 	uint16_t queue_id;
 	uint8_t port_id;
 };
 
+//创建write对象
 static void *
 rte_port_ethdev_writer_create(void *params, int socket_id)
 {
@@ -186,7 +194,7 @@ rte_port_ethdev_writer_create(void *params, int socket_id)
 	/* Initialization */
 	port->port_id = conf->port_id;
 	port->queue_id = conf->queue_id;
-	port->tx_burst_sz = conf->tx_burst_sz;
+	port->tx_burst_sz = conf->tx_burst_sz;//多大进行发送
 	port->tx_buf_count = 0;
 	port->bsz_mask = 1LLU << (conf->tx_burst_sz - 1);
 
@@ -198,9 +206,10 @@ send_burst(struct rte_port_ethdev_writer *p)
 {
 	uint32_t nb_tx;
 
+	//将tx_buf中的报文，自port_id的queue_id队列中发出
 	nb_tx = rte_eth_tx_burst(p->port_id, p->queue_id,
 			 p->tx_buf, p->tx_buf_count);
-
+	//没有发送成功的包，将被丢弃
 	RTE_PORT_ETHDEV_WRITER_STATS_PKTS_DROP_ADD(p, p->tx_buf_count - nb_tx);
 	for ( ; nb_tx < p->tx_buf_count; nb_tx++)
 		rte_pktmbuf_free(p->tx_buf[nb_tx]);
@@ -208,6 +217,7 @@ send_burst(struct rte_port_ethdev_writer *p)
 	p->tx_buf_count = 0;
 }
 
+//向硬件队列中发包。
 static int
 rte_port_ethdev_writer_tx(void *port, struct rte_mbuf *pkt)
 {
@@ -216,6 +226,7 @@ rte_port_ethdev_writer_tx(void *port, struct rte_mbuf *pkt)
 
 	p->tx_buf[p->tx_buf_count++] = pkt;
 	RTE_PORT_ETHDEV_WRITER_STATS_PKTS_IN_ADD(p, 1);
+	//如果够发送，就对外发送
 	if (p->tx_buf_count >= p->tx_burst_sz)
 		send_burst(p);
 
@@ -238,13 +249,16 @@ rte_port_ethdev_writer_tx_bulk(void *port,
 		uint64_t n_pkts = __builtin_popcountll(pkts_mask);
 		uint32_t n_pkts_ok;
 
+		//如果port中已缓存有报文，则先将其发送
 		if (tx_buf_count)
 			send_burst(p);
 
+		//再发送传入的
 		RTE_PORT_ETHDEV_WRITER_STATS_PKTS_IN_ADD(p, n_pkts);
 		n_pkts_ok = rte_eth_tx_burst(p->port_id, p->queue_id, pkts,
 			n_pkts);
 
+		//发送失败，刚丢包
 		RTE_PORT_ETHDEV_WRITER_STATS_PKTS_DROP_ADD(p, n_pkts - n_pkts_ok);
 		for ( ; n_pkts_ok < n_pkts; n_pkts_ok++) {
 			struct rte_mbuf *pkt = pkts[n_pkts_ok];
@@ -290,6 +304,7 @@ rte_port_ethdev_writer_free(void *port)
 		return -EINVAL;
 	}
 
+	//如果缓存了一些报文，则将这些报文发送出去
 	rte_port_ethdev_writer_flush(port);
 	rte_free(port);
 
@@ -335,7 +350,7 @@ struct rte_port_ethdev_writer_nodrop {
 	uint32_t tx_burst_sz;
 	uint16_t tx_buf_count;
 	uint64_t bsz_mask;
-	uint64_t n_retries;
+	uint64_t n_retries;//尝试发送多少次
 	uint16_t queue_id;
 	uint8_t port_id;
 };
@@ -381,15 +396,18 @@ rte_port_ethdev_writer_nodrop_create(void *params, int socket_id)
 	return port;
 }
 
+//如果暂时无法成功发送，则进行有限次尝试，尝试后仍不能成功发送，则释放mbuf
 static inline void
 send_burst_nodrop(struct rte_port_ethdev_writer_nodrop *p)
 {
 	uint32_t nb_tx = 0, i;
 
+	//先发送buf
 	nb_tx = rte_eth_tx_burst(p->port_id, p->queue_id, p->tx_buf,
 			p->tx_buf_count);
 
 	/* We sent all the packets in a first try */
+	//所有报文均已成功发送，则返回
 	if (nb_tx >= p->tx_buf_count) {
 		p->tx_buf_count = 0;
 		return;
@@ -400,6 +418,7 @@ send_burst_nodrop(struct rte_port_ethdev_writer_nodrop *p)
 							 p->tx_buf + nb_tx, p->tx_buf_count - nb_tx);
 
 		/* We sent all the packets in more than one try */
+		//在本次尝试中，所有报文，均发成发送，则返回
 		if (nb_tx >= p->tx_buf_count) {
 			p->tx_buf_count = 0;
 			return;
@@ -407,6 +426,7 @@ send_burst_nodrop(struct rte_port_ethdev_writer_nodrop *p)
 	}
 
 	/* We didn't send the packets in maximum allowed attempts */
+	//在进行了n_retries次尝试后，报文未成功发送，释放未成功发送的报文。
 	RTE_PORT_ETHDEV_WRITER_NODROP_STATS_PKTS_DROP_ADD(p, p->tx_buf_count - nb_tx);
 	for ( ; nb_tx < p->tx_buf_count; nb_tx++)
 		rte_pktmbuf_free(p->tx_buf[nb_tx]);
@@ -527,6 +547,7 @@ static int rte_port_ethdev_writer_nodrop_stats_read(void *port,
 /*
  * Summary of port operations
  */
+//自物理网卡的rx中读取报文
 struct rte_port_in_ops rte_port_ethdev_reader_ops = {
 	.f_create = rte_port_ethdev_reader_create,
 	.f_free = rte_port_ethdev_reader_free,
@@ -534,15 +555,17 @@ struct rte_port_in_ops rte_port_ethdev_reader_ops = {
 	.f_stats = rte_port_ethdev_reader_stats_read,
 };
 
+//port缓存ops
 struct rte_port_out_ops rte_port_ethdev_writer_ops = {
 	.f_create = rte_port_ethdev_writer_create,
 	.f_free = rte_port_ethdev_writer_free,
 	.f_tx = rte_port_ethdev_writer_tx,
-	.f_tx_bulk = rte_port_ethdev_writer_tx_bulk,
-	.f_flush = rte_port_ethdev_writer_flush,
+	.f_tx_bulk = rte_port_ethdev_writer_tx_bulk,//支持一次发多个
+	.f_flush = rte_port_ethdev_writer_flush,//将缓存的清空
 	.f_stats = rte_port_ethdev_writer_stats_read,
 };
 
+//如尽最大可能进行报文发送
 struct rte_port_out_ops rte_port_ethdev_writer_nodrop_ops = {
 	.f_create = rte_port_ethdev_writer_nodrop_create,
 	.f_free = rte_port_ethdev_writer_nodrop_free,

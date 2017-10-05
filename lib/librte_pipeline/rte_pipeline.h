@@ -603,7 +603,7 @@ struct rte_pipeline_port_in_params {
 	/** Input port operations (specific to each table type) */
 	struct rte_port_in_ops *ops;
 	/** Opaque parameter to be passed to create operation when invoked */
-	void *arg_create;
+	void *arg_create;//创建时参数
 
 	/** Callback function to execute the user actions on input packets.
 		Disabled if set to NULL. */

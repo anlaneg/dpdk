@@ -78,8 +78,8 @@
 struct rte_port_in {
 	/* Input parameters */
 	struct rte_port_in_ops ops;//h_port的创建，释放操作函数
-	rte_pipeline_port_in_action_handler f_action;
-	void *arg_ah;
+	rte_pipeline_port_in_action_handler f_action;//报文input-callback
+	void *arg_ah;//input-callback参数
 	uint32_t burst_size;
 
 	/* The table to which this port is connected */
@@ -863,6 +863,7 @@ rte_pipeline_port_out_check_params(struct rte_pipeline *p,
 	return 0;
 }
 
+//创建port-in
 int
 rte_pipeline_port_in_create(struct rte_pipeline *p,
 		struct rte_pipeline_port_in_params *params,
@@ -882,6 +883,7 @@ rte_pipeline_port_in_create(struct rte_pipeline *p,
 	port = &p->ports_in[id];
 
 	/* Create the port */
+	//创建in-port
 	h_port = params->ops->f_create(params->arg_create, p->socket_id);
 	if (h_port == NULL) {
 		RTE_LOG(ERR, PIPELINE, "%s: Port creation failed\n", __func__);
@@ -1386,6 +1388,7 @@ rte_pipeline_run(struct rte_pipeline *p)
 		return 0;
 
 	/* Input port RX */
+	//自port_in收取报文
 	n_pkts = port_in->ops.f_rx(port_in->h_port, p->pkts,
 		port_in->burst_size);
 	if (n_pkts == 0) {
@@ -1400,6 +1403,7 @@ rte_pipeline_run(struct rte_pipeline *p)
 	p->action_mask0[RTE_PIPELINE_ACTION_TABLE] = 0;
 
 	/* Input port user actions */
+	//port收到后执行用户定义action
 	if (port_in->f_action != NULL) {
 		port_in->f_action(p, p->pkts, n_pkts, port_in->arg_ah);
 
@@ -1413,6 +1417,7 @@ rte_pipeline_run(struct rte_pipeline *p)
 		uint64_t lookup_hit_mask, lookup_miss_mask;
 
 		/* Lookup */
+		//针对具体表进行查询
 		table = &p->tables[table_id];
 		table->ops.f_lookup(table->h_table, p->pkts, p->pkts_mask,
 			&lookup_hit_mask, (void **) p->entries);
@@ -1420,6 +1425,7 @@ rte_pipeline_run(struct rte_pipeline *p)
 
 		/* Lookup miss */
 		if (lookup_miss_mask != 0) {
+			//未查询成功
 			struct rte_pipeline_table_entry *default_entry =
 				table->default_entry;
 
@@ -1527,6 +1533,7 @@ rte_pipeline_flush(struct rte_pipeline *p)
 		return -EINVAL;
 	}
 
+	//对所有output_port进行flush
 	for (port_id = 0; port_id < p->num_ports_out; port_id++) {
 		struct rte_port_out *port = &p->ports_out[port_id];
 

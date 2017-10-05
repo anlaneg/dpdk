@@ -79,16 +79,17 @@ process_ipv6(struct rte_port_ring_writer_ras *p, struct rte_mbuf *pkt);
 struct rte_port_ring_writer_ras {
 	struct rte_port_out_stats stats;
 
-	struct rte_mbuf *tx_buf[RTE_PORT_IN_BURST_SIZE_MAX];
+	struct rte_mbuf *tx_buf[RTE_PORT_IN_BURST_SIZE_MAX];//缓存收到的报文
 	struct rte_ring *ring;
 	uint32_t tx_burst_sz;
 	uint32_t tx_buf_count;
-	struct rte_ip_frag_tbl *frag_tbl;
+	struct rte_ip_frag_tbl *frag_tbl;//分片表
 	struct rte_ip_frag_death_row death_row;
 
 	ras_op f_ras;
 };
 
+//分片重组port
 static void *
 rte_port_ring_writer_ras_create(void *params, int socket_id, int is_ipv4)
 {
@@ -180,17 +181,20 @@ static void
 process_ipv4(struct rte_port_ring_writer_ras *p, struct rte_mbuf *pkt)
 {
 	/* Assume there is no ethernet header */
+	//取ipv4头
 	struct ipv4_hdr *pkt_hdr = rte_pktmbuf_mtod(pkt, struct ipv4_hdr *);
 
 	/* Get "More fragments" flag and fragment offset */
-	uint16_t frag_field = rte_be_to_cpu_16(pkt_hdr->fragment_offset);
-	uint16_t frag_offset = (uint16_t)(frag_field & IPV4_HDR_OFFSET_MASK);
-	uint16_t frag_flag = (uint16_t)(frag_field & IPV4_HDR_MF_FLAG);
+	uint16_t frag_field = rte_be_to_cpu_16(pkt_hdr->fragment_offset);//分片字段取值
+	uint16_t frag_offset = (uint16_t)(frag_field & IPV4_HDR_OFFSET_MASK);//分片偏移量
+	uint16_t frag_flag = (uint16_t)(frag_field & IPV4_HDR_MF_FLAG);//是否有more标记
 
 	/* If it is a fragmented packet, then try to reassemble */
+	//非分片报文
 	if ((frag_flag == 0) && (frag_offset == 0))
 		p->tx_buf[p->tx_buf_count++] = pkt;
 	else {
+		//分片报文处理
 		struct rte_mbuf *mo;
 		struct rte_ip_frag_tbl *tbl = p->frag_tbl;
 		struct rte_ip_frag_death_row *dr = &p->death_row;
@@ -198,10 +202,11 @@ process_ipv4(struct rte_port_ring_writer_ras *p, struct rte_mbuf *pkt)
 		pkt->l3_len = sizeof(*pkt_hdr);
 
 		/* Process this fragment */
+		//执行分片重组
 		mo = rte_ipv4_frag_reassemble_packet(tbl, dr, pkt, rte_rdtsc(),
 				pkt_hdr);
 		if (mo != NULL)
-			p->tx_buf[p->tx_buf_count++] = mo;
+			p->tx_buf[p->tx_buf_count++] = mo;//合并重组后的分片
 
 		rte_ip_frag_free_death_row(&p->death_row, 3);
 	}
@@ -340,6 +345,7 @@ rte_port_ras_writer_stats_read(void *port,
 /*
  * Summary of port operations
  */
+//实现ipv4分片重组功能
 struct rte_port_out_ops rte_port_ring_writer_ipv4_ras_ops = {
 	.f_create = rte_port_ring_writer_ipv4_ras_create,
 	.f_free = rte_port_ring_writer_ras_free,

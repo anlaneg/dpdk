@@ -249,6 +249,8 @@ rte_port_source_create(void *params, int socket_id)
 	port->mempool = (struct rte_mempool *) p->mempool;
 
 	if (p->file_name) {
+		//读取pcap文件，并将pcap文件指定的报文加载在内存中，后续直接
+		//自此port收取报文时，将自pcap中收取报文
 		int status = PCAP_SOURCE_LOAD(port, p->file_name,
 			p->n_bytes_per_pkt, socket_id);
 
@@ -283,6 +285,7 @@ rte_port_source_free(void *port)
 	return 0;
 }
 
+//自pcap方式的port中读取报文
 static int
 rte_port_source_rx(void *port, struct rte_mbuf **pkts, uint32_t n_pkts)
 {
@@ -634,14 +637,14 @@ rte_port_sink_stats_read(void *port, struct rte_port_out_stats *stats,
 struct rte_port_in_ops rte_port_source_ops = {
 	.f_create = rte_port_source_create,
 	.f_free = rte_port_source_free,
-	.f_rx = rte_port_source_rx,
+	.f_rx = rte_port_source_rx,//自pcap文件中收取报文
 	.f_stats = rte_port_source_stats_read,
 };
 
 struct rte_port_out_ops rte_port_sink_ops = {
 	.f_create = rte_port_sink_create,
 	.f_free = rte_port_sink_free,
-	.f_tx = rte_port_sink_tx,
+	.f_tx = rte_port_sink_tx,//向pcap文件中写报文
 	.f_tx_bulk = rte_port_sink_tx_bulk,
 	.f_flush = rte_port_sink_flush,
 	.f_stats = rte_port_sink_stats_read,

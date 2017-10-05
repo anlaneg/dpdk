@@ -80,6 +80,7 @@ rte_port_ring_reader_create_internal(void *params, int socket_id,
 	}
 
 	/* Memory allocation */
+	//在socket_id上申请port
 	port = rte_zmalloc_socket("PORT", sizeof(*port),
 			RTE_CACHE_LINE_SIZE, socket_id);
 	if (port == NULL) {
@@ -88,29 +89,36 @@ rte_port_ring_reader_create_internal(void *params, int socket_id,
 	}
 
 	/* Initialization */
+	//指向对应的ring
 	port->ring = conf->ring;
 
 	return port;
 }
 
+//创建ring对应的port
 static void *
 rte_port_ring_reader_create(void *params, int socket_id)
 {
+	//单独者
 	return rte_port_ring_reader_create_internal(params, socket_id, 0);
 }
 
+//创建多读者对应的port
 static void *
 rte_port_ring_multi_reader_create(void *params, int socket_id)
 {
+	//多读者
 	return rte_port_ring_reader_create_internal(params, socket_id, 1);
 }
 
+//自ring对应的port中收取报文
 static int
 rte_port_ring_reader_rx(void *port, struct rte_mbuf **pkts, uint32_t n_pkts)
 {
 	struct rte_port_ring_reader *p = port;
 	uint32_t nb_rx;
 
+	//出队，并统计计数(单消费者）
 	nb_rx = rte_ring_sc_dequeue_burst(p->ring, (void **) pkts,
 			n_pkts, NULL);
 	RTE_PORT_RING_READER_STATS_PKTS_IN_ADD(p, nb_rx);
@@ -118,6 +126,7 @@ rte_port_ring_reader_rx(void *port, struct rte_mbuf **pkts, uint32_t n_pkts)
 	return nb_rx;
 }
 
+//自ring对应的port中收取报文
 static int
 rte_port_ring_multi_reader_rx(void *port, struct rte_mbuf **pkts,
 	uint32_t n_pkts)
@@ -125,6 +134,7 @@ rte_port_ring_multi_reader_rx(void *port, struct rte_mbuf **pkts,
 	struct rte_port_ring_reader *p = port;
 	uint32_t nb_rx;
 
+	//出队，并统计计数(多消费者）
 	nb_rx = rte_ring_mc_dequeue_burst(p->ring, (void **) pkts,
 			n_pkts, NULL);
 	RTE_PORT_RING_READER_STATS_PKTS_IN_ADD(p, nb_rx);
@@ -132,6 +142,7 @@ rte_port_ring_multi_reader_rx(void *port, struct rte_mbuf **pkts,
 	return nb_rx;
 }
 
+//释放资源
 static int
 rte_port_ring_reader_free(void *port)
 {
@@ -145,6 +156,7 @@ rte_port_ring_reader_free(void *port)
 	return 0;
 }
 
+//读取ring port对应的统计计数
 static int
 rte_port_ring_reader_stats_read(void *port,
 		struct rte_port_in_stats *stats, int clear)
@@ -237,6 +249,7 @@ rte_port_ring_multi_writer_create(void *params, int socket_id)
 	return rte_port_ring_writer_create_internal(params, socket_id, 1);
 }
 
+//将报文，按单生产者方式入队
 static inline void
 send_burst(struct rte_port_ring_writer *p)
 {
@@ -245,6 +258,7 @@ send_burst(struct rte_port_ring_writer *p)
 	nb_tx = rte_ring_sp_enqueue_burst(p->ring, (void **)p->tx_buf,
 			p->tx_buf_count, NULL);
 
+	//如果入队失败，则释放报文
 	RTE_PORT_RING_WRITER_STATS_PKTS_DROP_ADD(p, p->tx_buf_count - nb_tx);
 	for ( ; nb_tx < p->tx_buf_count; nb_tx++)
 		rte_pktmbuf_free(p->tx_buf[nb_tx]);
@@ -272,9 +286,11 @@ rte_port_ring_writer_tx(void *port, struct rte_mbuf *pkt)
 {
 	struct rte_port_ring_writer *p = port;
 
+	//向tx_buf中存放报文
 	p->tx_buf[p->tx_buf_count++] = pkt;
 	RTE_PORT_RING_WRITER_STATS_PKTS_IN_ADD(p, 1);
 	if (p->tx_buf_count >= p->tx_burst_sz)
+		//如果报文数超限，则进行发送
 		send_burst(p);
 
 	return 0;
@@ -581,6 +597,7 @@ send_burst_mp_nodrop(struct rte_port_ring_writer_nodrop *p)
 	p->tx_buf_count = 0;
 }
 
+//尽可能的不丢包来进行入队（单生产者方式）
 static int
 rte_port_ring_writer_nodrop_tx(void *port, struct rte_mbuf *pkt)
 {
@@ -765,6 +782,7 @@ rte_port_ring_writer_nodrop_stats_read(void *port,
 /*
  * Summary of port operations
  */
+//ring抽象的port操作
 struct rte_port_in_ops rte_port_ring_reader_ops = {
 	.f_create = rte_port_ring_reader_create,
 	.f_free = rte_port_ring_reader_free,
@@ -772,6 +790,7 @@ struct rte_port_in_ops rte_port_ring_reader_ops = {
 	.f_stats = rte_port_ring_reader_stats_read,
 };
 
+//单生产者方式入队
 struct rte_port_out_ops rte_port_ring_writer_ops = {
 	.f_create = rte_port_ring_writer_create,
 	.f_free = rte_port_ring_writer_free,
@@ -781,6 +800,7 @@ struct rte_port_out_ops rte_port_ring_writer_ops = {
 	.f_stats = rte_port_ring_writer_stats_read,
 };
 
+//采用尽可能不丢包的方式进行入队（单生产者模式）
 struct rte_port_out_ops rte_port_ring_writer_nodrop_ops = {
 	.f_create = rte_port_ring_writer_nodrop_create,
 	.f_free = rte_port_ring_writer_nodrop_free,
@@ -797,6 +817,7 @@ struct rte_port_in_ops rte_port_ring_multi_reader_ops = {
 	.f_stats = rte_port_ring_reader_stats_read,
 };
 
+//多生产者方式入队
 struct rte_port_out_ops rte_port_ring_multi_writer_ops = {
 	.f_create = rte_port_ring_multi_writer_create,
 	.f_free = rte_port_ring_writer_free,
@@ -806,6 +827,7 @@ struct rte_port_out_ops rte_port_ring_multi_writer_ops = {
 	.f_stats = rte_port_ring_writer_stats_read,
 };
 
+//多生产者方式入队（最大可能不丢包）
 struct rte_port_out_ops rte_port_ring_multi_writer_nodrop_ops = {
 	.f_create = rte_port_ring_multi_writer_nodrop_create,
 	.f_free = rte_port_ring_writer_nodrop_free,
