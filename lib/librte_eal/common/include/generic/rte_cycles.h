@@ -118,6 +118,7 @@ int rte_eal_hpet_init(int make_default);
  * @return
  *   The number of cycles
  */
+//取当前时间
 static inline uint64_t
 rte_get_timer_cycles(void)
 {

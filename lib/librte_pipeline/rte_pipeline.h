@@ -345,17 +345,17 @@ struct rte_pipeline_table_params {
 	void *arg_create;
 	/** Callback function to execute the user actions on input packets in
 	case of lookup hit */
-	rte_pipeline_table_action_handler_hit f_action_hit;
+	rte_pipeline_table_action_handler_hit f_action_hit;//表项命中时
 	/** Callback function to execute the user actions on input packets in
 	case of lookup miss */
-	rte_pipeline_table_action_handler_miss f_action_miss;
+	rte_pipeline_table_action_handler_miss f_action_miss;//表项不命中时
 
 	/** Opaque parameter to be passed to lookup hit and/or lookup miss
 	action handlers when invoked */
-	void *arg_ah;
+	void *arg_ah;//hit,miss回调对应的参数
 	/** Memory size to be reserved per table entry for storing the user
 	actions and their meta-data */
-	uint32_t action_data_size;
+	uint32_t action_data_size;//用于存放表项内容的数据大小（不含实际使用时的表项头）
 };
 
 /**

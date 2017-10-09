@@ -79,6 +79,7 @@ extern "C" {
  */
 /** Maximum number of packets read from any input port in a single burst.
 Cannot be changed. */
+//这个值目前基本没办法修改
 #define RTE_PORT_IN_BURST_SIZE_MAX                         64
 
 /** Input port statistics */

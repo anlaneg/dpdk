@@ -126,6 +126,7 @@ rte_timer_init(struct rte_timer *tim)
  * us), mark timer as configuring, and on success return the previous
  * status of the timer
  */
+//采用原子方式设置状态
 static int
 timer_set_config_state(struct rte_timer *tim,
 		       union rte_timer_status *ret_prev_status)
@@ -239,6 +240,7 @@ timer_get_skiplist_level(unsigned curr_depth)
  * For a given time value, get the entries at each level which
  * are <= that time value.
  */
+//在tim_locre core上查找time_val时间应存放的位置
 static void
 timer_get_prev_entries(uint64_t time_val, unsigned tim_lcore,
 		struct rte_timer **prev)
@@ -281,7 +283,7 @@ timer_get_prev_entries_for_node(struct rte_timer *tim, unsigned tim_lcore,
  * timer must be in config state
  * timer must not be in a list
  */
-//将timer加入到tim_lcore上
+//将timer加入到tim_lcore上，按跳表方式插入
 static void
 timer_add(struct rte_timer *tim, unsigned tim_lcore, int local_is_locked)
 {
@@ -292,7 +294,7 @@ timer_add(struct rte_timer *tim, unsigned tim_lcore, int local_is_locked)
 	/* if timer needs to be scheduled on another core, we need to
 	 * lock the list; if it is on local core, we need to lock if
 	 * we are not called from rte_timer_manage() */
-	//如对应core未加锁，则加锁（当前core可能与tim_lcore不同）
+	//如timer要求存放的core没有加锁，则加锁（当前core可能与tim_lcore不同）
 	if (tim_lcore != lcore_id || !local_is_locked)
 		rte_spinlock_lock(&priv_timer[tim_lcore].list_lock);
 
@@ -371,16 +373,17 @@ timer_del(struct rte_timer *tim, union rte_timer_status prev_status,
 /* Reset and start the timer associated with the timer handle (private func) */
 //重新设置定义器tim
 static int
-__rte_timer_reset(struct rte_timer *tim, uint64_t expire,
-		  uint64_t period, unsigned tim_lcore,
-		  rte_timer_cb_t fct, void *arg,
-		  int local_is_locked)
+__rte_timer_reset(struct rte_timer *tim, uint64_t expire,//timer及过期时间
+		  uint64_t period, unsigned tim_lcore,//周期数，分配到那个timer上
+		  rte_timer_cb_t fct, void *arg,//回调函数，及其参数
+		  int local_is_locked)//是否已加锁
 {
 	union rte_timer_status prev_status, status;
 	int ret;
 	unsigned lcore_id = rte_lcore_id();
 
 	/* round robin for tim_lcore */
+	//如果未指定core，则选择一个core,按robin的方式
 	if (tim_lcore == (unsigned)LCORE_ID_ANY) {
 		//容许在任意core上出现，轮循出一个core
 		if (lcore_id < RTE_MAX_LCORE) {
@@ -397,7 +400,7 @@ __rte_timer_reset(struct rte_timer *tim, uint64_t expire,
 
 	/* wait that the timer is in correct status before update,
 	 * and mark it as being configured */
-	//将timer置为config模式
+	//将timer置为config模式,并返回上一个状态
 	ret = timer_set_config_state(tim, &prev_status);
 	if (ret < 0)
 		return -1;
@@ -414,6 +417,7 @@ __rte_timer_reset(struct rte_timer *tim, uint64_t expire,
 		__TIMER_STAT_ADD(pending, -1);
 	}
 
+	//设置tim
 	tim->period = period;
 	tim->expire = expire;
 	tim->f = fct;
@@ -425,7 +429,7 @@ __rte_timer_reset(struct rte_timer *tim, uint64_t expire,
 	/* update state: as we are in CONFIG state, only us can modify
 	 * the state so we don't need to use cmpset() here */
 	rte_wmb();
-	status.state = RTE_TIMER_PENDING;
+	status.state = RTE_TIMER_PENDING;//修改为pending状态
 	status.owner = (int16_t)tim_lcore;
 	tim->status.u32 = status.u32;
 
@@ -433,6 +437,8 @@ __rte_timer_reset(struct rte_timer *tim, uint64_t expire,
 }
 
 /* Reset and start the timer associated with the timer handle tim */
+//重置timer,将其过期时间定在ticks之后，定时器类型，定时器位于那个core,定时器过期回调
+//定时器过期回调参数
 int
 rte_timer_reset(struct rte_timer *tim, uint64_t ticks,
 		enum rte_timer_type type, unsigned tim_lcore,
@@ -443,8 +449,9 @@ rte_timer_reset(struct rte_timer *tim, uint64_t ticks,
 
 	if (unlikely((tim_lcore != (unsigned)LCORE_ID_ANY) &&
 			!rte_lcore_is_enabled(tim_lcore)))
-		return -1;
+		return -1;//参数校验
 
+	//检查是否为周期性定时器
 	if (type == PERIODICAL)
 		period = ticks;
 	else
