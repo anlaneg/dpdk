@@ -113,11 +113,11 @@ struct rte_table {
 	struct rte_table_ops ops;//表操作函数
 	rte_pipeline_table_action_handler_hit f_action_hit;//表命中时action
 	rte_pipeline_table_action_handler_miss f_action_miss;//表missing时action
-	void *arg_ah;
+	void *arg_ah;//hit,miss回调需要的参数
 	struct rte_pipeline_table_entry *default_entry;//默认表项
-	uint32_t entry_size;
+	uint32_t entry_size;//表项大小
 
-	uint32_t table_next_id;
+	uint32_t table_next_id;//下一个表，用于在本表处理完成后，交给其它表处理
 	uint32_t table_next_id_valid;//table_next_id是否包含有效值
 
 	/* Handle to the low-level table object */
@@ -136,28 +136,28 @@ struct rte_pipeline {
 	/* Input parameters */
 	char name[RTE_PIPELINE_MAX_NAME_SZ];//pipeline名称
 	int socket_id;//内存位于哪个socket
-	uint32_t offset_port_id;
+	uint32_t offset_port_id;//port_id自mbuf中哪个偏移量中得出
 
 	/* Internal tables */
 	struct rte_port_in ports_in[RTE_PIPELINE_PORT_IN_MAX];//保存in-port
 	struct rte_port_out ports_out[RTE_PIPELINE_PORT_OUT_MAX];
-	struct rte_table tables[RTE_PIPELINE_TABLE_MAX];
+	struct rte_table tables[RTE_PIPELINE_TABLE_MAX];//按表编号存放不同的表
 
 	/* Occupancy of internal tables */
 	uint32_t num_ports_in;
 	uint32_t num_ports_out;
-	uint32_t num_tables;
+	uint32_t num_tables;//有多少表（也用于分配表编号）
 
 	/* List of enabled ports */
 	uint64_t enabled_port_in_mask;//开启的port（用一个bit表示一个port)
 	struct rte_port_in *port_in_next;
 
 	/* Pipeline run structures */
-	struct rte_mbuf *pkts[RTE_PORT_IN_BURST_SIZE_MAX];
-	struct rte_pipeline_table_entry *entries[RTE_PORT_IN_BURST_SIZE_MAX];
-	uint64_t action_mask0[RTE_PIPELINE_ACTIONS];
+	struct rte_mbuf *pkts[RTE_PORT_IN_BURST_SIZE_MAX];//用来缓存需要处理的报文
+	struct rte_pipeline_table_entry *entries[RTE_PORT_IN_BURST_SIZE_MAX];//用于缓存被命中的表项
+	uint64_t action_mask0[RTE_PIPELINE_ACTIONS];//指出某个报文执行某种action,与pkts_mask相对应
 	uint64_t action_mask1[RTE_PIPELINE_ACTIONS];
-	uint64_t pkts_mask;
+	uint64_t pkts_mask;//每个bit对应一个pkt
 	uint64_t n_pkts_ah_drop;
 	uint64_t pkts_drop_mask;
 } __rte_cache_aligned;
@@ -226,7 +226,7 @@ rte_pipeline_check_params(struct rte_pipeline_params *params)
 	return 0;
 }
 
-//创建一个pipeline对象
+//创建一个rte pipeline对象
 struct rte_pipeline *
 rte_pipeline_create(struct rte_pipeline_params *params)
 {
@@ -384,6 +384,7 @@ rte_pipeline_table_create(struct rte_pipeline *p,
 	if (status != 0)
 		return status;
 
+	//取出当前表编号
 	id = p->num_tables;
 	table = &p->tables[id];
 
@@ -409,7 +410,7 @@ rte_pipeline_table_create(struct rte_pipeline *p,
 	}
 
 	/* Commit current table to the pipeline */
-	p->num_tables++;
+	p->num_tables++;//表编号增加
 	*table_id = id;
 
 	/* Save input parameters */
@@ -1104,6 +1105,7 @@ rte_pipeline_port_in_disable(struct rte_pipeline *p, uint32_t port_id)
  * Pipeline run-time
  *
  */
+//参数校查及所有in-port关联table检查
 int
 rte_pipeline_check(struct rte_pipeline *p)
 {
@@ -1150,6 +1152,7 @@ rte_pipeline_check(struct rte_pipeline *p)
 	return 0;
 }
 
+//将pkts_mask对应的报文，分区到不同的action掩码上去
 static inline void
 rte_pipeline_compute_masks(struct rte_pipeline *p, uint64_t pkts_mask)
 {
@@ -1159,6 +1162,8 @@ rte_pipeline_compute_masks(struct rte_pipeline *p, uint64_t pkts_mask)
 	p->action_mask1[RTE_PIPELINE_ACTION_TABLE] = 0;
 
 	if ((pkts_mask & (pkts_mask + 1)) == 0) {
+		//pkts_mask是一个2**n-1的形式
+		//GCC有一个叫做__builtin_popcount的内建函数，它可以精确的计算1的个数。
 		uint64_t n_pkts = __builtin_popcountll(pkts_mask);
 		uint32_t i;
 
@@ -1169,6 +1174,7 @@ rte_pipeline_compute_masks(struct rte_pipeline *p, uint64_t pkts_mask)
 			p->action_mask1[pos] |= pkt_mask;
 		}
 	} else {
+		//非（2**n）-1的形式
 		uint32_t i;
 
 		for (i = 0; i < RTE_PORT_IN_BURST_SIZE_MAX; i++) {
@@ -1193,6 +1199,7 @@ rte_pipeline_action_handler_port_bulk(struct rte_pipeline *p,
 	p->pkts_mask = pkts_mask;
 
 	/* Output port user actions */
+	//如果output port有用户定义的回调，则执行回调
 	if (port_out->f_action != NULL) {
 		port_out->f_action(p, p->pkts, pkts_mask, port_out->arg_ah);
 
@@ -1201,12 +1208,15 @@ rte_pipeline_action_handler_port_bulk(struct rte_pipeline *p,
 	}
 
 	/* Output port TX */
+	//输出至指定port
 	if (p->pkts_mask != 0)
 		port_out->ops.f_tx_bulk(port_out->h_port,
 			p->pkts,
 			p->pkts_mask);
 }
 
+//执行action,输出到port
+//在输出到port前，用户可定义f_action进行提前处理
 static inline void
 rte_pipeline_action_handler_port(struct rte_pipeline *p, uint64_t pkts_mask)
 {
@@ -1220,12 +1230,13 @@ rte_pipeline_action_handler_port(struct rte_pipeline *p, uint64_t pkts_mask)
 			struct rte_mbuf *pkt = p->pkts[i];
 			uint32_t port_out_id = p->entries[i]->port_id;
 			struct rte_port_out *port_out =
-				&p->ports_out[port_out_id];
+				&p->ports_out[port_out_id];//需要输出到port_out
 
 			/* Output port user actions */
 			if (port_out->f_action == NULL) /* Output port TX */
 				port_out->ops.f_tx(port_out->h_port, pkt);
 			else {
+				//用户定义了f_action,则先调用action,再调用f_tx进行输出
 				uint64_t pkt_mask = 1LLU << i;
 
 				port_out->f_action(p,
@@ -1262,6 +1273,7 @@ rte_pipeline_action_handler_port(struct rte_pipeline *p, uint64_t pkts_mask)
 			if (port_out->f_action == NULL) /* Output port TX */
 				port_out->ops.f_tx(port_out->h_port, pkt);
 			else {
+				//用户定义了f_action,则先调用action,再调用f_tx进行输出
 				port_out->f_action(p,
 					p->pkts,
 					pkt_mask,
@@ -1279,6 +1291,7 @@ rte_pipeline_action_handler_port(struct rte_pipeline *p, uint64_t pkts_mask)
 	}
 }
 
+//action处理，port_meta，通过p->offset_port_id自mbuf得出port_id
 static inline void
 rte_pipeline_action_handler_port_meta(struct rte_pipeline *p,
 	uint64_t pkts_mask)
@@ -1295,12 +1308,13 @@ rte_pipeline_action_handler_port_meta(struct rte_pipeline *p,
 				RTE_MBUF_METADATA_UINT32(pkt,
 					p->offset_port_id);
 			struct rte_port_out *port_out = &p->ports_out[
-				port_out_id];
+				port_out_id];//输出port
 
 			/* Output port user actions */
 			if (port_out->f_action == NULL) /* Output port TX */
 				port_out->ops.f_tx(port_out->h_port, pkt);
 			else {
+				//用户定义了f_action,则先调用action,再调用f_tx进行输出
 				uint64_t pkt_mask = 1LLU << i;
 
 				port_out->f_action(p,
@@ -1355,6 +1369,7 @@ rte_pipeline_action_handler_port_meta(struct rte_pipeline *p,
 	}
 }
 
+//action处理,丢包
 static inline void
 rte_pipeline_action_handler_drop(struct rte_pipeline *p, uint64_t pkts_mask)
 {
@@ -1366,7 +1381,7 @@ rte_pipeline_action_handler_drop(struct rte_pipeline *p, uint64_t pkts_mask)
 			rte_pktmbuf_free(p->pkts[i]);
 	} else {
 		uint32_t i;
-
+		//非连续的1，按位计算，并进行释放
 		for (i = 0; i < RTE_PORT_IN_BURST_SIZE_MAX; i++) {
 			uint64_t pkt_mask = 1LLU << i;
 
@@ -1378,10 +1393,21 @@ rte_pipeline_action_handler_drop(struct rte_pipeline *p, uint64_t pkts_mask)
 	}
 }
 
+//定义报文处理基本流程：
+//1.通过port_in.ops.f_rx进行收取
+//2.执行port_in.f_action
+//3.查port_in对应的表
+//3.1 如果miss,有table.f_action_miss ，则执行;并按table.default_entry的action进行执行，见4
+//3.2 如果hit,有table.f_action_hit,则执行，并接对应action进行执行，见4
+//4.执行action
+//	4.1 drop动作，直接丢
+//  4.2 outport动作，按动作要求的port,进行输出，先执行port_out.f_action,再执行port_out.ops.f_tx进行发送
+//  4.3 port-meta动作，自mbuf中按动作定义的offset得到输出port,先执行port_out.f_action,再执行port_out.ops.f_tx进行发送
+//  4.4 table动作，取出新的表id,table.table_next_id 将其定义为port_in对应的表，跳到（3）步开始执行
 int
 rte_pipeline_run(struct rte_pipeline *p)
 {
-	//取出当前需要处理的port
+	//取出当前需要收取的port
 	struct rte_port_in *port_in = p->port_in_next;
 	uint32_t n_pkts, table_id;
 
@@ -1389,17 +1415,18 @@ rte_pipeline_run(struct rte_pipeline *p)
 		return 0;
 
 	/* Input port RX */
-	//自port_in收取报文
+	//自port_in收取报文(依据接口的不同类型，调用不同的函数进行处理）
 	n_pkts = port_in->ops.f_rx(port_in->h_port, p->pkts,
 		port_in->burst_size);
 	if (n_pkts == 0) {
-		//没有收到报文，切换至下一个port
+		//未收取到报文，切换下次收取的port,本次结束
 		p->port_in_next = port_in->next;
 		return 0;
 	}
 
-	//无符号移入，指出收到到的各pkt
+	//收取到N个报文，则设置N位的bit位（低位开始）
 	p->pkts_mask = RTE_LEN2MASK(n_pkts, uint64_t);
+	//各action标位清0
 	p->action_mask0[RTE_PIPELINE_ACTION_DROP] = 0;
 	p->action_mask0[RTE_PIPELINE_ACTION_PORT] = 0;
 	p->action_mask0[RTE_PIPELINE_ACTION_PORT_META] = 0;
@@ -1415,6 +1442,7 @@ rte_pipeline_run(struct rte_pipeline *p)
 	}
 
 	/* Table */
+	//查询此port_in对应的table
 	for (table_id = port_in->table_id; p->pkts_mask != 0; ) {
 		struct rte_table *table;
 		uint64_t lookup_hit_mask, lookup_miss_mask;
@@ -1424,17 +1452,19 @@ rte_pipeline_run(struct rte_pipeline *p)
 		table = &p->tables[table_id];
 		table->ops.f_lookup(table->h_table, p->pkts, p->pkts_mask,
 			&lookup_hit_mask, (void **) p->entries);
+		//lookup_hit_mask记录的是命中表项的报文掩码，lookup_miss_mask即为未命中表项的报文掩码
 		lookup_miss_mask = p->pkts_mask & (~lookup_hit_mask);
 
 		/* Lookup miss */
 		if (lookup_miss_mask != 0) {
-			//未查询成功
+			//有未查询到表项的
 			struct rte_pipeline_table_entry *default_entry =
 				table->default_entry;
 
 			p->pkts_mask = lookup_miss_mask;
 
 			/* Table user actions */
+			//如果有用户定义的miss处理，则进行处理
 			if (table->f_action_miss != NULL) {
 				table->f_action_miss(p,
 					p->pkts,
@@ -1449,10 +1479,13 @@ rte_pipeline_run(struct rte_pipeline *p)
 			/* Table reserved actions */
 			if ((default_entry->action == RTE_PIPELINE_ACTION_PORT) &&
 				(p->pkts_mask != 0))
+				//如果默认表项需要输出到port，则批量输出到port
 				rte_pipeline_action_handler_port_bulk(p,
 					p->pkts_mask,
 					default_entry->port_id);
 			else {
+				//要么drop,要么port-meta,要么next-table
+				//这里将其先分类到不同的action_mask0上去
 				uint32_t pos = default_entry->action;
 
 				RTE_PIPELINE_STATS_TABLE_DROP0(p);
@@ -1466,9 +1499,11 @@ rte_pipeline_run(struct rte_pipeline *p)
 
 		/* Lookup hit */
 		if (lookup_hit_mask != 0) {
+			//有命中表项的报文
 			p->pkts_mask = lookup_hit_mask;
 
 			/* Table user actions */
+			//如果有hit的自定义处理，则调用
 			if (table->f_action_hit != NULL) {
 				table->f_action_hit(p,
 					p->pkts,
@@ -1481,6 +1516,7 @@ rte_pipeline_run(struct rte_pipeline *p)
 			}
 
 			/* Table reserved actions */
+			//对于命中的报文，计算其对应的各action掩码
 			RTE_PIPELINE_STATS_TABLE_DROP0(p);
 			rte_pipeline_compute_masks(p, p->pkts_mask);
 			p->action_mask0[RTE_PIPELINE_ACTION_DROP] |=
@@ -1501,11 +1537,13 @@ rte_pipeline_run(struct rte_pipeline *p)
 		}
 
 		/* Prepare for next iteration */
+		//对于需要交付给其它表处理的报文，交给其它表处理，继续循环
 		p->pkts_mask = p->action_mask0[RTE_PIPELINE_ACTION_TABLE];
 		table_id = table->table_next_id;
 		p->action_mask0[RTE_PIPELINE_ACTION_TABLE] = 0;
 	}
 
+	//按action处理
 	/* Table reserved action PORT */
 	rte_pipeline_action_handler_port(p,
 		p->action_mask0[RTE_PIPELINE_ACTION_PORT]);
@@ -1519,7 +1557,7 @@ rte_pipeline_run(struct rte_pipeline *p)
 		p->action_mask0[RTE_PIPELINE_ACTION_DROP]);
 
 	/* Pick candidate for next port IN to serve */
-	p->port_in_next = port_in->next;
+	p->port_in_next = port_in->next;//切换到下一个port
 
 	return (int) n_pkts;
 }

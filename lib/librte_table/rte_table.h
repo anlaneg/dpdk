@@ -258,11 +258,11 @@ typedef int (*rte_table_op_entry_delete_bulk)(
  *   0 on success, error code otherwise
  */
 typedef int (*rte_table_op_lookup)(
-	void *table,
-	struct rte_mbuf **pkts,
-	uint64_t pkts_mask,
-	uint64_t *lookup_hit_mask,
-	void **entries);
+	void *table,//需要查的表
+	struct rte_mbuf **pkts,//需要查表的pkts
+	uint64_t pkts_mask,//通过掩码指出有那些pkts
+	uint64_t *lookup_hit_mask,//命中的掩码
+	void **entries);//命中的表项指针
 
 /**
  * Lookup table stats read
@@ -283,6 +283,7 @@ typedef int (*rte_table_op_stats_read)(
 	int clear);
 
 /** Lookup table interface defining the lookup table operation */
+//表项的操作集（表创建，表释放，表项添加，表项删除，表项查询）
 struct rte_table_ops {
 	rte_table_op_create f_create;                 /**< Create */
 	rte_table_op_free f_free;                     /**< Free */

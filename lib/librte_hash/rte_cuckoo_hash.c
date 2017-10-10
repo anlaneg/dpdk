@@ -111,6 +111,7 @@ rte_hash_cmp_eq(const void *key1, const void *key2, const struct rte_hash *h)
 		return cmp_jump_table[h->cmp_jump_table_idx](key1, key2, h->key_len);
 }
 
+//创建hash表
 struct rte_hash *
 rte_hash_create(const struct rte_hash_parameters *params)
 {
@@ -779,7 +780,9 @@ rte_hash_lookup_with_hash(const struct rte_hash *h,
 int32_t
 rte_hash_lookup(const struct rte_hash *h, const void *key)
 {
+	//不容许key＝＝NULL，H＝＝NULL
 	RETURN_IF_TRUE(((h == NULL) || (key == NULL)), -EINVAL);
+	//给出key,给出hashcode查表h
 	return __rte_hash_lookup_with_hash(h, key, rte_hash_hash(h, key), NULL);
 }
 
