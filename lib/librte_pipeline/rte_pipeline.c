@@ -89,7 +89,7 @@ struct rte_port_in {
 	void *h_port;//port对应的底层句柄
 
 	/* List of enabled ports */
-	struct rte_port_in *next;
+	struct rte_port_in *next;//将开启的port串成一串
 
 	/* Statistics */
 	uint64_t n_pkts_dropped_by_ah;
@@ -1381,6 +1381,7 @@ rte_pipeline_action_handler_drop(struct rte_pipeline *p, uint64_t pkts_mask)
 int
 rte_pipeline_run(struct rte_pipeline *p)
 {
+	//取出当前需要处理的port
 	struct rte_port_in *port_in = p->port_in_next;
 	uint32_t n_pkts, table_id;
 
@@ -1392,10 +1393,12 @@ rte_pipeline_run(struct rte_pipeline *p)
 	n_pkts = port_in->ops.f_rx(port_in->h_port, p->pkts,
 		port_in->burst_size);
 	if (n_pkts == 0) {
+		//没有收到报文，切换至下一个port
 		p->port_in_next = port_in->next;
 		return 0;
 	}
 
+	//无符号移入，指出收到到的各pkt
 	p->pkts_mask = RTE_LEN2MASK(n_pkts, uint64_t);
 	p->action_mask0[RTE_PIPELINE_ACTION_DROP] = 0;
 	p->action_mask0[RTE_PIPELINE_ACTION_PORT] = 0;
