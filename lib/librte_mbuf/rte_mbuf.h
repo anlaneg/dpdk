@@ -402,7 +402,7 @@ typedef uint64_t MARKER64[0]; /**< marker that allows us to overwrite 8 bytes
  * The generic rte_mbuf, containing a packet mbuf.
  */
 struct rte_mbuf {
-	MARKER cacheline0;
+	MARKER cacheline0;// 这种写法很帅气
 
 	void *buf_addr;           /**< Virtual address of segment buffer. */
 	/**

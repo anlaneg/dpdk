@@ -89,6 +89,7 @@ RTE_DECLARE_PER_LCORE(rte_cpuset_t, _cpuset); /**< Per thread "cpuset". */
  * @return
  *  Logical core ID (in EAL thread) or LCORE_ID_ANY (in non-EAL thread)
  */
+//当前core id
 static inline unsigned
 rte_lcore_id(void)
 {
