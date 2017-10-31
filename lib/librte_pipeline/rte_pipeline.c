@@ -89,7 +89,7 @@ struct rte_port_in {
 	void *h_port;//port对应的底层句柄
 
 	/* List of enabled ports */
-	struct rte_port_in *next;
+	struct rte_port_in *next;//将开启的port串成一串
 
 	/* Statistics */
 	uint64_t n_pkts_dropped_by_ah;
