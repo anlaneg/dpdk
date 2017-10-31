@@ -94,6 +94,7 @@ void __rte_panic(const char *funcname, const char *format, ...)
  * Like rte_panic this terminates the application. However, no traceback is
  * provided and no core-dump is generated.
  */
+//显示日志并退出，如果开启panic，则显示堆栈及寄存器
 void
 rte_exit(int exit_code, const char *format, ...)
 {

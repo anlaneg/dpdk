@@ -159,9 +159,8 @@ rte_eth_dev_pci_generic_probe(struct rte_pci_device *pci_dev,
 	if (!eth_dev)
 		return -ENOMEM;
 
-	//调用回调
-	RTE_FUNC_PTR_OR_ERR_RET(*dev_init, -EINVAL);
-	ret = dev_init(eth_dev);
+	RTE_FUNC_PTR_OR_ERR_RET(*dev_init, -EINVAL);//dev_init参数检查
+	ret = dev_init(eth_dev);//初始化设备
 	if (ret)
 		//初始化失败，释放port
 		rte_eth_dev_pci_release(eth_dev);

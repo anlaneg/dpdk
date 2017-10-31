@@ -782,7 +782,7 @@ rte_port_ring_writer_nodrop_stats_read(void *port,
 /*
  * Summary of port operations
  */
-//ring抽象的port操作
+//ring抽象的port操作,出队
 struct rte_port_in_ops rte_port_ring_reader_ops = {
 	.f_create = rte_port_ring_reader_create,
 	.f_free = rte_port_ring_reader_free,

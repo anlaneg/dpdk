@@ -1062,6 +1062,7 @@ struct rte_eth_dev_callback;
 TAILQ_HEAD(rte_eth_dev_cb_list, rte_eth_dev_callback);
 
 /* Macros to check for valid port */
+//检查给定的port_id是否为有效的port
 #define RTE_ETH_VALID_PORTID_OR_ERR_RET(port_id, retval) do { \
 	if (!rte_eth_dev_is_valid_port(port_id)) { \
 		RTE_PMD_DEBUG_TRACE("Invalid port_id=%d\n", port_id); \
@@ -1675,7 +1676,9 @@ struct rte_eth_dev_data {
 	void **rx_queues; /**< Array of pointers to RX queues. */
 	//发队列指针数组
 	void **tx_queues; /**< Array of pointers to TX queues. */
+	//收队列数
 	uint16_t nb_rx_queues; /**< Number of RX queues. */
+	//发队列数
 	uint16_t nb_tx_queues; /**< Number of TX queues. */
 
 	struct rte_eth_dev_sriov sriov;    /**< SRIOV data */
@@ -3371,14 +3374,14 @@ rte_eth_tx_done_cleanup(uint8_t port_id, uint16_t queue_id, uint32_t free_cnt);
  */
 enum rte_eth_event_type {
 	RTE_ETH_EVENT_UNKNOWN,  /**< unknown event type */
-	RTE_ETH_EVENT_INTR_LSC, /**< lsc interrupt event */
-	RTE_ETH_EVENT_QUEUE_STATE,
+	RTE_ETH_EVENT_INTR_LSC, /**< lsc interrupt event */ //链路状态变更
+	RTE_ETH_EVENT_QUEUE_STATE,//队列状态发生变更
 				/**< queue state event (enabled/disabled) */
 	RTE_ETH_EVENT_INTR_RESET,
 			/**< reset interrupt event, sent to VF on PF reset */
 	RTE_ETH_EVENT_VF_MBOX,  /**< message from the VF received by PF */
 	RTE_ETH_EVENT_MACSEC,   /**< MACsec offload related event */
-	RTE_ETH_EVENT_INTR_RMV, /**< device removal event */
+	RTE_ETH_EVENT_INTR_RMV, /**< device removal event */ //设备被移除
 	RTE_ETH_EVENT_MAX       /**< max value of this enum */
 };
 

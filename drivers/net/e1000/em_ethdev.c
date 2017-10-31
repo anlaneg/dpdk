@@ -522,6 +522,7 @@ error:
 	return diag;
 }
 
+//添加标记，需要link更新
 static int
 eth_em_configure(struct rte_eth_dev *dev)
 {
@@ -1607,8 +1608,10 @@ eth_em_interrupt_action(struct rte_eth_dev *dev,
 	int ret;
 
 	if (!(intr->flags & E1000_FLAG_NEED_LINK_UPDATE))
+		//无标记，退出
 		return -1;
 
+	//清除标记
 	intr->flags &= ~E1000_FLAG_NEED_LINK_UPDATE;
 	rte_intr_enable(intr_handle);
 
@@ -1663,6 +1666,7 @@ eth_em_interrupt_action(struct rte_eth_dev *dev,
  * @return
  *  void
  */
+//中断处理回调
 static void
 eth_em_interrupt_handler(void *param)
 {

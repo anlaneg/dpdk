@@ -172,6 +172,7 @@ struct em_tx_queue {
 	uint64_t               tx_ring_phys_addr; /**< TX ring DMA address. */
 	struct em_tx_entry    *sw_ring; /**< virtual address of SW ring. */
 	volatile uint32_t      *tdt_reg_addr; /**< Address of TDT register. */
+	//sw_ring中的tx描述符数量
 	uint16_t               nb_tx_desc;    /**< number of TX descriptors. */
 	uint16_t               tx_tail;  /**< Current value of TDT register. */
 	/**< Start freeing TX buffers if there are less free descriptors than
@@ -1180,6 +1181,7 @@ em_reset_tx_queue(struct em_tx_queue *txq)
 	memset((void*)&txq->ctx_cache, 0, sizeof (txq->ctx_cache));
 }
 
+//设置一个tx队列
 int
 eth_em_tx_queue_setup(struct rte_eth_dev *dev,
 			 uint16_t queue_idx,
@@ -1251,6 +1253,7 @@ eth_em_tx_queue_setup(struct rte_eth_dev *dev,
 
 	/* Free memory prior to re-allocation if needed... */
 	if (dev->data->tx_queues[queue_idx] != NULL) {
+		//指定的queue_idx上已有队列，需要释放
 		em_tx_queue_release(dev->data->tx_queues[queue_idx]);
 		dev->data->tx_queues[queue_idx] = NULL;
 	}
@@ -1267,11 +1270,13 @@ eth_em_tx_queue_setup(struct rte_eth_dev *dev,
 		return -ENOMEM;
 
 	/* Allocate the tx queue data structure. */
+	//申请队列结构体
 	if ((txq = rte_zmalloc("ethdev TX queue", sizeof(*txq),
 			RTE_CACHE_LINE_SIZE)) == NULL)
 		return -ENOMEM;
 
 	/* Allocate software ring */
+	//申请交换ring,申请数量为nb_desc
 	if ((txq->sw_ring = rte_zmalloc("txq->sw_ring",
 			sizeof(txq->sw_ring[0]) * nb_desc,
 			RTE_CACHE_LINE_SIZE)) == NULL) {
@@ -1297,6 +1302,7 @@ eth_em_tx_queue_setup(struct rte_eth_dev *dev,
 
 	em_reset_tx_queue(txq);
 
+	//设置tx队列
 	dev->data->tx_queues[queue_idx] = txq;
 	return 0;
 }

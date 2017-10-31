@@ -72,9 +72,9 @@ struct app_mempool_params {
 };
 
 struct app_link_params {
-	char *name;
+	char *name;//link%d
 	uint32_t parsed;
-	uint32_t pmd_id; /* Generated based on port mask */
+	uint32_t pmd_id; /* Generated based on port mask */ //基于port_mask产生的id
 	uint32_t arp_q; /* 0 = Disabled (packets go to default queue 0) */
 	uint32_t tcp_syn_q; /* 0 = Disabled (pkts go to default queue) */
 	uint32_t ip_local_q; /* 0 = Disabled (pkts go to default queue 0) */

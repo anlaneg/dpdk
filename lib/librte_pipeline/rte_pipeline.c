@@ -1190,6 +1190,7 @@ rte_pipeline_compute_masks(struct rte_pipeline *p, uint64_t pkts_mask)
 	}
 }
 
+//批量输出到接口port_id
 static inline void
 rte_pipeline_action_handler_port_bulk(struct rte_pipeline *p,
 	uint64_t pkts_mask, uint32_t port_id)

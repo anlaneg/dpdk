@@ -100,6 +100,7 @@ rte_pmd_debug_trace(const char *func_name, const char *fmt, ...)
 } while (0)
 
 /* Macros to check for invalid function pointers */
+//如果func为空，返回retval
 #define RTE_FUNC_PTR_OR_ERR_RET(func, retval) do { \
 	if ((func) == NULL) { \
 		RTE_PMD_DEBUG_TRACE("Function not supported\n"); \

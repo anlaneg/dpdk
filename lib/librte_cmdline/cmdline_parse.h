@@ -187,7 +187,7 @@ struct cmdline;
 struct cmdline_inst {
 	/* f(parsed_struct, data) */
 	void (*f)(void *, struct cmdline *, void *);
-	void *data;
+	void *data;//f参数
 	const char *help_str;
 	cmdline_parse_token_hdr_t *tokens[];
 };

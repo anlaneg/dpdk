@@ -436,12 +436,14 @@ rte_intr_callback_register(const struct rte_intr_handle *intr_handle,
 	}
 
 	/* allocate a new interrupt callback entity */
+	//申请中断回调实体
 	callback = rte_zmalloc("interrupt callback list",
 				sizeof(*callback), 0);
 	if (callback == NULL) {
 		RTE_LOG(ERR, EAL, "Can not allocate memory\n");
 		return -ENOMEM;
 	}
+	//设置回调及回调参数
 	callback->cb_fn = cb;
 	callback->cb_arg = cb_arg;
 
@@ -454,6 +456,7 @@ rte_intr_callback_register(const struct rte_intr_handle *intr_handle,
 			if TAILQ_EMPTY(&src->callbacks)
 				wake_thread = 1;
 
+			//将callback加入到尾部
 			TAILQ_INSERT_TAIL(&(src->callbacks), callback, next);
 			ret = 0;
 			break;

@@ -555,7 +555,7 @@ struct rte_port_in_ops rte_port_ethdev_reader_ops = {
 	.f_stats = rte_port_ethdev_reader_stats_read,
 };
 
-//port缓存ops
+//向硬件网卡的tx中写入报文
 struct rte_port_out_ops rte_port_ethdev_writer_ops = {
 	.f_create = rte_port_ethdev_writer_create,
 	.f_free = rte_port_ethdev_writer_free,

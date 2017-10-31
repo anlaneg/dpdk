@@ -293,6 +293,7 @@ rte_eth_dev_release_port(struct rte_eth_dev *eth_dev)
 	return 0;
 }
 
+//检查给定的port是否存在
 int
 rte_eth_dev_is_valid_port(uint8_t port_id)
 {
@@ -614,6 +615,9 @@ rte_eth_dev_tx_queue_stop(uint8_t port_id, uint16_t tx_queue_id)
 
 }
 
+//配置有多少个tx队列（此函数仅初始化tx_queues,按nb_queues要求生成相应的存放ring指定的空间）
+//也就是说，如果有10个队列，在64位机器上，我们仅申请80字节，用于存入10个队列指针
+//另外函数也支持缩减发送队列，会调用tx_queue_release函数将tx_queues中多余的队列进行释放
 static int
 rte_eth_dev_tx_queue_config(struct rte_eth_dev *dev, uint16_t nb_queues)
 {
@@ -622,24 +626,33 @@ rte_eth_dev_tx_queue_config(struct rte_eth_dev *dev, uint16_t nb_queues)
 	unsigned i;
 
 	if (dev->data->tx_queues == NULL && nb_queues != 0) { /* first time configuration */
+		//首次配置，发队列还为空，为其申请内存，并初始化为0
 		dev->data->tx_queues = rte_zmalloc("ethdev->tx_queues",
 						   sizeof(dev->data->tx_queues[0]) * nb_queues,
 						   RTE_CACHE_LINE_SIZE);
 		if (dev->data->tx_queues == NULL) {
+			//申请内存失败，报错
 			dev->data->nb_tx_queues = 0;
 			return -(ENOMEM);
 		}
 	} else if (dev->data->tx_queues != NULL && nb_queues != 0) { /* re-configure */
+		//之前存在tx_queues,现在需要重新配置
+		//检查是否容许重新配置（tx_queue_release实现是否提供），如果不容许报错，否则重新配置
 		RTE_FUNC_PTR_OR_ERR_RET(*dev->dev_ops->tx_queue_release, -ENOTSUP);
 
 		txq = dev->data->tx_queues;
 
+		//如果原有队列比我们目前要求的队列多，则释放多余队列（调用tx_queue_release)
 		for (i = nb_queues; i < old_nb_queues; i++)
 			(*dev->dev_ops->tx_queue_release)(txq[i]);
+
+		//在原有位置上realloc(完成旧的数据的copy)
 		txq = rte_realloc(txq, sizeof(txq[0]) * nb_queues,
 				  RTE_CACHE_LINE_SIZE);
 		if (txq == NULL)
-			return -ENOMEM;
+			return -ENOMEM;//失败，一般此时是进行扩大
+
+		//如果当前要求的队列比原有队列要多，则初始化增加的队列
 		if (nb_queues > old_nb_queues) {
 			uint16_t new_qs = nb_queues - old_nb_queues;
 
@@ -650,6 +663,8 @@ rte_eth_dev_tx_queue_config(struct rte_eth_dev *dev, uint16_t nb_queues)
 		dev->data->tx_queues = txq;
 
 	} else if (dev->data->tx_queues != NULL && nb_queues == 0) {
+		//之前存在队列，现在要求队列数变为0，这种情况相当于所有队列被释放
+		//tx_queues被置为NULL
 		RTE_FUNC_PTR_OR_ERR_RET(*dev->dev_ops->tx_queue_release, -ENOTSUP);
 
 		txq = dev->data->tx_queues;
@@ -660,6 +675,7 @@ rte_eth_dev_tx_queue_config(struct rte_eth_dev *dev, uint16_t nb_queues)
 		rte_free(dev->data->tx_queues);
 		dev->data->tx_queues = NULL;
 	}
+	//指出当前发队列
 	dev->data->nb_tx_queues = nb_queues;
 	return 0;
 }
@@ -754,6 +770,7 @@ rte_eth_dev_configure(uint8_t port_id, uint16_t nb_rx_q, uint16_t nb_tx_q,
 		return -EINVAL;
 	}
 
+	//要配置的tx队列超过设备容许的数据，报错
 	if (nb_tx_q > dev_info.max_tx_queues) {
 		RTE_PMD_DEBUG_TRACE("ethdev port_id=%d nb_tx_queues=%d > %d\n",
 				port_id, nb_tx_q, dev_info.max_tx_queues);
@@ -779,6 +796,7 @@ rte_eth_dev_configure(uint8_t port_id, uint16_t nb_rx_q, uint16_t nb_tx_q,
 	 * length is supported by the configured device.
 	 */
 	if (dev_conf->rxmode.jumbo_frame == 1) {
+		//巨帧被开启了，检查是否max_rx_pkt_len
 		if (dev_conf->rxmode.max_rx_pkt_len >
 		    dev_info.max_rx_pktlen) {
 			RTE_PMD_DEBUG_TRACE("ethdev port_id=%d max_rx_pkt_len %u"
@@ -806,6 +824,7 @@ rte_eth_dev_configure(uint8_t port_id, uint16_t nb_rx_q, uint16_t nb_tx_q,
 	/*
 	 * Setup new number of RX/TX queues and reconfigure device.
 	 */
+	//rx队列配置
 	diag = rte_eth_dev_rx_queue_config(dev, nb_rx_q);
 	if (diag != 0) {
 		RTE_PMD_DEBUG_TRACE("port%d rte_eth_dev_rx_queue_config = %d\n",
@@ -813,10 +832,12 @@ rte_eth_dev_configure(uint8_t port_id, uint16_t nb_rx_q, uint16_t nb_tx_q,
 		return diag;
 	}
 
+	//tx队列配置（准备存放对列指针的空间）
 	diag = rte_eth_dev_tx_queue_config(dev, nb_tx_q);
 	if (diag != 0) {
 		RTE_PMD_DEBUG_TRACE("port%d rte_eth_dev_tx_queue_config = %d\n",
 				port_id, diag);
+		//释放rx队列
 		rte_eth_dev_rx_queue_config(dev, 0);
 		return diag;
 	}
@@ -1098,7 +1119,7 @@ rte_eth_rx_queue_setup(uint8_t port_id, uint16_t rx_queue_id,
 	return ret;
 }
 
-//启动发队列
+//构造发队列
 int
 rte_eth_tx_queue_setup(uint8_t port_id, uint16_t tx_queue_id,
 		       uint16_t nb_tx_desc, unsigned int socket_id,
@@ -1112,16 +1133,19 @@ rte_eth_tx_queue_setup(uint8_t port_id, uint16_t tx_queue_id,
 
 	dev = &rte_eth_devices[port_id];
 	if (tx_queue_id >= dev->data->nb_tx_queues) {
+		//给定的tx_queue_id大于queue总数，调用有误
 		RTE_PMD_DEBUG_TRACE("Invalid TX queue_id=%d\n", tx_queue_id);
 		return -EINVAL;
 	}
 
+	//设备处理start状态，现在不容许配置
 	if (dev->data->dev_started) {
 		RTE_PMD_DEBUG_TRACE(
 		    "port %d must be stopped to allow configuration\n", port_id);
 		return -EBUSY;
 	}
 
+	//设备回调检查
 	RTE_FUNC_PTR_OR_ERR_RET(*dev->dev_ops->dev_infos_get, -ENOTSUP);
 	RTE_FUNC_PTR_OR_ERR_RET(*dev->dev_ops->tx_queue_setup, -ENOTSUP);
 
@@ -1130,6 +1154,7 @@ rte_eth_tx_queue_setup(uint8_t port_id, uint16_t tx_queue_id,
 	if (nb_tx_desc > dev_info.tx_desc_lim.nb_max ||
 	    nb_tx_desc < dev_info.tx_desc_lim.nb_min ||
 	    nb_tx_desc % dev_info.tx_desc_lim.nb_align != 0) {
+		//tx描述符取值过大或者过小或者与要求的数量不对齐
 		RTE_PMD_DEBUG_TRACE("Invalid value for nb_tx_desc(=%hu), "
 				"should be: <= %hu, = %hu, and a product of %hu\n",
 				nb_tx_desc,
@@ -1141,6 +1166,7 @@ rte_eth_tx_queue_setup(uint8_t port_id, uint16_t tx_queue_id,
 
 	txq = dev->data->tx_queues;
 	if (txq[tx_queue_id]) {
+		//要设置的txq已有值，需要将原队列释放掉
 		RTE_FUNC_PTR_OR_ERR_RET(*dev->dev_ops->tx_queue_release,
 					-ENOTSUP);
 		(*dev->dev_ops->tx_queue_release)(txq[tx_queue_id]);
@@ -1148,8 +1174,10 @@ rte_eth_tx_queue_setup(uint8_t port_id, uint16_t tx_queue_id,
 	}
 
 	if (tx_conf == NULL)
+		//如果未指定，采用设备的默认tx配置
 		tx_conf = &dev_info.default_txconf;
 
+	//创建tx队列tx_queue_id,队列的发送描述符nb_tx_desc,内存位置socket_id
 	return (*dev->dev_ops->tx_queue_setup)(dev, tx_queue_id, nb_tx_desc,
 					       socket_id, tx_conf);
 }
@@ -1313,7 +1341,7 @@ rte_eth_link_get(uint8_t port_id, struct rte_eth_link *eth_link)
 	struct rte_eth_dev *dev;
 
 	RTE_ETH_VALID_PORTID_OR_RET(port_id);
-	dev = &rte_eth_devices[port_id];
+	dev = &rte_eth_devices[port_id];//取出对应的设备
 
 	if (dev->data->dev_conf.intr_conf.lsc != 0)
 		rte_eth_dev_atomic_read_link_status(dev, eth_link);
@@ -1897,6 +1925,7 @@ rte_eth_dev_fw_version_get(uint8_t port_id, char *fw_version, size_t fw_size)
 	return (*dev->dev_ops->fw_version_get)(dev, fw_version, fw_size);
 }
 
+//取设备信息（获得：收描述符最大值，发措述符最大值）
 void
 rte_eth_dev_info_get(uint8_t port_id, struct rte_eth_dev_info *dev_info)
 {
@@ -2689,6 +2718,7 @@ rte_eth_dev_callback_register(uint8_t port_id,
 		if (user_cb->cb_fn == cb_fn &&
 			user_cb->cb_arg == cb_arg &&
 			user_cb->event == event) {
+			//重复注册情况
 			break;
 		}
 	}
@@ -2701,6 +2731,7 @@ rte_eth_dev_callback_register(uint8_t port_id,
 			user_cb->cb_fn = cb_fn;
 			user_cb->cb_arg = cb_arg;
 			user_cb->event = event;
+			//添加入链表，完成注册
 			TAILQ_INSERT_TAIL(&(dev->link_intr_cbs), user_cb, next);
 		}
 	}
@@ -2709,6 +2740,7 @@ rte_eth_dev_callback_register(uint8_t port_id,
 	return (user_cb == NULL) ? -ENOMEM : 0;
 }
 
+//解注册
 int
 rte_eth_dev_callback_unregister(uint8_t port_id,
 			enum rte_eth_event_type event,
@@ -2741,9 +2773,11 @@ rte_eth_dev_callback_unregister(uint8_t port_id,
 		 * then remove it.
 		 */
 		if (cb->active == 0) {
+			//未执行回调，可安全删除
 			TAILQ_REMOVE(&(dev->link_intr_cbs), cb, next);
 			rte_free(cb);
 		} else {
+			//已计划执行回调，需要稍后重试
 			ret = -EAGAIN;
 		}
 	}
@@ -2764,14 +2798,16 @@ _rte_eth_dev_callback_process(struct rte_eth_dev *dev,
 	TAILQ_FOREACH(cb_lst, &(dev->link_intr_cbs), next) {
 		if (cb_lst->cb_fn == NULL || cb_lst->event != event)
 			continue;
+		//找到合乎的回调
 		dev_cb = *cb_lst;
-		cb_lst->active = 1;
+		cb_lst->active = 1;//标记开始执行回调
 		if (cb_arg != NULL)
 			dev_cb.cb_arg = cb_arg;
 		if (ret_param != NULL)
 			dev_cb.ret_param = ret_param;
 
 		rte_spinlock_unlock(&rte_eth_dev_cb_lock);
+		//解锁执行回调
 		rc = dev_cb.cb_fn(dev->data->port_id, dev_cb.event,
 				dev_cb.cb_arg, dev_cb.ret_param);
 		rte_spinlock_lock(&rte_eth_dev_cb_lock);
