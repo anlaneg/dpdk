@@ -313,6 +313,7 @@ rte_eth_dev_socket_id(uint8_t port_id)
 	return rte_eth_devices[port_id].data->numa_node;
 }
 
+//获取系统共识别出多少个设备
 uint8_t
 rte_eth_dev_count(void)
 {
@@ -1976,6 +1977,7 @@ rte_eth_dev_get_supported_ptypes(uint8_t port_id, uint32_t ptype_mask,
 	return j;
 }
 
+//给定port id，取此port对应的mac地址
 void
 rte_eth_macaddr_get(uint8_t port_id, struct ether_addr *mac_addr)
 {
