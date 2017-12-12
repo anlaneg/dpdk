@@ -68,6 +68,7 @@ struct vhost_user_socket {
 	bool is_server;//是否为server
 	bool reconnect;//是否开启重连接
 	bool dequeue_zero_copy;//是否开启出队zero copy
+	bool iommu_support;
 
 	/*
 	 * The "supported_features" indicates the feature bits the
@@ -222,9 +223,7 @@ vhost_user_add_connection(int fd, struct vhost_user_socket *vsocket)
 	//申请一个vhost
 	vid = vhost_new_device();
 	if (vid == -1) {
-		close(fd);
-		free(conn);
-		return;
+		goto err;
 	}
 
 	size = strnlen(vsocket->path, PATH_MAX);
@@ -236,6 +235,16 @@ vhost_user_add_connection(int fd, struct vhost_user_socket *vsocket)
 
 	RTE_LOG(INFO, VHOST_CONFIG, "new device, handle is %d\n", vid);
 
+	if (vsocket->notify_ops->new_connection) {
+		ret = vsocket->notify_ops->new_connection(vid);
+		if (ret < 0) {
+			RTE_LOG(ERR, VHOST_CONFIG,
+				"failed to add vhost user connection with fd %d\n",
+				fd);
+			goto err;
+		}
+	}
+
 	//初始化连接，注册fd进行读取
 	conn->connfd = fd;
 	conn->vsocket = vsocket;
@@ -243,18 +252,24 @@ vhost_user_add_connection(int fd, struct vhost_user_socket *vsocket)
 	ret = fdset_add(&vhost_user.fdset, fd, vhost_user_read_cb,
 			NULL, conn);
 	if (ret < 0) {
-		conn->connfd = -1;
-		free(conn);
-		close(fd);
 		RTE_LOG(ERR, VHOST_CONFIG,
 			"failed to add fd %d into vhost server fdset\n",
 			fd);
-		return;
+
+		if (vsocket->notify_ops->destroy_connection)
+			vsocket->notify_ops->destroy_connection(conn->vid);
+
+		goto err;
 	}
 
 	pthread_mutex_lock(&vsocket->conn_mutex);
 	TAILQ_INSERT_TAIL(&vsocket->conn_list, conn, next);
 	pthread_mutex_unlock(&vsocket->conn_mutex);
+	return;
+
+err:
+	free(conn);
+	close(fd);
 }
 
 /* call back when there is new vhost-user connection from client  */
@@ -286,6 +301,9 @@ vhost_user_read_cb(int connfd, void *dat, int *remove)
 		close(connfd);
 		*remove = 1;
 		vhost_destroy_device(conn->vid);
+
+		if (vsocket->notify_ops->destroy_connection)
+			vsocket->notify_ops->destroy_connection(conn->vid);
 
 		pthread_mutex_lock(&vsocket->conn_mutex);
 		TAILQ_REMOVE(&vsocket->conn_list, conn, next);
@@ -698,6 +716,11 @@ rte_vhost_driver_register(const char *path, uint64_t flags)
 	//标记支持的功能
 	vsocket->supported_features = VIRTIO_NET_SUPPORTED_FEATURES;
 	vsocket->features           = VIRTIO_NET_SUPPORTED_FEATURES;
+
+	if (!(flags & RTE_VHOST_USER_IOMMU_SUPPORT)) {
+		vsocket->supported_features &= ~(1ULL << VIRTIO_F_IOMMU_PLATFORM);
+		vsocket->features &= ~(1ULL << VIRTIO_F_IOMMU_PLATFORM);
+	}
 
 	//指明为vhost user client
 	if ((flags & RTE_VHOST_USER_CLIENT) != 0) {

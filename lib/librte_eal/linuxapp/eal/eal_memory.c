@@ -59,7 +59,6 @@
 
 #include <rte_log.h>
 #include <rte_memory.h>
-#include <rte_memzone.h>
 #include <rte_launch.h>
 #include <rte_eal.h>
 #include <rte_eal_memconfig.h>
@@ -74,13 +73,6 @@
 #include "eal_hugepages.h"
 
 #define PFN_MASK_SIZE	8
-
-#ifdef RTE_LIBRTE_XEN_DOM0
-int rte_xen_dom0_supported(void)
-{
-	return internal_config.xen_dom0_support;
-}
-#endif
 
 /**
  * @file
@@ -107,10 +99,6 @@ test_phys_addrs_available(void)
 	uint64_t tmp;
 	phys_addr_t physaddr;
 
-	/* For dom0, phys addresses can always be available */
-	if (rte_xen_dom0_supported())
-		return;
-
 	if (!rte_eal_has_hugepages()) {
 		RTE_LOG(ERR, EAL,
 			"Started without hugepages support, physical addresses not available\n");
@@ -120,11 +108,13 @@ test_phys_addrs_available(void)
 
 	physaddr = rte_mem_virt2phy(&tmp);
 	if (physaddr == RTE_BAD_PHYS_ADDR) {
-		RTE_LOG(ERR, EAL,
-			"Cannot obtain physical addresses: %s. "
-			"Only vfio will function.\n",
-			strerror(errno));
-		phys_addrs_available = false;//如果我们拿不再physaddr的物理地址，说明系统的物理机址是不可取的
+		if (rte_eal_iova_mode() == RTE_IOVA_PA)
+			RTE_LOG(ERR, EAL,
+				"Cannot obtain physical addresses: %s. "
+				"Only vfio will function.\n",
+				strerror(errno));
+		//如果我们拿不到physaddr的物理地址，说明系统的物理机址是不可取的
+		phys_addrs_available = false;
 	}
 }
 
@@ -141,32 +131,9 @@ rte_mem_virt2phy(const void *virtaddr)
 	int page_size;
 	off_t offset;
 
-	/* when using dom0, /proc/self/pagemap always returns 0, check in
-	 * dpdk memory by browsing the memsegs */
-	if (rte_xen_dom0_supported()) {
-		struct rte_mem_config *mcfg;
-		struct rte_memseg *memseg;
-		unsigned i;
-
-		mcfg = rte_eal_get_configuration()->mem_config;
-		for (i = 0; i < RTE_MAX_MEMSEG; i++) {
-			memseg = &mcfg->memseg[i];
-			if (memseg->addr == NULL)
-				break;
-			if (virtaddr > memseg->addr &&
-					virtaddr < RTE_PTR_ADD(memseg->addr,
-						memseg->len)) {
-				return memseg->phys_addr +
-					RTE_PTR_DIFF(virtaddr, memseg->addr);
-			}
-		}
-
-		return RTE_BAD_PHYS_ADDR;
-	}
-
 	/* Cannot parse /proc/self/pagemap, no need to log errors everywhere */
 	if (!phys_addrs_available)
-		return RTE_BAD_PHYS_ADDR;
+		return RTE_BAD_IOVA;
 
 	/* standard page size */
 	//通过/proc/self/pagemap文件读取指定页首地址对应的物理地址
@@ -176,7 +143,7 @@ rte_mem_virt2phy(const void *virtaddr)
 	if (fd < 0) {
 		RTE_LOG(ERR, EAL, "%s(): cannot open /proc/self/pagemap: %s\n",
 			__func__, strerror(errno));
-		return RTE_BAD_PHYS_ADDR;
+		return RTE_BAD_IOVA;
 	}
 
 	virt_pfn = (unsigned long)virtaddr / page_size;
@@ -185,7 +152,7 @@ rte_mem_virt2phy(const void *virtaddr)
 		RTE_LOG(ERR, EAL, "%s(): seek error in /proc/self/pagemap: %s\n",
 				__func__, strerror(errno));
 		close(fd);
-		return RTE_BAD_PHYS_ADDR;
+		return RTE_BAD_IOVA;
 	}
 
 	retval = read(fd, &page, PFN_MASK_SIZE);
@@ -193,12 +160,12 @@ rte_mem_virt2phy(const void *virtaddr)
 	if (retval < 0) {
 		RTE_LOG(ERR, EAL, "%s(): cannot read /proc/self/pagemap: %s\n",
 				__func__, strerror(errno));
-		return RTE_BAD_PHYS_ADDR;
+		return RTE_BAD_IOVA;
 	} else if (retval != PFN_MASK_SIZE) {
 		RTE_LOG(ERR, EAL, "%s(): read %d bytes from /proc/self/pagemap "
 				"but expected %d:\n",
 				__func__, retval, PFN_MASK_SIZE);
-		return RTE_BAD_PHYS_ADDR;
+		return RTE_BAD_IOVA;
 	}
 
 	/*
@@ -207,13 +174,21 @@ rte_mem_virt2phy(const void *virtaddr)
 	 */
 	//有效地址在0-54位，如果0-54位为0，则说明地址有误
 	if ((page & 0x7fffffffffffffULL) == 0)
-		return RTE_BAD_PHYS_ADDR;
+		return RTE_BAD_IOVA;
 
 	//求出虚地址页首地址对应的物理机址，再由此算出具体一个虚地址对应的物理地址
 	physaddr = ((page & 0x7fffffffffffffULL) * page_size)
 		+ ((unsigned long)virtaddr % page_size);
 
 	return physaddr;
+}
+
+rte_iova_t
+rte_mem_virt2iova(const void *virtaddr)
+{
+	if (rte_eal_iova_mode() == RTE_IOVA_VA)
+		return (uintptr_t)virtaddr;
+	return rte_mem_virt2phy(virtaddr);
 }
 
 /*
@@ -375,7 +350,7 @@ void numa_error(char *where)
  * hugetlbfs, then mmap() hugepage_sz data in it. If orig is set, the
  * virtual address is stored in hugepg_tbl[i].orig_va, else it is stored
  * in hugepg_tbl[i].final_va. The second mapping (when orig is 0) tries to
- * map continguous physical blocks in contiguous virtual blocks.
+ * map contiguous physical blocks in contiguous virtual blocks.
  */
 static unsigned
 map_all_hugepages(struct hugepage_file *hugepg_tbl, struct hugepage_info *hpi,
@@ -721,6 +696,8 @@ create_shared_memory(const char *filename, const size_t mem_size)
 	}
 	retval = mmap(NULL, mem_size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
 	close(fd);
+	if (retval == MAP_FAILED)
+		return NULL;
 	return retval;
 }
 
@@ -1066,23 +1043,15 @@ rte_eal_hugepage_init(void)
 					strerror(errno));
 			return -1;
 		}
-		mcfg->memseg[0].phys_addr = RTE_BAD_PHYS_ADDR;
+		if (rte_eal_iova_mode() == RTE_IOVA_VA)
+			mcfg->memseg[0].iova = (uintptr_t)addr;
+		else
+			mcfg->memseg[0].iova = RTE_BAD_IOVA;
 		mcfg->memseg[0].addr = addr;
 		mcfg->memseg[0].hugepage_sz = RTE_PGSIZE_4K;
 		mcfg->memseg[0].len = internal_config.memory;
 		mcfg->memseg[0].socket_id = 0;
 		return 0;
-	}
-
-/* check if app runs on Xen Dom0 */
-	if (internal_config.xen_dom0_support) {
-#ifdef RTE_LIBRTE_XEN_DOM0
-		/* use dom0_mm kernel driver to init memory */
-		if (rte_xen_dom0_memory_init() < 0)
-			return -1;
-		else
-			return 0;
-#endif
 	}
 
 	/* calculate total number of hugepages available. at this point we haven't
@@ -1326,7 +1295,7 @@ rte_eal_hugepage_init(void)
 			if (j == RTE_MAX_MEMSEG)
 				break;
 
-			mcfg->memseg[j].phys_addr = hugepage[i].physaddr;
+			mcfg->memseg[j].iova = hugepage[i].physaddr;
 			mcfg->memseg[j].addr = hugepage[i].final_va;
 			mcfg->memseg[j].len = hugepage[i].size;
 			mcfg->memseg[j].socket_id = hugepage[i].socket_id;
@@ -1337,7 +1306,7 @@ rte_eal_hugepage_init(void)
 #ifdef RTE_ARCH_PPC_64
 		/* Use the phy and virt address of the last page as segment
 		 * address for IBM Power architecture */
-			mcfg->memseg[j].phys_addr = hugepage[i].physaddr;
+			mcfg->memseg[j].iova = hugepage[i].physaddr;
 			mcfg->memseg[j].addr = hugepage[i].final_va;
 #endif
 			mcfg->memseg[j].len += mcfg->memseg[j].hugepage_sz;
@@ -1407,17 +1376,6 @@ rte_eal_hugepage_attach(void)
 
 	//检测系统是否可以取到物理地址
 	test_phys_addrs_available();
-
-	if (internal_config.xen_dom0_support) {
-#ifdef RTE_LIBRTE_XEN_DOM0
-		if (rte_xen_dom0_memory_attach() < 0) {
-			RTE_LOG(ERR, EAL, "Failed to attach memory segments of primary "
-					"process\n");
-			return -1;
-		}
-		return 0;
-#endif
-	}
 
 	fd_zero = open("/dev/zero", O_RDONLY);
 	if (fd_zero < 0) {
@@ -1550,7 +1508,7 @@ error:
 	return -1;
 }
 
-bool
+int
 rte_eal_using_phys_addrs(void)
 {
 	return phys_addrs_available;

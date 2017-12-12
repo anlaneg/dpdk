@@ -39,7 +39,7 @@
 #include <rte_ethdev_vdev.h>
 #include <rte_malloc.h>
 #include <rte_memcpy.h>
-#include <rte_vdev.h>
+#include <rte_bus_vdev.h>
 #include <rte_kvargs.h>
 #include <rte_vhost.h>
 #include <rte_spinlock.h>
@@ -56,6 +56,7 @@ enum {VIRTIO_RXQ, VIRTIO_TXQ, VIRTIO_QNUM};
 #define ETH_VHOST_QUEUES_ARG		"queues"
 #define ETH_VHOST_CLIENT_ARG		"client"
 #define ETH_VHOST_DEQUEUE_ZERO_COPY	"dequeue-zero-copy"
+#define ETH_VHOST_IOMMU_SUPPORT		"iommu-support"
 #define VHOST_MAX_PKT_BURST 32
 
 static const char *valid_arguments[] = {
@@ -63,6 +64,7 @@ static const char *valid_arguments[] = {
 	ETH_VHOST_QUEUES_ARG,
 	ETH_VHOST_CLIENT_ARG,
 	ETH_VHOST_DEQUEUE_ZERO_COPY,
+	ETH_VHOST_IOMMU_SUPPORT,
 	NULL
 };
 
@@ -109,7 +111,7 @@ struct vhost_queue {
 	rte_atomic32_t while_queuing;
 	struct pmd_internal *internal;
 	struct rte_mempool *mb_pool;//vq使用那个pool上的mbuf
-	uint8_t port;
+	uint16_t port;
 	uint16_t virtqueue_id;//虚队列编号
 	struct vhost_stats stats;
 };
@@ -709,7 +711,7 @@ static struct vhost_device_ops vhost_ops = {
 };
 
 int
-rte_eth_vhost_get_queue_event(uint8_t port_id,
+rte_eth_vhost_get_queue_event(uint16_t port_id,
 		struct rte_eth_vhost_queue_event *event)
 {
 	struct rte_vhost_vring_state *state;
@@ -746,7 +748,7 @@ rte_eth_vhost_get_queue_event(uint8_t port_id,
 }
 
 int
-rte_eth_vhost_get_vid_from_port_id(uint8_t port_id)
+rte_eth_vhost_get_vid_from_port_id(uint16_t port_id)
 {
 	struct internal_list *list;
 	struct rte_eth_dev *eth_dev;
@@ -899,7 +901,7 @@ eth_dev_info(struct rte_eth_dev *dev,
 	dev_info->min_rx_bufsize = 0;
 }
 
-static void
+static int
 eth_stats_get(struct rte_eth_dev *dev, struct rte_eth_stats *stats)
 {
 	unsigned i;
@@ -937,6 +939,8 @@ eth_stats_get(struct rte_eth_dev *dev, struct rte_eth_stats *stats)
 	stats->oerrors = tx_missed_total;
 	stats->ibytes = rx_total_bytes;
 	stats->obytes = tx_total_bytes;
+
+	return 0;
 }
 
 static void
@@ -1093,8 +1097,7 @@ eth_dev_vhost_create(struct rte_vdev_device *dev, char *iface_name,
 	internal->max_queues = queues;
 	data->dev_link = pmd_link;
 	data->mac_addrs = eth_addr;
-	data->dev_flags =
-		RTE_ETH_DEV_DETACHABLE | RTE_ETH_DEV_INTR_LSC;
+	data->dev_flags = RTE_ETH_DEV_INTR_LSC;
 
 	eth_dev->dev_ops = &ops;
 
@@ -1179,6 +1182,7 @@ rte_pmd_vhost_probe(struct rte_vdev_device *dev)
 	uint64_t flags = 0;
 	int client_mode = 0;
 	int dequeue_zero_copy = 0;
+	int iommu_support = 0;
 
 	RTE_LOG(INFO, PMD, "Initializing pmd_vhost for %s\n",
 		rte_vdev_device_name(dev));
@@ -1233,6 +1237,16 @@ rte_pmd_vhost_probe(struct rte_vdev_device *dev)
 		if (dequeue_zero_copy)
 			//标记dequeue-zero-copy
 			flags |= RTE_VHOST_USER_DEQUEUE_ZERO_COPY;
+	}
+
+	if (rte_kvargs_count(kvlist, ETH_VHOST_IOMMU_SUPPORT) == 1) {
+		ret = rte_kvargs_process(kvlist, ETH_VHOST_IOMMU_SUPPORT,
+					 &open_int, &iommu_support);
+		if (ret < 0)
+			goto out_free;
+
+		if (iommu_support)
+			flags |= RTE_VHOST_USER_IOMMU_SUPPORT;
 	}
 
 	//设置numa_node

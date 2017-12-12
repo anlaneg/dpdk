@@ -89,4 +89,4 @@ rte_rand(void)
 #endif
 
 
-#endif /* _RTE_PER_LCORE_H_ */
+#endif /* _RTE_RANDOM_H_ */

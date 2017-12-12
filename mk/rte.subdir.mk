@@ -64,8 +64,7 @@ $(DIRS-y):
 	@[ -d $(CURDIR)/$@ ] || mkdir -p $(CURDIR)/$@
 	#进行指定源代码子目录进行编译
 	@echo "== Build $S/$@"
-	@$(MAKE) S=$S/$@ -f $(SRCDIR)/$@/Makefile -C $(CURDIR)/$@ \
-		DEPDIRS="$(DEPDIRS-$@)" all
+	@$(MAKE) S=$S/$@ -f $(SRCDIR)/$@/Makefile -C $(CURDIR)/$@ all
 
 .PHONY: clean
 clean: _postclean

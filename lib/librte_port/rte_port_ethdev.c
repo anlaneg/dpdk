@@ -60,7 +60,7 @@ struct rte_port_ethdev_reader {
 	struct rte_port_in_stats stats;
 
 	uint16_t queue_id;
-	uint8_t port_id;
+	uint16_t port_id;
 };
 
 //创建逻辑port(对应的是某port的某队列）
@@ -163,7 +163,7 @@ struct rte_port_ethdev_writer {
 	uint16_t tx_buf_count;//当前发送缓存中含有多少buf
 	uint64_t bsz_mask;//tx_buf_count为2的n次方,mask为其减1
 	uint16_t queue_id;
-	uint8_t port_id;
+	uint16_t port_id;
 };
 
 //创建write对象
@@ -352,7 +352,7 @@ struct rte_port_ethdev_writer_nodrop {
 	uint64_t bsz_mask;
 	uint64_t n_retries;//尝试发送多少次
 	uint16_t queue_id;
-	uint8_t port_id;
+	uint16_t port_id;
 };
 
 static void *

@@ -65,7 +65,6 @@ struct internal_config {
 	volatile unsigned force_nrank;    /**< force number of ranks */ //内存强制rank
 	volatile unsigned no_hugetlbfs;   /**< true to disable hugetlbfs */
 	unsigned hugepage_unlink;         /**< true to unlink backing files */
-	volatile unsigned xen_dom0_support; /**< support app running on Xen Dom0*/
 	volatile unsigned no_pci;         /**< true to disable PCI */ //是否禁用pci,debug用
 	volatile unsigned no_hpet;        /**< true to disable HPET */
 	volatile unsigned vmware_tsc_map; /**< true to use VMware TSC mapping
@@ -85,7 +84,7 @@ struct internal_config {
 	volatile enum rte_intr_mode vfio_intr_mode;
 	const char *hugefile_prefix;      /**< the base filename of hugetlbfs files */ //大页文件前缀（默认rte)
 	const char *hugepage_dir;         /**< specific hugetlbfs directory to use */ //采用那个大页目录
-
+	const char *mbuf_pool_ops_name;   /**< mbuf pool ops name */
 	unsigned num_hugepage_sizes;      /**< how many sizes on this system */ //有多少种大页类型
 	struct hugepage_info hugepage_info[MAX_HUGEPAGE_SIZES];//每种大页的信息
 };
