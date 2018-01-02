@@ -123,6 +123,7 @@ pci_uio_map_resource(struct rte_pci_device *dev)
 
 	/* secondary processes - use already recorded details */
 	if (rte_eal_process_type() != RTE_PROC_PRIMARY)
+		//如果是从进程，则使用已记录的映射
 		return pci_uio_map_secondary(dev);
 
 	/* allocate uio resource */

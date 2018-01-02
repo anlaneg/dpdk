@@ -88,7 +88,7 @@
 
 static uint64_t baseaddr_offset;
 
-static bool phys_addrs_available = true;
+static bool phys_addrs_available = true;//默认是可以使用物理地址的
 
 #define RANDOMIZE_VA_SPACE_FILE "/proc/sys/kernel/randomize_va_space"
 
@@ -99,6 +99,7 @@ test_phys_addrs_available(void)
 	uint64_t tmp;
 	phys_addr_t physaddr;
 
+	//如果不使用大页，则物理地址无效
 	if (!rte_eal_has_hugepages()) {
 		RTE_LOG(ERR, EAL,
 			"Started without hugepages support, physical addresses not available\n");
@@ -106,6 +107,7 @@ test_phys_addrs_available(void)
 		return;
 	}
 
+	//检查是否可以拿到tmp的物理地址
 	physaddr = rte_mem_virt2phy(&tmp);
 	if (physaddr == RTE_BAD_PHYS_ADDR) {
 		if (rte_eal_iova_mode() == RTE_IOVA_PA)
@@ -146,15 +148,17 @@ rte_mem_virt2phy(const void *virtaddr)
 		return RTE_BAD_IOVA;
 	}
 
-	virt_pfn = (unsigned long)virtaddr / page_size;
-	offset = sizeof(uint64_t) * virt_pfn;
+	virt_pfn = (unsigned long)virtaddr / page_size;//虚拟地址对应的页号
+	offset = sizeof(uint64_t) * virt_pfn;//采用64位输出指针地址，故需要偏移sizeof(uint64_t)*virt_pfn
 	if (lseek(fd, offset, SEEK_SET) == (off_t) -1) {
+		//偏移到指定页
 		RTE_LOG(ERR, EAL, "%s(): seek error in /proc/self/pagemap: %s\n",
 				__func__, strerror(errno));
 		close(fd);
 		return RTE_BAD_IOVA;
 	}
 
+	//读取此页对应的物理地址（8字节）
 	retval = read(fd, &page, PFN_MASK_SIZE);
 	close(fd);
 	if (retval < 0) {
@@ -1508,6 +1512,7 @@ error:
 	return -1;
 }
 
+//检查当前系统是否可以获取到物理地址
 int
 rte_eal_using_phys_addrs(void)
 {

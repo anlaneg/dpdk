@@ -224,8 +224,8 @@ struct pci_map {
 struct mapped_pci_resource {
 	TAILQ_ENTRY(mapped_pci_resource) next;
 
-	struct rte_pci_addr pci_addr;
-	char path[PATH_MAX];
+	struct rte_pci_addr pci_addr;//设备pci地址
+	char path[PATH_MAX];//设备名称
 	int nb_maps;
 	struct pci_map maps[PCI_MAX_RESOURCE];
 };

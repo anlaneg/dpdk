@@ -524,6 +524,7 @@ rte_eal_init(int argc, char **argv)
 		return -1;
 	}
 
+	//防止rte_eal_init函数被多次调用
 	if (!rte_atomic32_test_and_set(&run_once)) {
 		rte_eal_init_alert("already called initialization.");
 		rte_errno = EALREADY;
@@ -543,6 +544,7 @@ rte_eal_init(int argc, char **argv)
 		return -1;
 	}
 
+	//解析命令行
 	fctret = eal_parse_args(argc, argv);
 	if (fctret < 0) {
 		rte_eal_init_alert("Invalid 'command line' arguments.");
@@ -564,6 +566,7 @@ rte_eal_init(int argc, char **argv)
 		return -1;
 	}
 
+	//使注册的所有bus进行扫描
 	if (rte_bus_scan()) {
 		rte_eal_init_alert("Cannot scan the buses for devices\n");
 		rte_errno = ENODEV;

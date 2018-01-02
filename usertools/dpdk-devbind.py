@@ -1,4 +1,5 @@
 #! /usr/bin/env python
+# encoding:utf-8
 #
 #   BSD LICENSE
 #
@@ -195,18 +196,22 @@ def check_modules():
         sysfs_path = '/sys/module/'
 
         # Get the list of directories in sysfs_path
+        # 收集sysfs_path下所有目录
         sysfs_mods = [os.path.join(sysfs_path, o) for o
                       in os.listdir(sysfs_path)
                       if os.path.isdir(os.path.join(sysfs_path, o))]
 
         # Extract the last element of '/sys/module/abc' in the array
+        #取出所有模块名称
         sysfs_mods = [a.split('/')[-1] for a in sysfs_mods]
 
         # special case for vfio_pci (module is named vfio-pci,
         # but its .ko is named vfio_pci)
+        # 将vfio_pci更改为vfio-pci
         sysfs_mods = [a if a != 'vfio_pci' else 'vfio-pci' for a in sysfs_mods]
 
         for mod in mods:
+            #如果sysfs_mods中包含mod["Name"]，则将其置为发现
             if mod["Name"] in sysfs_mods:
                 mod["Found"] = True
     except:
@@ -215,12 +220,16 @@ def check_modules():
     # check if we have at least one loaded module
     if True not in [mod["Found"] for mod in mods] and b_flag is not None:
         if b_flag in dpdk_drivers:
+            #b_flag要求了dpdk_drivers中指定的driver,但dpdk_drivers中的driver均
+            #在系统中没有被发现
             print("Error - no supported modules(DPDK driver) are loaded")
             sys.exit(1)
         else:
+            #指定的driver，不被dpdk支持
             print("Warning - no supported modules(DPDK driver) are loaded")
 
     # change DPDK driver list to only contain drivers that are loaded
+    #将driver变量缩小为被发现的模块。
     dpdk_drivers = [mod["Name"] for mod in mods if mod["Found"]]
 
 
@@ -271,8 +280,27 @@ def get_device_details(devices_type):
     # request machine readable format, with numeric IDs and String
     dev = {}
     dev_lines = check_output(["lspci", "-Dvmmnnk"]).splitlines()
+    """
+Slot:    0000:00:00.0
+Class:    Host bridge [0600]
+Vendor:    Intel Corporation [8086]
+Device:    440FX - 82441FX PMC [Natoma] [1237]
+SVendor:    Red Hat, Inc [1af4]
+SDevice:    Qemu virtual machine [1100]
+Rev:    02
+
+Slot:    0000:00:01.0
+Class:    ISA bridge [0601]
+Vendor:    Intel Corporation [8086]
+Device:    82371SB PIIX3 ISA [Natoma/Triton II] [7000]
+SVendor:    Red Hat, Inc [1af4]
+SDevice:    Qemu virtual machine [1100]
+    """
+
+
     for dev_line in dev_lines:
         if len(dev_line) == 0:
+            #一个块结束了
             if device_type_match(dev, devices_type):
                 # Replace "Driver" with "Driver_str" to have consistency of
                 # of dictionary key names
@@ -444,6 +472,7 @@ def bind_one(dev_id, driver, force):
                       % (dev_id, filename))
                 return
             try:
+                #指定解绑定哪种driver
                 f.write("%s" % driver)
                 f.close()
             except:
@@ -480,6 +509,7 @@ def bind_one(dev_id, driver, force):
             bind_one(dev_id, saved_driver, force)
         return
     try:
+        #进行绑定
         f.write(dev_id)
         f.close()
     except:
@@ -647,9 +677,11 @@ def parse_args():
         sys.exit(1)
 
     for opt, arg in opts:
+        #对help的处理
         if opt == "--help" or opt == "--usage":
             usage()
             sys.exit(0)
+        #检查其它的命令行参数的合法性
         if opt == "--status-dev":
             status_flag = True
             status_dev = arg
@@ -660,6 +692,7 @@ def parse_args():
             force_flag = True
         if opt == "-b" or opt == "-u" or opt == "--bind" or opt == "--unbind":
             if b_flag is not None:
+                #多次指出或者矛盾指出
                 print("Error - Only one bind or unbind may be specified\n")
                 sys.exit(1)
             if opt == "-u" or opt == "--unbind":

@@ -109,6 +109,7 @@ rte_pci_map_device(struct rte_pci_device *dev)
 	case RTE_KDRV_IGB_UIO:
 	case RTE_KDRV_UIO_GENERIC:
 		if (rte_eal_using_phys_addrs()) {
+			//可以使用物理地址，为uio来映射资源
 			/* map resources for devices that use uio */
 			ret = pci_uio_map_resource(dev);
 		}
@@ -217,6 +218,7 @@ pci_parse_sysfs_resource(const char *filename, struct rte_pci_device *dev)
 		return -1;
 	}
 
+	//最多提取6块资源
 	for (i = 0; i<PCI_MAX_RESOURCE; i++) {
 
 		if (fgets(buf, sizeof(buf), f) == NULL) {
@@ -490,6 +492,7 @@ rte_pci_scan(void)
 		RTE_LOG(DEBUG, EAL, "VFIO PCI modules not loaded\n");
 #endif
 
+	//通过sysfs的pci进行扫描
 	dir = opendir(rte_pci_get_sysfs_path());
 	if (dir == NULL) {
 		RTE_LOG(ERR, EAL, "%s(): opendir failed: %s\n",
@@ -512,7 +515,7 @@ rte_pci_scan(void)
 		snprintf(dirname, sizeof(dirname), "%s/%s",
 				rte_pci_get_sysfs_path(), e->d_name);
 
-		//扫描具体的一个pci设备
+		//扫描具体的一个pci设备，并将其加入到rte_pci_bus.device_list链上
 		if (pci_scan_one(dirname, &addr) < 0)
 			goto error;
 	}
@@ -527,6 +530,7 @@ error:
 /*
  * Is pci device bound to any kdrv
  */
+//检查是否存在一个pci设备是绑定了驱动的
 static inline int
 pci_one_device_is_bound(void)
 {
@@ -548,6 +552,7 @@ pci_one_device_is_bound(void)
 /*
  * Any one of the device bound to uio
  */
+//检查是否有任意一个设备绑定了uio驱动
 static inline int
 pci_one_device_bound_uio(void)
 {
@@ -575,6 +580,7 @@ pci_one_device_bound_uio(void)
 		if (!need_check)
 			continue;
 
+		//如果绑定的驱动为igb_uio或者uio_generic，则返回1
 		if (dev->kdrv == RTE_KDRV_IGB_UIO ||
 		   dev->kdrv == RTE_KDRV_UIO_GENERIC) {
 			return 1;

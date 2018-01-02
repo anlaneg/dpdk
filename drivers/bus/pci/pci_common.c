@@ -121,6 +121,7 @@ rte_pci_match(const struct rte_pci_driver *pci_drv,
 {
 	const struct rte_pci_id *id_table;
 
+	//检查驱动支持的设备列表中是否包含本设备
 	for (id_table = pci_drv->id_table; id_table->vendor_id != 0;
 	     id_table++) {
 		/* check if device's identifiers match the driver's ones */
@@ -170,7 +171,7 @@ rte_pci_probe_one_driver(struct rte_pci_driver *dr,
 		//此driver不匹配此device
 		return 1;
 
-	//设备被识别
+	//设备可以被此驱动使用
 	RTE_LOG(INFO, EAL, "PCI device "PCI_PRI_FMT" on NUMA socket %i\n",
 			loc->domain, loc->bus, loc->devid, loc->function,
 			dev->device.numa_node);
@@ -185,6 +186,7 @@ rte_pci_probe_one_driver(struct rte_pci_driver *dr,
 		return 1;
 	}
 
+	//设备所属numa不合法，更新为0
 	if (dev->device.numa_node < 0) {
 		RTE_LOG(WARNING, EAL, "  Invalid NUMA socket, default to 0\n");
 		dev->device.numa_node = 0;
@@ -194,6 +196,7 @@ rte_pci_probe_one_driver(struct rte_pci_driver *dr,
 	RTE_LOG(INFO, EAL, "  probe driver: %x:%x %s\n", dev->id.vendor_id,
 		dev->id.device_id, dr->driver.name);
 
+	//如果driver要求mapping，则进行资源map
 	if (dr->drv_flags & RTE_PCI_DRV_NEED_MAPPING) {
 		/* map resources for devices that use igb_uio */
 		ret = rte_pci_map_device(dev);
@@ -268,7 +271,7 @@ rte_pci_detach_dev(struct rte_pci_device *dev)
  * registered driver for the given device. Return -1 if initialization
  * failed, return 1 if no driver is found for this device.
  */
-//探测所有设备
+//探测当前device，检查其是否可以匹配已知的driver
 static int
 pci_probe_all_drivers(struct rte_pci_device *dev)
 {
@@ -321,6 +324,7 @@ rte_pci_probe_one(const struct rte_pci_addr *addr)
 		if (rte_pci_addr_cmp(&dev->addr, addr))
 			continue;
 
+		//找到要求probe的设备
 		ret = pci_probe_all_drivers(dev);
 		if (ret)
 			goto err_return;

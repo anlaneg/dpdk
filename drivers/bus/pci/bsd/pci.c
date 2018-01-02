@@ -139,6 +139,7 @@ pci_uio_free_resource(struct rte_pci_device *dev,
 	}
 }
 
+//申请uio_res
 int
 pci_uio_alloc_resource(struct rte_pci_device *dev,
 		struct mapped_pci_resource **uio_res)
@@ -151,6 +152,7 @@ pci_uio_alloc_resource(struct rte_pci_device *dev,
 	snprintf(devname, sizeof(devname), "/dev/uio@pci:%u:%u:%u",
 			dev->addr.bus, dev->addr.devid, dev->addr.function);
 
+	//尝试读写/dev/uio@pci:，检查文件是否存在
 	if (access(devname, O_RDWR) < 0) {
 		RTE_LOG(WARNING, EAL, "  "PCI_PRI_FMT" not managed by UIO driver, "
 				"skipping\n", loc->domain, loc->bus, loc->devid, loc->function);
@@ -167,6 +169,7 @@ pci_uio_alloc_resource(struct rte_pci_device *dev,
 	dev->intr_handle.type = RTE_INTR_HANDLE_UIO;
 
 	/* allocate the mapping details for secondary processes*/
+	//申请内存
 	*uio_res = rte_zmalloc("UIO_RES", sizeof(**uio_res), 0);
 	if (*uio_res == NULL) {
 		RTE_LOG(ERR, EAL,

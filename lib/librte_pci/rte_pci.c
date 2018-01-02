@@ -141,6 +141,7 @@ rte_eal_compare_pci_addr(const struct rte_pci_addr *addr,
 	return rte_pci_addr_cmp(addr, addr2);
 }
 
+//检查两个pci地址是否一致
 int
 rte_pci_addr_cmp(const struct rte_pci_addr *addr,
 	     const struct rte_pci_addr *addr2)

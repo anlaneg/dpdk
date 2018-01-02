@@ -39,7 +39,7 @@
 
 #include "eal_private.h"
 
-//注册的bus挂载此链上
+//注册的bus挂载此链上（在装载期间通过rte_bus_register完成注册）
 struct rte_bus_list rte_bus_list =
 	TAILQ_HEAD_INITIALIZER(rte_bus_list);
 
