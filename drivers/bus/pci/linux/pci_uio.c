@@ -102,6 +102,7 @@ pci_uio_set_bus_master(int dev_fd)
 	return 0;
 }
 
+//采用mknod创建uio 设备
 static int
 pci_mknod_uio_dev(const char *sysfs_uio_path, unsigned uio_num)
 {
@@ -113,6 +114,7 @@ pci_mknod_uio_dev(const char *sysfs_uio_path, unsigned uio_num)
 
 	/* get the name of the sysfs file that contains the major and minor
 	 * of the uio device and read its content */
+	//标例：/sys/bus/pci/devices/0000:00:02.0/uio/uio0/dev
 	snprintf(filename, sizeof(filename), "%s/dev", sysfs_uio_path);
 
 	f = fopen(filename, "r");
@@ -122,6 +124,7 @@ pci_mknod_uio_dev(const char *sysfs_uio_path, unsigned uio_num)
 		return -1;
 	}
 
+	//取设备号
 	ret = fscanf(f, "%u:%u", &major, &minor);
 	if (ret != 2) {
 		RTE_LOG(ERR, EAL, "%s(): cannot parse sysfs to get major:minor\n",
@@ -131,6 +134,7 @@ pci_mknod_uio_dev(const char *sysfs_uio_path, unsigned uio_num)
 	}
 	fclose(f);
 
+	//创建设备/dev/uio%u
 	/* create the char device "mknod /dev/uioX c major minor" */
 	snprintf(filename, sizeof(filename), "/dev/uio%u", uio_num);
 	dev = makedev(major, minor);
@@ -163,12 +167,14 @@ pci_get_uio_dev(struct rte_pci_device *dev, char *dstbuf,
 	/* depending on kernel version, uio can be located in uio/uioX
 	 * or uio:uioX */
 
+	//示例：/sys/bus/pci/devices/0000\:00\:02.0/uio/
 	snprintf(dirname, sizeof(dirname),
 			"%s/" PCI_PRI_FMT "/uio", rte_pci_get_sysfs_path(),
 			loc->domain, loc->bus, loc->devid, loc->function);
 
 	dir = opendir(dirname);
 	if (dir == NULL) {
+		//不存在此目录，去除掉/uio后再尝试
 		/* retry with the parent directory */
 		snprintf(dirname, sizeof(dirname),
 				"%s/" PCI_PRI_FMT, rte_pci_get_sysfs_path(),
@@ -176,6 +182,7 @@ pci_get_uio_dev(struct rte_pci_device *dev, char *dstbuf,
 		dir = opendir(dirname);
 
 		if (dir == NULL) {
+			//再尝试失败
 			RTE_LOG(ERR, EAL, "Cannot opendir %s\n", dirname);
 			return -1;
 		}
@@ -192,9 +199,10 @@ pci_get_uio_dev(struct rte_pci_device *dev, char *dstbuf,
 		if (strncmp(e->d_name, "uio", 3) != 0)
 			continue;
 
+		//我们找到了名称为"uio%d"目录
 		/* first try uio%d */
 		errno = 0;
-		uio_num = strtoull(e->d_name + shortprefix_len, &endptr, 10);
+		uio_num = strtoull(e->d_name + shortprefix_len, &endptr, 10);//取uio对应的%d
 		if (errno == 0 && endptr != (e->d_name + shortprefix_len)) {
 			snprintf(dstbuf, buflen, "%s/uio%u", dirname, uio_num);
 			break;
@@ -202,7 +210,7 @@ pci_get_uio_dev(struct rte_pci_device *dev, char *dstbuf,
 
 		/* then try uio:uio%d */
 		errno = 0;
-		uio_num = strtoull(e->d_name + longprefix_len, &endptr, 10);
+		uio_num = strtoull(e->d_name + longprefix_len, &endptr, 10);//尝试接uio:uio对应的%d
 		if (errno == 0 && endptr != (e->d_name + longprefix_len)) {
 			snprintf(dstbuf, buflen, "%s/uio:uio%u", dirname, uio_num);
 			break;
@@ -215,6 +223,7 @@ pci_get_uio_dev(struct rte_pci_device *dev, char *dstbuf,
 		return -1;
 
 	/* create uio device if we've been asked to */
+	//参数指定了创建，通过pci_mknod_uio_dev进行创建
 	if (rte_eal_create_uio_dev() && create &&
 			pci_mknod_uio_dev(dstbuf, uio_num) < 0)
 		RTE_LOG(WARNING, EAL, "Cannot create /dev/uio%u\n", uio_num);
@@ -252,6 +261,7 @@ pci_uio_alloc_resource(struct rte_pci_device *dev,
 	loc = &dev->addr;
 
 	/* find uio resource */
+	//获取此dev的uio设备编号
 	uio_num = pci_get_uio_dev(dev, dirname, sizeof(dirname), 1);
 	if (uio_num < 0) {
 		RTE_LOG(WARNING, EAL, "  "PCI_PRI_FMT" not managed by UIO driver, "
@@ -261,6 +271,7 @@ pci_uio_alloc_resource(struct rte_pci_device *dev,
 	snprintf(devname, sizeof(devname), "/dev/uio%u", uio_num);
 
 	/* save fd if in primary process */
+	//自此设备读取中断（打开此文件，用于中断处理）
 	dev->intr_handle.fd = open(devname, O_RDWR);
 	if (dev->intr_handle.fd < 0) {
 		RTE_LOG(ERR, EAL, "Cannot open %s: %s\n",
@@ -268,6 +279,7 @@ pci_uio_alloc_resource(struct rte_pci_device *dev,
 		goto error;
 	}
 
+	//打开配置文件
 	snprintf(cfgname, sizeof(cfgname),
 			"/sys/class/uio/uio%u/device/config", uio_num);
 	dev->intr_handle.uio_cfg_fd = open(cfgname, O_RDWR);
@@ -297,6 +309,7 @@ pci_uio_alloc_resource(struct rte_pci_device *dev,
 		goto error;
 	}
 
+	//填充uio_res的path及pci_addr
 	snprintf((*uio_res)->path, sizeof((*uio_res)->path), "%s", devname);
 	memcpy(&(*uio_res)->pci_addr, &dev->addr, sizeof((*uio_res)->pci_addr));
 
@@ -321,6 +334,7 @@ pci_uio_map_resource_by_index(struct rte_pci_device *dev, int res_idx,
 	maps = uio_res->maps;
 
 	/* update devname for mmap  */
+	//例：/sys/bus/pci/devices/0000\:00\:01.0/resource
 	snprintf(devname, sizeof(devname),
 			"%s/" PCI_PRI_FMT "/resource%d",
 			rte_pci_get_sysfs_path(),
@@ -338,6 +352,7 @@ pci_uio_map_resource_by_index(struct rte_pci_device *dev, int res_idx,
 	/*
 	 * open resource file, to mmap it
 	 */
+	//打开资源文件
 	fd = open(devname, O_RDWR);
 	if (fd < 0) {
 		RTE_LOG(ERR, EAL, "Cannot open %s: %s\n",
@@ -355,9 +370,11 @@ pci_uio_map_resource_by_index(struct rte_pci_device *dev, int res_idx,
 	if (mapaddr == MAP_FAILED)
 		goto error;
 
+	//取映射的内存地址
 	pci_map_addr = RTE_PTR_ADD(mapaddr,
 			(size_t)dev->mem_resource[res_idx].len);
 
+	//记录映射的地址
 	maps[map_idx].phaddr = dev->mem_resource[res_idx].phys_addr;
 	maps[map_idx].size = dev->mem_resource[res_idx].len;
 	maps[map_idx].addr = mapaddr;

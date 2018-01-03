@@ -175,6 +175,7 @@ rte_pci_addr_parse(const char *str, struct rte_pci_addr *addr)
 
 
 /* map a particular resource from a file */
+//实现对文件的映射
 void *
 pci_map_resource(void *requested_addr, int fd, off_t offset, size_t size,
 		 int additional_flags)

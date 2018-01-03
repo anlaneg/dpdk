@@ -213,6 +213,7 @@ pci_uio_map_resource_by_index(struct rte_pci_device *dev, int res_idx,
 	/*
 	 * open resource file, to mmap it
 	 */
+	//打开设备
 	fd = open(devname, O_RDWR);
 	if (fd < 0) {
 		RTE_LOG(ERR, EAL, "Cannot open %s: %s\n",
@@ -221,6 +222,7 @@ pci_uio_map_resource_by_index(struct rte_pci_device *dev, int res_idx,
 	}
 
 	/* if matching map is found, then use it */
+	//通过mmap来映射设备的内存
 	offset = res_idx * pagesz;
 	mapaddr = pci_map_resource(NULL, fd, (off_t)offset,
 			(size_t)dev->mem_resource[res_idx].len, 0);

@@ -108,6 +108,7 @@ pci_uio_map_secondary(struct rte_pci_device *dev)
 }
 
 /* map the PCI resource of a PCI device in virtual memory */
+//映射设备的内存
 int
 pci_uio_map_resource(struct rte_pci_device *dev)
 {
@@ -127,6 +128,7 @@ pci_uio_map_resource(struct rte_pci_device *dev)
 		return pci_uio_map_secondary(dev);
 
 	/* allocate uio resource */
+	//申请uio的资源
 	ret = pci_uio_alloc_resource(dev, &uio_res);
 	if (ret)
 		return ret;
@@ -136,8 +138,9 @@ pci_uio_map_resource(struct rte_pci_device *dev)
 		/* skip empty BAR */
 		phaddr = dev->mem_resource[i].phys_addr;
 		if (phaddr == 0)
-			continue;
+			continue;//跳过空的资源
 
+		//映射内存资源
 		ret = pci_uio_map_resource_by_index(dev, i,
 				uio_res, map_idx);
 		if (ret)
@@ -148,6 +151,7 @@ pci_uio_map_resource(struct rte_pci_device *dev)
 
 	uio_res->nb_maps = map_idx;
 
+	//将映射的内存串在uio_res_list链上
 	TAILQ_INSERT_TAIL(uio_res_list, uio_res, next);
 
 	return 0;

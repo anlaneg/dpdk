@@ -148,6 +148,7 @@ rte_pci_unmap_device(struct rte_pci_device *dev)
 	}
 }
 
+//返回最大的虚拟地址
 void *
 pci_find_max_end_va(void)
 {
@@ -160,9 +161,10 @@ pci_find_max_end_va(void)
 			break;
 
 		if (seg->addr > last->addr)
-			last = seg;
+			last = seg;//选择更大的地址
 
 	}
+	//返回最后端的一个虚拟地址
 	return RTE_PTR_ADD(last->addr, last->len);
 }
 

@@ -70,6 +70,7 @@ struct internal_config {
 	volatile unsigned vmware_tsc_map; /**< true to use VMware TSC mapping
 										* instead of native TSC */
 	volatile unsigned no_shconf;      /**< true if there is no shared config */
+	//通过参数create-uio-dev指定
 	volatile unsigned create_uio_dev; /**< true to create /dev/uioX devices */
 	//多进程处理模式
 	volatile enum rte_proc_type_t process_type; /**< multi-process proc type */
