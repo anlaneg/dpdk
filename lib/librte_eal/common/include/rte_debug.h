@@ -87,7 +87,7 @@ void rte_dump_registers(void);
 //如果exp为假，则panic
 #define	RTE_VERIFY(exp)	do {                                                  \
 	if (unlikely(!(exp)))                                                           \
-		rte_panic("line %d\tassert \"" #exp "\" failed\n", __LINE__); \
+		rte_panic("line %d\tassert \"%s\" failed\n", __LINE__, #exp); \
 } while (0)
 
 /*
