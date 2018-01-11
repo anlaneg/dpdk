@@ -1,34 +1,5 @@
-/*-
- *   BSD LICENSE
- *
- *   Copyright(c) 2010-2017 Intel Corporation. All rights reserved.
- *   All rights reserved.
- *
- *   Redistribution and use in source and binary forms, with or without
- *   modification, are permitted provided that the following conditions
- *   are met:
- *
- *     * Redistributions of source code must retain the above copyright
- *       notice, this list of conditions and the following disclaimer.
- *     * Redistributions in binary form must reproduce the above copyright
- *       notice, this list of conditions and the following disclaimer in
- *       the documentation and/or other materials provided with the
- *       distribution.
- *     * Neither the name of Intel Corporation nor the names of its
- *       contributors may be used to endorse or promote products derived
- *       from this software without specific prior written permission.
- *
- *   THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
- *   "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
- *   LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
- *   A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
- *   OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
- *   SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
- *   LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
- *   DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
- *   THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
- *   (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- *   OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+/* SPDX-License-Identifier: BSD-3-Clause
+ * Copyright(c) 2010-2017 Intel Corporation
  */
 
 #include <stdarg.h>
@@ -91,6 +62,7 @@
 #include "testpmd.h"
 
 uint16_t verbose_level = 0; /**< Silent by default. */
+int testpmd_logtype; /**< Log type for testpmd logs */
 
 /* use master core for command line ? */
 uint8_t interactive = 0;
@@ -512,7 +484,7 @@ mbuf_pool_create(uint16_t mbuf_seg_size, unsigned nb_mbuf,
 	mb_size = sizeof(struct rte_mbuf) + mbuf_seg_size;
 	mbuf_poolname_build(socket_id, pool_name, sizeof(pool_name));
 
-	RTE_LOG(INFO, USER1,
+	TESTPMD_LOG(INFO,
 		"create a new mbuf pool <%s>: n=%u, size=%u, socket=%u\n",
 		pool_name, nb_mbuf, mbuf_seg_size, socket_id);
 
@@ -1804,7 +1776,7 @@ detach_port(portid_t port_id)
 		port_flow_flush(port_id);
 
 	if (rte_eth_dev_detach(port_id, name)) {
-		RTE_LOG(ERR, USER1, "Failed to detach port '%s'\n", name);
+		TESTPMD_LOG(ERR, "Failed to detach port '%s'\n", name);
 		return;
 	}
 
@@ -1913,7 +1885,7 @@ rmv_event_callback(void *arg)
 	close_port(port_id);
 	printf("removing device %s\n", dev->device->name);
 	if (rte_eal_dev_detach(dev->device))
-		RTE_LOG(ERR, USER1, "Failed to detach device %s\n",
+		TESTPMD_LOG(ERR, "Failed to detach device %s\n",
 			dev->device->name);
 }
 
@@ -2384,8 +2356,13 @@ main(int argc, char** argv)
 	if (diag < 0)
 		rte_panic("Cannot init EAL\n");
 
+	testpmd_logtype = rte_log_register("testpmd");
+	if (testpmd_logtype < 0)
+		rte_panic("Cannot register log type");
+	rte_log_set_level(testpmd_logtype, RTE_LOG_DEBUG);
+
 	if (mlockall(MCL_CURRENT | MCL_FUTURE)) {
-		RTE_LOG(NOTICE, USER1, "mlockall() failed with error \"%s\"\n",
+		TESTPMD_LOG(NOTICE, "mlockall() failed with error \"%s\"\n",
 			strerror(errno));
 	}
 
@@ -2396,7 +2373,7 @@ main(int argc, char** argv)
 
 	nb_ports = (portid_t) rte_eth_dev_count();
 	if (nb_ports == 0)
-		RTE_LOG(WARNING, EAL, "No probed ethernet devices\n");
+		TESTPMD_LOG(WARNING, "No probed ethernet devices\n");
 
 	/* allocate port structures, and init them */
 	init_port();

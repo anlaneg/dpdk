@@ -698,7 +698,10 @@ static void cmd_help_long_parsed(void *parsed_result,
 			"set port (port_id) queue-region flush (on|off)\n"
 			"    flush all queue region related configuration\n\n"
 
-			"add port meter profile srtcm_rfc2697 (port_id) (profile_id) (cir) (cbs) (ebs) (color_aware)\n"
+			"show port meter cap (port_id)\n"
+			"    Show port meter capability information\n\n"
+
+			"add port meter profile srtcm_rfc2697 (port_id) (profile_id) (cir) (cbs) (ebs)\n"
 			"    meter profile add - srtcm rfc 2697\n\n"
 
 			"add port meter profile trtcm_rfc2698 (port_id) (profile_id) (cir) (pir) (cbs) (pbs)\n"
@@ -710,8 +713,17 @@ static void cmd_help_long_parsed(void *parsed_result,
 			"del port meter profile (port_id) (profile_id)\n"
 			"    meter profile delete\n\n"
 
-			"set port meter (port_id) (mtr_id) (profile_id) (g_action) (y_action) (r_action) (stats_mask) (shared)\n"
+			"create port meter (port_id) (mtr_id) (profile_id) (meter_enable)\n"
+			"(g_action) (y_action) (r_action) (stats_mask) (shared)\n"
+			"(use_pre_meter_color) [(dscp_tbl_entry0) (dscp_tbl_entry1)...\n"
+			"(dscp_tbl_entry63)]\n"
 			"    meter create\n\n"
+
+			"enable port meter (port_id) (mtr_id)\n"
+			"    meter enable\n\n"
+
+			"disable port meter (port_id) (mtr_id)\n"
+			"    meter disable\n\n"
 
 			"del port meter (port_id) (mtr_id)\n"
 			"    meter delete\n\n"
@@ -719,7 +731,12 @@ static void cmd_help_long_parsed(void *parsed_result,
 			"set port meter profile (port_id) (mtr_id) (profile_id)\n"
 			"    meter update meter profile\n\n"
 
-			"set port meter policer action (port_id) (mtr_id) (color) (action)\n"
+			"set port meter dscp table (port_id) (mtr_id) [(dscp_tbl_entry0)\n"
+			"(dscp_tbl_entry1)...(dscp_tbl_entry63)]\n"
+			"    update meter dscp table entries\n\n"
+
+			"set port meter policer action (port_id) (mtr_id) (action_mask)\n"
+			"(action0) [(action1) (action2)]\n"
 			"    meter update policer action\n\n"
 
 			"set port meter stats mask (port_id) (mtr_id) (stats_mask)\n"
@@ -3352,7 +3369,7 @@ cmdline_parse_token_num_t cmd_vlan_tpid_tpid =
 			      tp_id, UINT16);
 cmdline_parse_token_num_t cmd_vlan_tpid_portid =
 	TOKEN_NUM_INITIALIZER(struct cmd_vlan_tpid_result,
-			      port_id, UINT8);
+			      port_id, UINT16);
 
 cmdline_parse_inst_t cmd_vlan_tpid = {
 	.f = cmd_vlan_tpid_parsed,
@@ -15685,12 +15702,16 @@ cmdline_parse_ctx_t main_ctx[] = {
 	(cmdline_parse_inst_t *)&cmd_set_hash_input_set,
 	(cmdline_parse_inst_t *)&cmd_set_fdir_input_set,
 	(cmdline_parse_inst_t *)&cmd_flow,
+	(cmdline_parse_inst_t *)&cmd_show_port_meter_cap,
 	(cmdline_parse_inst_t *)&cmd_add_port_meter_profile_srtcm,
 	(cmdline_parse_inst_t *)&cmd_add_port_meter_profile_trtcm,
 	(cmdline_parse_inst_t *)&cmd_del_port_meter_profile,
-	(cmdline_parse_inst_t *)&cmd_set_port_meter,
+	(cmdline_parse_inst_t *)&cmd_create_port_meter,
+	(cmdline_parse_inst_t *)&cmd_enable_port_meter,
+	(cmdline_parse_inst_t *)&cmd_disable_port_meter,
 	(cmdline_parse_inst_t *)&cmd_del_port_meter,
 	(cmdline_parse_inst_t *)&cmd_set_port_meter_profile,
+	(cmdline_parse_inst_t *)&cmd_set_port_meter_dscp_table,
 	(cmdline_parse_inst_t *)&cmd_set_port_meter_policer_action,
 	(cmdline_parse_inst_t *)&cmd_set_port_meter_stats_mask,
 	(cmdline_parse_inst_t *)&cmd_show_port_meter_stats,

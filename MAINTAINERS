@@ -52,6 +52,7 @@ F: devtools/get-maintainer.sh
 F: devtools/git-log-fixes.sh
 F: devtools/load-devel-config
 F: devtools/test-build.sh
+F: license/
 
 
 Build System
@@ -397,6 +398,7 @@ F: doc/guides/nics/features/enic.ini
 
 Intel e1000
 M: Wenzhuo Lu <wenzhuo.lu@intel.com>
+T: git://dpdk.org/next/dpdk-next-net-intel
 F: drivers/net/e1000/
 F: doc/guides/nics/e1000em.rst
 F: doc/guides/nics/intel_vf.rst
@@ -406,6 +408,7 @@ F: doc/guides/nics/features/igb*.ini
 Intel ixgbe
 M: Wenzhuo Lu <wenzhuo.lu@intel.com>
 M: Konstantin Ananyev <konstantin.ananyev@intel.com>
+T: git://dpdk.org/next/dpdk-next-net-intel
 F: drivers/net/ixgbe/
 F: doc/guides/nics/ixgbe.rst
 F: doc/guides/nics/intel_vf.rst
@@ -414,6 +417,7 @@ F: doc/guides/nics/features/ixgbe*.ini
 Intel i40e
 M: Beilei Xing <beilei.xing@intel.com>
 M: Qi Zhang <qi.z.zhang@intel.com>
+T: git://dpdk.org/next/dpdk-next-net-intel
 F: drivers/net/i40e/
 F: doc/guides/nics/i40e.rst
 F: doc/guides/nics/intel_vf.rst
@@ -422,11 +426,13 @@ F: doc/guides/nics/features/i40e*.ini
 Intel fm10k
 M: Qi Zhang <qi.z.zhang@intel.com>
 M: Xiao Wang <xiao.w.wang@intel.com>
+T: git://dpdk.org/next/dpdk-next-net-intel
 F: drivers/net/fm10k/
 F: doc/guides/nics/features/fm10k*.ini
 
 Mellanox mlx4
 M: Adrien Mazarguil <adrien.mazarguil@6wind.com>
+T: git://dpdk.org/next/dpdk-next-net-mlx
 F: drivers/net/mlx4/
 F: doc/guides/nics/mlx4.rst
 F: doc/guides/nics/features/mlx4.ini
@@ -435,6 +441,7 @@ Mellanox mlx5
 M: Adrien Mazarguil <adrien.mazarguil@6wind.com>
 M: Nelio Laranjeiro <nelio.laranjeiro@6wind.com>
 M: Yongseok Koh <yskoh@mellanox.com>
+T: git://dpdk.org/next/dpdk-next-net-mlx
 F: drivers/net/mlx5/
 F: doc/guides/nics/mlx5.rst
 F: doc/guides/nics/features/mlx5.ini
