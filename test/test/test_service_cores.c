@@ -238,6 +238,93 @@ service_name(void)
 	return unregister_all();
 }
 
+/* verify service attr get */
+static int
+service_attr_get(void)
+{
+	/* ensure all services unregistered so cycle counts are zero */
+	unregister_all();
+
+	struct rte_service_spec service;
+	memset(&service, 0, sizeof(struct rte_service_spec));
+	service.callback = dummy_cb;
+	snprintf(service.name, sizeof(service.name), DUMMY_SERVICE_NAME);
+	service.capabilities |= RTE_SERVICE_CAP_MT_SAFE;
+	uint32_t id;
+	TEST_ASSERT_EQUAL(0, rte_service_component_register(&service, &id),
+			"Register of  service failed");
+	rte_service_component_runstate_set(id, 1);
+	TEST_ASSERT_EQUAL(0, rte_service_runstate_set(id, 1),
+			"Error: Service start returned non-zero");
+	rte_service_set_stats_enable(id, 1);
+
+	uint32_t attr_id = UINT32_MAX;
+	uint32_t attr_value = 0xdead;
+	/* check error return values */
+	TEST_ASSERT_EQUAL(-EINVAL, rte_service_attr_get(id, attr_id,
+							&attr_value),
+			"Invalid attr_id didn't return -EINVAL");
+
+	attr_id = RTE_SERVICE_ATTR_CYCLES;
+	TEST_ASSERT_EQUAL(-EINVAL, rte_service_attr_get(UINT32_MAX, attr_id,
+							&attr_value),
+			"Invalid service id didn't return -EINVAL");
+
+	TEST_ASSERT_EQUAL(-EINVAL, rte_service_attr_get(id, attr_id, NULL),
+			"Invalid attr_value pointer id didn't return -EINVAL");
+
+	/* check correct (zero) return value and correct value (zero) */
+	TEST_ASSERT_EQUAL(0, rte_service_attr_get(id, attr_id, &attr_value),
+			"Valid attr_get() call didn't return success");
+	TEST_ASSERT_EQUAL(0, attr_value,
+			"attr_get() call didn't set correct cycles (zero)");
+	/* check correct call count */
+	const int attr_calls = RTE_SERVICE_ATTR_CALL_COUNT;
+	TEST_ASSERT_EQUAL(0, rte_service_attr_get(id, attr_calls, &attr_value),
+			"Valid attr_get() call didn't return success");
+	TEST_ASSERT_EQUAL(0, attr_value,
+			"attr_get() call didn't get call count (zero)");
+
+	/* Call service to increment cycle count */
+	TEST_ASSERT_EQUAL(0, rte_service_lcore_add(slcore_id),
+			"Service core add did not return zero");
+	TEST_ASSERT_EQUAL(0, rte_service_map_lcore_set(id, slcore_id, 1),
+			"Enabling valid service and core failed");
+	TEST_ASSERT_EQUAL(0, rte_service_lcore_start(slcore_id),
+			"Starting service core failed");
+
+	/* wait for the service lcore to run */
+	rte_delay_ms(200);
+
+	TEST_ASSERT_EQUAL(0, rte_service_attr_get(id, attr_id, &attr_value),
+			"Valid attr_get() call didn't return success");
+	int cycles_gt_zero = attr_value > 0;
+	TEST_ASSERT_EQUAL(1, cycles_gt_zero,
+			"attr_get() failed to get cycles (expected > zero)");
+
+	rte_service_lcore_stop(slcore_id);
+
+	TEST_ASSERT_EQUAL(0, rte_service_attr_get(id, attr_calls, &attr_value),
+			"Valid attr_get() call didn't return success");
+	TEST_ASSERT_EQUAL(1, (attr_value > 0),
+			"attr_get() call didn't get call count (zero)");
+
+	TEST_ASSERT_EQUAL(0, rte_service_attr_reset_all(id),
+			"Valid attr_reset_all() return success");
+
+	TEST_ASSERT_EQUAL(0, rte_service_attr_get(id, attr_id, &attr_value),
+			"Valid attr_get() call didn't return success");
+	TEST_ASSERT_EQUAL(0, attr_value,
+			"attr_get() call didn't set correct cycles (zero)");
+	/* ensure call count > zero */
+	TEST_ASSERT_EQUAL(0, rte_service_attr_get(id, attr_calls, &attr_value),
+			"Valid attr_get() call didn't return success");
+	TEST_ASSERT_EQUAL(0, (attr_value > 0),
+			"attr_get() call didn't get call count (zero)");
+
+	return unregister_all();
+}
+
 /* verify service dump */
 static int
 service_dump(void)
@@ -320,6 +407,7 @@ service_lcore_en_dis_able(void)
 
 	/* call remote_launch to verify that app can launch ex-service lcore */
 	service_remote_launch_flag = 0;
+	rte_eal_wait_lcore(slcore_id);
 	int ret = rte_eal_remote_launch(service_remote_launch_func, NULL,
 					slcore_id);
 	TEST_ASSERT_EQUAL(0, ret, "Ex-service core remote launch failed.");
@@ -334,7 +422,7 @@ static int
 service_lcore_running_check(void)
 {
 	uint64_t tick = service_tick;
-	rte_delay_ms(SERVICE_DELAY * 10);
+	rte_delay_ms(SERVICE_DELAY * 100);
 	/* if (tick != service_tick) we know the lcore as polled the service */
 	return tick != service_tick;
 }
@@ -477,6 +565,10 @@ service_threaded_test(int mt_safe)
 	if (!mt_safe)
 		test_params[1] = 1;
 
+	/* wait for lcores before start() */
+	rte_eal_wait_lcore(slcore_1);
+	rte_eal_wait_lcore(slcore_2);
+
 	rte_service_lcore_start(slcore_1);
 	rte_service_lcore_start(slcore_2);
 
@@ -490,6 +582,8 @@ service_threaded_test(int mt_safe)
 	TEST_ASSERT_EQUAL(0, rte_service_runstate_set(sid, 0),
 			"Failed to stop MT Safe service");
 
+	rte_eal_wait_lcore(slcore_1);
+	rte_eal_wait_lcore(slcore_2);
 	unregister_all();
 
 	/* return the value of the callback pass_test variable to caller */
@@ -583,6 +677,7 @@ service_app_lcore_poll_impl(const int mt_safe)
 	rte_service_runstate_set(id, 1);
 
 	uint32_t app_core2 = rte_get_next_lcore(slcore_id, 1, 1);
+	rte_eal_wait_lcore(app_core2);
 	int app_core2_ret = rte_eal_remote_launch(service_run_on_app_core_func,
 						  &id, app_core2);
 
@@ -685,6 +780,7 @@ static struct unit_test_suite service_tests  = {
 		TEST_CASE_ST(dummy_register, NULL, service_name),
 		TEST_CASE_ST(dummy_register, NULL, service_get_by_name),
 		TEST_CASE_ST(dummy_register, NULL, service_dump),
+		TEST_CASE_ST(dummy_register, NULL, service_attr_get),
 		TEST_CASE_ST(dummy_register, NULL, service_probe_capability),
 		TEST_CASE_ST(dummy_register, NULL, service_start_stop),
 		TEST_CASE_ST(dummy_register, NULL, service_lcore_add_del),

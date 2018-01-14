@@ -246,7 +246,9 @@ int32_t rte_service_run_iter_on_app_lcore(uint32_t id,
  * Start a service core.
  *
  * Starting a core makes the core begin polling. Any services assigned to it
- * will be run as fast as possible.
+ * will be run as fast as possible. The application must ensure that the lcore
+ * is in a launchable state: e.g. call *rte_eal_lcore_wait* on the lcore_id
+ * before calling this function.
  *
  * @retval 0 Success
  * @retval -EINVAL Failed to start core. The *lcore_id* passed in is not
@@ -391,6 +393,40 @@ int32_t rte_service_lcore_count_services(uint32_t lcore);
  * @retval -EINVAL Invalid service id provided
  */
 int32_t rte_service_dump(FILE *f, uint32_t id);
+
+/**
+ * Returns the number of cycles that this service has consumed
+ */
+#define RTE_SERVICE_ATTR_CYCLES 0
+
+/**
+ * Returns the count of invocations of this service function
+ */
+#define RTE_SERVICE_ATTR_CALL_COUNT 1
+
+/**
+ * @warning
+ * @b EXPERIMENTAL: this API may change without prior notice
+ *
+ * Get an attribute from a service.
+ *
+ * @retval 0 Success, the attribute value has been written to *attr_value*.
+ *         -EINVAL Invalid id, attr_id or attr_value was NULL.
+ */
+int32_t rte_service_attr_get(uint32_t id, uint32_t attr_id,
+			     uint32_t *attr_value);
+
+/**
+ * @warning
+ * @b EXPERIMENTAL: this API may change without prior notice
+ *
+ * Reset all attribute values of a service.
+ *
+ * @param id The service to reset all statistics of
+ * @retval 0 Successfully reset attributes
+ *         -EINVAL Invalid service id provided
+ */
+int32_t rte_service_attr_reset_all(uint32_t id);
 
 #ifdef __cplusplus
 }
