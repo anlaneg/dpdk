@@ -191,8 +191,8 @@ rte_iova_t
 rte_mem_virt2iova(const void *virtaddr)
 {
 	if (rte_eal_iova_mode() == RTE_IOVA_VA)
-		return (uintptr_t)virtaddr;
-	return rte_mem_virt2phy(virtaddr);
+		return (uintptr_t)virtaddr;//如果dma采用虚拟地址，则直接返回
+	return rte_mem_virt2phy(virtaddr);//通过memmap获取物理地址
 }
 
 /*

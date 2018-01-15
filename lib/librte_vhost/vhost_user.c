@@ -116,6 +116,7 @@ vhost_user_set_owner(void)
 	return 0;
 }
 
+//设备将被置为down,且队列将被重建
 static int
 vhost_user_reset_owner(struct virtio_net *dev)
 {
@@ -171,6 +172,7 @@ vhost_user_set_features(struct virtio_net *dev, uint64_t features)
 	dev->features = features;
 	if (dev->features &
 		((1 << VIRTIO_NET_F_MRG_RXBUF) | (1ULL << VIRTIO_F_VERSION_1))) {
+		//支持mrg_rxbuf时头部采用virtio_net_hdr_mrg_rxbuf
 		dev->vhost_hlen = sizeof(struct virtio_net_hdr_mrg_rxbuf);
 	} else {
 		dev->vhost_hlen = sizeof(struct virtio_net_hdr);
@@ -603,8 +605,9 @@ vhost_user_set_mem_table(struct virtio_net *dev, struct VhostUserMsg *pmsg)
 	//初始化对方发送过来的地址
 	for (i = 0; i < memory.nregions; i++) {
 		fd  = pmsg->fds[i];
-		reg = &dev->mem->regions[i];
+		reg = &dev->mem->regions[i];//上面我们申请了mem的内存，这里指向对应的region,进行初始化
 
+		//copy消息传递过来的信息
 		reg->guest_phys_addr = memory.regions[i].guest_phys_addr;
 		reg->guest_user_addr = memory.regions[i].userspace_addr;
 		reg->size            = memory.regions[i].memory_size;
@@ -628,6 +631,7 @@ vhost_user_set_mem_table(struct virtio_net *dev, struct VhostUserMsg *pmsg)
 				"couldn't get hugepage size through fstat\n");
 			goto err_mmap;
 		}
+		//将mmap_size按alignment对齐
 		mmap_size = RTE_ALIGN_CEIL(mmap_size, alignment);
 
 		//map fd对应的那一段内存
@@ -864,6 +868,7 @@ vhost_user_get_protocol_features(struct virtio_net *dev,
 	 * application, disable also REPLY_ACK feature for older buggy
 	 * Qemu versions (from v2.7.0 to v2.9.0).
 	 */
+	//无IOMMU时VHOST_USER_PROTOCOL_F_REPLY_ACK不生效
 	if (!(features & (1ULL << VIRTIO_F_IOMMU_PLATFORM)))
 		protocol_features &= ~(1ULL << VHOST_USER_PROTOCOL_F_REPLY_ACK);
 
@@ -951,7 +956,7 @@ vhost_user_send_rarp(struct virtio_net *dev, struct VhostUserMsg *msg)
 	RTE_LOG(DEBUG, VHOST_CONFIG,
 		":: mac: %02x:%02x:%02x:%02x:%02x:%02x\n",
 		mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
-	memcpy(dev->mac.addr_bytes, mac, 6);
+	memcpy(dev->mac.addr_bytes, mac, 6);//设置mac地址
 
 	/*
 	 * Set the flag to inject a RARP broadcast packet at
@@ -961,11 +966,12 @@ vhost_user_send_rarp(struct virtio_net *dev, struct VhostUserMsg *msg)
 	 * before the flag is set.
 	 */
 	rte_smp_wmb();
-	rte_atomic16_set(&dev->broadcast_rarp, 1);
+	rte_atomic16_set(&dev->broadcast_rarp, 1);//设置广播rarp
 
 	return 0;
 }
 
+//设置设备的mtu
 static int
 vhost_user_net_set_mtu(struct virtio_net *dev, struct VhostUserMsg *msg)
 {
@@ -1093,6 +1099,7 @@ vhost_user_iotlb_msg(struct virtio_net **pdev, struct VhostUserMsg *msg)
 }
 
 /* return bytes# of read on success or negative val on failure. */
+//读取消息
 static int
 read_vhost_message(int sockfd, struct VhostUserMsg *msg)
 {
@@ -1126,6 +1133,7 @@ read_vhost_message(int sockfd, struct VhostUserMsg *msg)
 	return ret;
 }
 
+//发送消息
 static int
 send_vhost_message(int sockfd, struct VhostUserMsg *msg)
 {
@@ -1326,11 +1334,11 @@ vhost_user_msg_handler(int vid, int fd)
 	case VHOST_USER_SET_VRING_ENABLE:
 		vhost_user_set_vring_enable(dev, &msg);
 		break;
-	case VHOST_USER_SEND_RARP:
+	case VHOST_USER_SEND_RARP://发送rarp
 		vhost_user_send_rarp(dev, &msg);
 		break;
 
-	case VHOST_USER_NET_SET_MTU:
+	case VHOST_USER_NET_SET_MTU://设置MTU
 		ret = vhost_user_net_set_mtu(dev, &msg);
 		break;
 

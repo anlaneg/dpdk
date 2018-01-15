@@ -200,12 +200,12 @@ struct virtio_net {
 	/* Frontend (QEMU) memory and memory region information */
 	struct rte_vhost_memory	*mem;//内存信息（由消息发送过来，我们map)
 	uint64_t		features;
-	uint64_t		protocol_features;
+	uint64_t		protocol_features;//协议功能
 	int			vid;//virtio编号，属于vhost_devices的下标
 	uint32_t		flags;
 	uint16_t		vhost_hlen;
 	/* to tell if we need broadcast rarp packet */
-	rte_atomic16_t		broadcast_rarp;
+	rte_atomic16_t		broadcast_rarp;//标记是否需要发送rarp报文
 	uint32_t		nr_vring;//队列数（收＋发）
 	int			dequeue_zero_copy;//是否入队是zero copy
 	struct vhost_virtqueue	*virtqueue[VHOST_MAX_QUEUE_PAIRS * 2];//设备的所有vhost队列（收＋发）
@@ -215,7 +215,7 @@ struct virtio_net {
 	uint64_t		log_base;
 	uint64_t		log_addr;
 	struct ether_addr	mac;
-	uint16_t		mtu;
+	uint16_t		mtu;//设备的mtu
 
 	struct vhost_device_ops const *notify_ops;//此设备的操作集(来源于vsocket)
 

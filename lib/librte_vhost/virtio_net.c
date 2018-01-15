@@ -834,12 +834,14 @@ vhost_dequeue_offload(struct virtio_net_hdr *hdr, struct rte_mbuf *m)
 
 #define RARP_PKT_SIZE	64
 
+//构造rarp报文
 static int
 make_rarp_packet(struct rte_mbuf *rarp_mbuf, const struct ether_addr *mac)
 {
 	struct ether_hdr *eth_hdr;
 	struct arp_hdr  *rarp;
 
+	//长度过小
 	if (rarp_mbuf->buf_len < 64) {
 		RTE_LOG(WARNING, VHOST_DATA,
 			"failed to make RARP; mbuf size too small %u (< %d)\n",
@@ -849,9 +851,9 @@ make_rarp_packet(struct rte_mbuf *rarp_mbuf, const struct ether_addr *mac)
 
 	/* Ethernet header. */
 	eth_hdr = rte_pktmbuf_mtod_offset(rarp_mbuf, struct ether_hdr *, 0);
-	memset(eth_hdr->d_addr.addr_bytes, 0xff, ETHER_ADDR_LEN);
-	ether_addr_copy(mac, &eth_hdr->s_addr);
-	eth_hdr->ether_type = htons(ETHER_TYPE_RARP);
+	memset(eth_hdr->d_addr.addr_bytes, 0xff, ETHER_ADDR_LEN);//目的mac全ff
+	ether_addr_copy(mac, &eth_hdr->s_addr);//设置源mac
+	eth_hdr->ether_type = htons(ETHER_TYPE_RARP);//指明rarp协议
 
 	/* RARP header. */
 	rarp = (struct arp_hdr *)(eth_hdr + 1);
@@ -1258,6 +1260,7 @@ rte_vhost_dequeue_burst(int vid, uint16_t queue_id,
 			return 0;
 		}
 
+		//构造rarp报文
 		if (make_rarp_packet(rarp_mbuf, &dev->mac)) {
 			rte_pktmbuf_free(rarp_mbuf);
 			rarp_mbuf = NULL;

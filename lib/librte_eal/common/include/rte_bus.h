@@ -67,7 +67,7 @@ TAILQ_HEAD(rte_bus_list, rte_bus);
 enum rte_iova_mode {
 	RTE_IOVA_DC = 0,	/* Don't care mode */
 	RTE_IOVA_PA = (1 << 0), /* DMA using physical address */
-	RTE_IOVA_VA = (1 << 1)  /* DMA using virtual address */
+	RTE_IOVA_VA = (1 << 1)  /* DMA using virtual address */ //dma采用虚拟地址
 };
 
 /**

@@ -222,7 +222,7 @@ vhost_user_add_connection(int fd, struct vhost_user_socket *vsocket)
 	conn->connfd = fd;
 	conn->vsocket = vsocket;
 	conn->vid = vid;
-	ret = fdset_add(&vhost_user.fdset, fd, vhost_user_read_cb,
+	ret = fdset_add(&vhost_user.fdset, fd, vhost_user_read_cb,//注册读取
 			NULL, conn);
 	if (ret < 0) {
 		RTE_LOG(ERR, VHOST_CONFIG,
@@ -609,7 +609,7 @@ rte_vhost_driver_set_features(const char *path, uint64_t features)
 	return vsocket ? 0 : -1;
 }
 
-//获得的功能
+//获得的当前vsocket上生效的功能
 int
 rte_vhost_driver_get_features(const char *path, uint64_t *features)
 {
