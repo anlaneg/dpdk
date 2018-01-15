@@ -91,7 +91,7 @@ fdset_find_fd(struct fdset *pfdset, int fd)
 	return i == pfdset->num ? -1 : i;
 }
 
-//注册fd及其回调
+//注册fd及其回调（使用idx位置处的空间，其读回调rcb,写回计wcb,dat为回调时参数）
 static void
 fdset_add_fd(struct fdset *pfdset, int idx, int fd,
 	fd_cb rcb, fd_cb wcb, void *dat)
@@ -107,8 +107,8 @@ fdset_add_fd(struct fdset *pfdset, int idx, int fd,
 
 	//poll参数初始化
 	pfd->fd = fd;
-	pfd->events  = rcb ? POLLIN : 0;//关注in事件
-	pfd->events |= wcb ? POLLOUT : 0;//关注out事件
+	pfd->events  = rcb ? POLLIN : 0;//有读回调，关注in事件
+	pfd->events |= wcb ? POLLOUT : 0;//有写回调，关注out事件
 	pfd->revents = 0;
 }
 
@@ -131,7 +131,7 @@ fdset_init(struct fdset *pfdset)
 /**
  * Register the fd in the fdset with read/write handler and context.
  */
-//向fdset中注册一个fd
+//向fdset中注册一个fd及其回调
 int
 fdset_add(struct fdset *pfdset, int fd, fd_cb rcb, fd_cb wcb, void *dat)
 {

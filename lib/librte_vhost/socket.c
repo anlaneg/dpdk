@@ -36,7 +36,7 @@ struct vhost_user_socket {
 	char *path;//server unix socket地址
 	int socket_fd;//unix socket对应的fd
 	struct sockaddr_un un;//采用path构造的unix地址
-	bool is_server;//是否为server
+	bool is_server;//是否为server模式
 	bool reconnect;//是否开启重连接
 	bool dequeue_zero_copy;//是否开启出队zero copy
 	bool iommu_support;
@@ -64,8 +64,9 @@ struct vhost_user_connection {
 
 #define MAX_VHOST_SOCKET 1024
 struct vhost_user {
+	//用于存放所有已创建的socket,采用顺序表格式，当移除时，需要将后面的前移
 	struct vhost_user_socket *vsockets[MAX_VHOST_SOCKET];
-	struct fdset fdset;
+	struct fdset fdset;//用于注册所有fd
 	int vsocket_cnt;
 	pthread_mutex_t mutex;
 };
@@ -206,6 +207,7 @@ vhost_user_add_connection(int fd, struct vhost_user_socket *vsocket)
 
 	RTE_LOG(INFO, VHOST_CONFIG, "new device, handle is %d\n", vid);
 
+	//通知出现一个新连接
 	if (vsocket->notify_ops->new_connection) {
 		ret = vsocket->notify_ops->new_connection(vid);
 		if (ret < 0) {
@@ -296,6 +298,7 @@ create_unix_socket(struct vhost_user_socket *vsocket)
 	int fd;
 	struct sockaddr_un *un = &vsocket->un;
 
+	//创建对应的socket
 	fd = socket(AF_UNIX, SOCK_STREAM, 0);
 	if (fd < 0)
 		return -1;
@@ -371,13 +374,13 @@ struct vhost_user_reconnect {
 TAILQ_HEAD(vhost_user_reconnect_tailq_list, vhost_user_reconnect);
 struct vhost_user_reconnect_list {
 	struct vhost_user_reconnect_tailq_list head;
-	pthread_mutex_t mutex;
+	pthread_mutex_t mutex;//重连保护锁
 };
 
 static struct vhost_user_reconnect_list reconn_list;//重连链表
 static pthread_t reconn_tid;//重连线程id
 
-//连接到un地址
+//连接到un地址，并设置为非阻塞
 static int
 vhost_user_connect_nonblock(int fd, struct sockaddr *un, size_t sz)
 {
@@ -424,6 +427,7 @@ vhost_user_client_reconnect(void *arg __rte_unused)
 		     reconn != NULL; reconn = next) {
 			next = TAILQ_NEXT(reconn, next);
 
+			//实现重连
 			ret = vhost_user_connect_nonblock(reconn->fd,
 						(struct sockaddr *)&reconn->un,
 						sizeof(reconn->un));
@@ -444,8 +448,8 @@ vhost_user_client_reconnect(void *arg __rte_unused)
 				"%s: connected\n", reconn->vsocket->path);
 			vhost_user_add_connection(reconn->fd, reconn->vsocket);
 
-			//丢弃重连数据
 remove_fd:
+			//重连成功，不需要再保存在reconnect链表了
 			TAILQ_REMOVE(&reconn_list.head, reconn, next);
 			free(reconn);
 		}
@@ -470,6 +474,7 @@ vhost_user_reconnect_init(void)
 	}
 	TAILQ_INIT(&reconn_list.head);
 
+	//初始化重连线程
 	ret = pthread_create(&reconn_tid, NULL,
 			     vhost_user_client_reconnect, NULL);
 	if (ret < 0) {
@@ -511,7 +516,7 @@ vhost_user_start_client(struct vhost_user_socket *vsocket)
 		return -1;
 	}
 
-	//有重连，申请reconn结构，并挂在reconn-list上
+	//有重连，申请reconn结构，并挂在reconn-list上，重连线程会进行尝试
 	RTE_LOG(INFO, VHOST_CONFIG, "%s: reconnecting...\n", path);
 	reconn = malloc(sizeof(*reconn));
 	if (reconn == NULL) {
@@ -697,6 +702,7 @@ rte_vhost_driver_register(const char *path, uint64_t flags)
 	if ((flags & RTE_VHOST_USER_CLIENT) != 0) {
 		vsocket->reconnect = !(flags & RTE_VHOST_USER_NO_RECONNECT);
 		if (vsocket->reconnect && reconn_tid == 0) {
+			//如果需要支持重连，且重连线程还未初始化，则初始化重连线程
 			if (vhost_user_reconnect_init() < 0) {
 				goto out_mutex;
 			}
@@ -851,11 +857,12 @@ vhost_driver_callback_get(const char *path)
 }
 
 //处理此path对应的socket(或监听，或连接到服务器）
+//内部实现：采用一个线程读取fd来触发
 int
 rte_vhost_driver_start(const char *path)
 {
 	struct vhost_user_socket *vsocket;
-	static pthread_t fdset_tid;
+	static pthread_t fdset_tid;//全局的fd维护线程
 
 	pthread_mutex_lock(&vhost_user.mutex);
 	vsocket = find_vhost_user_socket(path);

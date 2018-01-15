@@ -262,6 +262,7 @@ reset_device(struct virtio_net *dev)
  * Invoked when there is a new vhost-user connection established (when
  * there is a new virtio device being attached).
  */
+//申请一个vhost设备，返回vhost设备对应的id号
 int
 vhost_new_device(void)
 {
