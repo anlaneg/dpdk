@@ -211,9 +211,9 @@ struct virtio_net {
 	struct vhost_virtqueue	*virtqueue[VHOST_MAX_QUEUE_PAIRS * 2];//设备的所有vhost队列（收＋发）
 #define IF_NAME_SZ (PATH_MAX > IFNAMSIZ ? PATH_MAX : IFNAMSIZ)
 	char			ifname[IF_NAME_SZ];//设备名称
-	uint64_t		log_size;
-	uint64_t		log_base;
-	uint64_t		log_addr;
+	uint64_t		log_size;//map的内存大小
+	uint64_t		log_base;//map的内存起始地址
+	uint64_t		log_addr;//map的可用于log的起始地址
 	struct ether_addr	mac;
 	uint16_t		mtu;//设备的mtu
 

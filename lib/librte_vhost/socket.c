@@ -89,6 +89,7 @@ static struct vhost_user vhost_user = {
 };
 
 /* return bytes# of read on success or negative val on failure. */
+//控制消息读取
 int
 read_fd_message(int sockfd, char *buf, int buflen, int *fds, int fd_num)
 {
@@ -222,7 +223,7 @@ vhost_user_add_connection(int fd, struct vhost_user_socket *vsocket)
 	conn->connfd = fd;
 	conn->vsocket = vsocket;
 	conn->vid = vid;
-	ret = fdset_add(&vhost_user.fdset, fd, vhost_user_read_cb,//注册读取
+	ret = fdset_add(&vhost_user.fdset, fd, vhost_user_read_cb,//注册读取（用于处理控制消息）
 			NULL, conn);
 	if (ret < 0) {
 		RTE_LOG(ERR, VHOST_CONFIG,
@@ -261,7 +262,7 @@ vhost_user_server_new_connection(int fd, void *dat, int *remove __rte_unused)
 	vhost_user_add_connection(fd, vsocket);
 }
 
-//vhost_user客户端读取处理
+//vhost_user客户端读取处理(控制消息处理）
 static void
 vhost_user_read_cb(int connfd, void *dat, int *remove)
 {
@@ -269,6 +270,7 @@ vhost_user_read_cb(int connfd, void *dat, int *remove)
 	struct vhost_user_socket *vsocket = conn->vsocket;
 	int ret;
 
+	//读取并处理控制消息
 	ret = vhost_user_msg_handler(conn->vid, connfd);
 	if (ret < 0) {
 		close(connfd);
@@ -284,6 +286,7 @@ vhost_user_read_cb(int connfd, void *dat, int *remove)
 
 		free(conn);
 
+		//如果支持重连，则重新创建，并连接
 		if (vsocket->reconnect) {
 			create_unix_socket(vsocket);
 			vhost_user_start_client(vsocket);

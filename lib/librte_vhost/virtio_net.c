@@ -322,7 +322,7 @@ virtio_dev_rx(struct virtio_net *dev, uint16_t queue_id,
 	count = RTE_MIN(count, free_entries);
 	count = RTE_MIN(count, (uint32_t)MAX_PKT_BURST);
 	if (count == 0)
-		//发送成功0个
+		//只能发送0个，退出
 		goto out;
 
 	LOG_DEBUG(VHOST_DATA, "(%d) start_idx %d | end_idx %d\n",
@@ -333,6 +333,7 @@ virtio_dev_rx(struct virtio_net *dev, uint16_t queue_id,
 	/* Retrieve all of the desc indexes first to avoid caching issues. */
 	//预取描述符idx(可预取32个）
 	rte_prefetch0(&vq->avail->ring[start_idx & (vq->size - 1)]);
+
 	//填充used->ring
 	for (i = 0; i < count; i++) {
 		used_idx = (start_idx + i) & (vq->size - 1);
@@ -703,7 +704,7 @@ out:
 	return pkt_idx;
 }
 
-//vhost报文入队处理
+//vhost报文入队处理（发送）
 uint16_t
 rte_vhost_enqueue_burst(int vid, uint16_t queue_id,
 	struct rte_mbuf **pkts, uint16_t count)

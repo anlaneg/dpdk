@@ -212,6 +212,7 @@ vhost_user_set_vring_num(struct virtio_net *dev,
 		}
 	}
 
+	//按消息创建shadow_used_ring
 	vq->shadow_used_ring = rte_malloc(NULL,
 				vq->size * sizeof(struct vring_used_elem),
 				RTE_CACHE_LINE_SIZE);
@@ -221,6 +222,7 @@ vhost_user_set_vring_num(struct virtio_net *dev,
 		return -1;
 	}
 
+	//按消息创建batch_copy_elems
 	vq->batch_copy_elems = rte_malloc(NULL,
 				vq->size * sizeof(struct batch_copy_elem),
 				RTE_CACHE_LINE_SIZE);
@@ -339,6 +341,7 @@ qva_to_vva(struct virtio_net *dev, uint64_t qva)
  * If IOMMU is enabled, the ring address is a guest IO virtual address,
  * else it is a QEMU virtual address.
  */
+//将ra地址转换为host的虚拟地址
 static uint64_t
 ring_addr_to_vva(struct virtio_net *dev, struct vhost_virtqueue *vq,
 		uint64_t ra, uint64_t size)
@@ -887,6 +890,7 @@ vhost_user_set_protocol_features(struct virtio_net *dev,
 	dev->protocol_features = protocol_features;
 }
 
+//申请log内存
 static int
 vhost_user_set_log_base(struct virtio_net *dev, struct VhostUserMsg *msg)
 {
@@ -906,8 +910,8 @@ vhost_user_set_log_base(struct virtio_net *dev, struct VhostUserMsg *msg)
 		return -1;
 	}
 
-	size = msg->payload.log.mmap_size;
-	off  = msg->payload.log.mmap_offset;
+	size = msg->payload.log.mmap_size;//map多少字节
+	off  = msg->payload.log.mmap_offset;//map后的内存自那个偏移可以使用
 	RTE_LOG(INFO, VHOST_CONFIG,
 		"log mmap size: %"PRId64", offset: %"PRId64"\n",
 		size, off);
@@ -927,7 +931,7 @@ vhost_user_set_log_base(struct virtio_net *dev, struct VhostUserMsg *msg)
 	 * Free previously mapped log memory on occasionally
 	 * multiple VHOST_USER_SET_LOG_BASE.
 	 */
-	//前面有地址，这里释放掉
+	//之前已map过地址，这里释放掉
 	if (dev->log_addr) {
 		munmap((void *)(uintptr_t)dev->log_addr, dev->log_size);
 	}
@@ -1199,7 +1203,7 @@ vhost_user_check_and_alloc_queue_pair(struct virtio_net *dev, VhostUserMsg *msg)
 	return alloc_vring_queue(dev, vring_idx);
 }
 
-//消息处理
+//控制消息处理
 int
 vhost_user_msg_handler(int vid, int fd)
 {
@@ -1284,14 +1288,14 @@ vhost_user_msg_handler(int vid, int fd)
 		ret = vhost_user_set_mem_table(dev, &msg);
 		break;
 
-	case VHOST_USER_SET_LOG_BASE:
+	case VHOST_USER_SET_LOG_BASE://map的log内存（未看到使用）
 		vhost_user_set_log_base(dev, &msg);
 
 		/* it needs a reply */
 		msg.size = sizeof(msg.payload.u64);
 		send_vhost_reply(fd, &msg);
 		break;
-	case VHOST_USER_SET_LOG_FD:
+	case VHOST_USER_SET_LOG_FD://关闭fd
 		close(msg.fds[0]);
 		RTE_LOG(INFO, VHOST_CONFIG, "not implemented.\n");
 		break;
