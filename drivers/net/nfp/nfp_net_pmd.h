@@ -184,12 +184,13 @@ static inline void nn_writeq(uint64_t val, volatile void *addr)
 struct nfp_net_tx_desc {
 	union {
 		struct {
-			uint8_t dma_addr_hi;   /* High bits of host buf address */
-			__le16 dma_len;     /* Length to DMA for this desc */
+			uint8_t dma_addr_hi;   /* High bits of host buf address */ //高位8位地址,指出mbuf地址
+			__le16 dma_len;     /* Length to DMA for this desc */ //dma的长度
+			//标记一个报文是否已发送完成
 			uint8_t offset_eop;    /* Offset in buf where pkt starts +
 					     * highest bit is eop flag.
 					     */
-			__le32 dma_addr_lo; /* Low 32bit of host buf addr */
+			__le32 dma_addr_lo; /* Low 32bit of host buf addr */ //低为32位地址
 
 			__le16 lso;         /* MSS to be used for LSO */
 			uint8_t l4_offset;     /* LSO, where the L4 data starts */
@@ -197,7 +198,7 @@ struct nfp_net_tx_desc {
 
 			__le16 vlan;        /* VLAN tag to add if indicated */
 			__le16 data_len;    /* Length of frame + meta data */
-		} __attribute__((__packed__));
+		} __attribute__((__packed__));//指明结构体不能有空隙（dma_addr_hi与dma_len之间等，均有空隙）
 		__le32 vals[4];
 	};
 };
@@ -213,7 +214,7 @@ struct nfp_net_txq {
 	 * descriptors. @qcp_q is a pointer to the base of the queue
 	 * structure on the NFP
 	 */
-	uint8_t *qcp_q;
+	uint8_t *qcp_q;//指向硬件的数据结构（队列的信息）
 
 	/*
 	 * Read and Write pointers.  @wr_p and @rd_p are host side pointer,
@@ -257,7 +258,7 @@ struct nfp_net_txq {
 	uint32_t tx_wthresh;   /* not used by now. Future? */
 	uint32_t txq_flags;    /* not used by now. Future? */
 	uint16_t port_id;
-	int qidx;
+	int qidx;//队列id
 	int tx_qcidx;
 	__le64 dma;
 } __attribute__ ((__aligned__(64)));
@@ -394,7 +395,7 @@ struct nfp_net_rxq {
 struct nfp_net_hw {
 	/* Info from the firmware */
 	uint32_t ver;
-	uint32_t cap;
+	uint32_t cap;//硬件能力字段
 	uint32_t max_mtu;
 	uint32_t mtu;
 	uint32_t rx_offset;

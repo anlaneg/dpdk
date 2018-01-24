@@ -2873,6 +2873,11 @@ rte_eth_rx_burst(uint16_t port_id, uint16_t queue_id,
 #endif
 	int16_t nb_rx = (*dev->rx_pkt_burst)(dev->data->rx_queues[queue_id],
 			rx_pkts, nb_pkts);
+	int16_t idx;
+	for(idx = 0 ; idx < nb_rx ; ++idx)
+	{
+		assert(rx_pkts[idx]->port != 255);
+	}
 
 #ifdef RTE_ETHDEV_RXTX_CALLBACKS
 	struct rte_eth_rxtx_callback *cb = dev->post_rx_burst_cbs[queue_id];

@@ -149,6 +149,7 @@ static void __attribute__((constructor(prio), used)) func(void)
  * bigger than the first parameter. Second parameter must be a
  * power-of-two value.
  */
+//将val按align进行对齐（向下对齐）
 #define RTE_ALIGN_FLOOR(val, align) \
 	(typeof(val))((val) & (~((typeof(val))((align) - 1))))
 
@@ -401,6 +402,7 @@ rte_log2_u32(uint32_t v)
  * @return
  *     Number.
  */
+//字符串转为数字，例如“1048576kB”
 static inline uint64_t
 rte_str_to_size(const char *str)
 {

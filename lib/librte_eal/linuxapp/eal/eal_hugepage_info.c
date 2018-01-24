@@ -73,7 +73,7 @@ get_num_hugepages(const char *subdir)
 	return num_pages;
 }
 
-//取meminfo中的Hugepagesize字段量，即大页的大小
+//取meminfo中的Hugepagesize字段量，即大页的页大小
 static uint64_t
 get_default_hp_size(void)
 {
@@ -99,6 +99,7 @@ get_default_hp_size(void)
 	return size;
 }
 
+//解析指定的大页目录
 static const char *
 get_hugepage_dir(uint64_t hugepage_sz)
 {
@@ -120,13 +121,15 @@ get_hugepage_dir(uint64_t hugepage_sz)
 	char buf[BUFSIZ];
 	char *retval = NULL;
 
+	//打开kernel挂载文件
 	FILE *fd = fopen(proc_mounts, "r");
 	if (fd == NULL)
 		rte_panic("Cannot open %s\n", proc_mounts);
 
 	if (default_size == 0)
-		default_size = get_default_hp_size();
+		default_size = get_default_hp_size();//获取默认大页的页大小
 
+	//读取一行数据，然后按空隔拆分，需要最多拆分为4列，否则会报错
 	while (fgets(buf, sizeof(buf), fd)){
 		if (rte_strsplit(buf, sizeof(buf), splitstr, _FIELDNAME_MAX,
 				split_tok) != _FIELDNAME_MAX) {
@@ -135,14 +138,14 @@ get_hugepage_dir(uint64_t hugepage_sz)
 		}
 
 		/* we have a specified --huge-dir option, only examine that dir */
-		//如果internal_config.hugepage_dir被指定，则仅要求含有hugepage_dir这一行
+		//如果通过参数指定了大页的目录，则仅检查参数指定的目录，其它目录将被忽略
 		if (internal_config.hugepage_dir != NULL &&
 				strcmp(splitstr[MOUNTPT], internal_config.hugepage_dir) != 0)
 			continue;
 
 		//仅要求文件类型为hugetlbfs类型
 		if (strncmp(splitstr[FSTYPE], hugetlbfs_str, htlbfs_str_len) == 0){
-			//取pagesize选项
+			//尝试着在option中取pagesize选项
 			const char *pagesz_str = strstr(splitstr[OPTIONS], pagesize_opt);
 
 			/* if no explicit page size, the default page size is compared */
@@ -154,7 +157,7 @@ get_hugepage_dir(uint64_t hugepage_sz)
 				}
 			}
 			/* there is an explicit page size, so check it */
-			//如果指定了页大小，与页大小比对
+			//如果选项中指定了页大小，与页大小比对
 			else {
 				uint64_t pagesz = rte_str_to_size(&pagesz_str[pagesize_opt_len]);
 				if (pagesz == hugepage_sz) {
@@ -166,6 +169,7 @@ get_hugepage_dir(uint64_t hugepage_sz)
 	} /* end while fgets */
 
 	fclose(fd);
+	//返回此大页对应的挂载点
 	return retval;
 }
 
@@ -174,7 +178,7 @@ get_hugepage_dir(uint64_t hugepage_sz)
  * there are. Checks if the file is locked (i.e.
  * if it's in use by another DPDK process).
  */
-//删除掉hugepage上所有的hugepage文件
+//删除掉hugepage上所有的hugepage文件（没有用的hugepage文件，会加锁尝试）
 static int
 clear_hugedir(const char * hugedir)
 {
@@ -216,13 +220,16 @@ clear_hugedir(const char * hugedir)
 		}
 
 		/* non-blocking lock */
+		//尝试锁住此fd
 		lck_result = flock(fd, LOCK_EX | LOCK_NB);
 
 		/* if lock succeeds, unlock and remove the file */
 		if (lck_result != -1) {
+			//如果锁成功，则移除此file
 			flock(fd, LOCK_UN);
 			unlinkat(dir_fd, dirent->d_name, 0);
 		}
+		//如果没有锁成功，则不处理
 		close (fd);
 		dirent = readdir(dir);
 	}
@@ -264,6 +271,14 @@ eal_hugepage_info_init(void)
 	struct dirent *dirent;
 
 	//打开大页目录
+	/*
+anlang@anlang:~/workspace/acc_be$ ls -al /sys/kernel/mm/hugepages/
+total 0
+drwxr-xr-x 4 root root 0 1月  16 15:15 .
+drwxr-xr-x 6 root root 0 1月  16 15:15 ..
+drwxr-xr-x 2 root root 0 1月  16 15:15 hugepages-1048576kB
+drwxr-xr-x 2 root root 0 1月  16 15:15 hugepages-2048kB
+	 */
 	dir = opendir(sys_dir_path);
 	if (dir == NULL) {
 		RTE_LOG(ERR, EAL,
@@ -275,7 +290,7 @@ eal_hugepage_info_init(void)
 	for (dirent = readdir(dir); dirent != NULL; dirent = readdir(dir)) {
 		struct hugepage_info *hpi;
 
-		//如果不以dirent_start_text开头，则忽略
+		//如果不以$dirent_start_text开头，则忽略
 		if (strncmp(dirent->d_name, dirent_start_text,
 			    dirent_start_len) != 0)
 			continue;
@@ -288,7 +303,7 @@ eal_hugepage_info_init(void)
 		hpi = &internal_config.hugepage_info[num_sizes];
 		hpi->hugepage_sz =
 			rte_str_to_size(&dirent->d_name[dirent_start_len]);//页大小
-		hpi->hugedir = get_hugepage_dir(hpi->hugepage_sz);//获取页大小为hugepage_sz的挂载点
+		hpi->hugedir = get_hugepage_dir(hpi->hugepage_sz);//获取页大小为$hugepage_sz的挂载点
 
 		/* first, check if we have a mountpoint */
 		//检查此页大小是否有挂载点
@@ -306,6 +321,7 @@ eal_hugepage_info_init(void)
 			continue;
 		}
 
+		//锁住此大页目录，排除其它进程
 		/* try to obtain a writelock */
 		hpi->lock_descriptor = open(hpi->hugedir, O_RDONLY);
 
@@ -316,16 +332,19 @@ eal_hugepage_info_init(void)
 			break;
 		}
 		/* clear out the hugepages dir from unused pages */
+		//删除掉此目录无用的页
 		if (clear_hugedir(hpi->hugedir) == -1)
 			break;
 
 		/* for now, put all pages into socket 0,
 		 * later they will be sorted */
+		//获取此目录空闲的页大小（注意仅填充到socket 0)
 		hpi->num_pages[0] = get_num_hugepages(dirent->d_name);
 
 #ifndef RTE_ARCH_64
 		/* for 32-bit systems, limit number of hugepages to
 		 * 1GB per page size */
+		//32位系统，最多占用1G内存
 		hpi->num_pages[0] = RTE_MIN(hpi->num_pages[0],
 					    RTE_PGSIZE_1G / hpi->hugepage_sz);
 #endif

@@ -38,6 +38,7 @@ extern "C" {
 #define RTE_MEMZONE_256MB          0x00020000   /**< Use 256MB pages. */
 #define RTE_MEMZONE_512MB          0x00040000   /**< Use 512MB pages. */
 #define RTE_MEMZONE_4GB            0x00080000   /**< Use 4GB pages. */
+//任意页标记
 #define RTE_MEMZONE_SIZE_HINT_ONLY 0x00000004   /**< Use available page size */
 
 /**

@@ -20,7 +20,7 @@
  * mount points of hugepages
  */
 struct hugepage_info {
-	uint64_t hugepage_sz;   /**< size of a huge page */ //每个大页的类型
+	uint64_t hugepage_sz;   /**< size of a huge page */ //每个大页的类型(页大小）
 	const char *hugedir;    /**< dir where hugetlbfs is mounted */ //挂载目录名称
 	uint32_t num_pages[RTE_MAX_NUMA_NODES];
 				/**< number of hugepages of that size on each socket */

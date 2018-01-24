@@ -128,15 +128,17 @@ nfp_qcp_ptr_add(uint8_t *q, enum nfp_qcp_ptr ptr, uint32_t val)
 	uint32_t off;
 
 	if (ptr == NFP_QCP_READ_PTR)
-		off = NFP_QCP_QUEUE_ADD_RPTR;
+		off = NFP_QCP_QUEUE_ADD_RPTR;//读位置q+0
 	else
-		off = NFP_QCP_QUEUE_ADD_WPTR;
+		off = NFP_QCP_QUEUE_ADD_WPTR;//写位置q+1
 
+	//当值>255时，向q+off内一次写一个255
 	while (val > NFP_QCP_MAX_ADD) {
 		nn_writel(rte_cpu_to_le_32(NFP_QCP_MAX_ADD), q + off);
 		val -= NFP_QCP_MAX_ADD;
 	}
 
+	//向q+off位置，写入值val
 	nn_writel(rte_cpu_to_le_32(val), q + off);
 }
 
@@ -1695,6 +1697,7 @@ nfp_net_tx_queue_setup(struct rte_eth_dev *dev, uint16_t queue_idx,
 	 * handle the maximum ring size is allocated in order to allow for
 	 * resizing in later calls to the queue setup function.
 	 */
+	//申请硬件描述符用内存
 	tz = rte_eth_dma_zone_reserve(dev, "tx_ring", queue_idx,
 				   sizeof(struct nfp_net_tx_desc) *
 				   NFP_NET_MAX_TX_DESC, NFP_MEMZONE_ALIGN,
@@ -1714,6 +1717,7 @@ nfp_net_tx_queue_setup(struct rte_eth_dev *dev, uint16_t queue_idx,
 	/* queue mapping based on firmware configuration */
 	txq->qidx = queue_idx;
 	txq->tx_qcidx = queue_idx * hw->stride_tx;
+	//此队列对应的信息
 	txq->qcp_q = hw->tx_bar + NFP_QCP_QUEUE_OFF(txq->tx_qcidx);
 
 	txq->port_id = dev->data->port_id;
@@ -1721,7 +1725,7 @@ nfp_net_tx_queue_setup(struct rte_eth_dev *dev, uint16_t queue_idx,
 
 	/* Saving physical and virtual addresses for the TX ring */
 	txq->dma = (uint64_t)tz->iova;
-	txq->txds = (struct nfp_net_tx_desc *)tz->addr;
+	txq->txds = (struct nfp_net_tx_desc *)tz->addr;//设置描述符地址
 
 	/* mbuf pointers array for referencing mbufs linked to TX descriptors */
 	txq->txbufs = rte_zmalloc_socket("txq->txbufs",
@@ -1762,12 +1766,14 @@ nfp_net_tx_tso(struct nfp_net_txq *txq, struct nfp_net_tx_desc *txd,
 
 	ol_flags = mb->ol_flags;
 
+	//没有开启tso时
 	if (!(ol_flags & PKT_TX_TCP_SEG))
 		goto clean_txd;
 
+	//指明l4层的偏移移
 	txd->l4_offset = mb->l2_len + mb->l3_len + mb->l4_len;
-	txd->lso = rte_cpu_to_le_16(mb->tso_segsz);
-	txd->flags = PCIE_DESC_TX_LSO;
+	txd->lso = rte_cpu_to_le_16(mb->tso_segsz);//指明段的大小
+	txd->flags = PCIE_DESC_TX_LSO;//指明需要执行tso
 	return;
 
 clean_txd:
@@ -1784,12 +1790,14 @@ nfp_net_tx_cksum(struct nfp_net_txq *txq, struct nfp_net_tx_desc *txd,
 	uint64_t ol_flags;
 	struct nfp_net_hw *hw = txq->hw;
 
+	//硬件不支持checksum offload
 	if (!(hw->cap & NFP_NET_CFG_CTRL_TXCSUM))
 		return;
 
 	ol_flags = mb->ol_flags;
 
 	/* IPv6 does not need checksum */
+	//标记需要计算checksum,标记offload哪种checksum
 	if (ol_flags & PKT_TX_IP_CKSUM)
 		txd->flags |= PCIE_DESC_TX_IP4_CSUM;
 
@@ -2185,7 +2193,7 @@ nfp_net_xmit_pkts(void *tx_queue, struct rte_mbuf **tx_pkts, uint16_t nb_pkts)
 {
 	struct nfp_net_txq *txq;
 	struct nfp_net_hw *hw;
-	struct nfp_net_tx_desc *txds, txd;
+	struct nfp_net_tx_desc *txds, txd;//发送用的描述符
 	struct rte_mbuf *pkt;
 	uint64_t dma_addr;
 	int pkt_size, dma_size;
@@ -2200,6 +2208,7 @@ nfp_net_xmit_pkts(void *tx_queue, struct rte_mbuf **tx_pkts, uint16_t nb_pkts)
 	PMD_TX_LOG(DEBUG, "working for queue %u at pos %d and %u packets\n",
 		   txq->qidx, txq->wr_p, nb_pkts);
 
+	//如果txq满或者不足以发送（应是强制发送，未看进去，需要关注）
 	if ((nfp_free_tx_desc(txq) < nb_pkts) || (nfp_net_txq_full(txq)))
 		nfp_net_tx_free_bufs(txq);
 
@@ -2220,6 +2229,7 @@ nfp_net_xmit_pkts(void *tx_queue, struct rte_mbuf **tx_pkts, uint16_t nb_pkts)
 		/* Warming the cache for releasing the mbuf later on */
 		RTE_MBUF_PREFETCH_TO_FREE(*lmbuf);
 
+		//取出需要发送的第i个报文
 		pkt = *(tx_pkts + i);
 
 		if (unlikely((pkt->nb_segs > 1) &&
@@ -2253,6 +2263,8 @@ nfp_net_xmit_pkts(void *tx_queue, struct rte_mbuf **tx_pkts, uint16_t nb_pkts)
 		 */
 		pkt_size = pkt->pkt_len;
 
+		//针对单个报文的发送，由于单个报文可能有多个segment,故采用循环进行处理，一个
+		//报文对应一个txd
 		while (pkt) {
 			/* Copying TSO, VLAN and cksum info */
 			*txds = txd;
@@ -2278,14 +2290,15 @@ nfp_net_xmit_pkts(void *tx_queue, struct rte_mbuf **tx_pkts, uint16_t nb_pkts)
 			txds->dma_addr_hi = (dma_addr >> 32) & 0xff;
 			txds->dma_addr_lo = (dma_addr & 0xffffffff);
 			ASSERT(free_descs > 0);
-			free_descs--;
+			free_descs--;//少了一个描述符
 
 			txq->wr_p++;
 			if (unlikely(txq->wr_p == txq->tx_count)) /* wrapping?*/
-				txq->wr_p = 0;
+				txq->wr_p = 0;//如果绕圈了，则回归到0
 
 			pkt_size -= dma_size;
 			if (!pkt_size)
+				//一个报文发送完成了
 				/* End of packet */
 				txds->offset_eop |= PCIE_DESC_TX_EOP;
 			else
@@ -2293,6 +2306,7 @@ nfp_net_xmit_pkts(void *tx_queue, struct rte_mbuf **tx_pkts, uint16_t nb_pkts)
 
 			pkt = pkt->next;
 			/* Referencing next free TX descriptor */
+			//取一个新的txds,取一个空闲的空间
 			txds = &txq->txds[txq->wr_p];
 			lmbuf = &txq->txbufs[txq->wr_p].mbuf;
 			issued_descs++;
@@ -2303,7 +2317,7 @@ nfp_net_xmit_pkts(void *tx_queue, struct rte_mbuf **tx_pkts, uint16_t nb_pkts)
 xmit_end:
 	/* Increment write pointers. Force memory write before we let HW know */
 	rte_wmb();
-	nfp_qcp_ptr_add(txq->qcp_q, NFP_QCP_WRITE_PTR, issued_descs);
+	nfp_qcp_ptr_add(txq->qcp_q, NFP_QCP_WRITE_PTR, issued_descs);//知会硬件用了写多少个描述符
 
 	return i;
 }

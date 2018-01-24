@@ -1051,19 +1051,23 @@ rte_eal_hugepage_init(void)
 	/* hugetlbfs can be disabled */
 	//当大页被禁用，此时memseg即使用addr
 	if (internal_config.no_hugetlbfs) {
+		//申请一块内存（大小为internal_config.memory)
 		addr = mmap(NULL, internal_config.memory, PROT_READ | PROT_WRITE,
 				MAP_PRIVATE | MAP_ANONYMOUS, 0, 0);
 		if (addr == MAP_FAILED) {
+			//申请失败处理
 			RTE_LOG(ERR, EAL, "%s: mmap() failed: %s\n", __func__,
 					strerror(errno));
 			return -1;
 		}
+
+		//检查dma要求
 		if (rte_eal_iova_mode() == RTE_IOVA_VA)
 			mcfg->memseg[0].iova = (uintptr_t)addr;
 		else
-			mcfg->memseg[0].iova = RTE_BAD_IOVA;
+			mcfg->memseg[0].iova = RTE_BAD_IOVA;//dma要求物理地址，此方式无法拿到物理地址
 		mcfg->memseg[0].addr = addr;
-		mcfg->memseg[0].hugepage_sz = RTE_PGSIZE_4K;
+		mcfg->memseg[0].hugepage_sz = RTE_PGSIZE_4K;//页大小为4K
 		mcfg->memseg[0].len = internal_config.memory;
 		mcfg->memseg[0].socket_id = 0;
 		return 0;
@@ -1075,7 +1079,7 @@ rte_eal_hugepage_init(void)
 		/* meanwhile, also initialize used_hp hugepage sizes in used_hp */
 		used_hp[i].hugepage_sz = internal_config.hugepage_info[i].hugepage_sz;
 
-		nr_hugepages += internal_config.hugepage_info[i].num_pages[0];
+		nr_hugepages += internal_config.hugepage_info[i].num_pages[0];//记录一共有多少大页
 	}
 
 	/*
@@ -1084,6 +1088,7 @@ rte_eal_hugepage_init(void)
 	 * processing done on these pages, shared memory will be created
 	 * at a later stage.
 	 */
+	//为每个大页注册申请一个struct hugepage_file结构
 	tmp_hp = malloc(nr_hugepages * sizeof(struct hugepage_file));
 	if (tmp_hp == NULL)
 		goto fail;

@@ -1018,6 +1018,7 @@ rte_eal_process_type(void)
 	return rte_config.process_type;
 }
 
+//检查是否配置有大页内存
 int rte_eal_has_hugepages(void)
 {
 	return ! internal_config.no_hugetlbfs;

@@ -461,6 +461,7 @@ struct rte_mbuf {
 	/** Input port (16 bits to support more than 256 virtual ports). */
 	uint16_t port;
 
+	//mbuf的offload功能标记（dpdk定义了一组功能，然后由驱动对这组功能进行映射，并对应到各自硬件特性上）
 	uint64_t ol_flags;        /**< Offload features. */
 
 	/* remaining bytes are set on RX when pulling packet from descriptor */
@@ -500,11 +501,12 @@ struct rte_mbuf {
 		};
 	};
 
-	//总的报文长度
+	//总的报文长度(可能有多个seg,用next串起来)
 	uint32_t pkt_len;         /**< Total pkt len: sum of all segments. */
 	//mbuf中的数据长度
 	uint16_t data_len;        /**< Amount of data in segment buffer. */
 	/** VLAN TCI (CPU order), valid if PKT_RX_VLAN_STRIPPED is set. */
+	//为了让网卡来插入vlan,这里将vlan放在此种（cpu序），等报文发送时，网卡将报文插入
 	uint16_t vlan_tci;
 
 	union {

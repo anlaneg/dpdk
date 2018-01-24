@@ -99,21 +99,21 @@
  */
 #define NFP_NET_CFG_CTRL                0x0000
 #define   NFP_NET_CFG_CTRL_ENABLE         (0x1 <<  0) /* Global enable */
-#define   NFP_NET_CFG_CTRL_PROMISC        (0x1 <<  1) /* Enable Promisc mode */
+#define   NFP_NET_CFG_CTRL_PROMISC        (0x1 <<  1) /* Enable Promisc mode */ //开启了混杂模式
 #define   NFP_NET_CFG_CTRL_L2BC           (0x1 <<  2) /* Allow L2 Broadcast */
 #define   NFP_NET_CFG_CTRL_L2MC           (0x1 <<  3) /* Allow L2 Multicast */
-#define   NFP_NET_CFG_CTRL_RXCSUM         (0x1 <<  4) /* Enable RX Checksum */
-#define   NFP_NET_CFG_CTRL_TXCSUM         (0x1 <<  5) /* Enable TX Checksum */
-#define   NFP_NET_CFG_CTRL_RXVLAN         (0x1 <<  6) /* Enable VLAN strip */
+#define   NFP_NET_CFG_CTRL_RXCSUM         (0x1 <<  4) /* Enable RX Checksum */  //开启rx checksum
+#define   NFP_NET_CFG_CTRL_TXCSUM         (0x1 <<  5) /* Enable TX Checksum */  //开启tx checksum
+#define   NFP_NET_CFG_CTRL_RXVLAN         (0x1 <<  6) /* Enable VLAN strip */   //开启vlan剥离
 #define   NFP_NET_CFG_CTRL_TXVLAN         (0x1 <<  7) /* Enable VLAN insert */
 #define   NFP_NET_CFG_CTRL_SCATTER        (0x1 <<  8) /* Scatter DMA */
-#define   NFP_NET_CFG_CTRL_GATHER         (0x1 <<  9) /* Gather DMA */
-#define   NFP_NET_CFG_CTRL_LSO            (0x1 << 10) /* LSO/TSO */
+#define   NFP_NET_CFG_CTRL_GATHER         (0x1 <<  9) /* Gather DMA */          //DMA的模式？
+#define   NFP_NET_CFG_CTRL_LSO            (0x1 << 10) /* LSO/TSO */             //支持lso
 #define   NFP_NET_CFG_CTRL_RINGCFG        (0x1 << 16) /* Ring runtime changes */
 #define   NFP_NET_CFG_CTRL_RSS            (0x1 << 17) /* RSS */
-#define   NFP_NET_CFG_CTRL_IRQMOD         (0x1 << 18) /* Interrupt moderation */
+#define   NFP_NET_CFG_CTRL_IRQMOD         (0x1 << 18) /* Interrupt moderation */  //中断调整？
 #define   NFP_NET_CFG_CTRL_RINGPRIO       (0x1 << 19) /* Ring priorities */
-#define   NFP_NET_CFG_CTRL_MSIXAUTO       (0x1 << 20) /* MSI-X auto-masking */
+#define   NFP_NET_CFG_CTRL_MSIXAUTO       (0x1 << 20) /* MSI-X auto-masking */    //这个是什么？
 #define   NFP_NET_CFG_CTRL_TXRWB          (0x1 << 21) /* Write-back of TX ring*/
 #define   NFP_NET_CFG_CTRL_L2SWITCH       (0x1 << 22) /* L2 Switch */
 #define   NFP_NET_CFG_CTRL_L2SWITCH_LOCAL (0x1 << 23) /* Switch to local */

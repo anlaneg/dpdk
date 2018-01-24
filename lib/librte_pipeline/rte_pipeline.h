@@ -190,7 +190,7 @@ enum rte_pipeline_action {
 	RTE_PIPELINE_ACTION_PORT,//输出到指定port
 
 	/** Send packet to output port read from packet meta-data */
-	RTE_PIPELINE_ACTION_PORT_META,
+	RTE_PIPELINE_ACTION_PORT_META,//自报文中某个metadata位置取出出接口，然后发送
 
 	/** Send packet to table */
 	RTE_PIPELINE_ACTION_TABLE,//跳转到表x

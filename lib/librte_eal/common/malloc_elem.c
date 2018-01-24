@@ -55,22 +55,27 @@ malloc_elem_mkend(struct malloc_elem *elem, struct malloc_elem *prev)
  * and alignment would fit in the current element. If the data doesn't
  * fit, return NULL.
  */
+//检查是否可以分配，如果不能返回NULL，如果可以返回拆分点
 static void *
 elem_start_pt(struct malloc_elem *elem, size_t size, unsigned align,
 		size_t bound)
 {
-	const size_t bmask = ~(bound - 1);
+	const size_t bmask = ~(bound - 1);//bound的mask,它是一个2的n次方
+	//下面我们会试着将elem分成两段，采用尾段（第二段），故分配置，将会从尾部向前减去size
+	//然后将new_data_start按align对齐（这种对齐是通过丢弃末尾数字来对齐，相当于new_data_start
+	//在向第一段方向移动了，（忽略掉bound的检查）然后检查剩余的一段是否够分配一个struct malloc_elem
+	//如果不够，就返回NULL
 	uintptr_t end_pt = (uintptr_t)elem +
-			elem->size - MALLOC_ELEM_TRAILER_LEN;
+			elem->size - MALLOC_ELEM_TRAILER_LEN;//尝试计算理论上elem的起始位置
 	uintptr_t new_data_start = RTE_ALIGN_FLOOR((end_pt - size), align);
 	uintptr_t new_elem_start;
 
 	/* check boundary */
 	if ((new_data_start & bmask) != ((end_pt - 1) & bmask)) {
-		end_pt = RTE_ALIGN_FLOOR(end_pt, bound);
-		new_data_start = RTE_ALIGN_FLOOR((end_pt - size), align);
+		end_pt = RTE_ALIGN_FLOOR(end_pt, bound);//在end_pt前保持一个边界宽（故end_pt前移一个bound)
+		new_data_start = RTE_ALIGN_FLOOR((end_pt - size), align);//在（end_pt，end_pt+size）范围内给用户使用（考虑对齐）
 		end_pt = new_data_start + size;
-		if (((end_pt - 1) & bmask) != (new_data_start & bmask))
+		if (((end_pt - 1) & bmask) != (new_data_start & bmask)) //没有搞清楚这个的作用
 			return NULL;
 	}
 
@@ -122,6 +127,7 @@ split_elem(struct malloc_elem *elem, struct malloc_elem *split_pt)
  *   heap->free_head[2] - (2^10 ,2^12]
  *   heap->free_head[3] - (2^12, 2^14]
  *   heap->free_head[4] - (2^14, MAX_SIZE]
+ * 如上述，按照不同的size返回相应的索引号
  */
 size_t
 malloc_elem_free_list_index(size_t size)
@@ -194,6 +200,7 @@ malloc_elem_alloc(struct malloc_elem *elem, size_t size, unsigned align,
 		malloc_elem_free_list_insert(new_free_elem);
 	}
 
+	//剩余的块太小了，直接做为padding存在
 	if (old_elem_size < MALLOC_ELEM_OVERHEAD + MIN_DATA_SIZE) {
 		/* don't split it, pad the element instead */
 		elem->state = ELEM_BUSY;

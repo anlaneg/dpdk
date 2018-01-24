@@ -44,13 +44,16 @@ rte_malloc_socket(const char *type, size_t size, unsigned align, int socket_arg)
 	void *ret;
 
 	/* return NULL if size is 0 or alignment is not power-of-2 */
+	//参数检查
 	if (size == 0 || (align && !rte_is_power_of_2(align)))
 		return NULL;
 
 	if (!rte_eal_has_hugepages())
+		//没有配置大页内存时，强制变更为socket不相关申请
 		socket_arg = SOCKET_ID_ANY;
 
 	if (socket_arg == SOCKET_ID_ANY)
+		//获取当前线程numa编号
 		socket = malloc_get_numa_socket();
 	else
 		socket = socket_arg;
@@ -59,6 +62,7 @@ rte_malloc_socket(const char *type, size_t size, unsigned align, int socket_arg)
 	if (socket >= RTE_MAX_NUMA_NODES)
 		return NULL;
 
+	//指定在$socket堆上进行申请
 	ret = malloc_heap_alloc(&mcfg->malloc_heaps[socket], type,
 				size, 0, align == 0 ? 1 : align, 0);
 	if (ret != NULL || socket_arg != SOCKET_ID_ANY)
@@ -96,6 +100,7 @@ rte_malloc(const char *type, size_t size, unsigned align)
 void *
 rte_zmalloc_socket(const char *type, size_t size, unsigned align, int socket)
 {
+	//当socket == SOCKET_ID_ANY时，与socket无关
 	return rte_malloc_socket(type, size, align, socket);
 }
 
@@ -105,6 +110,7 @@ rte_zmalloc_socket(const char *type, size_t size, unsigned align, int socket)
 void *
 rte_zmalloc(const char *type, size_t size, unsigned align)
 {
+	//申请内存，对内存所在的socket无要求
 	return rte_zmalloc_socket(type, size, align, SOCKET_ID_ANY);
 }
 

@@ -97,11 +97,13 @@ find_suitable_element(struct malloc_heap *heap, size_t size,
 	size_t idx;
 	struct malloc_elem *elem, *alt_elem = NULL;
 
+	//依据不同的size返回起始的idx，当在当前的idx中无法找到合适的elem，则向上层的idx进行查找
 	for (idx = malloc_elem_free_list_index(size);
 			idx < RTE_HEAP_NUM_FREELISTS; idx++) {
 		for (elem = LIST_FIRST(&heap->free_head[idx]);
 				!!elem; elem = LIST_NEXT(elem, free_list)) {
 			if (malloc_elem_can_hold(elem, size, align, bound)) {
+				//这个elem可以用于分配，检查大页属性是否合适，如果合适返回此elem
 				if (check_hugepage_sz(flags, elem->ms->hugepage_sz))
 					return elem;
 				if (alt_elem == NULL)
@@ -132,10 +134,12 @@ malloc_heap_alloc(struct malloc_heap *heap,
 	size = RTE_CACHE_LINE_ROUNDUP(size);
 	align = RTE_CACHE_LINE_ROUNDUP(align);
 
+	//加锁保护分配过程
 	rte_spinlock_lock(&heap->lock);
 
 	elem = find_suitable_element(heap, size, flags, align, bound);
 	if (elem != NULL) {
+		//找到了一个合适的元素，拆分此元素进行分配
 		elem = malloc_elem_alloc(elem, size, align, bound);
 		/* increase heap's count of allocated elements */
 		heap->alloc_count++;
@@ -183,6 +187,7 @@ malloc_heap_get_stats(struct malloc_heap *heap,
 	return 0;
 }
 
+//初始化各socket的堆
 int
 rte_eal_malloc_heap_init(void)
 {
@@ -196,6 +201,7 @@ rte_eal_malloc_heap_init(void)
 	for (ms = &mcfg->memseg[0], ms_cnt = 0;
 			(ms_cnt < RTE_MAX_MEMSEG) && (ms->len > 0);
 			ms_cnt++, ms++) {
+		//初始化各socket上的堆
 		malloc_heap_add_memseg(&mcfg->malloc_heaps[ms->socket_id], ms);
 	}
 
