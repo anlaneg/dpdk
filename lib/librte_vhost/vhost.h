@@ -74,17 +74,21 @@ struct vhost_virtqueue {
 
 	uint16_t		last_avail_idx;//队列上一次收取位置
 	uint16_t		last_used_idx;//队列上一次发送位置
+	/* Last used index we notify to front end. */
+	uint16_t		signalled_used;
 #define VIRTIO_INVALID_EVENTFD		(-1)
 #define VIRTIO_UNINITIALIZED_EVENTFD	(-2)
 
 	/* Backend value to determine if device should started/stopped */
 	int			backend;
+	int			enabled;
+	int			access_ok;
+	rte_spinlock_t		access_lock;
+
 	/* Used to notify the guest (trigger interrupt) */
 	int			callfd;
 	/* Currently unused as polling mode is enabled */
 	int			kickfd;
-	int			enabled;//队列是否被启用
-	int			access_ok;
 
 	/* Physical address of used ring, for logging */
 	uint64_t		log_guest_addr;
@@ -175,13 +179,19 @@ struct vhost_msg {
 				(1ULL << VIRTIO_F_VERSION_1)   | \
 				(1ULL << VHOST_F_LOG_ALL)      | \
 				(1ULL << VHOST_USER_F_PROTOCOL_FEATURES) | \
+				(1ULL << VIRTIO_NET_F_GSO) | \
 				(1ULL << VIRTIO_NET_F_HOST_TSO4) | \
 				(1ULL << VIRTIO_NET_F_HOST_TSO6) | \
+				(1ULL << VIRTIO_NET_F_HOST_UFO) | \
+				(1ULL << VIRTIO_NET_F_HOST_ECN) | \
 				(1ULL << VIRTIO_NET_F_CSUM)    | \
 				(1ULL << VIRTIO_NET_F_GUEST_CSUM) | \
 				(1ULL << VIRTIO_NET_F_GUEST_TSO4) | \
 				(1ULL << VIRTIO_NET_F_GUEST_TSO6) | \
+				(1ULL << VIRTIO_NET_F_GUEST_UFO) | \
+				(1ULL << VIRTIO_NET_F_GUEST_ECN) | \
 				(1ULL << VIRTIO_RING_F_INDIRECT_DESC) | \
+				(1ULL << VIRTIO_RING_F_EVENT_IDX) | \
 				(1ULL << VIRTIO_NET_F_MTU) | \
 				(1ULL << VIRTIO_F_IOMMU_PLATFORM))
 
@@ -335,6 +345,9 @@ void cleanup_device(struct virtio_net *dev, int destroy);
 void reset_device(struct virtio_net *dev);
 void vhost_destroy_device(int);
 
+void cleanup_vq(struct vhost_virtqueue *vq, int destroy);
+void free_vq(struct vhost_virtqueue *vq);
+
 int alloc_vring_queue(struct virtio_net *dev, uint32_t vring_idx);
 
 void vhost_set_ifname(int, const char *if_name, unsigned int if_len);
@@ -362,6 +375,49 @@ vhost_iova_to_vva(struct virtio_net *dev, struct vhost_virtqueue *vq,
 		return rte_vhost_gpa_to_vva(dev->mem, iova);
 
 	return __vhost_iova_to_vva(dev, vq, iova, size, perm);
+}
+
+#define vhost_used_event(vr) \
+	(*(volatile uint16_t*)&(vr)->avail->ring[(vr)->size])
+
+/*
+ * The following is used with VIRTIO_RING_F_EVENT_IDX.
+ * Assuming a given event_idx value from the other size, if we have
+ * just incremented index from old to new_idx, should we trigger an
+ * event?
+ */
+static __rte_always_inline int
+vhost_need_event(uint16_t event_idx, uint16_t new_idx, uint16_t old)
+{
+	return (uint16_t)(new_idx - event_idx - 1) < (uint16_t)(new_idx - old);
+}
+
+static __rte_always_inline void
+vhost_vring_call(struct virtio_net *dev, struct vhost_virtqueue *vq)
+{
+	/* Flush used->idx update before we read avail->flags. */
+	rte_mb();
+
+	/* Don't kick guest if we don't reach index specified by guest. */
+	if (dev->features & (1ULL << VIRTIO_RING_F_EVENT_IDX)) {
+		uint16_t old = vq->signalled_used;
+		uint16_t new = vq->last_used_idx;
+
+		LOG_DEBUG(VHOST_DATA, "%s: used_event_idx=%d, old=%d, new=%d\n",
+			__func__,
+			vhost_used_event(vq),
+			old, new);
+		if (vhost_need_event(vhost_used_event(vq), new, old)
+			&& (vq->callfd >= 0)) {
+			vq->signalled_used = vq->last_used_idx;
+			eventfd_write(vq->callfd, (eventfd_t) 1);
+		}
+	} else {
+		/* Kick the guest if necessary. */
+		if (!(vq->avail->flags & VRING_AVAIL_F_NO_INTERRUPT)
+				&& (vq->callfd >= 0))
+			eventfd_write(vq->callfd, (eventfd_t)1);
+	}
 }
 
 #endif /* _VHOST_NET_CDEV_H_ */

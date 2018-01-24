@@ -231,11 +231,6 @@ int16_t tx_free_thresh = RTE_PMD_PARAM_UNSET;
 int16_t tx_rs_thresh = RTE_PMD_PARAM_UNSET;
 
 /*
- * Configurable value of TX queue flags.
- */
-int32_t txq_flags = RTE_PMD_PARAM_UNSET;
-
-/*
  * Receive Side Scaling (RSS) configuration.
  */
 uint64_t rss_hf = ETH_RSS_IP; /* RSS IP by default. */
@@ -310,15 +305,14 @@ lcoreid_t latencystats_lcore_id = -1;
  */
 struct rte_eth_rxmode rx_mode = {
 	.max_rx_pkt_len = ETHER_MAX_LEN, /**< Default maximum frame length. */
-	.split_hdr_size = 0,
-	.header_split   = 0, /**< Header Split disabled. */
-	.hw_ip_checksum = 0, /**< IP checksum offload disabled. */
-	.hw_vlan_filter = 1, /**< VLAN filtering enabled. */
-	.hw_vlan_strip  = 1, /**< VLAN strip enabled. */
-	.hw_vlan_extend = 0, /**< Extended VLAN disabled. */
-	.jumbo_frame    = 0, /**< Jumbo Frame Support disabled. */
-	.hw_strip_crc   = 1, /**< CRC stripping by hardware enabled. */
-	.hw_timestamp   = 0, /**< HW timestamp enabled. */
+	.offloads = (DEV_RX_OFFLOAD_VLAN_FILTER |
+		     DEV_RX_OFFLOAD_VLAN_STRIP |
+		     DEV_RX_OFFLOAD_CRC_STRIP),
+	.ignore_offload_bitfield = 1,
+};
+
+struct rte_eth_txmode tx_mode = {
+	.offloads = DEV_TX_OFFLOAD_MBUF_FAST_FREE,
 };
 
 struct rte_fdir_conf fdir_conf = {
@@ -540,6 +534,98 @@ check_socket_id(const unsigned int socket_id)
 	return 0;
 }
 
+/*
+ * Get the allowed maximum number of RX queues.
+ * *pid return the port id which has minimal value of
+ * max_rx_queues in all ports.
+ */
+queueid_t
+get_allowed_max_nb_rxq(portid_t *pid)
+{
+	queueid_t allowed_max_rxq = MAX_QUEUE_ID;
+	portid_t pi;
+	struct rte_eth_dev_info dev_info;
+
+	RTE_ETH_FOREACH_DEV(pi) {
+		rte_eth_dev_info_get(pi, &dev_info);
+		if (dev_info.max_rx_queues < allowed_max_rxq) {
+			allowed_max_rxq = dev_info.max_rx_queues;
+			*pid = pi;
+		}
+	}
+	return allowed_max_rxq;
+}
+
+/*
+ * Check input rxq is valid or not.
+ * If input rxq is not greater than any of maximum number
+ * of RX queues of all ports, it is valid.
+ * if valid, return 0, else return -1
+ */
+int
+check_nb_rxq(queueid_t rxq)
+{
+	queueid_t allowed_max_rxq;
+	portid_t pid = 0;
+
+	allowed_max_rxq = get_allowed_max_nb_rxq(&pid);
+	if (rxq > allowed_max_rxq) {
+		printf("Fail: input rxq (%u) can't be greater "
+		       "than max_rx_queues (%u) of port %u\n",
+		       rxq,
+		       allowed_max_rxq,
+		       pid);
+		return -1;
+	}
+	return 0;
+}
+
+/*
+ * Get the allowed maximum number of TX queues.
+ * *pid return the port id which has minimal value of
+ * max_tx_queues in all ports.
+ */
+queueid_t
+get_allowed_max_nb_txq(portid_t *pid)
+{
+	queueid_t allowed_max_txq = MAX_QUEUE_ID;
+	portid_t pi;
+	struct rte_eth_dev_info dev_info;
+
+	RTE_ETH_FOREACH_DEV(pi) {
+		rte_eth_dev_info_get(pi, &dev_info);
+		if (dev_info.max_tx_queues < allowed_max_txq) {
+			allowed_max_txq = dev_info.max_tx_queues;
+			*pid = pi;
+		}
+	}
+	return allowed_max_txq;
+}
+
+/*
+ * Check input txq is valid or not.
+ * If input txq is not greater than any of maximum number
+ * of TX queues of all ports, it is valid.
+ * if valid, return 0, else return -1
+ */
+int
+check_nb_txq(queueid_t txq)
+{
+	queueid_t allowed_max_txq;
+	portid_t pid = 0;
+
+	allowed_max_txq = get_allowed_max_nb_txq(&pid);
+	if (txq > allowed_max_txq) {
+		printf("Fail: input txq (%u) can't be greater "
+		       "than max_tx_queues (%u) of port %u\n",
+		       txq,
+		       allowed_max_txq,
+		       pid);
+		return -1;
+	}
+	return 0;
+}
+
 static void
 init_config(void)
 {
@@ -581,7 +667,14 @@ init_config(void)
 
 	RTE_ETH_FOREACH_DEV(pid) {
 		port = &ports[pid];
+		/* Apply default Tx configuration for all ports */
+		port->dev_conf.txmode = tx_mode;
+		port->dev_conf.rxmode = rx_mode;
 		rte_eth_dev_info_get(pid, &port->dev_info);
+		if (!(port->dev_info.tx_offload_capa &
+		      DEV_TX_OFFLOAD_MBUF_FAST_FREE))
+			port->dev_conf.txmode.offloads &=
+				~DEV_TX_OFFLOAD_MBUF_FAST_FREE;
 
 		if (numa_support) {
 			if (port_numa[pid] != NUMA_NO_CONFIG)
@@ -1371,15 +1464,23 @@ all_ports_started(void)
 }
 
 int
+port_is_stopped(portid_t port_id)
+{
+	struct rte_port *port = &ports[port_id];
+
+	if ((port->port_status != RTE_PORT_STOPPED) &&
+	    (port->slave_flag == 0))
+		return 0;
+	return 1;
+}
+
+int
 all_ports_stopped(void)
 {
 	portid_t pi;
-	struct rte_port *port;
 
 	RTE_ETH_FOREACH_DEV(pi) {
-		port = &ports[pi];
-		if ((port->port_status != RTE_PORT_STOPPED) &&
-			(port->slave_flag == 0))
+		if (!port_is_stopped(pi))
 			return 0;
 	}
 
@@ -1467,6 +1568,9 @@ start_port(portid_t pid)
 		}
 		if (port->need_reconfig_queues > 0) {
 			port->need_reconfig_queues = 0;
+			port->tx_conf.txq_flags = ETH_TXQ_FLAGS_IGNORE;
+			/* Apply Tx offloads configuration */
+			port->tx_conf.offloads = port->dev_conf.txmode.offloads;
 			/* setup tx queues */
 			for (qi = 0; qi < nb_txq; qi++) {
 				if ((numa_support) &&
@@ -1493,6 +1597,8 @@ start_port(portid_t pid)
 				port->need_reconfig_queues = 1;
 				return -1;
 			}
+			/* Apply Rx offloads configuration */
+			port->rx_conf.offloads = port->dev_conf.rxmode.offloads;
 			/* setup rx queues */
 			for (qi = 0; qi < nb_rxq; qi++) {
 				if ((numa_support) &&
@@ -1540,20 +1646,6 @@ start_port(portid_t pid)
 			}
 		}
 
-		for (event_type = RTE_ETH_EVENT_UNKNOWN;
-		     event_type < RTE_ETH_EVENT_MAX;
-		     event_type++) {
-			diag = rte_eth_dev_callback_register(pi,
-							event_type,
-							eth_event_callback,
-							NULL);
-			if (diag) {
-				printf("Failed to setup even callback for event %d\n",
-					event_type);
-				return -1;
-			}
-		}
-
 		/* start port */
 		if (rte_eth_dev_start(pi) < 0) {
 			printf("Fail to start port %d\n", pi);
@@ -1578,6 +1670,20 @@ start_port(portid_t pid)
 
 		/* at least one port started, need checking link status */
 		need_check_link_status = 1;
+	}
+
+	for (event_type = RTE_ETH_EVENT_UNKNOWN;
+	     event_type < RTE_ETH_EVENT_MAX;
+	     event_type++) {
+		diag = rte_eth_dev_callback_register(RTE_ETH_ALL,
+						event_type,
+						eth_event_callback,
+						NULL);
+		if (diag) {
+			printf("Failed to setup even callback for event %d\n",
+				event_type);
+			return -1;
+		}
 	}
 
 	if (need_check_link_status == 1 && !no_link_check)
@@ -1902,6 +2008,8 @@ eth_event_callback(portid_t port_id, enum rte_eth_event_type type, void *param,
 		[RTE_ETH_EVENT_VF_MBOX] = "VF Mbox",
 		[RTE_ETH_EVENT_MACSEC] = "MACsec",
 		[RTE_ETH_EVENT_INTR_RMV] = "device removal",
+		[RTE_ETH_EVENT_NEW] = "device probed",
+		[RTE_ETH_EVENT_DESTROY] = "device released",
 		[RTE_ETH_EVENT_MAX] = NULL,
 	};
 
@@ -2044,9 +2152,6 @@ rxtx_port_config(struct rte_port *port)
 
 	if (tx_free_thresh != RTE_PMD_PARAM_UNSET)
 		port->tx_conf.tx_free_thresh = tx_free_thresh;
-
-	if (txq_flags != RTE_PMD_PARAM_UNSET)
-		port->tx_conf.txq_flags = txq_flags;
 }
 
 void
@@ -2057,7 +2162,6 @@ init_port_config(void)
 
 	RTE_ETH_FOREACH_DEV(pid) {
 		port = &ports[pid];
-		port->dev_conf.rxmode = rx_mode;
 		port->dev_conf.fdir_conf = fdir_conf;
 		if (nb_rxq > 1) {
 			port->dev_conf.rx_adv_conf.rss_conf.rss_key = NULL;
@@ -2224,7 +2328,7 @@ init_port_dcb_config(portid_t pid,
 	retval = get_eth_dcb_conf(&port_conf, dcb_mode, num_tcs, pfc_en);
 	if (retval < 0)
 		return retval;
-	port_conf.rxmode.hw_vlan_filter = 1;
+	port_conf.rxmode.offloads |= DEV_RX_OFFLOAD_VLAN_FILTER;
 
 	/**
 	 * Write the configuration into the device.
@@ -2273,7 +2377,7 @@ init_port_dcb_config(portid_t pid,
 
 	rxtx_port_config(rte_port);
 	/* VLAN filter */
-	rte_port->dev_conf.rxmode.hw_vlan_filter = 1;
+	rte_port->dev_conf.rxmode.offloads |= DEV_RX_OFFLOAD_VLAN_FILTER;
 	for (i = 0; i < RTE_DIM(vlan_tags); i++)
 		rx_vft_set(pid, vlan_tags[i], 1);
 

@@ -107,7 +107,7 @@ rte_member_create(const struct rte_member_parameters *params)
 	rte_rwlock_write_lock(RTE_EAL_TAILQ_RWLOCK);
 
 	TAILQ_FOREACH(te, member_list, next) {
-		setsum = (struct rte_member_setsum *) te->data;
+		setsum = te->data;
 		if (strncmp(params->name, setsum->name,
 				RTE_MEMBER_NAMESIZE) == 0)
 			break;
@@ -125,7 +125,7 @@ rte_member_create(const struct rte_member_parameters *params)
 	}
 
 	/* Create a new setsum structure */
-	setsum = (struct rte_member_setsum *) rte_zmalloc_socket(params->name,
+	setsum = rte_zmalloc_socket(params->name,
 			sizeof(struct rte_member_setsum), RTE_CACHE_LINE_SIZE,
 			params->socket_id);
 	if (setsum == NULL) {
@@ -162,8 +162,9 @@ rte_member_create(const struct rte_member_parameters *params)
 	return setsum;
 
 error_unlock_exit:
+	rte_free(te);
+	rte_free(setsum);
 	rte_rwlock_write_unlock(RTE_EAL_TAILQ_RWLOCK);
-	rte_member_free(setsum);
 	return NULL;
 }
 
@@ -301,7 +302,7 @@ RTE_INIT(librte_member_init_log);
 static void
 librte_member_init_log(void)
 {
-	librte_member_logtype = rte_log_register("librte.member");
+	librte_member_logtype = rte_log_register("lib.member");
 	if (librte_member_logtype >= 0)
 		rte_log_set_level(librte_member_logtype, RTE_LOG_DEBUG);
 }

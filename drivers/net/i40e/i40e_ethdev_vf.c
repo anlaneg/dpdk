@@ -25,7 +25,7 @@
 #include <rte_eal.h>
 #include <rte_alarm.h>
 #include <rte_ether.h>
-#include <rte_ethdev.h>
+#include <rte_ethdev_driver.h>
 #include <rte_ethdev_pci.h>
 #include <rte_malloc.h>
 #include <rte_dev.h>
@@ -916,14 +916,16 @@ i40evf_update_stats(struct i40e_vsi *vsi,
 static void
 i40evf_dev_xstats_reset(struct rte_eth_dev *dev)
 {
+	int ret;
 	struct i40e_vf *vf = I40EVF_DEV_PRIVATE_TO_VF(dev->data->dev_private);
 	struct i40e_eth_stats *pstats = NULL;
 
 	/* read stat values to clear hardware registers */
-	i40evf_query_stats(dev, &pstats);
+	ret = i40evf_query_stats(dev, &pstats);
 
 	/* set stats offset base on current values */
-	vf->vsi.eth_stats_offset = *pstats;
+	if (ret == 0)
+		vf->vsi.eth_stats_offset = *pstats;
 }
 
 static int i40evf_dev_xstats_get_names(__rte_unused struct rte_eth_dev *dev,
@@ -1136,7 +1138,7 @@ i40evf_init_vf(struct rte_eth_dev *dev)
 	struct i40e_hw *hw = I40E_DEV_PRIVATE_TO_HW(dev->data->dev_private);
 	struct i40e_vf *vf = I40EVF_DEV_PRIVATE_TO_VF(dev->data->dev_private);
 	uint16_t interval =
-		i40e_calc_itr_interval(I40E_QUEUE_ITR_INTERVAL_MAX);
+		i40e_calc_itr_interval(RTE_LIBRTE_I40E_ITR_INTERVAL, 0);
 
 	vf->adapter = I40E_DEV_PRIVATE_TO_ADAPTER(dev->data->dev_private);
 	vf->dev_data = dev->data;
@@ -1279,7 +1281,7 @@ i40evf_handle_pf_event(struct rte_eth_dev *dev, uint8_t *msg,
 	case VIRTCHNL_EVENT_RESET_IMPENDING:
 		PMD_DRV_LOG(DEBUG, "VIRTCHNL_EVENT_RESET_IMPENDING event");
 		_rte_eth_dev_callback_process(dev, RTE_ETH_EVENT_INTR_RESET,
-					      NULL, NULL);
+					      NULL);
 		break;
 	case VIRTCHNL_EVENT_LINK_CHANGE:
 		PMD_DRV_LOG(DEBUG, "VIRTCHNL_EVENT_LINK_CHANGE event");
@@ -1556,13 +1558,19 @@ static int
 i40evf_init_vlan(struct rte_eth_dev *dev)
 {
 	/* Apply vlan offload setting */
-	return i40evf_vlan_offload_set(dev, ETH_VLAN_STRIP_MASK);
+	i40evf_vlan_offload_set(dev, ETH_VLAN_STRIP_MASK);
+
+	return 0;
 }
 
 static int
 i40evf_vlan_offload_set(struct rte_eth_dev *dev, int mask)
 {
 	struct rte_eth_conf *dev_conf = &dev->data->dev_conf;
+	struct i40e_vf *vf = I40EVF_DEV_PRIVATE_TO_VF(dev->data->dev_private);
+
+	if (!(vf->vf_res->vf_cap_flags & VIRTCHNL_VF_OFFLOAD_VLAN))
+		return -ENOTSUP;
 
 	/* Vlan stripping setting */
 	if (mask & ETH_VLAN_STRIP_MASK) {
@@ -1833,7 +1841,7 @@ i40evf_dev_rx_queue_intr_enable(struct rte_eth_dev *dev, uint16_t queue_id)
 	struct rte_intr_handle *intr_handle = &pci_dev->intr_handle;
 	struct i40e_hw *hw = I40E_DEV_PRIVATE_TO_HW(dev->data->dev_private);
 	uint16_t interval =
-		i40e_calc_itr_interval(RTE_LIBRTE_I40E_ITR_INTERVAL);
+		i40e_calc_itr_interval(RTE_LIBRTE_I40E_ITR_INTERVAL, 0);
 	uint16_t msix_intr;
 
 	msix_intr = intr_handle->intr_vec[queue_id];
@@ -2192,7 +2200,13 @@ i40evf_dev_info_get(struct rte_eth_dev *dev, struct rte_eth_dev_info *dev_info)
 		DEV_TX_OFFLOAD_IPV4_CKSUM |
 		DEV_TX_OFFLOAD_UDP_CKSUM |
 		DEV_TX_OFFLOAD_TCP_CKSUM |
-		DEV_TX_OFFLOAD_SCTP_CKSUM;
+		DEV_TX_OFFLOAD_SCTP_CKSUM |
+		DEV_TX_OFFLOAD_OUTER_IPV4_CKSUM |
+		DEV_TX_OFFLOAD_TCP_TSO |
+		DEV_TX_OFFLOAD_VXLAN_TNL_TSO |
+		DEV_TX_OFFLOAD_GRE_TNL_TSO |
+		DEV_TX_OFFLOAD_IPIP_TNL_TSO |
+		DEV_TX_OFFLOAD_GENEVE_TNL_TSO;
 
 	dev_info->default_rxconf = (struct rte_eth_rxconf) {
 		.rx_thresh = {
@@ -2646,19 +2660,19 @@ i40evf_set_default_mac_addr(struct rte_eth_dev *dev,
 			    struct ether_addr *mac_addr)
 {
 	struct i40e_vf *vf = I40EVF_DEV_PRIVATE_TO_VF(dev->data->dev_private);
+	struct i40e_hw *hw = I40E_DEV_PRIVATE_TO_HW(dev->data->dev_private);
 
 	if (!is_valid_assigned_ether_addr(mac_addr)) {
 		PMD_DRV_LOG(ERR, "Tried to set invalid MAC address.");
 		return;
 	}
 
-	if (is_same_ether_addr(mac_addr, dev->data->mac_addrs))
-		return;
-
 	if (vf->flags & I40E_FLAG_VF_MAC_BY_PF)
 		return;
 
-	i40evf_del_mac_addr_by_addr(dev, dev->data->mac_addrs);
+	i40evf_del_mac_addr_by_addr(dev, (struct ether_addr *)hw->mac.addr);
 
 	i40evf_add_mac_addr(dev, mac_addr, 0, 0);
+
+	ether_addr_copy(mac_addr, (struct ether_addr *)hw->mac.addr);
 }

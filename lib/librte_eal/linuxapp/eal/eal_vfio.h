@@ -85,7 +85,7 @@ struct vfio_iommu_spapr_tce_info {
 #define RTE_VFIO_NOIOMMU VFIO_NOIOMMU_IOMMU
 #endif
 
-#define VFIO_MAX_GROUPS 64
+#define VFIO_MAX_GROUPS RTE_MAX_VFIO_GROUPS
 
 /*
  * Function prototypes for VFIO multiprocess sync functions
@@ -147,10 +147,6 @@ vfio_get_group_no(const char *sysfs_base,
 /* open group fd or get an existing one */
 int
 vfio_get_group_fd(int iommu_group_no);
-
-/* remove group fd from internal VFIO group fd array */
-int
-clear_group(int vfio_group_fd);
 
 int vfio_mp_sync_setup(void);
 

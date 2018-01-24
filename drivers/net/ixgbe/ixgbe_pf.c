@@ -15,7 +15,7 @@
 #include <rte_debug.h>
 #include <rte_eal.h>
 #include <rte_ether.h>
-#include <rte_ethdev.h>
+#include <rte_ethdev_driver.h>
 #include <rte_memcpy.h>
 #include <rte_malloc.h>
 #include <rte_random.h>
@@ -244,7 +244,7 @@ int ixgbe_pf_host_configure(struct rte_eth_dev *eth_dev)
 
 	gpie = IXGBE_READ_REG(hw, IXGBE_GPIE);
 	gpie &= ~IXGBE_GPIE_VTMODE_MASK;
-	gpie |= IXGBE_GPIE_MSIX_MODE;
+	gpie |= IXGBE_GPIE_MSIX_MODE | IXGBE_GPIE_PBA_SUPPORT;
 
 	switch (RTE_ETH_DEV_SRIOV(eth_dev).active) {
 	case ETH_64_POOLS:
@@ -739,7 +739,7 @@ ixgbe_rcv_msg_from_vf(struct rte_eth_dev *dev, uint16_t vf)
 
 		/* notify application about VF reset */
 		_rte_eth_dev_callback_process(dev, RTE_ETH_EVENT_VF_MBOX,
-					      NULL, &ret_param);
+					      &ret_param);
 		return ret;
 	}
 
@@ -751,7 +751,7 @@ ixgbe_rcv_msg_from_vf(struct rte_eth_dev *dev, uint16_t vf)
 	 * if ret_param.retval > 1, do nothing and send NAK to VF
 	 */
 	_rte_eth_dev_callback_process(dev, RTE_ETH_EVENT_VF_MBOX,
-				      NULL, &ret_param);
+				      &ret_param);
 
 	retval = ret_param.retval;
 

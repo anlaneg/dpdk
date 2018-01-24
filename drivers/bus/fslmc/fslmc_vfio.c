@@ -22,7 +22,7 @@
 
 #include <eal_filesystem.h>
 #include <rte_mbuf.h>
-#include <rte_ethdev.h>
+#include <rte_ethdev_driver.h>
 #include <rte_malloc.h>
 #include <rte_memcpy.h>
 #include <rte_string_fns.h>
@@ -223,7 +223,10 @@ int rte_fslmc_vfio_dmamap(void)
 		dma_map.size = memseg[i].len;
 		dma_map.vaddr = memseg[i].addr_64;
 #ifdef RTE_LIBRTE_DPAA2_USE_PHYS_IOVA
-		dma_map.iova = memseg[i].phys_addr;
+		if (rte_eal_iova_mode() == RTE_IOVA_VA)
+			dma_map.iova = dma_map.vaddr;
+		else
+			dma_map.iova = memseg[i].iova;
 #else
 		dma_map.iova = dma_map.vaddr;
 #endif
@@ -634,12 +637,14 @@ fslmc_vfio_setup_group(void)
 	if (ret) {
 		FSLMC_VFIO_LOG(ERR, "VFIO error getting group status");
 		close(vfio_group.fd);
+		rte_vfio_clear_group(vfio_group.fd);
 		return ret;
 	}
 
 	if (!(status.flags & VFIO_GROUP_FLAGS_VIABLE)) {
 		FSLMC_VFIO_LOG(ERR, "VFIO group not viable");
 		close(vfio_group.fd);
+		rte_vfio_clear_group(vfio_group.fd);
 		return -EPERM;
 	}
 	/* Since Group is VIABLE, Store the groupid */
@@ -654,6 +659,7 @@ fslmc_vfio_setup_group(void)
 				"Error connecting container with groupid %d",
 				groupid);
 			close(vfio_group.fd);
+			rte_vfio_clear_group(vfio_group.fd);
 			return ret;
 		}
 	}
@@ -664,6 +670,7 @@ fslmc_vfio_setup_group(void)
 		FSLMC_VFIO_LOG(ERR, "Error getting device %s fd from group %d",
 			       g_container, vfio_group.groupid);
 		close(vfio_group.fd);
+		rte_vfio_clear_group(vfio_group.fd);
 		return ret;
 	}
 	container_device_fd = ret;

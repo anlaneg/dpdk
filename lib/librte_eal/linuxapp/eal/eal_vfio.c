@@ -197,7 +197,7 @@ vfio_group_device_count(int vfio_group_fd)
 }
 
 int
-clear_group(int vfio_group_fd)
+rte_vfio_clear_group(int vfio_group_fd)
 {
 	int i;
 	int socket_fd, ret;
@@ -300,12 +300,12 @@ rte_vfio_setup_device(const char *sysfs_base, const char *dev_addr,
 		RTE_LOG(ERR, EAL, "  %s cannot get group status, "
 				"error %i (%s)\n", dev_addr, errno, strerror(errno));
 		close(vfio_group_fd);
-		clear_group(vfio_group_fd);
+		rte_vfio_clear_group(vfio_group_fd);
 		return -1;
 	} else if (!(group_status.flags & VFIO_GROUP_FLAGS_VIABLE)) {
 		RTE_LOG(ERR, EAL, "  %s VFIO group is not viable!\n", dev_addr);
 		close(vfio_group_fd);
-		clear_group(vfio_group_fd);
+		rte_vfio_clear_group(vfio_group_fd);
 		return -1;
 	}
 
@@ -319,7 +319,7 @@ rte_vfio_setup_device(const char *sysfs_base, const char *dev_addr,
 			RTE_LOG(ERR, EAL, "  %s cannot add VFIO group to container, "
 					"error %i (%s)\n", dev_addr, errno, strerror(errno));
 			close(vfio_group_fd);
-			clear_group(vfio_group_fd);
+			rte_vfio_clear_group(vfio_group_fd);
 			return -1;
 		}
 
@@ -341,7 +341,7 @@ rte_vfio_setup_device(const char *sysfs_base, const char *dev_addr,
 					"  %s failed to select IOMMU type\n",
 					dev_addr);
 				close(vfio_group_fd);
-				clear_group(vfio_group_fd);
+				rte_vfio_clear_group(vfio_group_fd);
 				return -1;
 			}
 			ret = t->dma_map_func(vfio_cfg.vfio_container_fd);
@@ -350,7 +350,7 @@ rte_vfio_setup_device(const char *sysfs_base, const char *dev_addr,
 					"  %s DMA remapping failed, error %i (%s)\n",
 					dev_addr, errno, strerror(errno));
 				close(vfio_group_fd);
-				clear_group(vfio_group_fd);
+				rte_vfio_clear_group(vfio_group_fd);
 				return -1;
 			}
 		}
@@ -366,7 +366,7 @@ rte_vfio_setup_device(const char *sysfs_base, const char *dev_addr,
 		RTE_LOG(WARNING, EAL, "Getting a vfio_dev_fd for %s failed\n",
 				dev_addr);
 		close(vfio_group_fd);
-		clear_group(vfio_group_fd);
+		rte_vfio_clear_group(vfio_group_fd);
 		return -1;
 	}
 
@@ -378,7 +378,7 @@ rte_vfio_setup_device(const char *sysfs_base, const char *dev_addr,
 				strerror(errno));
 		close(*vfio_dev_fd);
 		close(vfio_group_fd);
-		clear_group(vfio_group_fd);
+		rte_vfio_clear_group(vfio_group_fd);
 		return -1;
 	}
 	vfio_group_device_get(vfio_group_fd);
@@ -438,7 +438,7 @@ rte_vfio_release_device(const char *sysfs_base, const char *dev_addr,
 			return -1;
 		}
 
-		if (clear_group(vfio_group_fd) < 0) {
+		if (rte_vfio_clear_group(vfio_group_fd) < 0) {
 			RTE_LOG(INFO, EAL, "Error when clearing group for %s\n",
 					   dev_addr);
 			return -1;
@@ -814,20 +814,33 @@ vfio_noiommu_dma_map(int __rte_unused vfio_container_fd)
 int
 rte_vfio_noiommu_is_enabled(void)
 {
-	int fd, ret, cnt __rte_unused;
+	int fd;
+	ssize_t cnt;
 	char c;
 
-	ret = -1;
 	fd = open(VFIO_NOIOMMU_MODE, O_RDONLY);
-	if (fd < 0)
-		return -1;
+	if (fd < 0) {
+		if (errno != ENOENT) {
+			RTE_LOG(ERR, EAL, "  cannot open vfio noiommu file %i (%s)\n",
+					errno, strerror(errno));
+			return -1;
+		}
+		/*
+		 * else the file does not exists
+		 * i.e. noiommu is not enabled
+		 */
+		return 0;
+	}
 
 	cnt = read(fd, &c, 1);
-	if (c == 'Y')
-		ret = 1;
-
 	close(fd);
-	return ret;
+	if (cnt != 1) {
+		RTE_LOG(ERR, EAL, "  unable to read from vfio noiommu "
+				"file %i (%s)\n", errno, strerror(errno));
+		return -1;
+	}
+
+	return c == 'Y';
 }
 
 #endif

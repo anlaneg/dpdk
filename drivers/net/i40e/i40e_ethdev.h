@@ -32,7 +32,8 @@
 #define I40E_NUM_MACADDR_MAX       64
 /* Maximum number of VFs */
 #define I40E_MAX_VF               128
-
+/*flag of no loopback*/
+#define I40E_AQ_LB_MODE_NONE	  0x0
 /*
  * vlan_id is a 12 bit number.
  * The VFTA array is actually a 4096 bit array, 128 of 32bit elements.
@@ -160,6 +161,7 @@ enum i40e_flxpld_layer_idx {
 #define I40E_ITR_INDEX_NONE             3
 #define I40E_QUEUE_ITR_INTERVAL_DEFAULT 32 /* 32 us */
 #define I40E_QUEUE_ITR_INTERVAL_MAX     8160 /* 8160 us */
+#define I40E_VF_QUEUE_ITR_INTERVAL_DEFAULT 8160 /* 8160 us */
 /* Special FW support this floating VEB feature */
 #define FLOATING_VEB_SUPPORTED_FW_MAJ 5
 #define FLOATING_VEB_SUPPORTED_FW_MIN 0
@@ -397,6 +399,9 @@ struct i40e_pf_vf {
 	uint16_t lan_nb_qps; /* Actual queues allocated */
 	uint16_t reset_cnt; /* Total vf reset times */
 	struct ether_addr mac_addr;  /* Default MAC address */
+	/* version of the virtchnl from VF */
+	struct virtchnl_version_info version;
+	uint32_t request_caps; /* offload caps requested from VF */
 };
 
 /*
@@ -862,6 +867,13 @@ struct i40e_customized_pctype {
 	bool valid;   /* Check if it's valid */
 };
 
+struct i40e_rte_flow_rss_conf {
+	struct rte_eth_rss_conf rss_conf; /**< RSS parameters. */
+	uint16_t queue_region_conf; /**< Queue region config flag */
+	uint16_t num; /**< Number of entries in queue[]. */
+	uint16_t queue[I40E_MAX_Q_PER_TC]; /**< Queues indices to use. */
+};
+
 /*
  * Structure to store private data specific for PF instance.
  */
@@ -916,6 +928,7 @@ struct i40e_pf {
 	struct i40e_fdir_info fdir; /* flow director info */
 	struct i40e_ethertype_rule ethertype; /* Ethertype filter rule */
 	struct i40e_tunnel_rule tunnel; /* Tunnel filter rule */
+	struct i40e_rte_flow_rss_conf rss_info; /* rss info */
 	struct i40e_queue_regions queue_region; /* queue region info */
 	struct i40e_fc_conf fc_conf; /* Flow control conf */
 	struct i40e_mirror_rule_list mirror_list;
@@ -1042,6 +1055,7 @@ union i40e_filter_t {
 	struct i40e_fdir_filter_conf fdir_filter;
 	struct rte_eth_tunnel_filter_conf tunnel_filter;
 	struct i40e_tunnel_filter_conf consistent_tunnel_filter;
+	struct i40e_rte_flow_rss_conf rss_conf;
 };
 
 typedef int (*parse_filter_t)(struct rte_eth_dev *dev,
@@ -1169,6 +1183,11 @@ int i40e_dcb_init_configure(struct rte_eth_dev *dev, bool sw_dcb);
 int i40e_flush_queue_region_all_conf(struct rte_eth_dev *dev,
 		struct i40e_hw *hw, struct i40e_pf *pf, uint16_t on);
 void i40e_init_queue_region_conf(struct rte_eth_dev *dev);
+void i40e_flex_payload_reg_set_default(struct i40e_hw *hw);
+int i40e_set_rss_key(struct i40e_vsi *vsi, uint8_t *key, uint8_t key_len);
+int i40e_set_rss_lut(struct i40e_vsi *vsi, uint8_t *lut, uint16_t lut_size);
+int i40e_config_rss_filter(struct i40e_pf *pf,
+		struct i40e_rte_flow_rss_conf *conf, bool add);
 
 #define I40E_DEV_TO_PCI(eth_dev) \
 	RTE_DEV_TO_PCI((eth_dev)->device)
@@ -1245,10 +1264,14 @@ i40e_align_floor(int n)
 }
 
 static inline uint16_t
-i40e_calc_itr_interval(int16_t interval)
+i40e_calc_itr_interval(int16_t interval, bool is_pf)
 {
-	if (interval < 0 || interval > I40E_QUEUE_ITR_INTERVAL_MAX)
-		interval = I40E_QUEUE_ITR_INTERVAL_DEFAULT;
+	if (interval < 0 || interval > I40E_QUEUE_ITR_INTERVAL_MAX) {
+		if (is_pf)
+			interval = I40E_QUEUE_ITR_INTERVAL_DEFAULT;
+		else
+			interval = I40E_VF_QUEUE_ITR_INTERVAL_DEFAULT;
+	}
 
 	/* Convert to hardware count, as writing each 1 represents 2 us */
 	return interval / 2;

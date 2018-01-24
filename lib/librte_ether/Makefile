@@ -27,6 +27,8 @@ SRCS-y += ethdev_profile.c
 # Export include files
 #
 SYMLINK-y-include += rte_ethdev.h
+SYMLINK-y-include += rte_ethdev_driver.h
+SYMLINK-y-include += rte_ethdev_core.h
 SYMLINK-y-include += rte_ethdev_pci.h
 SYMLINK-y-include += rte_ethdev_vdev.h
 SYMLINK-y-include += rte_eth_ctrl.h

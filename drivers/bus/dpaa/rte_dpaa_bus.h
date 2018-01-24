@@ -20,6 +20,17 @@
 #define DEV_TO_DPAA_DEVICE(ptr)	\
 		container_of(ptr, struct rte_dpaa_device, device)
 
+/* DPAA SoC identifier; If this is not available, it can be concluded
+ * that board is non-DPAA. Single slot is currently supported.
+ */
+#define DPAA_SOC_ID_FILE	"/sys/devices/soc0/soc_id"
+
+#define SVR_LS1043A_FAMILY	0x87920000
+#define SVR_LS1046A_FAMILY	0x87070000
+#define SVR_MASK		0xffff0000
+
+extern unsigned int dpaa_svr_family;
+
 struct rte_dpaa_device;
 struct rte_dpaa_driver;
 
@@ -87,10 +98,10 @@ static inline void *rte_dpaa_mem_ptov(phys_addr_t paddr)
 	int i;
 
 	for (i = 0; i < RTE_MAX_MEMSEG && memseg[i].addr != NULL; i++) {
-		if (paddr >= memseg[i].phys_addr && paddr <
-			memseg[i].phys_addr + memseg[i].len)
+		if (paddr >= memseg[i].iova && paddr <
+			memseg[i].iova + memseg[i].len)
 			return (uint8_t *)(memseg[i].addr) +
-			       (paddr - memseg[i].phys_addr);
+			       (paddr - memseg[i].iova);
 	}
 
 	return NULL;
@@ -125,6 +136,10 @@ void rte_dpaa_driver_unregister(struct rte_dpaa_driver *driver);
  */
 int rte_dpaa_portal_init(void *arg);
 
+int rte_dpaa_portal_fq_init(void *arg, struct qman_fq *fq);
+
+int rte_dpaa_portal_fq_close(struct qman_fq *fq);
+
 /**
  * Cleanup a DPAA Portal
  */
@@ -139,6 +154,20 @@ static void dpaainitfn_ ##nm(void) \
 	rte_dpaa_driver_register(&dpaa_drv); \
 } \
 RTE_PMD_EXPORT_NAME(nm, __COUNTER__)
+
+/* Create storage for dqrr entries per lcore */
+#define DPAA_PORTAL_DEQUEUE_DEPTH	16
+struct dpaa_portal_dqrr {
+	void *mbuf[DPAA_PORTAL_DEQUEUE_DEPTH];
+	uint64_t dqrr_held;
+	uint8_t dqrr_size;
+};
+
+RTE_DECLARE_PER_LCORE(struct dpaa_portal_dqrr, held_bufs);
+
+#define DPAA_PER_LCORE_DQRR_SIZE       RTE_PER_LCORE(held_bufs).dqrr_size
+#define DPAA_PER_LCORE_DQRR_HELD       RTE_PER_LCORE(held_bufs).dqrr_held
+#define DPAA_PER_LCORE_DQRR_MBUF(i)    RTE_PER_LCORE(held_bufs).mbuf[i]
 
 #ifdef __cplusplus
 }

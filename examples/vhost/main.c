@@ -116,21 +116,23 @@ static struct rte_eth_conf vmdq_conf_default = {
 	.rxmode = {
 		.mq_mode        = ETH_MQ_RX_VMDQ_ONLY,
 		.split_hdr_size = 0,
-		.header_split   = 0, /**< Header Split disabled */
-		.hw_ip_checksum = 0, /**< IP checksum offload disabled */
-		.hw_vlan_filter = 0, /**< VLAN filtering disabled */
+		.ignore_offload_bitfield = 1,
 		/*
-		 * It is necessary for 1G NIC such as I350,
+		 * VLAN strip is necessary for 1G NIC such as I350,
 		 * this fixes bug of ipv4 forwarding in guest can't
 		 * forward pakets from one virtio dev to another virtio dev.
 		 */
-		.hw_vlan_strip  = 1, /**< VLAN strip enabled. */
-		.jumbo_frame    = 0, /**< Jumbo Frame Support disabled */
-		.hw_strip_crc   = 1, /**< CRC stripped by hardware */
+		.offloads = (DEV_RX_OFFLOAD_CRC_STRIP |
+			     DEV_RX_OFFLOAD_VLAN_STRIP),
 	},
 
 	.txmode = {
 		.mq_mode = ETH_MQ_TX_NONE,
+		.offloads = (DEV_TX_OFFLOAD_IPV4_CKSUM |
+			     DEV_TX_OFFLOAD_TCP_CKSUM |
+			     DEV_TX_OFFLOAD_VLAN_INSERT |
+			     DEV_TX_OFFLOAD_MULTI_SEGS |
+			     DEV_TX_OFFLOAD_TCP_TSO),
 	},
 	.rx_adv_conf = {
 		/*
@@ -146,6 +148,7 @@ static struct rte_eth_conf vmdq_conf_default = {
 		},
 	},
 };
+
 
 static unsigned lcore_ids[RTE_MAX_LCORE];//那些core被开启了
 static uint16_t ports[RTE_MAX_ETHPORTS];//那些port被开启了
@@ -251,20 +254,11 @@ port_init(uint16_t port)
 	/* The max pool number from dev_info will be used to validate the pool number specified in cmd line */
 	rte_eth_dev_info_get (port, &dev_info);//获取设备信息
 
-	//收队列数比MAX_QUEUES要大，需要重新编译
-	if (dev_info.max_rx_queues > MAX_QUEUES) {
-		rte_exit(EXIT_FAILURE,
-			"please define MAX_QUEUES no less than %u in %s\n",
-			dev_info.max_rx_queues, __FILE__);
-	}
-
 	//默认的收发配置
 	rxconf = &dev_info.default_rxconf;
 	txconf = &dev_info.default_txconf;
 	rxconf->rx_drop_en = 1;
-
-	/* Enable vlan offload */
-	txconf->txq_flags &= ~ETH_TXQ_FLAGS_NOVLANOFFL;
+	txconf->txq_flags = ETH_TXQ_FLAGS_IGNORE;
 
 	/*configure the number of supported virtio devices based on VMDQ limits */
 	num_devices = dev_info.max_vmdq_pools;
@@ -305,6 +299,9 @@ port_init(uint16_t port)
 	if (port >= rte_eth_dev_count()) return -1;
 
 	rx_rings = (uint16_t)dev_info.max_rx_queues;
+	if (dev_info.tx_offload_capa & DEV_TX_OFFLOAD_MBUF_FAST_FREE)
+		port_conf.txmode.offloads |=
+			DEV_TX_OFFLOAD_MBUF_FAST_FREE;
 	/* Configure ethernet device. */
 	//配置设备
 	retval = rte_eth_dev_configure(port, rx_rings, tx_rings, &port_conf);
@@ -328,6 +325,7 @@ port_init(uint16_t port)
 	}
 
 	/* Setup the queues. */
+	rxconf->offloads = port_conf.rxmode.offloads;
 	//配置收队列
 	for (q = 0; q < rx_rings; q ++) {
 		retval = rte_eth_rx_queue_setup(port, q, rx_ring_size,
@@ -342,6 +340,7 @@ port_init(uint16_t port)
 		}
 	}
 
+	txconf->offloads = port_conf.txmode.offloads;
 	//配置发队列
 	for (q = 0; q < tx_rings; q ++) {
 		retval = rte_eth_tx_queue_setup(port, q, tx_ring_size,
@@ -605,7 +604,8 @@ us_vhost_parse_args(int argc, char **argv)
 				} else {
 					mergeable = !!ret;
 					if (ret) {
-						vmdq_conf_default.rxmode.jumbo_frame = 1;
+						vmdq_conf_default.rxmode.offloads |=
+							DEV_RX_OFFLOAD_JUMBO_FRAME;
 						vmdq_conf_default.rxmode.max_rx_pkt_len
 							= JUMBO_FRAME_MAX_SIZE;
 					}
@@ -946,7 +946,8 @@ virtio_tx_route(struct vhost_dev *vdev, struct rte_mbuf *m, uint16_t vlan_tag)
 		struct vhost_dev *vdev2;
 
 		TAILQ_FOREACH(vdev2, &vhost_dev_list, global_vdev_entry) {
-			virtio_xmit(vdev2, vdev, m);
+			if (vdev2 != vdev)
+				virtio_xmit(vdev2, vdev, m);
 		}
 		goto queue2nic;
 	}

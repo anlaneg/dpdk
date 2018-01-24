@@ -15,6 +15,7 @@
 #include <rte_udp.h>
 #include <rte_sctp.h>
 #include <rte_arp.h>
+#include <rte_spinlock.h>
 
 #include "iotlb.h"
 #include "vhost.h"
@@ -161,6 +162,11 @@ virtio_enqueue_offload(struct rte_mbuf *m_buf, struct virtio_net_hdr *net_hdr)
 		net_hdr->gso_size = m_buf->tso_segsz;
 		net_hdr->hdr_len = m_buf->l2_len + m_buf->l3_len
 					+ m_buf->l4_len;
+	} else if (m_buf->ol_flags & PKT_TX_UDP_SEG) {
+		net_hdr->gso_type = VIRTIO_NET_HDR_GSO_UDP;
+		net_hdr->gso_size = m_buf->tso_segsz;
+		net_hdr->hdr_len = m_buf->l2_len + m_buf->l3_len +
+			m_buf->l4_len;
 	} else {
 		ASSIGN_UNLESS_EQUAL(net_hdr->gso_type, 0);
 		ASSIGN_UNLESS_EQUAL(net_hdr->gso_size, 0);
@@ -301,8 +307,11 @@ virtio_dev_rx(struct virtio_net *dev, uint16_t queue_id,
 
 	//取出队列
 	vq = dev->virtqueue[queue_id];
+
+	rte_spinlock_lock(&vq->access_lock);
+
 	if (unlikely(vq->enabled == 0))
-		return 0;
+		goto out_access_unlock;
 
 	if (dev->features & (1ULL << VIRTIO_F_IOMMU_PLATFORM))
 		vhost_user_iotlb_rd_lock(vq);
@@ -391,16 +400,13 @@ virtio_dev_rx(struct virtio_net *dev, uint16_t queue_id,
 		offsetof(struct vring_used, idx),
 		sizeof(vq->used->idx));
 
-	/* flush used->idx update before we read avail->flags. */
-	rte_mb();
-
-	/* Kick the guest if necessary. */
-	if (!(vq->avail->flags & VRING_AVAIL_F_NO_INTERRUPT)
-			&& (vq->callfd >= 0))
-		eventfd_write(vq->callfd, (eventfd_t)1);
+	vhost_vring_call(dev, vq);
 out:
 	if (dev->features & (1ULL << VIRTIO_F_IOMMU_PLATFORM))
 		vhost_user_iotlb_rd_unlock(vq);
+
+out_access_unlock:
+	rte_spinlock_unlock(&vq->access_lock);
 
 	return count;
 }
@@ -635,8 +641,11 @@ virtio_dev_merge_rx(struct virtio_net *dev, uint16_t queue_id,
 
 	//取出指定queue
 	vq = dev->virtqueue[queue_id];
+
+	rte_spinlock_lock(&vq->access_lock);
+
 	if (unlikely(vq->enabled == 0))
-		return 0;
+		goto out_access_unlock;
 
 	if (dev->features & (1ULL << VIRTIO_F_IOMMU_PLATFORM))
 		vhost_user_iotlb_rd_lock(vq);
@@ -687,19 +696,15 @@ virtio_dev_merge_rx(struct virtio_net *dev, uint16_t queue_id,
 
 	if (likely(vq->shadow_used_idx)) {
 		flush_shadow_used_ring(dev, vq);
-
-		/* flush used->idx update before we read avail->flags. */
-		rte_mb();
-
-		/* Kick the guest if necessary. */
-		if (!(vq->avail->flags & VRING_AVAIL_F_NO_INTERRUPT)
-				&& (vq->callfd >= 0))
-			eventfd_write(vq->callfd, (eventfd_t)1);
+		vhost_vring_call(dev, vq);
 	}
 
 out:
 	if (dev->features & (1ULL << VIRTIO_F_IOMMU_PLATFORM))
 		vhost_user_iotlb_rd_unlock(vq);
+
+out_access_unlock:
+	rte_spinlock_unlock(&vq->access_lock);
 
 	return pkt_idx;
 }
@@ -825,53 +830,17 @@ vhost_dequeue_offload(struct virtio_net_hdr *hdr, struct rte_mbuf *m)
 			m->tso_segsz = hdr->gso_size;
 			m->l4_len = (tcp_hdr->data_off & 0xf0) >> 2;
 			break;
+		case VIRTIO_NET_HDR_GSO_UDP:
+			m->ol_flags |= PKT_TX_UDP_SEG;
+			m->tso_segsz = hdr->gso_size;
+			m->l4_len = sizeof(struct udp_hdr);
+			break;
 		default:
 			RTE_LOG(WARNING, VHOST_DATA,
 				"unsupported gso type %u.\n", hdr->gso_type);
 			break;
 		}
 	}
-}
-
-#define RARP_PKT_SIZE	64
-
-//构造rarp报文
-static int
-make_rarp_packet(struct rte_mbuf *rarp_mbuf, const struct ether_addr *mac)
-{
-	struct ether_hdr *eth_hdr;
-	struct arp_hdr  *rarp;
-
-	//长度过小
-	if (rarp_mbuf->buf_len < 64) {
-		RTE_LOG(WARNING, VHOST_DATA,
-			"failed to make RARP; mbuf size too small %u (< %d)\n",
-			rarp_mbuf->buf_len, RARP_PKT_SIZE);
-		return -1;
-	}
-
-	/* Ethernet header. */
-	eth_hdr = rte_pktmbuf_mtod_offset(rarp_mbuf, struct ether_hdr *, 0);
-	memset(eth_hdr->d_addr.addr_bytes, 0xff, ETHER_ADDR_LEN);//目的mac全ff
-	ether_addr_copy(mac, &eth_hdr->s_addr);//设置源mac
-	eth_hdr->ether_type = htons(ETHER_TYPE_RARP);//指明rarp协议
-
-	/* RARP header. */
-	rarp = (struct arp_hdr *)(eth_hdr + 1);
-	rarp->arp_hrd = htons(ARP_HRD_ETHER);
-	rarp->arp_pro = htons(ETHER_TYPE_IPv4);
-	rarp->arp_hln = ETHER_ADDR_LEN;
-	rarp->arp_pln = 4;
-	rarp->arp_op  = htons(ARP_OP_REVREQUEST);
-
-	ether_addr_copy(mac, &rarp->arp_data.arp_sha);
-	ether_addr_copy(mac, &rarp->arp_data.arp_tha);
-	memset(&rarp->arp_data.arp_sip, 0x00, 4);
-	memset(&rarp->arp_data.arp_tip, 0x00, 4);
-
-	rarp_mbuf->pkt_len  = rarp_mbuf->data_len = RARP_PKT_SIZE;
-
-	return 0;
 }
 
 static __rte_always_inline void
@@ -981,7 +950,9 @@ copy_desc_to_mbuf(struct virtio_net *dev, struct vhost_virtqueue *vq,
 					desc->addr + desc_offset, cpy_len)))) {
 			cur->data_len = cpy_len;
 			cur->data_off = 0;
-			cur->buf_addr = (void *)(uintptr_t)desc_addr;//报文指向这一段内存
+			//报文指向这一段内存
+			cur->buf_addr = (void *)(uintptr_t)(desc_addr
+				+ desc_offset);
 			cur->buf_iova = hpa;
 
 			/*
@@ -1117,11 +1088,7 @@ update_used_idx(struct virtio_net *dev, struct vhost_virtqueue *vq,
 	vq->used->idx += count;
 	vhost_log_used_vring(dev, vq, offsetof(struct vring_used, idx),
 			sizeof(vq->used->idx));
-
-	/* Kick guest if required. */
-	if (!(vq->avail->flags & VRING_AVAIL_F_NO_INTERRUPT)
-			&& (vq->callfd >= 0))
-		eventfd_write(vq->callfd, (eventfd_t)1);
+	vhost_vring_call(dev, vq);
 }
 
 static __rte_always_inline struct zcopy_mbuf *
@@ -1167,10 +1134,27 @@ mbuf_is_consumed(struct rte_mbuf *m)
 	return true;
 }
 
+static __rte_always_inline void
+restore_mbuf(struct rte_mbuf *m)
+{
+	uint32_t mbuf_size, priv_size;
+
+	while (m) {
+		priv_size = rte_pktmbuf_priv_size(m->pool);
+		mbuf_size = sizeof(struct rte_mbuf) + priv_size;
+		/* start of buffer is after mbuf structure and priv data */
+
+		m->buf_addr = (char *)m + mbuf_size;
+		m->buf_iova = rte_mempool_virt2iova(m) + mbuf_size;
+		m = m->next;
+	}
+}
+
 //给定队列id后，首先检查队列中是否有内容，队列里存放的是描述符索引
 //通过出队，我们可以拿到描述符索引（desc_indexes)，然后取出描述符
 //(描述符，指出报文存放的首地址，报文的长度，标记位，报文过长时会被分片的下一片）
 //再由描述符定位到实际的报文
+
 uint16_t
 rte_vhost_dequeue_burst(int vid, uint16_t queue_id,
 	struct rte_mempool *mbuf_pool, struct rte_mbuf **pkts, uint16_t count)
@@ -1198,8 +1182,12 @@ rte_vhost_dequeue_burst(int vid, uint16_t queue_id,
 
 	//找到虚拟队列，若未启用，则返回0
 	vq = dev->virtqueue[queue_id];
-	if (unlikely(vq->enabled == 0))
+
+	if (unlikely(rte_spinlock_trylock(&vq->access_lock) == 0))
 		return 0;
+
+	if (unlikely(vq->enabled == 0))
+		goto out_access_unlock;
 
 	vq->batch_copy_nb_elems = 0;
 
@@ -1225,6 +1213,7 @@ rte_vhost_dequeue_burst(int vid, uint16_t queue_id,
 				nr_updated += 1;
 
 				TAILQ_REMOVE(&vq->zmbuf_list, zmbuf, next);
+				restore_mbuf(zmbuf->mbuf);
 				rte_pktmbuf_free(zmbuf->mbuf);
 				put_zmbuf(zmbuf);
 				vq->nr_zmbuf -= 1;
@@ -1254,20 +1243,13 @@ rte_vhost_dequeue_burst(int vid, uint16_t queue_id,
 			rte_atomic16_cmpset((volatile uint16_t *)
 				&dev->broadcast_rarp.cnt, 1, 0))) {
 
-		rarp_mbuf = rte_pktmbuf_alloc(mbuf_pool);
+		rarp_mbuf = rte_net_make_rarp_packet(mbuf_pool, &dev->mac);
 		if (rarp_mbuf == NULL) {
 			RTE_LOG(ERR, VHOST_DATA,
-				"Failed to allocate memory for mbuf.\n");
+				"Failed to make RARP packet.\n");
 			return 0;
 		}
-
-		//构造rarp报文
-		if (make_rarp_packet(rarp_mbuf, &dev->mac)) {
-			rte_pktmbuf_free(rarp_mbuf);
-			rarp_mbuf = NULL;
-		} else {
-			count -= 1;
-		}
+		count -= 1;
 	}
 
 	//获取有多少实体可收取
@@ -1383,6 +1365,9 @@ rte_vhost_dequeue_burst(int vid, uint16_t queue_id,
 out:
 	if (dev->features & (1ULL << VIRTIO_F_IOMMU_PLATFORM))
 		vhost_user_iotlb_rd_unlock(vq);
+
+out_access_unlock:
+	rte_spinlock_unlock(&vq->access_lock);
 
 	if (unlikely(rarp_mbuf != NULL)) {
 		/*

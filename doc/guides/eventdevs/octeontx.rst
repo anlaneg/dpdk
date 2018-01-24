@@ -51,10 +51,6 @@ Please note that enabling debugging options may affect system performance.
 
   Toggle compilation of the ``librte_pmd_octeontx_ssovf`` driver.
 
-- ``CONFIG_RTE_LIBRTE_PMD_OCTEONTX_SSOVF_DEBUG`` (default ``n``)
-
-  Toggle display of generic debugging messages
-
 Driver Compilation
 ~~~~~~~~~~~~~~~~~~
 
@@ -86,6 +82,19 @@ Example:
 .. code-block:: console
 
     ./your_eventdev_application --vdev="event_octeontx"
+
+
+Selftest
+--------
+
+The functionality of octeontx eventdev can be verified using this option,
+various unit and functional tests are run to verify the sanity.
+The tests are run once the vdev creation is successfully complete.
+
+.. code-block:: console
+
+    --vdev="event_octeontx,self_test=1"
+
 
 Limitations
 -----------

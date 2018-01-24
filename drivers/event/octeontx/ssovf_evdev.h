@@ -13,22 +13,16 @@
 
 #define EVENTDEV_NAME_OCTEONTX_PMD event_octeontx
 
-#ifdef RTE_LIBRTE_PMD_OCTEONTX_SSOVF_DEBUG
-#define ssovf_log_info(fmt, args...) \
-	RTE_LOG(INFO, EVENTDEV, "[%s] %s() " fmt "\n", \
-		RTE_STR(EVENTDEV_NAME_OCTEONTX_PMD), __func__, ## args)
-#define ssovf_log_dbg(fmt, args...) \
-	RTE_LOG(DEBUG, EVENTDEV, "[%s] %s() " fmt "\n", \
-		RTE_STR(EVENTDEV_NAME_OCTEONTX_PMD), __func__, ## args)
-#else
-#define ssovf_log_info(fmt, args...)
-#define ssovf_log_dbg(fmt, args...)
-#endif
+#define SSOVF_LOG(level, fmt, args...) \
+	rte_log(RTE_LOG_ ## level, otx_logtype_ssovf, \
+			"[%s] %s() " fmt "\n", \
+			RTE_STR(EVENTDEV_NAME_OCTEONTX_PMD), __func__, ## args)
 
+#define ssovf_log_info(fmt, ...) SSOVF_LOG(INFO, fmt, ##__VA_ARGS__)
+#define ssovf_log_dbg(fmt, ...) SSOVF_LOG(DEBUG, fmt, ##__VA_ARGS__)
+#define ssovf_log_err(fmt, ...) SSOVF_LOG(ERR, fmt, ##__VA_ARGS__)
 #define ssovf_func_trace ssovf_log_dbg
-#define ssovf_log_err(fmt, args...) \
-	RTE_LOG(ERR, EVENTDEV, "[%s] %s() " fmt "\n", \
-		RTE_STR(EVENTDEV_NAME_OCTEONTX_PMD), __func__, ## args)
+#define ssovf_log_selftest ssovf_log_info
 
 #define SSO_MAX_VHGRP                     (64)
 #define SSO_MAX_VHWS                      (32)
@@ -85,6 +79,8 @@
 #define SSO_CONVERT_NS_GETWORK_ITER       0x6
 #define SSO_GRP_GET_PRIORITY              0x7
 #define SSO_GRP_SET_PRIORITY              0x8
+
+#define SSOVF_SELFTEST_ARG               ("selftest")
 
 /*
  * In Cavium OcteonTX SoC, all accesses to the device registers are
@@ -152,6 +148,8 @@ ssovf_pmd_priv(const struct rte_eventdev *eventdev)
 	return eventdev->data->dev_private;
 }
 
+extern int otx_logtype_ssovf;
+
 uint16_t ssows_enq(void *port, const struct rte_event *ev);
 uint16_t ssows_enq_burst(void *port,
 		const struct rte_event ev[], uint16_t nb_events);
@@ -168,5 +166,6 @@ uint16_t ssows_deq_timeout_burst(void *port, struct rte_event ev[],
 		uint16_t nb_events, uint64_t timeout_ticks);
 void ssows_flush_events(struct ssows *ws, uint8_t queue_id);
 void ssows_reset(struct ssows *ws);
+int test_eventdev_octeontx(void);
 
 #endif /* __SSOVF_EVDEV_H__ */

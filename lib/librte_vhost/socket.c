@@ -469,6 +469,7 @@ static int
 vhost_user_reconnect_init(void)
 {
 	int ret;
+	char thread_name[RTE_MAX_THREAD_NAME_LEN];
 
 	ret = pthread_mutex_init(&reconn_list.mutex, NULL);
 	if (ret < 0) {
@@ -480,11 +481,19 @@ vhost_user_reconnect_init(void)
 	//初始化重连线程
 	ret = pthread_create(&reconn_tid, NULL,
 			     vhost_user_client_reconnect, NULL);
-	if (ret < 0) {
+	if (ret != 0) {
 		RTE_LOG(ERR, VHOST_CONFIG, "failed to create reconnect thread");
 		if (pthread_mutex_destroy(&reconn_list.mutex)) {
 			RTE_LOG(ERR, VHOST_CONFIG,
 				"failed to destroy reconnect mutex");
+		}
+	} else {
+		snprintf(thread_name, RTE_MAX_THREAD_NAME_LEN,
+			 "vhost-reconn");
+
+		if (rte_thread_setname(reconn_tid, thread_name)) {
+			RTE_LOG(DEBUG, VHOST_CONFIG,
+				"failed to set reconnect thread name");
 		}
 	}
 
@@ -706,9 +715,8 @@ rte_vhost_driver_register(const char *path, uint64_t flags)
 		vsocket->reconnect = !(flags & RTE_VHOST_USER_NO_RECONNECT);
 		if (vsocket->reconnect && reconn_tid == 0) {
 			//如果需要支持重连，且重连线程还未初始化，则初始化重连线程
-			if (vhost_user_reconnect_init() < 0) {
+			if (vhost_user_reconnect_init() != 0)
 				goto out_mutex;
-			}
 		}
 	} else {
 		vsocket->is_server = true;
@@ -879,7 +887,7 @@ rte_vhost_driver_start(const char *path)
 		//启动线程，处理vhost_user的读写事件
 		int ret = pthread_create(&fdset_tid, NULL, fdset_event_dispatch,
 				     &vhost_user.fdset);
-		if (ret < 0)
+		if (ret != 0)
 			RTE_LOG(ERR, VHOST_CONFIG,
 				"failed to create fdset handling thread");
 	}

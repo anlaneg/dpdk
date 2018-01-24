@@ -9,11 +9,6 @@
 
 #include "virtio_pci.h"
 
-#define SPEED_10	10
-#define SPEED_100	100
-#define SPEED_1000	1000
-#define SPEED_10G	10000
-
 #ifndef PAGE_SIZE
 #define PAGE_SIZE 4096
 #endif
@@ -38,6 +33,7 @@
 	 1u << VIRTIO_NET_F_HOST_TSO6	  |	\
 	 1u << VIRTIO_NET_F_MRG_RXBUF	  |	\
 	 1u << VIRTIO_NET_F_MTU	| \
+	 1ULL << VIRTIO_NET_F_GUEST_ANNOUNCE |	\
 	 1u << VIRTIO_RING_F_INDIRECT_DESC |    \
 	 1ULL << VIRTIO_F_VERSION_1       |	\
 	 1ULL << VIRTIO_F_IOMMU_PLATFORM)
@@ -91,5 +87,10 @@ uint16_t virtio_xmit_pkts_simple(void *tx_queue, struct rte_mbuf **tx_pkts,
 int eth_virtio_dev_init(struct rte_eth_dev *eth_dev);
 
 void virtio_interrupt_handler(void *param);
+
+int virtio_dev_pause(struct rte_eth_dev *dev);
+void virtio_dev_resume(struct rte_eth_dev *dev);
+int virtio_inject_pkts(struct rte_eth_dev *dev, struct rte_mbuf **tx_pkts,
+		int nb_pkts);
 
 #endif /* _VIRTIO_ETHDEV_H_ */

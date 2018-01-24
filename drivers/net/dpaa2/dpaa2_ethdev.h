@@ -50,6 +50,33 @@
 /* Disable RX tail drop, default is enable */
 #define DPAA2_RX_TAILDROP_OFF	0x04
 
+/* LX2 FRC Parsed values (Little Endian) */
+#define DPAA2_PKT_TYPE_ETHER		0x0060
+#define DPAA2_PKT_TYPE_IPV4		0x0000
+#define DPAA2_PKT_TYPE_IPV6		0x0020
+#define DPAA2_PKT_TYPE_IPV4_EXT \
+			(0x0001 | DPAA2_PKT_TYPE_IPV4)
+#define DPAA2_PKT_TYPE_IPV6_EXT \
+			(0x0001 | DPAA2_PKT_TYPE_IPV6)
+#define DPAA2_PKT_TYPE_IPV4_TCP \
+			(0x000e | DPAA2_PKT_TYPE_IPV4)
+#define DPAA2_PKT_TYPE_IPV6_TCP \
+			(0x000e | DPAA2_PKT_TYPE_IPV6)
+#define DPAA2_PKT_TYPE_IPV4_UDP \
+			(0x0010 | DPAA2_PKT_TYPE_IPV4)
+#define DPAA2_PKT_TYPE_IPV6_UDP \
+			(0x0010 | DPAA2_PKT_TYPE_IPV6)
+#define DPAA2_PKT_TYPE_IPV4_SCTP	\
+			(0x000f | DPAA2_PKT_TYPE_IPV4)
+#define DPAA2_PKT_TYPE_IPV6_SCTP	\
+			(0x000f | DPAA2_PKT_TYPE_IPV6)
+#define DPAA2_PKT_TYPE_IPV4_ICMP \
+			(0x0003 | DPAA2_PKT_TYPE_IPV4_EXT)
+#define DPAA2_PKT_TYPE_IPV6_ICMP \
+			(0x0003 | DPAA2_PKT_TYPE_IPV6_EXT)
+#define DPAA2_PKT_TYPE_VLAN_1		0x0160
+#define DPAA2_PKT_TYPE_VLAN_2		0x0260
+
 struct dpaa2_dev_priv {
 	void *hw;
 	int32_t hw_id;
@@ -91,6 +118,11 @@ void dpaa2_dev_process_parallel_event(struct qbman_swp *swp,
 				      const struct qbman_result *dq,
 				      struct dpaa2_queue *rxq,
 				      struct rte_event *ev);
+void dpaa2_dev_process_atomic_event(struct qbman_swp *swp,
+				    const struct qbman_fd *fd,
+				    const struct qbman_result *dq,
+				    struct dpaa2_queue *rxq,
+				    struct rte_event *ev);
 uint16_t dpaa2_dev_tx(void *queue, struct rte_mbuf **bufs, uint16_t nb_pkts);
 uint16_t dummy_dev_tx(void *queue, struct rte_mbuf **bufs, uint16_t nb_pkts);
 #endif /* _DPAA2_ETHDEV_H */

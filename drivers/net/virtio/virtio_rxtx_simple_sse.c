@@ -14,7 +14,7 @@
 #include <rte_branch_prediction.h>
 #include <rte_cycles.h>
 #include <rte_ether.h>
-#include <rte_ethdev.h>
+#include <rte_ethdev_driver.h>
 #include <rte_errno.h>
 #include <rte_memory.h>
 #include <rte_mempool.h>
@@ -25,9 +25,7 @@
 
 #include "virtio_rxtx_simple.h"
 
-#define RTE_VIRTIO_VPMD_RX_BURST 32
 #define RTE_VIRTIO_DESC_PER_LOOP 8
-#define RTE_VIRTIO_VPMD_RX_REARM_THRESH RTE_VIRTIO_VPMD_RX_BURST
 
 /* virtio vPMD receive routine, only accept(nb_pkts >= RTE_VIRTIO_DESC_PER_LOOP)
  *

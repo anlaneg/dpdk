@@ -251,17 +251,22 @@ test_memzone_reserve_flags(void)
 				printf("MEMZONE FLAG 2MB\n");
 				return -1;
 			}
-			if (rte_memzone_free(mz)) {
-				printf("Fail memzone free\n");
-				return -1;
-			}
 		}
 
 		if (hugepage_2MB_avail && hugepage_1GB_avail) {
 			mz = rte_memzone_reserve("flag_zone_2M_HINT", size, SOCKET_ID_ANY,
 								RTE_MEMZONE_2MB|RTE_MEMZONE_1GB);
-			if (mz != NULL) {
+			if (mz == NULL) {
 				printf("BOTH SIZES SET\n");
+				return -1;
+			}
+			if (mz->hugepage_sz != RTE_PGSIZE_1G &&
+					mz->hugepage_sz != RTE_PGSIZE_2M) {
+				printf("Wrong size when both sizes set\n");
+				return -1;
+			}
+			if (rte_memzone_free(mz)) {
+				printf("Fail memzone free\n");
 				return -1;
 			}
 		}
@@ -292,7 +297,7 @@ test_memzone_reserve_flags(void)
 		mz = rte_memzone_reserve("flag_zone_16M_HINT", size,
 		SOCKET_ID_ANY, RTE_MEMZONE_16MB|RTE_MEMZONE_SIZE_HINT_ONLY);
 		if (mz == NULL) {
-			printf("MEMZONE FLAG 2MB\n");
+			printf("MEMZONE FLAG 16MB\n");
 			return -1;
 		}
 		if (mz->hugepage_sz != RTE_PGSIZE_16M) {
@@ -395,8 +400,17 @@ test_memzone_reserve_flags(void)
 			mz = rte_memzone_reserve("flag_zone_16M_HINT", size,
 				SOCKET_ID_ANY,
 				RTE_MEMZONE_16MB|RTE_MEMZONE_16GB);
-			if (mz != NULL) {
+			if (mz == NULL) {
 				printf("BOTH SIZES SET\n");
+				return -1;
+			}
+			if (mz->hugepage_sz != RTE_PGSIZE_16G &&
+					mz->hugepage_sz != RTE_PGSIZE_16M) {
+				printf("Wrong size when both sizes set\n");
+				return -1;
+			}
+			if (rte_memzone_free(mz)) {
+				printf("Fail memzone free\n");
 				return -1;
 			}
 		}
@@ -746,7 +760,7 @@ test_memzone_bounded(void)
 static int
 test_memzone_free(void)
 {
-	const struct rte_memzone *mz[RTE_MAX_MEMZONE];
+	const struct rte_memzone *mz[RTE_MAX_MEMZONE + 1];
 	int i;
 	char name[20];
 
@@ -919,11 +933,11 @@ test_memzone_basic(void)
 	return 0;
 }
 
-static int memzone_calk_called;
+static int memzone_walk_called;
 static void memzone_walk_clb(const struct rte_memzone *mz __rte_unused,
 			     void *arg __rte_unused)
 {
-	memzone_calk_called = 1;
+	memzone_walk_called = 1;
 }
 
 static int
@@ -967,7 +981,7 @@ test_memzone(void)
 
 	printf("check memzone cleanup\n");
 	rte_memzone_walk(memzone_walk_clb, NULL);
-	if (memzone_calk_called) {
+	if (memzone_walk_called) {
 		printf("there are some memzones left after test\n");
 		rte_memzone_dump(stdout);
 		return -1;

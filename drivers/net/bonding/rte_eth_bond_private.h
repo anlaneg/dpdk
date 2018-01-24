@@ -5,7 +5,7 @@
 #ifndef _RTE_ETH_BOND_PRIVATE_H_
 #define _RTE_ETH_BOND_PRIVATE_H_
 
-#include <rte_ethdev.h>
+#include <rte_ethdev_driver.h>
 #include <rte_spinlock.h>
 #include <rte_bitmap.h>
 
@@ -80,8 +80,8 @@ struct bond_slave_details {
 	uint16_t reta_size;
 };
 
-
-typedef uint16_t (*xmit_hash_t)(const struct rte_mbuf *buf, uint8_t slave_count);
+typedef void (*burst_xmit_hash_t)(struct rte_mbuf **buf, uint16_t nb_pkts,
+		uint8_t slave_count, uint16_t *slaves);
 
 /** Link Bonding PMD device private configuration Structure */
 struct bond_dev_private {
@@ -97,7 +97,7 @@ struct bond_dev_private {
 
 	uint8_t balance_xmit_policy;
 	/**< Transmit policy - l2 / l23 / l34 for operation in balance mode */
-	xmit_hash_t xmit_hash;
+	burst_xmit_hash_t burst_xmit_hash;
 	/**< Transmit policy hash function */
 
 	uint8_t user_defined_mac;
@@ -152,6 +152,9 @@ struct bond_dev_private {
 };
 
 extern const struct eth_dev_ops default_dev_ops;
+
+int
+check_for_master_bonded_ethdev(const struct rte_eth_dev *eth_dev);
 
 int
 check_for_bonded_ethdev(const struct rte_eth_dev *eth_dev);
@@ -216,14 +219,18 @@ void
 slave_add(struct bond_dev_private *internals,
 		struct rte_eth_dev *slave_eth_dev);
 
-uint16_t
-xmit_l2_hash(const struct rte_mbuf *buf, uint8_t slave_count);
+void
+burst_xmit_l2_hash(struct rte_mbuf **buf, uint16_t nb_pkts,
+		uint8_t slave_count, uint16_t *slaves);
 
-uint16_t
-xmit_l23_hash(const struct rte_mbuf *buf, uint8_t slave_count);
+void
+burst_xmit_l23_hash(struct rte_mbuf **buf, uint16_t nb_pkts,
+		uint8_t slave_count, uint16_t *slaves);
 
-uint16_t
-xmit_l34_hash(const struct rte_mbuf *buf, uint8_t slave_count);
+void
+burst_xmit_l34_hash(struct rte_mbuf **buf, uint16_t nb_pkts,
+		uint8_t slave_count, uint16_t *slaves);
+
 
 void
 bond_ethdev_primary_set(struct bond_dev_private *internals,

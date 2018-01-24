@@ -36,6 +36,13 @@ extern "C" {
 
 #define FSLMC_OBJECT_MAX_LEN 32   /**< Length of each device on bus */
 
+
+/** Device driver supports link state interrupt */
+#define RTE_DPAA2_DRV_INTR_LSC	0x0008
+
+/** Device driver supports IOVA as VA */
+#define RTE_DPAA2_DRV_IOVA_AS_VA 0X0040
+
 struct rte_dpaa2_driver;
 
 /* DPAA2 Device and Driver lists for FSLMC bus */
@@ -55,7 +62,8 @@ enum rte_dpaa2_dev_type {
 	DPAA2_CI,	/**< DPCI type device */
 	DPAA2_MPORTAL,  /**< DPMCP type device */
 	/* Unknown device placeholder */
-	DPAA2_UNKNOWN
+	DPAA2_UNKNOWN,
+	DPAA2_DEVTYPE_MAX,
 };
 
 TAILQ_HEAD(rte_dpaa2_object_list, rte_dpaa2_object);
@@ -117,9 +125,27 @@ struct rte_fslmc_bus {
 				/**< FSLMC DPAA2 Device list */
 	struct rte_fslmc_driver_list driver_list;
 				/**< FSLMC DPAA2 Driver list */
-	int device_count;
-				/**< Optional: Count of devices on bus */
+	int device_count[DPAA2_DEVTYPE_MAX];
+				/**< Count of all devices scanned */
 };
+
+#define DPAA2_PORTAL_DEQUEUE_DEPTH	32
+
+/* Create storage for dqrr entries per lcore */
+struct dpaa2_portal_dqrr {
+	struct rte_mbuf *mbuf[DPAA2_PORTAL_DEQUEUE_DEPTH];
+	uint64_t dqrr_held;
+	uint8_t dqrr_size;
+};
+
+RTE_DECLARE_PER_LCORE(struct dpaa2_portal_dqrr, dpaa2_held_bufs);
+
+#define DPAA2_PER_LCORE_DQRR_SIZE \
+	RTE_PER_LCORE(dpaa2_held_bufs).dqrr_size
+#define DPAA2_PER_LCORE_DQRR_HELD \
+	RTE_PER_LCORE(dpaa2_held_bufs).dqrr_held
+#define DPAA2_PER_LCORE_DQRR_MBUF(i) \
+	RTE_PER_LCORE(dpaa2_held_bufs).mbuf[i]
 
 /**
  * Register a DPAA2 driver.
@@ -149,10 +175,6 @@ static void dpaa2initfn_ ##nm(void) \
 } \
 RTE_PMD_EXPORT_NAME(nm, __COUNTER__)
 
-#ifdef __cplusplus
-}
-#endif
-
 /**
  * Register a DPAA2 MC Object driver.
  *
@@ -161,6 +183,17 @@ RTE_PMD_EXPORT_NAME(nm, __COUNTER__)
  *   to be registered.
  */
 void rte_fslmc_object_register(struct rte_dpaa2_object *object);
+
+/**
+ * Count of a particular type of DPAA2 device scanned on the bus.
+ *
+ * @param dev_type
+ *   Type of device as rte_dpaa2_dev_type enumerator
+ * @return
+ *   >=0 for count; 0 indicates either no device of the said type scanned or
+ *   invalid device type.
+ */
+uint32_t rte_fslmc_get_device_count(enum rte_dpaa2_dev_type device_type);
 
 /** Helper for DPAA2 object registration */
 #define RTE_PMD_REGISTER_DPAA2_OBJECT(nm, dpaa2_obj) \
@@ -171,5 +204,9 @@ static void dpaa2objinitfn_ ##nm(void) \
 	rte_fslmc_object_register(&dpaa2_obj); \
 } \
 RTE_PMD_EXPORT_NAME(nm, __COUNTER__)
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* _RTE_FSLMC_H_ */

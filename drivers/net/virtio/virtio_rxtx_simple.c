@@ -15,7 +15,7 @@
 #include <rte_malloc.h>
 #include <rte_mbuf.h>
 #include <rte_ether.h>
-#include <rte_ethdev.h>
+#include <rte_ethdev_driver.h>
 #include <rte_prefetch.h>
 #include <rte_string_fns.h>
 #include <rte_errno.h>
@@ -70,7 +70,7 @@ virtio_xmit_pkts_simple(void *tx_queue, struct rte_mbuf **tx_pkts,
 	uint16_t desc_idx_max = (vq->vq_nentries >> 1) - 1;
 	uint16_t nb_tx = 0;
 
-	if (unlikely(hw->started == 0))
+	if (unlikely(hw->started == 0 && tx_pkts != hw->inject_pkts))
 		return nb_tx;
 
 	nb_used = VIRTQUEUE_NUSED(vq);

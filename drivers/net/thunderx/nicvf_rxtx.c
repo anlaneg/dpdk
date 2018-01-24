@@ -13,7 +13,7 @@
 #include <rte_common.h>
 #include <rte_cycles.h>
 #include <rte_errno.h>
-#include <rte_ethdev.h>
+#include <rte_ethdev_driver.h>
 #include <rte_ether.h>
 #include <rte_log.h>
 #include <rte_mbuf.h>
@@ -224,7 +224,7 @@ nicvf_xmit_pkts_multiseg(void *tx_queue, struct rte_mbuf **tx_pkts,
 
 	/* Inform HW to xmit the packets */
 	nicvf_addr_write(sq->sq_door, used_desc);
-	return nb_pkts;
+	return i;
 }
 
 static const uint32_t ptype_table[16][16] __rte_cache_aligned = {

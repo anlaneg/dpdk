@@ -129,6 +129,17 @@ struct virtio_net_ctrl_mac {
 #define VIRTIO_NET_CTRL_VLAN_ADD 0
 #define VIRTIO_NET_CTRL_VLAN_DEL 1
 
+/*
+ * Control link announce acknowledgement
+ *
+ * The command VIRTIO_NET_CTRL_ANNOUNCE_ACK is used to indicate that
+ * driver has recevied the notification; device would clear the
+ * VIRTIO_NET_S_ANNOUNCE bit in the status field after it receives
+ * this command.
+ */
+#define VIRTIO_NET_CTRL_ANNOUNCE     3
+#define VIRTIO_NET_CTRL_ANNOUNCE_ACK 0
+
 struct virtio_net_ctrl_hdr {
 	uint8_t class;
 	uint8_t cmd;
@@ -196,8 +207,6 @@ struct virtqueue {
 #define VIRTIO_NET_CTRL_MQ_VQ_PAIRS_SET        0
 #define VIRTIO_NET_CTRL_MQ_VQ_PAIRS_MIN        1
 #define VIRTIO_NET_CTRL_MQ_VQ_PAIRS_MAX        0x8000
-
-#define VIRTIO_NET_CTRL_MAC_ADDR_SET         1
 
 /**
  * This is the first element of the scatter-gather list.  If you don't
@@ -275,7 +284,7 @@ void virtqueue_dump(struct virtqueue *vq);
 struct rte_mbuf *virtqueue_detatch_unused(struct virtqueue *vq);
 
 /* Flush the elements in the used ring. */
-void virtqueue_flush(struct virtqueue *vq);
+void virtqueue_rxvq_flush(struct virtqueue *vq);
 
 static inline int
 virtqueue_full(const struct virtqueue *vq)

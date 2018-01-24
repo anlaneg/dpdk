@@ -2,7 +2,7 @@
  * Copyright(c) 2013-2016 Intel Corporation
  */
 
-#include <rte_ethdev.h>
+#include <rte_ethdev_driver.h>
 #include <rte_ethdev_pci.h>
 #include <rte_malloc.h>
 #include <rte_memzone.h>
@@ -25,7 +25,7 @@
 /* Wait interval to get switch status */
 #define WAIT_SWITCH_MSG_US    100000
 /* A period of quiescence for switch */
-#define FM10K_SWITCH_QUIESCE_US 10000
+#define FM10K_SWITCH_QUIESCE_US 100000
 /* Number of chars per uint32 type */
 #define CHARS_PER_UINT32 (sizeof(uint32_t))
 #define BIT_MASK_PER_UINT32 ((1 << CHARS_PER_UINT32) - 1)
@@ -39,6 +39,9 @@
 #define GLORT_PF_MASK    0xFFC0
 #define GLORT_FD_MASK    GLORT_PF_MASK
 #define GLORT_FD_INDEX   GLORT_FD_Q_BASE
+
+int fm10k_logtype_init;
+int fm10k_logtype_driver;
 
 static void fm10k_close_mbx_service(struct fm10k_hw *hw);
 static void fm10k_dev_promiscuous_enable(struct rte_eth_dev *dev);
@@ -504,9 +507,8 @@ fm10k_dev_rss_configure(struct rte_eth_dev *dev)
 		0x6A, 0x42, 0xB7, 0x3B, 0xBE, 0xAC, 0x01, 0xFA,
 	};
 
-	if (dev->data->nb_rx_queues == 1 ||
-	    dev_conf->rxmode.mq_mode != ETH_MQ_RX_RSS ||
-	    dev_conf->rx_adv_conf.rss_conf.rss_hf == 0) {
+	if (dev_conf->rxmode.mq_mode != ETH_MQ_RX_RSS ||
+		dev_conf->rx_adv_conf.rss_conf.rss_hf == 0) {
 		FM10K_WRITE_REG(hw, FM10K_MRQC(0), 0);
 		return;
 	}
@@ -1213,7 +1215,7 @@ fm10k_dev_close(struct rte_eth_dev *dev)
 		MAX_LPORT_NUM, false);
 	fm10k_mbx_unlock(hw);
 
-	/* allow 10ms for device to quiesce */
+	/* allow 100ms for device to quiesce */
 	rte_delay_us(FM10K_SWITCH_QUIESCE_US);
 
 	/* Stop mailbox service first */
@@ -2596,7 +2598,7 @@ fm10k_dev_interrupt_handler_pf(void *param)
 			dev_info->sm_down = 0;
 			_rte_eth_dev_callback_process(dev,
 					RTE_ETH_EVENT_INTR_LSC,
-					NULL, NULL);
+					NULL);
 		}
 	}
 
@@ -2609,7 +2611,7 @@ fm10k_dev_interrupt_handler_pf(void *param)
 		PMD_INIT_LOG(INFO, "INT: Switch is down");
 		dev_info->sm_down = 1;
 		_rte_eth_dev_callback_process(dev, RTE_ETH_EVENT_INTR_LSC,
-				NULL, NULL);
+				NULL);
 	}
 
 	/* Handle SRAM error */
@@ -2677,7 +2679,7 @@ fm10k_dev_interrupt_handler_vf(void *param)
 		/* Setting reset flag */
 		dev_info->sm_down = 1;
 		_rte_eth_dev_callback_process(dev, RTE_ETH_EVENT_INTR_LSC,
-				NULL, NULL);
+				NULL);
 	}
 
 	if (dev_info->sm_down == 1 &&
@@ -2706,7 +2708,7 @@ fm10k_dev_interrupt_handler_vf(void *param)
 
 		dev_info->sm_down = 0;
 		_rte_eth_dev_callback_process(dev, RTE_ETH_EVENT_INTR_LSC,
-				NULL, NULL);
+				NULL);
 	}
 
 	/* Re-enable interrupt from device side */
@@ -3234,3 +3236,15 @@ static struct rte_pci_driver rte_pmd_fm10k = {
 RTE_PMD_REGISTER_PCI(net_fm10k, rte_pmd_fm10k);
 RTE_PMD_REGISTER_PCI_TABLE(net_fm10k, pci_id_fm10k_map);
 RTE_PMD_REGISTER_KMOD_DEP(net_fm10k, "* igb_uio | uio_pci_generic | vfio-pci");
+
+RTE_INIT(fm10k_init_log);
+static void
+fm10k_init_log(void)
+{
+	fm10k_logtype_init = rte_log_register("pmd.fm10k.init");
+	if (fm10k_logtype_init >= 0)
+		rte_log_set_level(fm10k_logtype_init, RTE_LOG_NOTICE);
+	fm10k_logtype_driver = rte_log_register("pmd.fm10k.driver");
+	if (fm10k_logtype_driver >= 0)
+		rte_log_set_level(fm10k_logtype_driver, RTE_LOG_NOTICE);
+}

@@ -70,7 +70,7 @@ usage(char* progname)
 	       "--rss-ip | --rss-udp | "
 	       "--rxpt= | --rxht= | --rxwt= | --rxfreet= | "
 	       "--txpt= | --txht= | --txwt= | --txfreet= | "
-	       "--txrst= | --txqflags= ]\n",
+	       "--txrst= | --tx-offloads ]\n",
 	       progname);
 #ifdef RTE_LIBRTE_CMDLINE
 	printf("  --interactive: run in interactive mode.\n");
@@ -163,8 +163,6 @@ usage(char* progname)
 	       "(0 <= N <= value of txd).\n");
 	printf("  --txrst=N: set the transmit RS bit threshold of TX rings to N "
 	       "(0 <= N <= value of txd).\n");
-	printf("  --txqflags=0xXXXXXXXX: hexadecimal bitmask of TX queue flags "
-	       "(0 <= N <= 0x7FFFFFFF).\n");
 	printf("  --tx-queue-stats-mapping=(port,queue,mapping)[,(port,queue,mapping]: "
 	       "tx queues statistics counters mapping "
 	       "(0 <= mapping <= %d).\n", RTE_ETHDEV_QUEUE_STAT_CNTRS - 1);
@@ -187,6 +185,7 @@ usage(char* progname)
 	       "disable print of designated event or all of them.\n");
 	printf("  --flow-isolate-all: "
 	       "requests flow API isolated mode on all ports at initialization time.\n");
+	printf("  --tx-offloads=0xXXXXXXXX: hexadecimal bitmask of TX queue offloads\n");
 }
 
 #ifdef RTE_LIBRTE_CMDLINE
@@ -517,6 +516,10 @@ parse_event_printing_config(const char *optarg, int enable)
 		mask = UINT32_C(1) << RTE_ETH_EVENT_MACSEC;
 	else if (!strcmp(optarg, "intr_rmv"))
 		mask = UINT32_C(1) << RTE_ETH_EVENT_INTR_RMV;
+	else if (!strcmp(optarg, "dev_probed"))
+		mask = UINT32_C(1) << RTE_ETH_EVENT_NEW;
+	else if (!strcmp(optarg, "dev_released"))
+		mask = UINT32_C(1) << RTE_ETH_EVENT_DESTROY;
 	else if (!strcmp(optarg, "all"))
 		mask = ~UINT32_C(0);
 	else {
@@ -536,7 +539,11 @@ launch_args_parse(int argc, char** argv)
 	int n, opt;
 	char **argvopt;
 	int opt_idx;
+	portid_t pid;
 	enum { TX, RX };
+	/* Default offloads for all ports. */
+	uint64_t rx_offloads = rx_mode.offloads;
+	uint64_t tx_offloads = tx_mode.offloads;
 
 	static struct option lgopts[] = {
 		{ "help",			0, 0, 0 },
@@ -599,7 +606,6 @@ launch_args_parse(int argc, char** argv)
 		{ "txwt",			1, 0, 0 },
 		{ "txfreet",			1, 0, 0 },
 		{ "txrst",			1, 0, 0 },
-		{ "txqflags",			1, 0, 0 },
 		{ "rxpt",			1, 0, 0 },
 		{ "rxht",			1, 0, 0 },
 		{ "rxwt",			1, 0, 0 },
@@ -614,6 +620,7 @@ launch_args_parse(int argc, char** argv)
 		{ "no-rmv-interrupt",		0, 0, 0 },
 		{ "print-event",		1, 0, 0 },
 		{ "mask-event",			1, 0, 0 },
+		{ "tx-offloads",		1, 0, 0 },
 		{ 0, 0, 0, 0 },
 	};
 
@@ -775,7 +782,8 @@ launch_args_parse(int argc, char** argv)
 				if (n >= ETHER_MIN_LEN) {
 					rx_mode.max_rx_pkt_len = (uint32_t) n;
 					if (n > ETHER_MAX_LEN)
-					    rx_mode.jumbo_frame = 1;
+						rx_offloads |=
+							DEV_RX_OFFLOAD_JUMBO_FRAME;
 				} else
 					rte_exit(EXIT_FAILURE,
 						 "Invalid max-pkt-len=%d - should be > %d\n",
@@ -868,34 +876,30 @@ launch_args_parse(int argc, char** argv)
 			}
 #endif
 			if (!strcmp(lgopts[opt_idx].name, "disable-crc-strip"))
-				rx_mode.hw_strip_crc = 0;
+				rx_offloads &= ~DEV_RX_OFFLOAD_CRC_STRIP;
 			if (!strcmp(lgopts[opt_idx].name, "enable-lro"))
-				rx_mode.enable_lro = 1;
+				rx_offloads |= DEV_RX_OFFLOAD_TCP_LRO;
 			if (!strcmp(lgopts[opt_idx].name, "enable-scatter"))
-				rx_mode.enable_scatter = 1;
+				rx_offloads |= DEV_RX_OFFLOAD_SCATTER;
 			if (!strcmp(lgopts[opt_idx].name, "enable-rx-cksum"))
-				rx_mode.hw_ip_checksum = 1;
+				rx_offloads |= DEV_RX_OFFLOAD_CHECKSUM;
 			if (!strcmp(lgopts[opt_idx].name,
 					"enable-rx-timestamp"))
-				rx_mode.hw_timestamp = 1;
-
-			if (!strcmp(lgopts[opt_idx].name, "disable-hw-vlan")) {
-				rx_mode.hw_vlan_filter = 0;
-				rx_mode.hw_vlan_strip  = 0;
-				rx_mode.hw_vlan_extend = 0;
-			}
+				rx_offloads |= DEV_RX_OFFLOAD_TIMESTAMP;
+			if (!strcmp(lgopts[opt_idx].name, "disable-hw-vlan"))
+				rx_offloads &= ~DEV_RX_OFFLOAD_VLAN;
 
 			if (!strcmp(lgopts[opt_idx].name,
 					"disable-hw-vlan-filter"))
-				rx_mode.hw_vlan_filter = 0;
+				rx_offloads &= ~DEV_RX_OFFLOAD_VLAN_FILTER;
 
 			if (!strcmp(lgopts[opt_idx].name,
 					"disable-hw-vlan-strip"))
-				rx_mode.hw_vlan_strip  = 0;
+				rx_offloads &= ~DEV_RX_OFFLOAD_VLAN_STRIP;
 
 			if (!strcmp(lgopts[opt_idx].name,
 					"disable-hw-vlan-extend"))
-				rx_mode.hw_vlan_extend = 0;
+				rx_offloads &= ~DEV_RX_OFFLOAD_VLAN_EXTEND;
 
 			if (!strcmp(lgopts[opt_idx].name, "enable-drop-en"))
 				rx_drop_en = 1;
@@ -922,21 +926,21 @@ launch_args_parse(int argc, char** argv)
 				rss_hf = ETH_RSS_UDP;
 			if (!strcmp(lgopts[opt_idx].name, "rxq")) {
 				n = atoi(optarg);
-				if (n >= 0 && n <= (int) MAX_QUEUE_ID)
+				if (n >= 0 && check_nb_rxq((queueid_t)n) == 0)
 					nb_rxq = (queueid_t) n;
 				else
 					rte_exit(EXIT_FAILURE, "rxq %d invalid - must be"
-						  " >= 0 && <= %d\n", n,
-						  (int) MAX_QUEUE_ID);
+						  " >= 0 && <= %u\n", n,
+						  get_allowed_max_nb_rxq(&pid));
 			}
 			if (!strcmp(lgopts[opt_idx].name, "txq")) {
 				n = atoi(optarg);
-				if (n >= 0 && n <= (int) MAX_QUEUE_ID)
+				if (n >= 0 && check_nb_txq((queueid_t)n) == 0)
 					nb_txq = (queueid_t) n;
 				else
 					rte_exit(EXIT_FAILURE, "txq %d invalid - must be"
-						  " >= 0 && <= %d\n", n,
-						  (int) MAX_QUEUE_ID);
+						  " >= 0 && <= %u\n", n,
+						  get_allowed_max_nb_txq(&pid));
 			}
 			if (!nb_rxq && !nb_txq) {
 				rte_exit(EXIT_FAILURE, "Either rx or tx queues should "
@@ -974,15 +978,6 @@ launch_args_parse(int argc, char** argv)
 					tx_rs_thresh = (int16_t)n;
 				else
 					rte_exit(EXIT_FAILURE, "txrst must be >= 0\n");
-			}
-			if (!strcmp(lgopts[opt_idx].name, "txqflags")) {
-				char *end = NULL;
-				n = strtoul(optarg, &end, 16);
-				if (n >= 0)
-					txq_flags = (int32_t)n;
-				else
-					rte_exit(EXIT_FAILURE,
-						 "txqflags must be >= 0\n");
 			}
 			if (!strcmp(lgopts[opt_idx].name, "rxd")) {
 				n = atoi(optarg);
@@ -1088,6 +1083,15 @@ launch_args_parse(int argc, char** argv)
 				rmv_interrupt = 0;
 			if (!strcmp(lgopts[opt_idx].name, "flow-isolate-all"))
 				flow_isolate_all = 1;
+			if (!strcmp(lgopts[opt_idx].name, "tx-offloads")) {
+				char *end = NULL;
+				n = strtoull(optarg, &end, 16);
+				if (n >= 0)
+					tx_offloads = (uint64_t)n;
+				else
+					rte_exit(EXIT_FAILURE,
+						 "tx-offloads must be >= 0\n");
+			}
 			if (!strcmp(lgopts[opt_idx].name, "print-event"))
 				if (parse_event_printing_config(optarg, 1)) {
 					rte_exit(EXIT_FAILURE,
@@ -1111,4 +1115,8 @@ launch_args_parse(int argc, char** argv)
 			break;
 		}
 	}
+
+	/* Set offload configuration from command line parameters. */
+	rx_mode.offloads = rx_offloads;
+	tx_mode.offloads = tx_offloads;
 }

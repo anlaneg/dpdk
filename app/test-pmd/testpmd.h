@@ -109,26 +109,6 @@ struct fwd_stream {
 #endif
 };
 
-/** Offload IP checksum in csum forward engine */
-#define TESTPMD_TX_OFFLOAD_IP_CKSUM          0x0001
-/** Offload UDP checksum in csum forward engine */
-#define TESTPMD_TX_OFFLOAD_UDP_CKSUM         0x0002
-/** Offload TCP checksum in csum forward engine */
-#define TESTPMD_TX_OFFLOAD_TCP_CKSUM         0x0004
-/** Offload SCTP checksum in csum forward engine */
-#define TESTPMD_TX_OFFLOAD_SCTP_CKSUM        0x0008
-/** Offload outer IP checksum in csum forward engine for recognized tunnels */
-#define TESTPMD_TX_OFFLOAD_OUTER_IP_CKSUM    0x0010
-/** Parse tunnel in csum forward engine. If set, dissect tunnel headers
- * of rx packets. If not set, treat inner headers as payload. */
-#define TESTPMD_TX_OFFLOAD_PARSE_TUNNEL      0x0020
-/** Insert VLAN header in forward engine */
-#define TESTPMD_TX_OFFLOAD_INSERT_VLAN       0x0040
-/** Insert double VLAN header in forward engine */
-#define TESTPMD_TX_OFFLOAD_INSERT_QINQ       0x0080
-/** Offload MACsec in forward engine */
-#define TESTPMD_TX_OFFLOAD_MACSEC            0x0100
-
 /** Descriptor for a single flow. */
 struct port_flow {
 	size_t size; /**< Allocated space including data[]. */
@@ -186,7 +166,7 @@ struct rte_port {
 	struct fwd_stream       *rx_stream; /**< Port RX stream, if unique */
 	struct fwd_stream       *tx_stream; /**< Port TX stream, if unique */
 	unsigned int            socket_id;  /**< For NUMA support */
-	uint16_t                tx_ol_flags;/**< TX Offload Flags (TESTPMD_TX_OFFLOAD...). */
+	uint16_t		parse_tunnel:1; /**< Parse internal headers */
 	uint16_t                tso_segsz;  /**< Segmentation offload MSS for non-tunneled packets. */
 	uint16_t                tunnel_tso_segsz; /**< Segmentation offload MSS for tunneled pkts. */
 	uint16_t                tx_vlan_id;/**< The tag ID */
@@ -387,6 +367,8 @@ extern portid_t fwd_ports_ids[RTE_MAX_ETHPORTS];
 extern struct rte_port *ports;
 
 extern struct rte_eth_rxmode rx_mode;
+extern struct rte_eth_txmode tx_mode;
+
 extern uint64_t rss_hf;
 
 extern queueid_t nb_rxq;
@@ -399,7 +381,6 @@ extern int16_t rx_free_thresh;
 extern int8_t rx_drop_en;
 extern int16_t tx_free_thresh;
 extern int16_t tx_rs_thresh;
-extern int32_t txq_flags;
 
 extern uint8_t dcb_config;
 extern uint8_t dcb_test;
@@ -572,6 +553,8 @@ void set_def_fwd_config(void);
 void reconfig(portid_t new_port_id, unsigned socket_id);
 int init_fwd_streams(void);
 
+void set_fwd_eth_peer(portid_t port_id, char *peer_addr);
+
 void port_mtu_set(portid_t port_id, uint16_t mtu);
 void port_reg_bit_display(portid_t port_id, uint32_t reg_off, uint8_t bit_pos);
 void port_reg_bit_set(portid_t port_id, uint32_t reg_off, uint8_t bit_pos,
@@ -654,6 +637,7 @@ void reset_port(portid_t pid);
 void attach_port(char *identifier);
 void detach_port(portid_t port_id);
 int all_ports_stopped(void);
+int port_is_stopped(portid_t port_id);
 int port_is_started(portid_t port_id);
 void pmd_test_exit(void);
 void fdir_get_infos(portid_t port_id);
@@ -687,9 +671,9 @@ void mcast_addr_add(portid_t port_id, struct ether_addr *mc_addr);
 void mcast_addr_remove(portid_t port_id, struct ether_addr *mc_addr);
 void port_dcb_info_display(portid_t port_id);
 
-uint8_t *open_ddp_package_file(const char *file_path, uint32_t *size);
-int save_ddp_package_file(const char *file_path, uint8_t *buf, uint32_t size);
-int close_ddp_package_file(uint8_t *buf);
+uint8_t *open_file(const char *file_path, uint32_t *size);
+int save_file(const char *file_path, uint8_t *buf, uint32_t size);
+int close_file(uint8_t *buf);
 
 void port_queue_region_info_display(portid_t port_id, void *buf);
 
@@ -699,6 +683,11 @@ enum print_warning {
 };
 int port_id_is_invalid(portid_t port_id, enum print_warning warning);
 int new_socket_id(unsigned int socket_id);
+
+queueid_t get_allowed_max_nb_rxq(portid_t *pid);
+int check_nb_rxq(queueid_t rxq);
+queueid_t get_allowed_max_nb_txq(portid_t *pid);
+int check_nb_txq(queueid_t txq);
 
 /*
  * Work-around of a compilation error with ICC on invocations of the

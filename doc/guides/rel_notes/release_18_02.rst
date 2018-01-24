@@ -41,6 +41,116 @@ New Features
      Also, make sure to start the actual text at the margin.
      =========================================================
 
+* **Added the ixgbe ethernet driver to support RSS with flow API.**
+
+  Rte_flow actually defined to include RSS, but till now, RSS is out of
+  rte_flow. This patch is to support igb and ixgbe NIC with existing RSS
+  configuration using rte_flow API.
+
+* **Add MAC loopback support for i40e.**
+
+  Add MAC loopback support for i40e in order to support test task asked by
+  users. According to the device configuration, it will setup TX->RX loopback
+  link or not.
+
+* **Add the support of run time determination of number of queues per i40e VF**
+
+  The number of queue per VF is determined by its host PF. If the PCI address
+  of an i40e PF is aaaa:bb.cc, the number of queues per VF can be configured
+  with EAL parameter like -w aaaa:bb.cc,queue-num-per-vf=n. The value n can be
+  1, 2, 4, 8 or 16. If no such parameter is configured, the number of queues
+  per VF is 4 by default.
+
+* **Added the i40e ethernet driver to support RSS with flow API.**
+
+  Rte_flow actually defined to include RSS, but till now, RSS is out of
+  rte_flow. This patch is to support i40e NIC with existing RSS
+  configuration using rte_flow API.It also enable queue region configuration
+  using flow API for i40e.
+
+* **Added NVGRE and UDP tunnels support in Solarflare network PMD.**
+
+  Added support for NVGRE, VXLAN and GENEVE tunnels.
+
+  * Added support for UDP tunnel ports configuration.
+  * Added tunneled packets classification.
+  * Added inner checksum offload.
+
+* **Added the igb ethernet driver to support RSS with flow API.**
+
+  Rte_flow actually defined to include RSS, but till now, RSS is out of
+  rte_flow. This patch is to support igb NIC with existing RSS configuration
+  using rte_flow API.
+
+* **Add AVF (Adaptive Virtual Function) net PMD.**
+
+  A new net PMD has been added, which supports Intel® Ethernet Adaptive
+  Virtual Function (AVF) with features list below:
+
+  * Basic Rx/Tx burst
+  * SSE vectorized Rx/Tx burst
+  * Promiscuous mode
+  * MAC/VLAN offload
+  * Checksum offload
+  * TSO offload
+  * Jumbo frame and MTU setting
+  * RSS configuration
+  * stats
+  * Rx/Tx descriptor status
+  * Link status update/event
+
+* **Updated the AESNI-MB PMD.**
+
+  The AESNI-MB PMD has been updated with additional support for:
+
+  * AES-CCM algorithm.
+
+* **Updated the DPAA_SEC crypto driver to support rte_security.**
+
+  Updated the ``dpaa_sec`` crypto PMD to support ``rte_security`` lookaside
+  protocol offload for IPSec.
+
+* **Added Wireless Base Band Device (bbdev) abstraction.**
+
+  The Wireless Baseband Device library is an acceleration abstraction
+  framework for 3gpp Layer 1 processing functions that provides a common
+  programming interface for seamless opeartion on integrated or discrete
+  hardware accelerators or using optimized software libraries for signal
+  processing.
+  The current release only supports 3GPP CRC, Turbo Coding and Rate
+  Matching operations, as specified in 3GPP TS 36.212.
+
+  See the :doc:`../prog_guide/bbdev` programmer's guide for more details.
+
+* **Added New eventdev OPDL PMD**
+
+  The OPDL (Ordered Packet Distribution Library) eventdev is a specific
+  implementation of the eventdev API. It is particularly suited to packet
+  processing workloads that have high throughput and low latency requirements.
+  All packets follow the same path through the device. The order in which
+  packets  follow is determinted by the order in which queues are set up.
+  Events are left on the ring until they are transmitted. As a result packets
+  do not go out of order.
+
+  With this change, application can use OPDL PMD by eventdev api.
+
+* **Added New pipeline use case for dpdk-test-eventdev application**
+
+  The pipeline case can be used to simulate various stages in a real world
+  application from packet receive to transmit while maintaining the packet
+  ordering also measure the performance of the event device across the stages
+  of the pipeline.
+
+  The pipeline use case has been made generic to work will all the event
+  devices based on the capabilities.
+
+* **Updated Eventdev Sample application to support event devices based on capability**
+
+  Updated Eventdev pipeline sample application to support various types of pipelines
+  based on the capabilities of the attached event and ethernet devices. Also,
+  renamed the application from SW PMD specific ``eventdev_pipeline_sw_pmd``
+  to PMD agnostic ``eventdev_pipeline``.
+
 
 API Changes
 -----------
@@ -117,6 +227,7 @@ The libraries prepended with a plus sign were incremented in this version.
 .. code-block:: diff
 
      librte_acl.so.2
+   + librte_bbdev.so.1
      librte_bitratestats.so.2
      librte_bus_dpaa.so.1
      librte_bus_fslmc.so.1

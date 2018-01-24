@@ -15,7 +15,7 @@
 #include <rte_malloc.h>
 #include <rte_mbuf.h>
 #include <rte_ether.h>
-#include <rte_ethdev.h>
+#include <rte_ethdev_driver.h>
 #include <rte_prefetch.h>
 #include <rte_string_fns.h>
 #include <rte_errno.h>
@@ -378,6 +378,7 @@ virtio_dev_cq_start(struct rte_eth_dev *dev)
 	struct virtio_hw *hw = dev->data->dev_private;
 
 	if (hw->cvq && hw->cvq->vq) {
+		rte_spinlock_init(&hw->cvq->lock);
 		VIRTQUEUE_DUMP((struct virtqueue *)hw->cvq->vq);
 	}
 }
@@ -987,7 +988,7 @@ virtio_xmit_pkts(void *tx_queue, struct rte_mbuf **tx_pkts, uint16_t nb_pkts)
 	uint16_t nb_used, nb_tx = 0;
 	int error;
 
-	if (unlikely(hw->started == 0))
+	if (unlikely(hw->started == 0 && tx_pkts != hw->inject_pkts))
 		return nb_tx;
 
 	if (unlikely(nb_pkts < 1))

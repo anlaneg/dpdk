@@ -6,7 +6,7 @@
 #include <pthread.h>
 #include <unistd.h>
 
-#include <rte_ethdev.h>
+#include <rte_ethdev_driver.h>
 #include <rte_ethdev_vdev.h>
 #include <rte_kni.h>
 #include <rte_kvargs.h>
@@ -61,7 +61,7 @@ static const struct rte_eth_link pmd_link = {
 		.link_speed = ETH_SPEED_NUM_10G,
 		.link_duplex = ETH_LINK_FULL_DUPLEX,
 		.link_status = ETH_LINK_DOWN,
-		.link_autoneg = ETH_LINK_SPEED_AUTONEG,
+		.link_autoneg = ETH_LINK_AUTONEG,
 };
 static int is_kni_initialized;
 

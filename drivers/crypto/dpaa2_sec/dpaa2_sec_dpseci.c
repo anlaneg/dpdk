@@ -673,6 +673,7 @@ dpaa2_sec_enqueue_burst(void *qp, struct rte_crypto_op **ops,
 		while (loop < frames_to_send) {
 			loop += qbman_swp_enqueue_multiple(swp, &eqdesc,
 							&fd_arr[loop],
+							NULL,
 							frames_to_send - loop);
 		}
 
@@ -2394,6 +2395,7 @@ cryptodev_dpaa2_sec_remove(struct rte_dpaa2_device *dpaa2_dev)
 }
 
 static struct rte_dpaa2_driver rte_dpaa2_sec_driver = {
+	.drv_flags = RTE_DPAA2_DRV_IOVA_AS_VA,
 	.drv_type = DPAA2_CRYPTO,
 	.driver = {
 		.name = "DPAA2 SEC PMD"
