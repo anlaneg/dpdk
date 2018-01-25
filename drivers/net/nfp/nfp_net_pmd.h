@@ -332,7 +332,7 @@ struct nfp_net_rxq {
 	 * freelist descriptors and @rd_p is where the driver start
 	 * reading descriptors for newly arrive packets from.
 	 */
-	uint32_t rd_p;
+	uint32_t rd_p;//收包的指针
 
 	/*
 	 * For each buffer placed on the freelist, record the
@@ -360,7 +360,7 @@ struct nfp_net_rxq {
 	 * to the NFP
 	 */
 	uint16_t rx_free_thresh;
-	uint16_t nb_rx_hold;
+	uint16_t nb_rx_hold;//记录有多少个mbuf已收取，但还没有通知硬件
 
 	 /* the size of the queue in number of descriptors */
 	uint16_t rx_count;

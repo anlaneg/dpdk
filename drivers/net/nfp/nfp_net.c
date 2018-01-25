@@ -114,6 +114,7 @@ static int nfp_net_rss_hash_write(struct rte_eth_dev *dev,
 /* Maximum value which can be added to a queue with one transaction */
 #define NFP_QCP_MAX_ADD	0x7f
 
+//从mbuf物理地址向后移动一个headroom,来进行填充
 #define RTE_MBUF_DMA_ADDR_DEFAULT(mb) \
 	(uint64_t)((mb)->buf_iova + RTE_PKTMBUF_HEADROOM)
 
@@ -1851,7 +1852,7 @@ nfp_net_rx_cksum(struct nfp_net_rxq *rxq, struct nfp_net_rx_desc *rxd,
 	struct nfp_net_hw *hw = rxq->hw;
 
 	if (!(hw->ctrl & NFP_NET_CFG_CTRL_RXCSUM))
-		return;
+		return;//未开启，不处理
 
 	/* If IPv4 and IP checksum error, fail */
 	if ((rxd->rxd.flags & PCIE_DESC_RX_IP4_CSUM) &&
@@ -1893,6 +1894,7 @@ nfp_net_set_hash(struct nfp_net_rxq *rxq, struct nfp_net_rx_desc *rxd,
 	uint32_t hash = 0;
 	uint32_t hash_type = 0;
 
+	//如果未开启rss，则不处理
 	if (!(hw->ctrl & NFP_NET_CFG_CTRL_RSS))
 		return;
 
@@ -1939,6 +1941,7 @@ nfp_net_set_hash(struct nfp_net_rxq *rxq, struct nfp_net_rx_desc *rxd,
 		return;
 	}
 
+	//填充mbuf中关于hash的字段
 	mbuf->hash.rss = hash;
 	mbuf->ol_flags |= PKT_RX_RSS_HASH;
 
@@ -2020,6 +2023,7 @@ nfp_net_recv_pkts(void *rx_queue, struct rte_mbuf **rx_pkts, uint16_t nb_pkts)
 	avail = 0;
 	nb_hold = 0;
 
+	//需要接收nb_pkts个，已收取了avail个
 	while (avail < nb_pkts) {
 		rxb = &rxq->rxbufs[rxq->rd_p];
 		if (unlikely(rxb == NULL)) {
@@ -2033,7 +2037,8 @@ nfp_net_recv_pkts(void *rx_queue, struct rte_mbuf **rx_pkts, uint16_t nb_pkts)
 		 */
 		rte_rmb();
 
-		rxds = &rxq->rxds[rxq->rd_p];
+		rxds = &rxq->rxds[rxq->rd_p];//取收包描述符
+		//检查这个报文是否已完成填充，如未完成，则停止收取
 		if ((rxds->rxd.meta_len_dd & PCIE_DESC_RX_DD) == 0)
 			break;
 
@@ -2041,6 +2046,7 @@ nfp_net_recv_pkts(void *rx_queue, struct rte_mbuf **rx_pkts, uint16_t nb_pkts)
 		 * We got a packet. Let's alloc a new mbuff for refilling the
 		 * free descriptor ring as soon as possible
 		 */
+		//申请一块新的buf,准备交换给rxbufs
 		new_mb = rte_pktmbuf_alloc(rxq->mem_pool);
 		if (unlikely(new_mb == NULL)) {
 			RTE_LOG_DP(DEBUG, PMD,
@@ -2056,17 +2062,20 @@ nfp_net_recv_pkts(void *rx_queue, struct rte_mbuf **rx_pkts, uint16_t nb_pkts)
 		 * Grab the mbuff and refill the descriptor with the
 		 * previously allocated mbuff
 		 */
+		//完成报文交换
 		mb = rxb->mbuf;
 		rxb->mbuf = new_mb;
 
 		PMD_RX_LOG(DEBUG, "Packet len: %u, mbuf_size: %u\n",
 			   rxds->rxd.data_len, rxq->mbuf_size);
 
+		//netronome当前仅支持收取一个segment,故md->data_len与pkt_len相同
 		/* Size of this segment */
 		mb->data_len = rxds->rxd.data_len - NFP_DESC_META_LEN(rxds);
 		/* Size of the whole packet. We just support 1 segment */
 		mb->pkt_len = rxds->rxd.data_len - NFP_DESC_META_LEN(rxds);
 
+		//防止用户设置mbuf_size过小
 		if (unlikely((mb->data_len + hw->rx_offset) >
 			     rxq->mbuf_size)) {
 			/*
@@ -2087,6 +2096,7 @@ nfp_net_recv_pkts(void *rx_queue, struct rte_mbuf **rx_pkts, uint16_t nb_pkts)
 		}
 
 		/* Filling the received mbuff with packet info */
+		//设置data_off,用于提供一些meta信息
 		if (hw->rx_offset)
 			mb->data_off = RTE_PKTMBUF_HEADROOM + hw->rx_offset;
 		else
@@ -2103,6 +2113,7 @@ nfp_net_recv_pkts(void *rx_queue, struct rte_mbuf **rx_pkts, uint16_t nb_pkts)
 		/* Checking the checksum flag */
 		nfp_net_rx_cksum(rxq, rxds, mb);
 
+		//剥vlan
 		if ((rxds->rxd.flags & PCIE_DESC_RX_VLAN) &&
 		    (hw->ctrl & NFP_NET_CFG_CTRL_RXVLAN)) {
 			mb->vlan_tci = rte_cpu_to_le_32(rxds->rxd.vlan);
@@ -2110,6 +2121,7 @@ nfp_net_recv_pkts(void *rx_queue, struct rte_mbuf **rx_pkts, uint16_t nb_pkts)
 		}
 
 		/* Adding the mbuff to the mbuff array passed by the app */
+		//将收到的报文放在接受缓冲中
 		rx_pkts[avail++] = mb;
 
 		/* Now resetting and updating the descriptor */
@@ -2117,14 +2129,17 @@ nfp_net_recv_pkts(void *rx_queue, struct rte_mbuf **rx_pkts, uint16_t nb_pkts)
 		rxds->vals[1] = 0;
 		dma_addr = rte_cpu_to_le_64(RTE_MBUF_DMA_ADDR_DEFAULT(new_mb));
 		rxds->fld.dd = 0;
+		//填写交换的新mbuf的dma地址
 		rxds->fld.dma_addr_hi = (dma_addr >> 32) & 0xff;
 		rxds->fld.dma_addr_lo = dma_addr & 0xffffffff;
 
+		//更新rd_p，使之指向下一个报文
 		rxq->rd_p++;
 		if (unlikely(rxq->rd_p == rxq->rx_count)) /* wrapping?*/
 			rxq->rd_p = 0;
 	}
 
+	//没有收到报文，不需要更新硬件，直接退
 	if (nb_hold == 0)
 		return nb_hold;
 
@@ -2138,6 +2153,7 @@ nfp_net_recv_pkts(void *rx_queue, struct rte_mbuf **rx_pkts, uint16_t nb_pkts)
 	 * FL queue WR pointer
 	 */
 	rte_wmb();
+	//如果未通知硬件mbuf已读取过多，则知会硬件，有nb_hold个mbuf已被读取
 	if (nb_hold > rxq->rx_free_thresh) {
 		PMD_RX_LOG(DEBUG, "port=%u queue=%u nb_hold=%u avail=%u\n",
 			   rxq->port_id, (unsigned int)rxq->qidx,
@@ -2145,7 +2161,7 @@ nfp_net_recv_pkts(void *rx_queue, struct rte_mbuf **rx_pkts, uint16_t nb_pkts)
 		nfp_qcp_ptr_add(rxq->qcp_fl, NFP_QCP_WRITE_PTR, nb_hold);
 		nb_hold = 0;
 	}
-	rxq->nb_rx_hold = nb_hold;
+	rxq->nb_rx_hold = nb_hold;//更新当前有多少mbuf已收取，但未知会硬件
 
 	return avail;
 }
