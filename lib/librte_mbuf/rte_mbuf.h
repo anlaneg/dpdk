@@ -593,6 +593,8 @@ struct rte_mbuf {
 
 	/** Size of the application private data. In case of an indirect
 	 * mbuf, it stores the direct mbuf private data size. */
+	//mbuf缓冲的头部存放mbuf的控制信息（rte_mbuf_t结构内容），接着在后面有一个
+	//priv_size用于存放用户定制的信息，例如crypto中存放rte_crypto_op
 	uint16_t priv_size;
 
 	/** Timesync flags for use with IEEE1588. */
@@ -740,6 +742,7 @@ rte_mbuf_to_baddr(struct rte_mbuf *md)
  */
 struct rte_pktmbuf_pool_private {
 	uint16_t mbuf_data_room_size; /**< Size of data space in each mbuf. */
+	//mbuf的私有数据
 	uint16_t mbuf_priv_size;      /**< Size of private area in each mbuf. */
 };
 

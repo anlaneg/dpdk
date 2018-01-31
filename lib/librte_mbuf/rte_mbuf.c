@@ -113,6 +113,7 @@ rte_pktmbuf_pool_init(struct rte_mempool *mp, void *opaque_arg)
  * rte_mempool_obj_iter() or rte_mempool_create().
  * Set the fields of a packet mbuf to their default values.
  */
+//mbuf初始化函数，用于初始化mbuf pool中的所各个mbuf
 void
 rte_pktmbuf_init(struct rte_mempool *mp,
 		 __attribute__((unused)) void *opaque_arg,
@@ -133,11 +134,12 @@ rte_pktmbuf_init(struct rte_mempool *mp,
 	memset(m, 0, mbuf_size);
 	/* start of buffer is after mbuf structure and priv data */
 	m->priv_size = priv_size;
-	m->buf_addr = (char *)m + mbuf_size;
+	m->buf_addr = (char *)m + mbuf_size;//将mbuf结构体放在m的后面，并空开一个priv_size
 	m->buf_iova = rte_mempool_virt2iova(m) + mbuf_size;
 	m->buf_len = (uint16_t)buf_len;
 
 	/* keep some headroom between start of buffer and data */
+	//自buf_addr后再空开一个HEADROOM放置报文
 	m->data_off = RTE_MIN(RTE_PKTMBUF_HEADROOM, (uint16_t)m->buf_len);
 
 	/* init some constant fields */
@@ -149,6 +151,12 @@ rte_pktmbuf_init(struct rte_mempool *mp,
 }
 
 /* helper to create a mbuf pool */
+//创建一个mbuf pool
+//@name 创建的池名称
+//@n 创建多少个buf
+//@cache_size cacheline大小
+//@priv_size 用户私有数据大小
+//@data_room_size 缓冲区大小（用于存放数据）
 struct rte_mempool *
 rte_pktmbuf_pool_create(const char *name, unsigned n,
 	unsigned cache_size, uint16_t priv_size, uint16_t data_room_size,
@@ -160,12 +168,14 @@ rte_pktmbuf_pool_create(const char *name, unsigned n,
 	unsigned elt_size;
 	int ret;
 
+	//priv_size必须按RTE_MBUF_PRIV_ALIGN对齐
 	if (RTE_ALIGN(priv_size, RTE_MBUF_PRIV_ALIGN) != priv_size) {
 		RTE_LOG(ERR, MBUF, "mbuf priv_size=%u is not aligned\n",
 			priv_size);
 		rte_errno = EINVAL;
 		return NULL;
 	}
+	//每个mbuf的大小为，rte_mbuf结构体大小＋用户私有数据大小＋缓冲区大小
 	elt_size = sizeof(struct rte_mbuf) + (unsigned)priv_size +
 		(unsigned)data_room_size;
 	mbp_priv.mbuf_data_room_size = data_room_size;
