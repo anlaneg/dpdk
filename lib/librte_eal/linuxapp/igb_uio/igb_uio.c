@@ -312,6 +312,7 @@ igbuio_pci_disable_interrupts(struct rte_uio_pci_dev *udev)
 /**
  * This gets called while opening uio device file.
  */
+//当/dev/uio%d设备被打开时，此回调将被调用
 static int
 igbuio_pci_open(struct uio_info *info, struct inode *inode)
 {
@@ -523,6 +524,7 @@ igbuio_pci_probe(struct pci_dev *dev, const struct pci_device_id *id)
 		goto fail_release_iomem;
 
 	/* register uio driver */
+	//igb_uio注册uio设备
 	err = uio_register_device(&dev->dev, &udev->info);
 	if (err != 0)
 		goto fail_remove_group;
@@ -602,6 +604,7 @@ igbuio_config_intr_mode(char *intr_str)
 	return 0;
 }
 
+//igb_uio是一个pci driver
 static struct pci_driver igbuio_pci_driver = {
 	.name = "igb_uio",
 	.id_table = NULL,
