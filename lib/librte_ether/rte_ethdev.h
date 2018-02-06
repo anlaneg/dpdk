@@ -3514,6 +3514,7 @@ rte_eth_dev_get_sec_ctx(uint8_t port_id);
  *   of pointers to *rte_mbuf* structures effectively supplied to the
  *   *rx_pkts* array.
  */
+//自接口port_id的指定队列queue_id收包，收到的报文存在rx_pkts中，最多收取nb_pkts个包
 static inline uint16_t
 rte_eth_rx_burst(uint16_t port_id, uint16_t queue_id,
 		 struct rte_mbuf **rx_pkts, const uint16_t nb_pkts)
