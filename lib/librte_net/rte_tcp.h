@@ -28,8 +28,8 @@ struct tcp_hdr {
 	uint16_t dst_port;  /**< TCP destination port. */
 	uint32_t sent_seq;  /**< TX data sequence number. */
 	uint32_t recv_ack;  /**< RX data acknowledgement sequence number. */
-	uint8_t  data_off;  /**< Data offset. */
-	uint8_t  tcp_flags; /**< TCP flags */
+	uint8_t  data_off;  /**< Data offset. */ //高位有四个预留位
+	uint8_t  tcp_flags; /**< TCP flags */ //高位有两个预留位（6位有效，自低向高，依次为fin,syn,rst,push,ack,urg)
 	uint16_t rx_win;    /**< RX flow control window. */
 	uint16_t cksum;     /**< TCP checksum. */
 	uint16_t tcp_urp;   /**< TCP urgent pointer, if any. */
