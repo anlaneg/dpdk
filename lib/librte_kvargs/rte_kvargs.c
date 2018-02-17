@@ -168,6 +168,7 @@ rte_kvargs_process(const struct rte_kvargs *kvlist,
 	const struct rte_kvargs_pair *pair;
 	unsigned i;
 
+	//key_match与kvlist发生匹配，则执行对应回调
 	for (i = 0; i < kvlist->count; i++) {
 		pair = &kvlist->pairs[i];
 		if (key_match == NULL || strcmp(pair->key, key_match) == 0) {
@@ -205,11 +206,14 @@ rte_kvargs_parse(const char *args, const char * const valid_keys[])
 		return NULL;
 	memset(kvlist, 0, sizeof(*kvlist));
 
+	//将args解析为key,values（逗号划分）
 	if (rte_kvargs_tokenize(kvlist, args) < 0) {
 		rte_kvargs_free(kvlist);
 		return NULL;
 	}
 
+	//如果指定了valid_keys，则检查kvlist中的key是否包含valid_keys
+	//如果不包含在valid_keys中，则释放kvlist,返回NULL
 	if (valid_keys != NULL && check_for_valid_keys(kvlist, valid_keys) < 0) {
 		rte_kvargs_free(kvlist);
 		return NULL;
