@@ -199,7 +199,8 @@ vhost_user_set_features(struct virtio_net *dev, uint64_t features)
 		(dev->features & (1 << VIRTIO_NET_F_MRG_RXBUF)) ? "on" : "off",
 		(dev->features & (1ULL << VIRTIO_F_VERSION_1)) ? "on" : "off");
 
-	if (!(dev->features & (1ULL << VIRTIO_NET_F_MQ))) {
+	if ((dev->flags & VIRTIO_DEV_BUILTIN_VIRTIO_NET) &&
+	    !(dev->features & (1ULL << VIRTIO_NET_F_MQ))) {
 		/*
 		 * Remove all but first queue pair if MQ hasn't been
 		 * negotiated. This is safe because the device is not
@@ -1393,16 +1394,16 @@ vhost_user_msg_handler(int vid, int fd)
 	}
 
 	/*
-	 * Note: we don't lock all queues on VHOST_USER_GET_VRING_BASE,
-	 * since it is sent when virtio stops and device is destroyed.
-	 * destroy_device waits for queues to be inactive, so it is safe.
-	 * Otherwise taking the access_lock would cause a dead lock.
+	 * Note: we don't lock all queues on VHOST_USER_GET_VRING_BASE
+	 * and VHOST_USER_RESET_OWNER, since it is sent when virtio stops
+	 * and device is destroyed. destroy_device waits for queues to be
+	 * inactive, so it is safe. Otherwise taking the access_lock
+	 * would cause a dead lock.
 	 */
 	switch (msg.request.master) {
 	case VHOST_USER_SET_FEATURES:
 	case VHOST_USER_SET_PROTOCOL_FEATURES:
 	case VHOST_USER_SET_OWNER:
-	case VHOST_USER_RESET_OWNER:
 	case VHOST_USER_SET_MEM_TABLE:
 	case VHOST_USER_SET_LOG_BASE:
 	case VHOST_USER_SET_LOG_FD:

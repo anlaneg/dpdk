@@ -1,38 +1,11 @@
-/*-
- *   BSD LICENSE
- *
- *   Copyright 2017 6WIND S.A.
- *   Copyright 2017 Mellanox.
- *
- *   Redistribution and use in source and binary forms, with or without
- *   modification, are permitted provided that the following conditions
- *   are met:
- *
- *     * Redistributions of source code must retain the above copyright
- *       notice, this list of conditions and the following disclaimer.
- *     * Redistributions in binary form must reproduce the above copyright
- *       notice, this list of conditions and the following disclaimer in
- *       the documentation and/or other materials provided with the
- *       distribution.
- *     * Neither the name of 6WIND S.A. nor the names of its
- *       contributors may be used to endorse or promote products derived
- *       from this software without specific prior written permission.
- *
- *   THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
- *   "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
- *   LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
- *   A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
- *   OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
- *   SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
- *   LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
- *   DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
- *   THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
- *   (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- *   OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+/* SPDX-License-Identifier: BSD-3-Clause
+ * Copyright 2017 6WIND S.A.
+ * Copyright 2017 Mellanox.
  */
 
 #include <stdbool.h>
 #include <stdint.h>
+#include <unistd.h>
 
 #include <rte_debug.h>
 #include <rte_atomic.h>
@@ -104,7 +77,11 @@ static struct rte_eth_dev_info default_infos = {
 		DEV_RX_OFFLOAD_SCATTER |
 		DEV_RX_OFFLOAD_TIMESTAMP |
 		DEV_RX_OFFLOAD_SECURITY,
-	.tx_offload_capa = 0x0,
+	.tx_offload_capa =
+		DEV_TX_OFFLOAD_MULTI_SEGS |
+		DEV_TX_OFFLOAD_IPV4_CKSUM |
+		DEV_TX_OFFLOAD_UDP_CKSUM |
+		DEV_TX_OFFLOAD_TCP_CKSUM,
 	.flow_type_rss_offloads = 0x0,
 };
 
@@ -117,6 +94,7 @@ fs_dev_configure(struct rte_eth_dev *dev)
 	uint8_t i;
 	int ret;
 
+	fs_lock(dev, 0);
 	supp_tx_offloads = PRIV(dev)->infos.tx_offload_capa;
 	tx_offloads = dev->data->dev_conf.txmode.offloads;
 	if ((tx_offloads & supp_tx_offloads) != tx_offloads) {
@@ -124,6 +102,7 @@ fs_dev_configure(struct rte_eth_dev *dev)
 		ERROR("Some Tx offloads are not supported, "
 		      "requested 0x%" PRIx64 " supported 0x%" PRIx64,
 		      tx_offloads, supp_tx_offloads);
+		fs_unlock(dev, 0);
 		return -rte_errno;
 	}
 	FOREACH_SUBDEV(sdev, i, dev) {
@@ -131,7 +110,8 @@ fs_dev_configure(struct rte_eth_dev *dev)
 		int lsc_interrupt = 0;
 		int lsc_enabled;
 
-		if (sdev->state != DEV_PROBED)
+		if (sdev->state != DEV_PROBED &&
+		    !(PRIV(dev)->alarm_lock == 0 && sdev->state == DEV_ACTIVE))
 			continue;
 
 		rmv_interrupt = ETH(sdev)->data->dev_flags &
@@ -154,7 +134,6 @@ fs_dev_configure(struct rte_eth_dev *dev)
 			dev->data->dev_conf.intr_conf.lsc = 0;
 		}
 		DEBUG("Configuring sub-device %d", i);
-		sdev->remove = 0;
 		ret = rte_eth_dev_configure(PORT_ID(sdev),
 					dev->data->nb_rx_queues,
 					dev->data->nb_tx_queues,
@@ -163,6 +142,7 @@ fs_dev_configure(struct rte_eth_dev *dev)
 			if (!fs_err(sdev, ret))
 				continue;
 			ERROR("Could not configure sub_device %d", i);
+			fs_unlock(dev, 0);
 			return ret;
 		}
 		if (rmv_interrupt) {
@@ -189,6 +169,7 @@ fs_dev_configure(struct rte_eth_dev *dev)
 	}
 	if (PRIV(dev)->state < DEV_ACTIVE)
 		PRIV(dev)->state = DEV_ACTIVE;
+	fs_unlock(dev, 0);
 	return 0;
 }
 
@@ -199,6 +180,12 @@ fs_dev_start(struct rte_eth_dev *dev)
 	uint8_t i;
 	int ret;
 
+	fs_lock(dev, 0);
+	ret = failsafe_rx_intr_install(dev);
+	if (ret) {
+		fs_unlock(dev, 0);
+		return ret;
+	}
 	FOREACH_SUBDEV(sdev, i, dev) {
 		if (sdev->state != DEV_ACTIVE)
 			continue;
@@ -207,6 +194,15 @@ fs_dev_start(struct rte_eth_dev *dev)
 		if (ret) {
 			if (!fs_err(sdev, ret))
 				continue;
+			fs_unlock(dev, 0);
+			return ret;
+		}
+		ret = failsafe_rx_intr_install_subdevice(sdev);
+		if (ret) {
+			if (!fs_err(sdev, ret))
+				continue;
+			rte_eth_dev_stop(PORT_ID(sdev));
+			fs_unlock(dev, 0);
 			return ret;
 		}
 		sdev->state = DEV_STARTED;
@@ -214,6 +210,7 @@ fs_dev_start(struct rte_eth_dev *dev)
 	if (PRIV(dev)->state < DEV_STARTED)
 		PRIV(dev)->state = DEV_STARTED;
 	fs_switch_dev(dev, NULL);
+	fs_unlock(dev, 0);
 	return 0;
 }
 
@@ -223,11 +220,15 @@ fs_dev_stop(struct rte_eth_dev *dev)
 	struct sub_device *sdev;
 	uint8_t i;
 
+	fs_lock(dev, 0);
 	PRIV(dev)->state = DEV_STARTED - 1;
 	FOREACH_SUBDEV_STATE(sdev, i, dev, DEV_STARTED) {
 		rte_eth_dev_stop(PORT_ID(sdev));
+		failsafe_rx_intr_uninstall_subdevice(sdev);
 		sdev->state = DEV_STARTED - 1;
 	}
+	failsafe_rx_intr_uninstall(dev);
+	fs_unlock(dev, 0);
 }
 
 static int
@@ -237,15 +238,18 @@ fs_dev_set_link_up(struct rte_eth_dev *dev)
 	uint8_t i;
 	int ret;
 
+	fs_lock(dev, 0);
 	FOREACH_SUBDEV_STATE(sdev, i, dev, DEV_ACTIVE) {
 		DEBUG("Calling rte_eth_dev_set_link_up on sub_device %d", i);
 		ret = rte_eth_dev_set_link_up(PORT_ID(sdev));
 		if ((ret = fs_err(sdev, ret))) {
 			ERROR("Operation rte_eth_dev_set_link_up failed for sub_device %d"
 			      " with error %d", i, ret);
+			fs_unlock(dev, 0);
 			return ret;
 		}
 	}
+	fs_unlock(dev, 0);
 	return 0;
 }
 
@@ -256,15 +260,18 @@ fs_dev_set_link_down(struct rte_eth_dev *dev)
 	uint8_t i;
 	int ret;
 
+	fs_lock(dev, 0);
 	FOREACH_SUBDEV_STATE(sdev, i, dev, DEV_ACTIVE) {
 		DEBUG("Calling rte_eth_dev_set_link_down on sub_device %d", i);
 		ret = rte_eth_dev_set_link_down(PORT_ID(sdev));
 		if ((ret = fs_err(sdev, ret))) {
 			ERROR("Operation rte_eth_dev_set_link_down failed for sub_device %d"
 			      " with error %d", i, ret);
+			fs_unlock(dev, 0);
 			return ret;
 		}
 	}
+	fs_unlock(dev, 0);
 	return 0;
 }
 
@@ -275,6 +282,7 @@ fs_dev_close(struct rte_eth_dev *dev)
 	struct sub_device *sdev;
 	uint8_t i;
 
+	fs_lock(dev, 0);
 	failsafe_hotplug_alarm_cancel(dev);
 	if (PRIV(dev)->state == DEV_STARTED)
 		dev->dev_ops->dev_stop(dev);
@@ -285,6 +293,7 @@ fs_dev_close(struct rte_eth_dev *dev)
 		sdev->state = DEV_ACTIVE - 1;
 	}
 	fs_dev_free_queues(dev);
+	fs_unlock(dev, 0);
 }
 
 static bool
@@ -318,11 +327,15 @@ fs_rx_queue_release(void *queue)
 		return;
 	rxq = queue;
 	dev = rxq->priv->dev;
+	fs_lock(dev, 0);
+	if (rxq->event_fd > 0)
+		close(rxq->event_fd);
 	FOREACH_SUBDEV_STATE(sdev, i, dev, DEV_ACTIVE)
 		SUBOPS(sdev, rx_queue_release)
 			(ETH(sdev)->data->rx_queues[rxq->qid]);
 	dev->data->rx_queues[rxq->qid] = NULL;
 	rte_free(rxq);
+	fs_unlock(dev, 0);
 }
 
 static int
@@ -333,11 +346,22 @@ fs_rx_queue_setup(struct rte_eth_dev *dev,
 		const struct rte_eth_rxconf *rx_conf,
 		struct rte_mempool *mb_pool)
 {
+	/*
+	 * FIXME: Add a proper interface in rte_eal_interrupts for
+	 * allocating eventfd as an interrupt vector.
+	 * For the time being, fake as if we are using MSIX interrupts,
+	 * this will cause rte_intr_efd_enable to allocate an eventfd for us.
+	 */
+	struct rte_intr_handle intr_handle = {
+		.type = RTE_INTR_HANDLE_VFIO_MSIX,
+		.efds = { -1, },
+	};
 	struct sub_device *sdev;
 	struct rxq *rxq;
 	uint8_t i;
 	int ret;
 
+	fs_lock(dev, 0);
 	rxq = dev->data->rx_queues[rx_queue_id];
 	if (rxq != NULL) {
 		fs_rx_queue_release(rxq);
@@ -353,14 +377,17 @@ fs_rx_queue_setup(struct rte_eth_dev *dev,
 		      dev->data->dev_conf.rxmode.offloads,
 		      PRIV(dev)->infos.rx_offload_capa |
 		      PRIV(dev)->infos.rx_queue_offload_capa);
+		fs_unlock(dev, 0);
 		return -rte_errno;
 	}
 	rxq = rte_zmalloc(NULL,
 			  sizeof(*rxq) +
 			  sizeof(rte_atomic64_t) * PRIV(dev)->subs_tail,
 			  RTE_CACHE_LINE_SIZE);
-	if (rxq == NULL)
+	if (rxq == NULL) {
+		fs_unlock(dev, 0);
 		return -ENOMEM;
+	}
 	FOREACH_SUBDEV(sdev, i, dev)
 		rte_atomic64_init(&rxq->refcnt[i]);
 	rxq->qid = rx_queue_id;
@@ -370,6 +397,12 @@ fs_rx_queue_setup(struct rte_eth_dev *dev,
 	rxq->info.nb_desc = nb_rx_desc;
 	rxq->priv = PRIV(dev);
 	rxq->sdev = PRIV(dev)->subs;
+	ret = rte_intr_efd_enable(&intr_handle, 1);
+	if (ret < 0) {
+		fs_unlock(dev, 0);
+		return ret;
+	}
+	rxq->event_fd = intr_handle.efds[0];
 	dev->data->rx_queues[rx_queue_id] = rxq;
 	FOREACH_SUBDEV_STATE(sdev, i, dev, DEV_ACTIVE) {
 		ret = rte_eth_rx_queue_setup(PORT_ID(sdev),
@@ -381,10 +414,88 @@ fs_rx_queue_setup(struct rte_eth_dev *dev,
 			goto free_rxq;
 		}
 	}
+	fs_unlock(dev, 0);
 	return 0;
 free_rxq:
 	fs_rx_queue_release(rxq);
+	fs_unlock(dev, 0);
 	return ret;
+}
+
+static int
+fs_rx_intr_enable(struct rte_eth_dev *dev, uint16_t idx)
+{
+	struct rxq *rxq;
+	struct sub_device *sdev;
+	uint8_t i;
+	int ret;
+	int rc = 0;
+
+	fs_lock(dev, 0);
+	if (idx >= dev->data->nb_rx_queues) {
+		rc = -EINVAL;
+		goto unlock;
+	}
+	rxq = dev->data->rx_queues[idx];
+	if (rxq == NULL || rxq->event_fd <= 0) {
+		rc = -EINVAL;
+		goto unlock;
+	}
+	/* Fail if proxy service is nor running. */
+	if (PRIV(dev)->rxp.sstate != SS_RUNNING) {
+		ERROR("failsafe interrupt services are not running");
+		rc = -EAGAIN;
+		goto unlock;
+	}
+	rxq->enable_events = 1;
+	FOREACH_SUBDEV_STATE(sdev, i, dev, DEV_ACTIVE) {
+		ret = rte_eth_dev_rx_intr_enable(PORT_ID(sdev), idx);
+		ret = fs_err(sdev, ret);
+		if (ret)
+			rc = ret;
+	}
+unlock:
+	fs_unlock(dev, 0);
+	if (rc)
+		rte_errno = -rc;
+	return rc;
+}
+
+static int
+fs_rx_intr_disable(struct rte_eth_dev *dev, uint16_t idx)
+{
+	struct rxq *rxq;
+	struct sub_device *sdev;
+	uint64_t u64;
+	uint8_t i;
+	int rc = 0;
+	int ret;
+
+	fs_lock(dev, 0);
+	if (idx >= dev->data->nb_rx_queues) {
+		rc = -EINVAL;
+		goto unlock;
+	}
+	rxq = dev->data->rx_queues[idx];
+	if (rxq == NULL || rxq->event_fd <= 0) {
+		rc = -EINVAL;
+		goto unlock;
+	}
+	rxq->enable_events = 0;
+	FOREACH_SUBDEV_STATE(sdev, i, dev, DEV_ACTIVE) {
+		ret = rte_eth_dev_rx_intr_disable(PORT_ID(sdev), idx);
+		ret = fs_err(sdev, ret);
+		if (ret)
+			rc = ret;
+	}
+	/* Clear pending events */
+	while (read(rxq->event_fd, &u64, sizeof(uint64_t)) >  0)
+		;
+unlock:
+	fs_unlock(dev, 0);
+	if (rc)
+		rte_errno = -rc;
+	return rc;
 }
 
 static bool
@@ -418,11 +529,13 @@ fs_tx_queue_release(void *queue)
 		return;
 	txq = queue;
 	dev = txq->priv->dev;
+	fs_lock(dev, 0);
 	FOREACH_SUBDEV_STATE(sdev, i, dev, DEV_ACTIVE)
 		SUBOPS(sdev, tx_queue_release)
 			(ETH(sdev)->data->tx_queues[txq->qid]);
 	dev->data->tx_queues[txq->qid] = NULL;
 	rte_free(txq);
+	fs_unlock(dev, 0);
 }
 
 static int
@@ -437,6 +550,7 @@ fs_tx_queue_setup(struct rte_eth_dev *dev,
 	uint8_t i;
 	int ret;
 
+	fs_lock(dev, 0);
 	txq = dev->data->tx_queues[tx_queue_id];
 	if (txq != NULL) {
 		fs_tx_queue_release(txq);
@@ -457,14 +571,17 @@ fs_tx_queue_setup(struct rte_eth_dev *dev,
 		      dev->data->dev_conf.txmode.offloads,
 		      PRIV(dev)->infos.tx_offload_capa |
 		      PRIV(dev)->infos.tx_queue_offload_capa);
+		fs_unlock(dev, 0);
 		return -rte_errno;
 	}
 	txq = rte_zmalloc("ethdev TX queue",
 			  sizeof(*txq) +
 			  sizeof(rte_atomic64_t) * PRIV(dev)->subs_tail,
 			  RTE_CACHE_LINE_SIZE);
-	if (txq == NULL)
+	if (txq == NULL) {
+		fs_unlock(dev, 0);
 		return -ENOMEM;
+	}
 	FOREACH_SUBDEV(sdev, i, dev)
 		rte_atomic64_init(&txq->refcnt[i]);
 	txq->qid = tx_queue_id;
@@ -483,9 +600,11 @@ fs_tx_queue_setup(struct rte_eth_dev *dev,
 			goto free_txq;
 		}
 	}
+	fs_unlock(dev, 0);
 	return 0;
 free_txq:
 	fs_tx_queue_release(txq);
+	fs_unlock(dev, 0);
 	return ret;
 }
 
@@ -512,8 +631,10 @@ fs_promiscuous_enable(struct rte_eth_dev *dev)
 	struct sub_device *sdev;
 	uint8_t i;
 
+	fs_lock(dev, 0);
 	FOREACH_SUBDEV_STATE(sdev, i, dev, DEV_ACTIVE)
 		rte_eth_promiscuous_enable(PORT_ID(sdev));
+	fs_unlock(dev, 0);
 }
 
 static void
@@ -522,8 +643,10 @@ fs_promiscuous_disable(struct rte_eth_dev *dev)
 	struct sub_device *sdev;
 	uint8_t i;
 
+	fs_lock(dev, 0);
 	FOREACH_SUBDEV_STATE(sdev, i, dev, DEV_ACTIVE)
 		rte_eth_promiscuous_disable(PORT_ID(sdev));
+	fs_unlock(dev, 0);
 }
 
 static void
@@ -532,8 +655,10 @@ fs_allmulticast_enable(struct rte_eth_dev *dev)
 	struct sub_device *sdev;
 	uint8_t i;
 
+	fs_lock(dev, 0);
 	FOREACH_SUBDEV_STATE(sdev, i, dev, DEV_ACTIVE)
 		rte_eth_allmulticast_enable(PORT_ID(sdev));
+	fs_unlock(dev, 0);
 }
 
 static void
@@ -542,8 +667,10 @@ fs_allmulticast_disable(struct rte_eth_dev *dev)
 	struct sub_device *sdev;
 	uint8_t i;
 
+	fs_lock(dev, 0);
 	FOREACH_SUBDEV_STATE(sdev, i, dev, DEV_ACTIVE)
 		rte_eth_allmulticast_disable(PORT_ID(sdev));
+	fs_unlock(dev, 0);
 }
 
 static int
@@ -554,6 +681,7 @@ fs_link_update(struct rte_eth_dev *dev,
 	uint8_t i;
 	int ret;
 
+	fs_lock(dev, 0);
 	FOREACH_SUBDEV_STATE(sdev, i, dev, DEV_ACTIVE) {
 		DEBUG("Calling link_update on sub_device %d", i);
 		ret = (SUBOPS(sdev, link_update))(ETH(sdev), wait_to_complete);
@@ -561,6 +689,7 @@ fs_link_update(struct rte_eth_dev *dev,
 		    rte_eth_dev_is_removed(PORT_ID(sdev)) == 0) {
 			ERROR("Link update failed for sub_device %d with error %d",
 			      i, ret);
+			fs_unlock(dev, 0);
 			return ret;
 		}
 	}
@@ -572,9 +701,11 @@ fs_link_update(struct rte_eth_dev *dev,
 		l2 = &ETH(TX_SUBDEV(dev))->data->dev_link;
 		if (memcmp(l1, l2, sizeof(*l1))) {
 			*l1 = *l2;
+			fs_unlock(dev, 0);
 			return 0;
 		}
 	}
+	fs_unlock(dev, 0);
 	return -1;
 }
 
@@ -587,6 +718,7 @@ fs_stats_get(struct rte_eth_dev *dev,
 	uint8_t i;
 	int ret;
 
+	fs_lock(dev, 0);
 	rte_memcpy(stats, &PRIV(dev)->stats_accumulator, sizeof(*stats));
 	FOREACH_SUBDEV_STATE(sdev, i, dev, DEV_ACTIVE) {
 		struct rte_eth_stats *snapshot = &sdev->stats_snapshot.stats;
@@ -602,12 +734,14 @@ fs_stats_get(struct rte_eth_dev *dev,
 			ERROR("Operation rte_eth_stats_get failed for sub_device %d with error %d",
 				  i, ret);
 			*timestamp = 0;
+			fs_unlock(dev, 0);
 			return ret;
 		}
 		*timestamp = rte_rdtsc();
 inc:
 		failsafe_stats_increment(stats, snapshot);
 	}
+	fs_unlock(dev, 0);
 	return 0;
 }
 
@@ -617,11 +751,13 @@ fs_stats_reset(struct rte_eth_dev *dev)
 	struct sub_device *sdev;
 	uint8_t i;
 
+	fs_lock(dev, 0);
 	FOREACH_SUBDEV_STATE(sdev, i, dev, DEV_ACTIVE) {
 		rte_eth_stats_reset(PORT_ID(sdev));
 		memset(&sdev->stats_snapshot, 0, sizeof(struct rte_eth_stats));
 	}
 	memset(&PRIV(dev)->stats_accumulator, 0, sizeof(struct rte_eth_stats));
+	fs_unlock(dev, 0);
 }
 
 /**
@@ -697,14 +833,20 @@ fs_dev_supported_ptypes_get(struct rte_eth_dev *dev)
 {
 	struct sub_device *sdev;
 	struct rte_eth_dev *edev;
+	const uint32_t *ret;
 
+	fs_lock(dev, 0);
 	sdev = TX_SUBDEV(dev);
-	if (sdev == NULL)
-		return NULL;
+	if (sdev == NULL) {
+		ret = NULL;
+		goto unlock;
+	}
 	edev = ETH(sdev);
 	/* ENOTSUP: counts as no supported ptypes */
-	if (SUBOPS(sdev, dev_supported_ptypes_get) == NULL)
-		return NULL;
+	if (SUBOPS(sdev, dev_supported_ptypes_get) == NULL) {
+		ret = NULL;
+		goto unlock;
+	}
 	/*
 	 * The API does not permit to do a clean AND of all ptypes,
 	 * It is also incomplete by design and we do not really care
@@ -712,7 +854,10 @@ fs_dev_supported_ptypes_get(struct rte_eth_dev *dev)
 	 * We just return the ptypes of the device of highest
 	 * priority, usually the PREFERRED device.
 	 */
-	return SUBOPS(sdev, dev_supported_ptypes_get)(edev);
+	ret = SUBOPS(sdev, dev_supported_ptypes_get)(edev);
+unlock:
+	fs_unlock(dev, 0);
+	return ret;
 }
 
 static int
@@ -722,15 +867,18 @@ fs_mtu_set(struct rte_eth_dev *dev, uint16_t mtu)
 	uint8_t i;
 	int ret;
 
+	fs_lock(dev, 0);
 	FOREACH_SUBDEV_STATE(sdev, i, dev, DEV_ACTIVE) {
 		DEBUG("Calling rte_eth_dev_set_mtu on sub_device %d", i);
 		ret = rte_eth_dev_set_mtu(PORT_ID(sdev), mtu);
 		if ((ret = fs_err(sdev, ret))) {
 			ERROR("Operation rte_eth_dev_set_mtu failed for sub_device %d with error %d",
 			      i, ret);
+			fs_unlock(dev, 0);
 			return ret;
 		}
 	}
+	fs_unlock(dev, 0);
 	return 0;
 }
 
@@ -741,15 +889,18 @@ fs_vlan_filter_set(struct rte_eth_dev *dev, uint16_t vlan_id, int on)
 	uint8_t i;
 	int ret;
 
+	fs_lock(dev, 0);
 	FOREACH_SUBDEV_STATE(sdev, i, dev, DEV_ACTIVE) {
 		DEBUG("Calling rte_eth_dev_vlan_filter on sub_device %d", i);
 		ret = rte_eth_dev_vlan_filter(PORT_ID(sdev), vlan_id, on);
 		if ((ret = fs_err(sdev, ret))) {
 			ERROR("Operation rte_eth_dev_vlan_filter failed for sub_device %d"
 			      " with error %d", i, ret);
+			fs_unlock(dev, 0);
 			return ret;
 		}
 	}
+	fs_unlock(dev, 0);
 	return 0;
 }
 
@@ -758,13 +909,22 @@ fs_flow_ctrl_get(struct rte_eth_dev *dev,
 		struct rte_eth_fc_conf *fc_conf)
 {
 	struct sub_device *sdev;
+	int ret;
 
+	fs_lock(dev, 0);
 	sdev = TX_SUBDEV(dev);
-	if (sdev == NULL)
-		return 0;
-	if (SUBOPS(sdev, flow_ctrl_get) == NULL)
-		return -ENOTSUP;
-	return SUBOPS(sdev, flow_ctrl_get)(ETH(sdev), fc_conf);
+	if (sdev == NULL) {
+		ret = 0;
+		goto unlock;
+	}
+	if (SUBOPS(sdev, flow_ctrl_get) == NULL) {
+		ret = -ENOTSUP;
+		goto unlock;
+	}
+	ret = SUBOPS(sdev, flow_ctrl_get)(ETH(sdev), fc_conf);
+unlock:
+	fs_unlock(dev, 0);
+	return ret;
 }
 
 static int
@@ -775,15 +935,18 @@ fs_flow_ctrl_set(struct rte_eth_dev *dev,
 	uint8_t i;
 	int ret;
 
+	fs_lock(dev, 0);
 	FOREACH_SUBDEV_STATE(sdev, i, dev, DEV_ACTIVE) {
 		DEBUG("Calling rte_eth_dev_flow_ctrl_set on sub_device %d", i);
 		ret = rte_eth_dev_flow_ctrl_set(PORT_ID(sdev), fc_conf);
 		if ((ret = fs_err(sdev, ret))) {
 			ERROR("Operation rte_eth_dev_flow_ctrl_set failed for sub_device %d"
 			      " with error %d", i, ret);
+			fs_unlock(dev, 0);
 			return ret;
 		}
 	}
+	fs_unlock(dev, 0);
 	return 0;
 }
 
@@ -793,6 +956,7 @@ fs_mac_addr_remove(struct rte_eth_dev *dev, uint32_t index)
 	struct sub_device *sdev;
 	uint8_t i;
 
+	fs_lock(dev, 0);
 	/* No check: already done within the rte_eth_dev_mac_addr_remove
 	 * call for the fail-safe device.
 	 */
@@ -800,6 +964,7 @@ fs_mac_addr_remove(struct rte_eth_dev *dev, uint32_t index)
 		rte_eth_dev_mac_addr_remove(PORT_ID(sdev),
 				&dev->data->mac_addrs[index]);
 	PRIV(dev)->mac_addr_pool[index] = 0;
+	fs_unlock(dev, 0);
 }
 
 static int
@@ -813,11 +978,13 @@ fs_mac_addr_add(struct rte_eth_dev *dev,
 	uint8_t i;
 
 	RTE_ASSERT(index < FAILSAFE_MAX_ETHADDR);
+	fs_lock(dev, 0);
 	FOREACH_SUBDEV_STATE(sdev, i, dev, DEV_ACTIVE) {
 		ret = rte_eth_dev_mac_addr_add(PORT_ID(sdev), mac_addr, vmdq);
 		if ((ret = fs_err(sdev, ret))) {
 			ERROR("Operation rte_eth_dev_mac_addr_add failed for sub_device %"
 			      PRIu8 " with error %d", i, ret);
+			fs_unlock(dev, 0);
 			return ret;
 		}
 	}
@@ -826,6 +993,7 @@ fs_mac_addr_add(struct rte_eth_dev *dev,
 		PRIV(dev)->nb_mac_addr = index;
 	}
 	PRIV(dev)->mac_addr_pool[index] = vmdq;
+	fs_unlock(dev, 0);
 	return 0;
 }
 
@@ -835,8 +1003,10 @@ fs_mac_addr_set(struct rte_eth_dev *dev, struct ether_addr *mac_addr)
 	struct sub_device *sdev;
 	uint8_t i;
 
+	fs_lock(dev, 0);
 	FOREACH_SUBDEV_STATE(sdev, i, dev, DEV_ACTIVE)
 		rte_eth_dev_default_mac_addr_set(PORT_ID(sdev), mac_addr);
+	fs_unlock(dev, 0);
 }
 
 static int
@@ -854,15 +1024,18 @@ fs_filter_ctrl(struct rte_eth_dev *dev,
 		*(const void **)arg = &fs_flow_ops;
 		return 0;
 	}
+	fs_lock(dev, 0);
 	FOREACH_SUBDEV_STATE(sdev, i, dev, DEV_ACTIVE) {
 		DEBUG("Calling rte_eth_dev_filter_ctrl on sub_device %d", i);
 		ret = rte_eth_dev_filter_ctrl(PORT_ID(sdev), type, op, arg);
 		if ((ret = fs_err(sdev, ret))) {
 			ERROR("Operation rte_eth_dev_filter_ctrl failed for sub_device %d"
 			      " with error %d", i, ret);
+			fs_unlock(dev, 0);
 			return ret;
 		}
 	}
+	fs_unlock(dev, 0);
 	return 0;
 }
 
@@ -888,6 +1061,8 @@ const struct eth_dev_ops failsafe_ops = {
 	.tx_queue_setup = fs_tx_queue_setup,
 	.rx_queue_release = fs_rx_queue_release,
 	.tx_queue_release = fs_tx_queue_release,
+	.rx_queue_intr_enable = fs_rx_intr_enable,
+	.rx_queue_intr_disable = fs_rx_intr_disable,
 	.flow_ctrl_get = fs_flow_ctrl_get,
 	.flow_ctrl_set = fs_flow_ctrl_set,
 	.mac_addr_remove = fs_mac_addr_remove,

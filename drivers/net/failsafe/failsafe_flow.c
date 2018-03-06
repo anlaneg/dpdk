@@ -1,34 +1,6 @@
-/*-
- *   BSD LICENSE
- *
- *   Copyright 2017 6WIND S.A.
- *   Copyright 2017 Mellanox.
- *
- *   Redistribution and use in source and binary forms, with or without
- *   modification, are permitted provided that the following conditions
- *   are met:
- *
- *     * Redistributions of source code must retain the above copyright
- *       notice, this list of conditions and the following disclaimer.
- *     * Redistributions in binary form must reproduce the above copyright
- *       notice, this list of conditions and the following disclaimer in
- *       the documentation and/or other materials provided with the
- *       distribution.
- *     * Neither the name of 6WIND S.A. nor the names of its
- *       contributors may be used to endorse or promote products derived
- *       from this software without specific prior written permission.
- *
- *   THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
- *   "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
- *   LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
- *   A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
- *   OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
- *   SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
- *   LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
- *   DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
- *   THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
- *   (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- *   OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+/* SPDX-License-Identifier: BSD-3-Clause
+ * Copyright 2017 6WIND S.A.
+ * Copyright 2017 Mellanox.
  */
 
 #include <sys/queue.h>
@@ -83,6 +55,7 @@ fs_flow_validate(struct rte_eth_dev *dev,
 	uint8_t i;
 	int ret;
 
+	fs_lock(dev, 0);
 	FOREACH_SUBDEV_STATE(sdev, i, dev, DEV_ACTIVE) {
 		DEBUG("Calling rte_flow_validate on sub_device %d", i);
 		ret = rte_flow_validate(PORT_ID(sdev),
@@ -90,9 +63,11 @@ fs_flow_validate(struct rte_eth_dev *dev,
 		if ((ret = fs_err(sdev, ret))) {
 			ERROR("Operation rte_flow_validate failed for sub_device %d"
 			      " with error %d", i, ret);
+			fs_unlock(dev, 0);
 			return ret;
 		}
 	}
+	fs_unlock(dev, 0);
 	return 0;
 }
 
@@ -107,6 +82,7 @@ fs_flow_create(struct rte_eth_dev *dev,
 	struct rte_flow *flow;
 	uint8_t i;
 
+	fs_lock(dev, 0);
 	flow = fs_flow_allocate(attr, patterns, actions);
 	FOREACH_SUBDEV_STATE(sdev, i, dev, DEV_ACTIVE) {
 		flow->flows[i] = rte_flow_create(PORT_ID(sdev),
@@ -118,6 +94,7 @@ fs_flow_create(struct rte_eth_dev *dev,
 		}
 	}
 	TAILQ_INSERT_TAIL(&PRIV(dev)->flow_list, flow, next);
+	fs_unlock(dev, 0);
 	return flow;
 err:
 	FOREACH_SUBDEV(sdev, i, dev) {
@@ -126,6 +103,7 @@ err:
 				flow->flows[i], error);
 	}
 	fs_flow_release(&flow);
+	fs_unlock(dev, 0);
 	return NULL;
 }
 
@@ -143,6 +121,7 @@ fs_flow_destroy(struct rte_eth_dev *dev,
 		return -EINVAL;
 	}
 	ret = 0;
+	fs_lock(dev, 0);
 	FOREACH_SUBDEV_STATE(sdev, i, dev, DEV_ACTIVE) {
 		int local_ret;
 
@@ -159,6 +138,7 @@ fs_flow_destroy(struct rte_eth_dev *dev,
 	}
 	TAILQ_REMOVE(&PRIV(dev)->flow_list, flow, next);
 	fs_flow_release(&flow);
+	fs_unlock(dev, 0);
 	return ret;
 }
 
@@ -172,12 +152,14 @@ fs_flow_flush(struct rte_eth_dev *dev,
 	uint8_t i;
 	int ret;
 
+	fs_lock(dev, 0);
 	FOREACH_SUBDEV_STATE(sdev, i, dev, DEV_ACTIVE) {
 		DEBUG("Calling rte_flow_flush on sub_device %d", i);
 		ret = rte_flow_flush(PORT_ID(sdev), error);
 		if ((ret = fs_err(sdev, ret))) {
 			ERROR("Operation rte_flow_flush failed for sub_device %d"
 			      " with error %d", i, ret);
+			fs_unlock(dev, 0);
 			return ret;
 		}
 	}
@@ -185,6 +167,7 @@ fs_flow_flush(struct rte_eth_dev *dev,
 		TAILQ_REMOVE(&PRIV(dev)->flow_list, flow, next);
 		fs_flow_release(&flow);
 	}
+	fs_unlock(dev, 0);
 	return 0;
 }
 
@@ -197,15 +180,19 @@ fs_flow_query(struct rte_eth_dev *dev,
 {
 	struct sub_device *sdev;
 
+	fs_lock(dev, 0);
 	sdev = TX_SUBDEV(dev);
 	if (sdev != NULL) {
 		int ret = rte_flow_query(PORT_ID(sdev),
 					 flow->flows[SUB_ID(sdev)],
 					 type, arg, error);
 
-		if ((ret = fs_err(sdev, ret)))
+		if ((ret = fs_err(sdev, ret))) {
+			fs_unlock(dev, 0);
 			return ret;
+		}
 	}
+	fs_unlock(dev, 0);
 	WARN("No active sub_device to query about its flow");
 	return -1;
 }
@@ -219,6 +206,7 @@ fs_flow_isolate(struct rte_eth_dev *dev,
 	uint8_t i;
 	int ret;
 
+	fs_lock(dev, 0);
 	FOREACH_SUBDEV(sdev, i, dev) {
 		if (sdev->state < DEV_PROBED)
 			continue;
@@ -230,11 +218,13 @@ fs_flow_isolate(struct rte_eth_dev *dev,
 		if ((ret = fs_err(sdev, ret))) {
 			ERROR("Operation rte_flow_isolate failed for sub_device %d"
 			      " with error %d", i, ret);
+			fs_unlock(dev, 0);
 			return ret;
 		}
 		sdev->flow_isolated = set;
 	}
 	PRIV(dev)->flow_isolated = set;
+	fs_unlock(dev, 0);
 	return 0;
 }
 

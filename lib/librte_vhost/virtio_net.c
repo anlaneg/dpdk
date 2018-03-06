@@ -719,6 +719,13 @@ rte_vhost_enqueue_burst(int vid, uint16_t queue_id,
 	if (!dev)
 		return 0;
 
+	if (unlikely(!(dev->flags & VIRTIO_DEV_BUILTIN_VIRTIO_NET))) {
+		RTE_LOG(ERR, VHOST_DATA,
+			"(%d) %s: built-in vhost net backend is disabled.\n",
+			dev->vid, __func__);
+		return 0;
+	}
+
 	if (dev->features & (1 << VIRTIO_NET_F_MRG_RXBUF))
 		return virtio_dev_merge_rx(dev, queue_id, pkts, count);
 	else
@@ -1171,6 +1178,13 @@ rte_vhost_dequeue_burst(int vid, uint16_t queue_id,
 	dev = get_device(vid);//找到对应的virtio_net
 	if (!dev)
 		return 0;
+
+	if (unlikely(!(dev->flags & VIRTIO_DEV_BUILTIN_VIRTIO_NET))) {
+		RTE_LOG(ERR, VHOST_DATA,
+			"(%d) %s: built-in vhost net backend is disabled.\n",
+			dev->vid, __func__);
+		return 0;
+	}
 
 	//检查队列是否有效，类型及索引
 	//rx队列属于奇数

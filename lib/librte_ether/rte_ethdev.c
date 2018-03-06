@@ -44,7 +44,6 @@
 static const char *MZ_RTE_ETH_DEV_DATA = "rte_eth_dev_data";
 //网络设备对象（用于管理按口编号等）
 struct rte_eth_dev rte_eth_devices[RTE_MAX_ETHPORTS];
-static struct rte_eth_dev_data *rte_eth_dev_data;
 static uint8_t eth_dev_last_created_port;
 
 /* spinlock for eth device callbacks */
@@ -56,11 +55,21 @@ static rte_spinlock_t rte_eth_rx_cb_lock = RTE_SPINLOCK_INITIALIZER;
 /* spinlock for add/remove tx callbacks */
 static rte_spinlock_t rte_eth_tx_cb_lock = RTE_SPINLOCK_INITIALIZER;
 
+/* spinlock for shared data allocation */
+static rte_spinlock_t rte_eth_shared_data_lock = RTE_SPINLOCK_INITIALIZER;
+
 /* store statistics names and its offset in stats structure  */
 struct rte_eth_xstats_name_off {
 	char name[RTE_ETH_XSTATS_NAME_SIZE];
 	unsigned offset;
 };
+
+/* Shared memory between primary and secondary processes. */
+static struct {
+	uint64_t next_owner_id;
+	rte_spinlock_t ownership_lock;
+	struct rte_eth_dev_data data[RTE_MAX_ETHPORTS];
+} *rte_eth_dev_shared_data;
 
 static const struct rte_eth_xstats_name_off rte_stats_strings[] = {
 	{"rx_good_packets", offsetof(struct rte_eth_stats, ipackets)},
@@ -184,24 +193,35 @@ rte_eth_find_next(uint16_t port_id)
 
 //分配eth_dev_data空间
 static void
-rte_eth_dev_data_alloc(void)
+rte_eth_dev_shared_data_prepare(void)
 {
 	const unsigned flags = 0;
 	const struct rte_memzone *mz;
 
-	if (rte_eal_process_type() == RTE_PROC_PRIMARY) {
-		mz = rte_memzone_reserve(MZ_RTE_ETH_DEV_DATA,
-				RTE_MAX_ETHPORTS * sizeof(*rte_eth_dev_data),
-				rte_socket_id(), flags);
-	} else
-		mz = rte_memzone_lookup(MZ_RTE_ETH_DEV_DATA);
-	if (mz == NULL)
-		rte_panic("Cannot allocate memzone for ethernet port data\n");
+	rte_spinlock_lock(&rte_eth_shared_data_lock);
 
-	rte_eth_dev_data = mz->addr;
-	if (rte_eal_process_type() == RTE_PROC_PRIMARY)
-		memset(rte_eth_dev_data, 0,
-				RTE_MAX_ETHPORTS * sizeof(*rte_eth_dev_data));
+	if (rte_eth_dev_shared_data == NULL) {
+		if (rte_eal_process_type() == RTE_PROC_PRIMARY) {
+			/* Allocate port data and ownership shared memory. */
+			mz = rte_memzone_reserve(MZ_RTE_ETH_DEV_DATA,
+					sizeof(*rte_eth_dev_shared_data),
+					rte_socket_id(), flags);
+		} else
+			mz = rte_memzone_lookup(MZ_RTE_ETH_DEV_DATA);
+		if (mz == NULL)
+			rte_panic("Cannot allocate ethdev shared data\n");
+
+		rte_eth_dev_shared_data = mz->addr;
+		if (rte_eal_process_type() == RTE_PROC_PRIMARY) {
+			rte_eth_dev_shared_data->next_owner_id =
+					RTE_ETH_DEV_NO_OWNER + 1;
+			rte_spinlock_init(&rte_eth_dev_shared_data->ownership_lock);
+			memset(rte_eth_dev_shared_data->data, 0,
+			       sizeof(rte_eth_dev_shared_data->data));
+		}
+	}
+
+	rte_spinlock_unlock(&rte_eth_shared_data_lock);
 }
 
 //给定eth设备名称，获取其对应的ret_eth-devices结构体
@@ -225,8 +245,12 @@ rte_eth_dev_find_free_port(void)
 	unsigned i;
 
 	for (i = 0; i < RTE_MAX_ETHPORTS; i++) {
-		if (rte_eth_devices[i].state == RTE_ETH_DEV_UNUSED)
+		/* Using shared name field to find a free port. */
+		if (rte_eth_dev_shared_data->data[i].name[0] == '\0') {
+			RTE_ASSERT(rte_eth_devices[i].state ==
+				   RTE_ETH_DEV_UNUSED);
 			return i;
+		}
 	}
 	return RTE_MAX_ETHPORTS;
 }
@@ -236,7 +260,7 @@ eth_dev_get(uint16_t port_id)
 {
 	struct rte_eth_dev *eth_dev = &rte_eth_devices[port_id];
 
-	eth_dev->data = &rte_eth_dev_data[port_id];
+	eth_dev->data = &rte_eth_dev_shared_data->data[port_id];
 	eth_dev->state = RTE_ETH_DEV_ATTACHED;//标记占用
 
 	eth_dev_last_created_port = port_id;
@@ -248,35 +272,39 @@ struct rte_eth_dev *
 rte_eth_dev_allocate(const char *name)
 {
 	uint16_t port_id;
-	struct rte_eth_dev *eth_dev;
+	struct rte_eth_dev *eth_dev = NULL;
+
+	rte_eth_dev_shared_data_prepare();
+
+	/* Synchronize port creation between primary and secondary threads. */
+	rte_spinlock_lock(&rte_eth_dev_shared_data->ownership_lock);
 
 	//分配空间的端口号（对应的eth-dev对象）
 	port_id = rte_eth_dev_find_free_port();
 	if (port_id == RTE_MAX_ETHPORTS) {
 		//无空闲节点可分配
-		RTE_PMD_DEBUG_TRACE("Reached maximum number of Ethernet ports\n");
-		return NULL;
+		RTE_LOG(ERR, EAL, "Reached maximum number of Ethernet ports\n");
+		goto unlock;
 	}
 
-	//如果rte_egh_dev_data未分配，则分配空间
-	if (rte_eth_dev_data == NULL)
-		rte_eth_dev_data_alloc();
-
-	//如果name已有对应的eth-dev结构，则报错
+	//分配空间
 	if (rte_eth_dev_allocated(name) != NULL) {
-		RTE_PMD_DEBUG_TRACE("Ethernet Device with name %s already allocated!\n",
+		//如果name已有对应的eth-dev结构，则报错
+		RTE_LOG(ERR, EAL, "Ethernet Device with name %s already allocated!\n",
 				name);
-		return NULL;
+		goto unlock;
 	}
 
-	//初始化此设备对应的eth-dev，及eth-dev-data结构
-	memset(&rte_eth_dev_data[port_id], 0, sizeof(struct rte_eth_dev_data));
 	eth_dev = eth_dev_get(port_id);
 	snprintf(eth_dev->data->name, sizeof(eth_dev->data->name), "%s", name);
 	eth_dev->data->port_id = port_id;
 	eth_dev->data->mtu = ETHER_MTU;
 
-	_rte_eth_dev_callback_process(eth_dev, RTE_ETH_EVENT_NEW, NULL);
+unlock:
+	rte_spinlock_unlock(&rte_eth_dev_shared_data->ownership_lock);
+
+	if (eth_dev != NULL)
+		_rte_eth_dev_callback_process(eth_dev, RTE_ETH_EVENT_NEW, NULL);
 
 	return eth_dev;
 }
@@ -290,25 +318,27 @@ struct rte_eth_dev *
 rte_eth_dev_attach_secondary(const char *name)
 {
 	uint16_t i;
-	struct rte_eth_dev *eth_dev;
+	struct rte_eth_dev *eth_dev = NULL;
 
-	if (rte_eth_dev_data == NULL)
-		rte_eth_dev_data_alloc();
+	rte_eth_dev_shared_data_prepare();
+
+	/* Synchronize port attachment to primary port creation and release. */
+	rte_spinlock_lock(&rte_eth_dev_shared_data->ownership_lock);
 
 	for (i = 0; i < RTE_MAX_ETHPORTS; i++) {
-		if (strcmp(rte_eth_dev_data[i].name, name) == 0)
+		if (strcmp(rte_eth_dev_shared_data->data[i].name, name) == 0)
 			break;
 	}
 	if (i == RTE_MAX_ETHPORTS) {
 		RTE_PMD_DEBUG_TRACE(
 			"device %s is not driven by the primary process\n",
 			name);
-		return NULL;
+	} else {
+		eth_dev = eth_dev_get(i);
+		RTE_ASSERT(eth_dev->data->port_id == i);
 	}
 
-	eth_dev = eth_dev_get(i);
-	RTE_ASSERT(eth_dev->data->port_id == i);
-
+	rte_spinlock_unlock(&rte_eth_dev_shared_data->ownership_lock);
 	return eth_dev;
 }
 
@@ -318,7 +348,15 @@ rte_eth_dev_release_port(struct rte_eth_dev *eth_dev)
 	if (eth_dev == NULL)
 		return -EINVAL;
 
+	rte_eth_dev_shared_data_prepare();
+
+	rte_spinlock_lock(&rte_eth_dev_shared_data->ownership_lock);
+
 	eth_dev->state = RTE_ETH_DEV_UNUSED;
+
+	memset(eth_dev->data, 0, sizeof(struct rte_eth_dev_data));
+
+	rte_spinlock_unlock(&rte_eth_dev_shared_data->ownership_lock);
 
 	_rte_eth_dev_callback_process(eth_dev, RTE_ETH_EVENT_DESTROY, NULL);
 
@@ -334,6 +372,154 @@ rte_eth_dev_is_valid_port(uint16_t port_id)
 		return 0;
 	else
 		return 1;
+}
+
+static int
+rte_eth_is_valid_owner_id(uint64_t owner_id)
+{
+	if (owner_id == RTE_ETH_DEV_NO_OWNER ||
+	    rte_eth_dev_shared_data->next_owner_id <= owner_id) {
+		RTE_PMD_DEBUG_TRACE("Invalid owner_id=%016lX.\n", owner_id);
+		return 0;
+	}
+	return 1;
+}
+
+uint64_t __rte_experimental
+rte_eth_find_next_owned_by(uint16_t port_id, const uint64_t owner_id)
+{
+	while (port_id < RTE_MAX_ETHPORTS &&
+	       ((rte_eth_devices[port_id].state != RTE_ETH_DEV_ATTACHED &&
+	       rte_eth_devices[port_id].state != RTE_ETH_DEV_REMOVED) ||
+	       rte_eth_devices[port_id].data->owner.id != owner_id))
+		port_id++;
+
+	if (port_id >= RTE_MAX_ETHPORTS)
+		return RTE_MAX_ETHPORTS;
+
+	return port_id;
+}
+
+int __rte_experimental
+rte_eth_dev_owner_new(uint64_t *owner_id)
+{
+	rte_eth_dev_shared_data_prepare();
+
+	rte_spinlock_lock(&rte_eth_dev_shared_data->ownership_lock);
+
+	*owner_id = rte_eth_dev_shared_data->next_owner_id++;
+
+	rte_spinlock_unlock(&rte_eth_dev_shared_data->ownership_lock);
+	return 0;
+}
+
+static int
+_rte_eth_dev_owner_set(const uint16_t port_id, const uint64_t old_owner_id,
+		       const struct rte_eth_dev_owner *new_owner)
+{
+	struct rte_eth_dev_owner *port_owner;
+	int sret;
+
+	RTE_ETH_VALID_PORTID_OR_ERR_RET(port_id, -ENODEV);
+
+	if (!rte_eth_is_valid_owner_id(new_owner->id) &&
+	    !rte_eth_is_valid_owner_id(old_owner_id))
+		return -EINVAL;
+
+	port_owner = &rte_eth_devices[port_id].data->owner;
+	if (port_owner->id != old_owner_id) {
+		RTE_PMD_DEBUG_TRACE("Cannot set owner to port %d already owned"
+				    " by %s_%016lX.\n", port_id,
+				    port_owner->name, port_owner->id);
+		return -EPERM;
+	}
+
+	sret = snprintf(port_owner->name, RTE_ETH_MAX_OWNER_NAME_LEN, "%s",
+			new_owner->name);
+	if (sret < 0 || sret >= RTE_ETH_MAX_OWNER_NAME_LEN)
+		RTE_PMD_DEBUG_TRACE("Port %d owner name was truncated.\n",
+				    port_id);
+
+	port_owner->id = new_owner->id;
+
+	RTE_PMD_DEBUG_TRACE("Port %d owner is %s_%016lX.\n", port_id,
+			    new_owner->name, new_owner->id);
+
+	return 0;
+}
+
+int __rte_experimental
+rte_eth_dev_owner_set(const uint16_t port_id,
+		      const struct rte_eth_dev_owner *owner)
+{
+	int ret;
+
+	rte_eth_dev_shared_data_prepare();
+
+	rte_spinlock_lock(&rte_eth_dev_shared_data->ownership_lock);
+
+	ret = _rte_eth_dev_owner_set(port_id, RTE_ETH_DEV_NO_OWNER, owner);
+
+	rte_spinlock_unlock(&rte_eth_dev_shared_data->ownership_lock);
+	return ret;
+}
+
+int __rte_experimental
+rte_eth_dev_owner_unset(const uint16_t port_id, const uint64_t owner_id)
+{
+	const struct rte_eth_dev_owner new_owner = (struct rte_eth_dev_owner)
+			{.id = RTE_ETH_DEV_NO_OWNER, .name = ""};
+	int ret;
+
+	rte_eth_dev_shared_data_prepare();
+
+	rte_spinlock_lock(&rte_eth_dev_shared_data->ownership_lock);
+
+	ret = _rte_eth_dev_owner_set(port_id, owner_id, &new_owner);
+
+	rte_spinlock_unlock(&rte_eth_dev_shared_data->ownership_lock);
+	return ret;
+}
+
+void __rte_experimental
+rte_eth_dev_owner_delete(const uint64_t owner_id)
+{
+	uint16_t port_id;
+
+	rte_eth_dev_shared_data_prepare();
+
+	rte_spinlock_lock(&rte_eth_dev_shared_data->ownership_lock);
+
+	if (rte_eth_is_valid_owner_id(owner_id)) {
+		RTE_ETH_FOREACH_DEV_OWNED_BY(port_id, owner_id)
+			memset(&rte_eth_devices[port_id].data->owner, 0,
+			       sizeof(struct rte_eth_dev_owner));
+		RTE_PMD_DEBUG_TRACE("All port owners owned by %016X identifier"
+				    " have removed.\n", owner_id);
+	}
+
+	rte_spinlock_unlock(&rte_eth_dev_shared_data->ownership_lock);
+}
+
+int __rte_experimental
+rte_eth_dev_owner_get(const uint16_t port_id, struct rte_eth_dev_owner *owner)
+{
+	int ret = 0;
+
+	rte_eth_dev_shared_data_prepare();
+
+	rte_spinlock_lock(&rte_eth_dev_shared_data->ownership_lock);
+
+	if (!rte_eth_dev_is_valid_port(port_id)) {
+		RTE_PMD_DEBUG_TRACE("Invalid port_id=%d\n", port_id);
+		ret = -ENODEV;
+	} else {
+		rte_memcpy(owner, &rte_eth_devices[port_id].data->owner,
+			   sizeof(*owner));
+	}
+
+	rte_spinlock_unlock(&rte_eth_dev_shared_data->ownership_lock);
+	return ret;
 }
 
 //获取dev属于那个numa-node
@@ -380,7 +566,7 @@ rte_eth_dev_get_name_by_port(uint16_t port_id, char *name)
 
 	/* shouldn't check 'rte_eth_devices[i].data',
 	 * because it might be overwritten by VDEV PMD */
-	tmp = rte_eth_dev_data[port_id].name;
+	tmp = rte_eth_dev_shared_data->data[port_id].name;
 	strcpy(name, tmp);
 	return 0;
 }
@@ -388,22 +574,22 @@ rte_eth_dev_get_name_by_port(uint16_t port_id, char *name)
 int
 rte_eth_dev_get_port_by_name(const char *name, uint16_t *port_id)
 {
-	int i;
+	uint32_t pid;
 
 	if (name == NULL) {
 		RTE_PMD_DEBUG_TRACE("Null pointer is specified\n");
 		return -EINVAL;
 	}
 
-	RTE_ETH_FOREACH_DEV(i) {
-		if (!strncmp(name,
-			rte_eth_dev_data[i].name, strlen(name))) {
-
-			*port_id = i;
-
+	for (pid = 0; pid < RTE_MAX_ETHPORTS; pid++) {
+		if (rte_eth_devices[pid].state != RTE_ETH_DEV_UNUSED &&
+		    !strncmp(name, rte_eth_dev_shared_data->data[pid].name,
+			     strlen(name))) {
+			*port_id = pid;
 			return 0;
 		}
 	}
+
 	return -ENODEV;
 }
 
@@ -843,7 +1029,7 @@ rte_eth_convert_rx_offloads(const uint64_t rx_offloads,
 }
 
 //接口配置
-const char *
+const char * __rte_experimental
 rte_eth_dev_rx_offload_name(uint64_t offload)
 {
 	const char *name = "UNKNOWN";
@@ -859,7 +1045,7 @@ rte_eth_dev_rx_offload_name(uint64_t offload)
 	return name;
 }
 
-const char *
+const char * __rte_experimental
 rte_eth_dev_tx_offload_name(uint64_t offload)
 {
 	const char *name = "UNKNOWN";
@@ -1230,7 +1416,7 @@ rte_eth_dev_reset(uint16_t port_id)
 	return eth_err(port_id, ret);
 }
 
-int
+int __rte_experimental
 rte_eth_dev_is_removed(uint16_t port_id)
 {
 	struct rte_eth_dev *dev;
@@ -1904,7 +2090,7 @@ rte_eth_xstats_get_names_by_id(uint16_t port_id,
 
 	if (ids) {
 		for (i = 0; i < size; i++) {
-			if (ids[i] > basic_count) {
+			if (ids[i] >= basic_count) {
 				no_ext_stat_requested = 0;
 				break;
 			}
@@ -2084,7 +2270,7 @@ rte_eth_xstats_get_by_id(uint16_t port_id, const uint64_t *ids,
 
 	if (ids) {
 		for (i = 0; i < size; i++) {
-			if (ids[i] > basic_count) {
+			if (ids[i] >= basic_count) {
 				no_ext_stat_requested = 0;
 				break;
 			}

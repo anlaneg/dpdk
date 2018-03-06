@@ -40,6 +40,7 @@ struct vhost_user_socket {
 	bool reconnect;//是否开启重连接
 	bool dequeue_zero_copy;//是否开启出队zero copy
 	bool iommu_support;
+	bool use_builtin_virtio_net;
 
 	/*
 	 * The "supported_features" indicates the feature bits the
@@ -201,6 +202,8 @@ vhost_user_add_connection(int fd, struct vhost_user_socket *vsocket)
 
 	size = strnlen(vsocket->path, PATH_MAX);
 	vhost_set_ifname(vid, vsocket->path, size);
+
+	vhost_set_builtin_virtio_net(vid, vsocket->use_builtin_virtio_net);
 
 	//如果vsocket开启了入队zero copy,则设置在dev上
 	if (vsocket->dequeue_zero_copy)
@@ -571,6 +574,12 @@ rte_vhost_driver_disable_features(const char *path, uint64_t features)
 
 	pthread_mutex_lock(&vhost_user.mutex);
 	vsocket = find_vhost_user_socket(path);
+
+	/* Note that use_builtin_virtio_net is not affected by this function
+	 * since callers may want to selectively disable features of the
+	 * built-in vhost net device backend.
+	 */
+
 	if (vsocket)
 		vsocket->features &= ~features;
 	pthread_mutex_unlock(&vhost_user.mutex);
@@ -615,6 +624,11 @@ rte_vhost_driver_set_features(const char *path, uint64_t features)
 	if (vsocket) {
 		vsocket->supported_features = features;
 		vsocket->features = features;
+
+		/* Anyone setting feature bits is implementing their own vhost
+		 * device backend.
+		 */
+		vsocket->use_builtin_virtio_net = false;
 	}
 	pthread_mutex_unlock(&vhost_user.mutex);
 
@@ -701,6 +715,7 @@ rte_vhost_driver_register(const char *path, uint64_t flags)
 	 * rte_vhost_driver_set_features(), which will overwrite following
 	 * two values.
 	 */
+	vsocket->use_builtin_virtio_net = true;
 	//标记支持的功能
 	vsocket->supported_features = VIRTIO_NET_SUPPORTED_FEATURES;
 	vsocket->features           = VIRTIO_NET_SUPPORTED_FEATURES;
