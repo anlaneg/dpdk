@@ -66,6 +66,10 @@ siena_board_cfg(
 	uint32_t nevq, nrxq, ntxq;
 	efx_rc_t rc;
 
+	/* Siena has a fixed 8Kbyte VI window size */
+	EFX_STATIC_ASSERT(1U << EFX_VI_WINDOW_SHIFT_8K	== 8192);
+	encp->enc_vi_window_shift = EFX_VI_WINDOW_SHIFT_8K;
+
 	/* External port identifier using one-based port numbering */
 	encp->enc_external_port = (uint8_t)enp->en_mcdi.em_emip.emi_port;
 
@@ -145,12 +149,15 @@ siena_board_cfg(
 	encp->enc_allow_set_mac_with_installed_filters = B_TRUE;
 	encp->enc_rx_packed_stream_supported = B_FALSE;
 	encp->enc_rx_var_packed_stream_supported = B_FALSE;
+	encp->enc_fw_subvariant_no_tx_csum_supported = B_FALSE;
 
 	/* Siena supports two 10G ports, and 8 lanes of PCIe Gen2 */
 	encp->enc_required_pcie_bandwidth_mbps = 2 * 10000;
 	encp->enc_max_pcie_link_gen = EFX_PCIE_LINK_SPEED_GEN2;
 
 	encp->enc_nvram_update_verify_result_supported = B_FALSE;
+
+	encp->enc_mac_stats_nstats = MC_CMD_MAC_NSTATS;
 
 	return (0);
 

@@ -264,11 +264,15 @@ static const struct eth_dev_ops ena_dev_ops = {
 static inline int ena_cpu_to_node(int cpu)
 {
 	struct rte_config *config = rte_eal_get_configuration();
+	struct rte_fbarray *arr = &config->mem_config->memzones;
+	const struct rte_memzone *mz;
 
-	if (likely(cpu < RTE_MAX_MEMZONE))
-		return config->mem_config->memzone[cpu].socket_id;
+	if (unlikely(cpu >= RTE_MAX_MEMZONE))
+		return NUMA_NO_NODE;
 
-	return NUMA_NO_NODE;
+	mz = rte_fbarray_get(arr, cpu);
+
+	return mz->socket_id;
 }
 
 static inline void ena_rx_mbuf_prepare(struct rte_mbuf *mbuf,
@@ -1526,8 +1530,6 @@ static void ena_infos_get(struct rte_eth_dev *dev,
 
 	ena_dev = &adapter->ena_dev;
 	ena_assert_msg(ena_dev != NULL, "Uninitialized device");
-
-	dev_info->pci_dev = RTE_ETH_DEV_TO_PCI(dev);
 
 	dev_info->speed_capa =
 			ETH_LINK_SPEED_1G   |

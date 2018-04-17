@@ -8,8 +8,10 @@ env_sources = files('eal_alarm.c',
 		'eal_hugepage_info.c',
 		'eal_interrupts.c',
 		'eal_lcore.c',
+		'eal_memalloc.c',
 		'eal_thread.c',
 		'eal_timer.c',
 		'eal.c',
 		'eal_memory.c',
+		'eal_dev.c'
 )

@@ -1692,6 +1692,20 @@ i40e_dev_supported_ptypes_get(struct rte_eth_dev *dev)
 	return NULL;
 }
 
+static int
+i40e_check_rx_queue_offloads(struct rte_eth_dev *dev, uint64_t requested)
+{
+	struct rte_eth_dev_info dev_info;
+	uint64_t mandatory = dev->data->dev_conf.rxmode.offloads;
+	uint64_t supported; /* All per port offloads */
+
+	dev->dev_ops->dev_infos_get(dev, &dev_info);
+	supported = dev_info.rx_offload_capa ^ dev_info.rx_queue_offload_capa;
+	if ((requested & dev_info.rx_offload_capa) != requested)
+		return 0; /* requested range check */
+	return !((mandatory ^ requested) & supported);
+}
+
 int
 i40e_dev_rx_queue_setup(struct rte_eth_dev *dev,
 			uint16_t queue_idx,
@@ -1712,6 +1726,18 @@ i40e_dev_rx_queue_setup(struct rte_eth_dev *dev,
 	uint16_t len, i;
 	uint16_t reg_idx, base, bsf, tc_mapping;
 	int q_offset, use_def_burst_func = 1;
+	struct rte_eth_dev_info dev_info;
+
+	if (!i40e_check_rx_queue_offloads(dev, rx_conf->offloads)) {
+		dev->dev_ops->dev_infos_get(dev, &dev_info);
+		PMD_INIT_LOG(ERR, "%p: Rx queue offloads 0x%" PRIx64
+			" don't match port  offloads 0x%" PRIx64
+			" or supported offloads 0x%" PRIx64,
+			(void *)dev, rx_conf->offloads,
+			dev->data->dev_conf.rxmode.offloads,
+			dev_info.rx_offload_capa);
+		return -ENOTSUP;
+	}
 
 	if (hw->mac.type == I40E_MAC_VF || hw->mac.type == I40E_MAC_X722_VF) {
 		vf = I40EVF_DEV_PRIVATE_TO_VF(dev->data->dev_private);
@@ -1760,8 +1786,8 @@ i40e_dev_rx_queue_setup(struct rte_eth_dev *dev,
 	rxq->queue_id = queue_idx;
 	rxq->reg_idx = reg_idx;
 	rxq->port_id = dev->data->port_id;
-	rxq->crc_len = (uint8_t) ((dev->data->dev_conf.rxmode.hw_strip_crc) ?
-							0 : ETHER_CRC_LEN);
+	rxq->crc_len = (uint8_t)((dev->data->dev_conf.rxmode.offloads &
+			DEV_RX_OFFLOAD_CRC_STRIP) ? 0 : ETHER_CRC_LEN);
 	rxq->drop_en = rx_conf->rx_drop_en;
 	rxq->vsi = vsi;
 	rxq->rx_deferred_start = rx_conf->rx_deferred_start;
@@ -1972,6 +1998,20 @@ i40e_dev_tx_descriptor_status(void *tx_queue, uint16_t offset)
 	return RTE_ETH_TX_DESC_FULL;
 }
 
+static int
+i40e_check_tx_queue_offloads(struct rte_eth_dev *dev, uint64_t requested)
+{
+	struct rte_eth_dev_info dev_info;
+	uint64_t mandatory = dev->data->dev_conf.txmode.offloads;
+	uint64_t supported; /* All per port offloads */
+
+	dev->dev_ops->dev_infos_get(dev, &dev_info);
+	supported = dev_info.tx_offload_capa ^ dev_info.tx_queue_offload_capa;
+	if ((requested & dev_info.tx_offload_capa) != requested)
+		return 0; /* requested range check */
+	return !((mandatory ^ requested) & supported);
+}
+
 int
 i40e_dev_tx_queue_setup(struct rte_eth_dev *dev,
 			uint16_t queue_idx,
@@ -1989,6 +2029,16 @@ i40e_dev_tx_queue_setup(struct rte_eth_dev *dev,
 	uint16_t tx_rs_thresh, tx_free_thresh;
 	uint16_t reg_idx, i, base, bsf, tc_mapping;
 	int q_offset;
+	struct rte_eth_dev_info dev_info;
+
+	if (!i40e_check_tx_queue_offloads(dev, tx_conf->offloads)) {
+		dev->dev_ops->dev_infos_get(dev, &dev_info);
+		PMD_INIT_LOG(ERR, "%p: Tx queue offloads 0x%" PRIx64
+			" don't match port  offloads 0x%" PRIx64
+			" or supported offloads 0x%" PRIx64,
+			(void *)dev, tx_conf->offloads,
+			dev->data->dev_conf.txmode.offloads,
+			dev_info.tx_offload_capa); }
 
 	if (hw->mac.type == I40E_MAC_VF || hw->mac.type == I40E_MAC_X722_VF) {
 		vf = I40EVF_DEV_PRIVATE_TO_VF(dev->data->dev_private);
@@ -2189,8 +2239,8 @@ i40e_memzone_reserve(const char *name, uint32_t len, int socket_id)
 	if (mz)
 		return mz;
 
-	mz = rte_memzone_reserve_aligned(name, len,
-					 socket_id, 0, I40E_RING_BASE_ALIGN);
+	mz = rte_memzone_reserve_aligned(name, len, socket_id,
+			RTE_MEMZONE_IOVA_CONTIG, I40E_RING_BASE_ALIGN);
 	return mz;
 }
 
@@ -2469,7 +2519,7 @@ i40e_rx_queue_config(struct i40e_rx_queue *rxq)
 
 	len = hw->func_caps.rx_buf_chain_len * rxq->rx_buf_len;
 	rxq->max_pkt_len = RTE_MIN(len, data->dev_conf.rxmode.max_rx_pkt_len);
-	if (data->dev_conf.rxmode.jumbo_frame == 1) {
+	if (data->dev_conf.rxmode.offloads & DEV_RX_OFFLOAD_JUMBO_FRAME) {
 		if (rxq->max_pkt_len <= ETHER_MAX_LEN ||
 			rxq->max_pkt_len > I40E_FRAME_SIZE_MAX) {
 			PMD_DRV_LOG(ERR, "maximum packet length must "
@@ -2747,6 +2797,7 @@ i40e_rxq_info_get(struct rte_eth_dev *dev, uint16_t queue_id,
 	qinfo->conf.rx_free_thresh = rxq->rx_free_thresh;
 	qinfo->conf.rx_drop_en = rxq->drop_en;
 	qinfo->conf.rx_deferred_start = rxq->rx_deferred_start;
+	qinfo->conf.offloads = rxq->offloads;
 }
 
 void

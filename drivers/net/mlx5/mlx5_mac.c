@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: BSD-3-Clause
  * Copyright 2015 6WIND S.A.
- * Copyright 2015 Mellanox.
+ * Copyright 2015 Mellanox Technologies, Ltd
  */
 
 #include <stddef.h>
@@ -35,21 +35,23 @@
 /**
  * Get MAC address by querying netdevice.
  *
- * @param[in] priv
- *   struct priv for the requested device.
+ * @param[in] dev
+ *   Pointer to Ethernet device.
  * @param[out] mac
  *   MAC address output buffer.
  *
  * @return
- *   0 on success, -1 on failure and errno is set.
+ *   0 on success, a negative errno value otherwise and rte_errno is set.
  */
 int
-priv_get_mac(struct priv *priv, uint8_t (*mac)[ETHER_ADDR_LEN])
+mlx5_get_mac(struct rte_eth_dev *dev, uint8_t (*mac)[ETHER_ADDR_LEN])
 {
 	struct ifreq request;
+	int ret;
 
-	if (priv_ifreq(priv, SIOCGIFHWADDR, &request))
-		return -1;
+	ret = mlx5_ifreq(dev, SIOCGIFHWADDR, &request);
+	if (ret)
+		return ret;
 	memcpy(mac, request.ifr_hwaddr.sa_data, ETHER_ADDR_LEN);
 	return 0;
 }
@@ -65,10 +67,21 @@ priv_get_mac(struct priv *priv, uint8_t (*mac)[ETHER_ADDR_LEN])
 void
 mlx5_mac_addr_remove(struct rte_eth_dev *dev, uint32_t index)
 {
+	struct priv *priv = dev->data->dev_private;
+	const int vf = priv->config.vf;
+	int ret;
+
 	assert(index < MLX5_MAX_MAC_ADDRESSES);
+	if (vf)
+		mlx5_nl_mac_addr_remove(dev, &dev->data->mac_addrs[index],
+					index);
 	memset(&dev->data->mac_addrs[index], 0, sizeof(struct ether_addr));
-	if (!dev->data->promiscuous)
-		mlx5_traffic_restart(dev);
+	if (!dev->data->promiscuous) {
+		ret = mlx5_traffic_restart(dev);
+		if (ret)
+			DRV_LOG(ERR, "port %u cannot restart traffic: %s",
+				dev->data->port_id, strerror(rte_errno));
+	}
 }
 
 /**
@@ -84,16 +97,16 @@ mlx5_mac_addr_remove(struct rte_eth_dev *dev, uint32_t index)
  *   VMDq pool index to associate address with (ignored).
  *
  * @return
- *   0 on success.
+ *   0 on success, a negative errno value otherwise and rte_errno is set.
  */
 int
 mlx5_mac_addr_add(struct rte_eth_dev *dev, struct ether_addr *mac,
-		  uint32_t index, uint32_t vmdq)
+		  uint32_t index, uint32_t vmdq __rte_unused)
 {
+	struct priv *priv = dev->data->dev_private;
+	const int vf = priv->config.vf;
 	unsigned int i;
-	int ret = 0;
 
-	(void)vmdq;
 	assert(index < MLX5_MAX_MAC_ADDRESSES);
 	/* First, make sure this address isn't already configured. */
 	for (i = 0; (i != MLX5_MAX_MAC_ADDRESSES); ++i) {
@@ -103,12 +116,19 @@ mlx5_mac_addr_add(struct rte_eth_dev *dev, struct ether_addr *mac,
 		if (memcmp(&dev->data->mac_addrs[i], mac, sizeof(*mac)))
 			continue;
 		/* Address already configured elsewhere, return with error. */
-		return EADDRINUSE;
+		rte_errno = EADDRINUSE;
+		return -rte_errno;
+	}
+	if (vf) {
+		int ret = mlx5_nl_mac_addr_add(dev, mac, index);
+
+		if (ret)
+			return ret;
 	}
 	dev->data->mac_addrs[index] = *mac;
 	if (!dev->data->promiscuous)
-		mlx5_traffic_restart(dev);
-	return ret;
+		return mlx5_traffic_restart(dev);
+	return 0;
 }
 
 /**
@@ -118,10 +138,14 @@ mlx5_mac_addr_add(struct rte_eth_dev *dev, struct ether_addr *mac,
  *   Pointer to Ethernet device structure.
  * @param mac_addr
  *   MAC address to register.
+ *
+ * @return
+ *   0 on success, a negative errno value otherwise and rte_errno is set.
  */
-void
+int
 mlx5_mac_addr_set(struct rte_eth_dev *dev, struct ether_addr *mac_addr)
 {
-	DEBUG("%p: setting primary MAC address", (void *)dev);
-	mlx5_mac_addr_add(dev, mac_addr, 0, 0);
+	DRV_LOG(DEBUG, "port %u setting primary MAC address",
+		dev->data->port_id);
+	return mlx5_mac_addr_add(dev, mac_addr, 0, 0);
 }

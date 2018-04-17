@@ -1,11 +1,12 @@
 /* SPDX-License-Identifier: BSD-3-Clause
- * Copyright(c) 2010-2014 Intel Corporation
+ * Copyright(c) 2010-2018 Intel Corporation
  */
 
 #ifndef _VHOST_NET_CDEV_H_
 #define _VHOST_NET_CDEV_H_
 #include <stdint.h>
 #include <stdio.h>
+#include <stdbool.h>
 #include <sys/types.h>
 #include <sys/queue.h>
 #include <unistd.h>
@@ -19,6 +20,7 @@
 #include <rte_rwlock.h>
 
 #include "rte_vhost.h"
+#include "rte_vdpa.h"
 
 /* Used to indicate that the device is running on a data core */
 #define VIRTIO_DEV_RUNNING 1
@@ -26,6 +28,8 @@
 #define VIRTIO_DEV_READY 2
 /* Used to indicate that the built-in vhost net device backend is enabled */
 #define VIRTIO_DEV_BUILTIN_VIRTIO_NET 4
+/* Used to indicate that the device has its own data path and configured */
+#define VIRTIO_DEV_VDPA_CONFIGURED 8
 
 /* Backend value set by guest. */
 #define VIRTIO_DEV_STOPPED -1
@@ -174,8 +178,6 @@ struct vhost_msg {
  #define VIRTIO_F_VERSION_1 32
 #endif
 
-#define VHOST_USER_F_PROTOCOL_FEATURES	30
-
 /* Features supported by this builtin vhost-user net driver. */
 #define VIRTIO_NET_SUPPORTED_FEATURES ((1ULL << VIRTIO_NET_F_MRG_RXBUF) | \
 				(1ULL << VIRTIO_F_ANY_LAYOUT) | \
@@ -210,6 +212,51 @@ struct guest_page {
 };
 
 /**
+ * function prototype for the vhost backend to handler specific vhost user
+ * messages prior to the master message handling
+ *
+ * @param vid
+ *  vhost device id
+ * @param msg
+ *  Message pointer.
+ * @param require_reply
+ *  If the handler requires sending a reply, this varaible shall be written 1,
+ *  otherwise 0.
+ * @param skip_master
+ *  If the handler requires skipping the master message handling, this variable
+ *  shall be written 1, otherwise 0.
+ * @return
+ *  0 on success, -1 on failure
+ */
+typedef int (*vhost_msg_pre_handle)(int vid, void *msg,
+		uint32_t *require_reply, uint32_t *skip_master);
+
+/**
+ * function prototype for the vhost backend to handler specific vhost user
+ * messages after the master message handling is done
+ *
+ * @param vid
+ *  vhost device id
+ * @param msg
+ *  Message pointer.
+ * @param require_reply
+ *  If the handler requires sending a reply, this varaible shall be written 1,
+ *  otherwise 0.
+ * @return
+ *  0 on success, -1 on failure
+ */
+typedef int (*vhost_msg_post_handle)(int vid, void *msg,
+		uint32_t *require_reply);
+
+/**
+ * pre and post vhost user message handlers
+ */
+struct vhost_user_extern_ops {
+	vhost_msg_pre_handle pre_msg_handle;
+	vhost_msg_post_handle post_msg_handle;
+};
+
+/**
  * Device structure contains all configuration information relating
  * to the device.
  */
@@ -241,24 +288,30 @@ struct virtio_net {
 	struct guest_page       *guest_pages;
 
 	int			slave_req_fd;
-} __rte_cache_aligned;
 
+	/*
+	 * Device id to identify a specific backend device.
+	 * It's set to -1 for the default software implementation.
+	 */
+	int			vdpa_dev_id;
+
+	/* private data for virtio device */
+	void			*extern_data;
+	/* pre and post vhost user message handlers for the device */
+	struct vhost_user_extern_ops extern_ops;
+} __rte_cache_aligned;
 
 #define VHOST_LOG_PAGE	4096
 
 /*
- * Atomically set a bit in memory.
+ * Mark all pages belonging to the same dirty log bitmap byte
+ * as dirty. The goal is to avoid concurrency between different
+ * threads doing atomic read-modify-writes on the same byte.
  */
-static __rte_always_inline void
-vhost_set_bit(unsigned int nr, volatile uint8_t *addr)
-{
-	__sync_fetch_and_or_8(addr, (1U << nr));
-}
-
 static __rte_always_inline void
 vhost_log_page(uint8_t *log_base, uint64_t page)
 {
-	vhost_set_bit(page % 8, &log_base[page / 8]);
+	log_base[page / 8] = 0xff;
 }
 
 static __rte_always_inline void
@@ -296,8 +349,8 @@ vhost_log_used_vring(struct virtio_net *dev, struct vhost_virtqueue *vq,
 
 #ifdef RTE_LIBRTE_VHOST_DEBUG
 #define VHOST_MAX_PRINT_BUFF 6072
-#define LOG_LEVEL RTE_LOG_DEBUG
-#define LOG_DEBUG(log_type, fmt, args...) RTE_LOG(DEBUG, log_type, fmt, ##args)
+#define VHOST_LOG_DEBUG(log_type, fmt, args...) \
+	RTE_LOG(DEBUG, log_type, fmt, ##args)
 #define PRINT_PACKET(device, addr, size, header) do { \
 	char *pkt_addr = (char *)(addr); \
 	unsigned int index; \
@@ -313,11 +366,10 @@ vhost_log_used_vring(struct virtio_net *dev, struct vhost_virtqueue *vq,
 	} \
 	snprintf(packet + strnlen(packet, VHOST_MAX_PRINT_BUFF), VHOST_MAX_PRINT_BUFF - strnlen(packet, VHOST_MAX_PRINT_BUFF), "\n"); \
 	\
-	LOG_DEBUG(VHOST_DATA, "%s", packet); \
+	VHOST_LOG_DEBUG(VHOST_DATA, "%s", packet); \
 } while (0)
 #else
-#define LOG_LEVEL RTE_LOG_INFO
-#define LOG_DEBUG(log_type, fmt, args...) do {} while (0)
+#define VHOST_LOG_DEBUG(log_type, fmt, args...) do {} while (0)
 #define PRINT_PACKET(device, addr, size, header) do {} while (0)
 #endif
 
@@ -345,7 +397,18 @@ gpa_to_hpa(struct virtio_net *dev, uint64_t gpa, uint64_t size)
 	return 0;
 }
 
-struct virtio_net *get_device(int vid);
+static __rte_always_inline struct virtio_net *
+get_device(int vid)
+{
+	struct virtio_net *dev = vhost_devices[vid];
+
+	if (unlikely(!dev)) {
+		RTE_LOG(ERR, VHOST_CONFIG,
+			"(%d) device not found.\n", vid);
+	}
+
+	return dev;
+}
 
 int vhost_new_device(void);
 void cleanup_device(struct virtio_net *dev, int destroy);
@@ -356,6 +419,9 @@ void cleanup_vq(struct vhost_virtqueue *vq, int destroy);
 void free_vq(struct vhost_virtqueue *vq);
 
 int alloc_vring_queue(struct virtio_net *dev, uint32_t vring_idx);
+
+void vhost_attach_vdpa_device(int vid, int did);
+void vhost_detach_vdpa_device(int vid);
 
 void vhost_set_ifname(int, const char *if_name, unsigned int if_len);
 void vhost_enable_dequeue_zero_copy(int vid);
@@ -411,7 +477,7 @@ vhost_vring_call(struct virtio_net *dev, struct vhost_virtqueue *vq)
 		uint16_t old = vq->signalled_used;
 		uint16_t new = vq->last_used_idx;
 
-		LOG_DEBUG(VHOST_DATA, "%s: used_event_idx=%d, old=%d, new=%d\n",
+		VHOST_LOG_DEBUG(VHOST_DATA, "%s: used_event_idx=%d, old=%d, new=%d\n",
 			__func__,
 			vhost_used_event(vq),
 			old, new);

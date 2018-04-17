@@ -83,6 +83,11 @@ The following is an overview of some key Vhost API functions:
       of those segments, thus the fewer the segments, the quicker we will get
       the mapping. NOTE: we may speed it by using tree searching in future.
 
+    * zero copy can not work when using vfio-pci with iommu mode currently, this
+      is because we don't setup iommu dma mapping for guest memory. If you have
+      to use vfio-pci driver, please insert vfio-pci kernel module in noiommu
+      mode.
+
   - ``RTE_VHOST_USER_IOMMU_SUPPORT``
 
     IOMMU support will be enabled when this flag is set. It is disabled by
@@ -160,6 +165,31 @@ The following is an overview of some key Vhost API functions:
 
   Receives (dequeues) ``count`` packets from guest, and stored them at ``pkts``.
 
+* ``rte_vhost_crypto_create(vid, cryptodev_id, sess_mempool, socket_id)``
+
+  As an extension of new_device(), this function adds virtio-crypto workload
+  acceleration capability to the device. All crypto workload is processed by
+  DPDK cryptodev with the device ID of ``cryptodev_id``.
+
+* ``rte_vhost_crypto_free(vid)``
+
+  Frees the memory and vhost-user message handlers created in
+  rte_vhost_crypto_create().
+
+* ``rte_vhost_crypto_fetch_requests(vid, queue_id, ops, nb_ops)``
+
+  Receives (dequeues) ``nb_ops`` virtio-crypto requests from guest, parses
+  them to DPDK Crypto Operations, and fills the ``ops`` with parsing results.
+
+* ``rte_vhost_crypto_finalize_requests(queue_id, ops, nb_ops)``
+
+  After the ``ops`` are dequeued from Cryptodev, finalizes the jobs and
+  notifies the guest(s).
+
+* ``rte_vhost_crypto_set_zero_copy(vid, option)``
+
+  Enable or disable zero copy feature of the vhost crypto backend.
+
 Vhost-user Implementations
 --------------------------
 
@@ -213,6 +243,27 @@ the data plane, and ``VHOST_GET_VRING_BASE`` is used as the signal to remove
 the vhost device from the data plane.
 
 When the socket connection is closed, vhost will destroy the device.
+
+Guest memory requirement
+------------------------
+
+* Memory pre-allocation
+
+  For non-zerocopy, guest memory pre-allocation is not a must. This can help
+  save of memory. If users really want the guest memory to be pre-allocated
+  (e.g., for performance reason), we can add option ``-mem-prealloc`` when
+  starting QEMU. Or, we can lock all memory at vhost side which will force
+  memory to be allocated when mmap at vhost side; option --mlockall in
+  ovs-dpdk is an example in hand.
+
+  For zerocopy, we force the VM memory to be pre-allocated at vhost lib when
+  mapping the guest memory; and also we need to lock the memory to prevent
+  pages being swapped out to disk.
+
+* Memory sharing
+
+  Make sure ``share=on`` QEMU option is given. vhost-user will not work with
+  a QEMU version without shared memory mapping.
 
 Vhost supported vSwitch reference
 ---------------------------------

@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: BSD-3-Clause
  * Copyright 2012 6WIND S.A.
- * Copyright 2012 Mellanox
+ * Copyright 2012 Mellanox Technologies, Ltd
  */
 
 /**
@@ -562,7 +562,7 @@ mlx4_pci_probe(struct rte_pci_driver *pci_drv, struct rte_pci_device *pci_dev)
 			(device_attr.vendor_part_id ==
 			 PCI_DEVICE_ID_MELLANOX_CONNECTX3PRO);
 		DEBUG("L2 tunnel checksum offloads are %ssupported",
-		      (priv->hw_csum_l2tun ? "" : "not "));
+		      priv->hw_csum_l2tun ? "" : "not ");
 		priv->hw_rss_sup = device_attr_ex.rss_caps.rx_hash_fields_mask;
 		if (!priv->hw_rss_sup) {
 			WARN("no RSS capabilities reported; disabling support"
@@ -578,6 +578,10 @@ mlx4_pci_probe(struct rte_pci_driver *pci_drv, struct rte_pci_device *pci_dev)
 		}
 		DEBUG("supported RSS hash fields mask: %016" PRIx64,
 		      priv->hw_rss_sup);
+		priv->hw_fcs_strip = !!(device_attr_ex.raw_packet_caps &
+					IBV_RAW_PACKET_CAP_SCATTER_FCS);
+		DEBUG("FCS stripping toggling is %ssupported",
+		      priv->hw_fcs_strip ? "" : "not ");
 		/* Configure the first MAC address by default. */
 		if (mlx4_get_mac(priv, &mac.addr_bytes)) {
 			ERROR("cannot get MAC address, is mlx4_en loaded?"
@@ -708,11 +712,53 @@ static struct rte_pci_driver mlx4_driver = {
 #ifdef RTE_LIBRTE_MLX4_DLOPEN_DEPS
 
 /**
+ * Suffix RTE_EAL_PMD_PATH with "-glue".
+ *
+ * This function performs a sanity check on RTE_EAL_PMD_PATH before
+ * suffixing its last component.
+ *
+ * @param buf[out]
+ *   Output buffer, should be large enough otherwise NULL is returned.
+ * @param size
+ *   Size of @p out.
+ *
+ * @return
+ *   Pointer to @p buf or @p NULL in case suffix cannot be appended.
+ */
+static char *
+mlx4_glue_path(char *buf, size_t size)
+{
+	static const char *const bad[] = { "/", ".", "..", NULL };
+	const char *path = RTE_EAL_PMD_PATH;
+	size_t len = strlen(path);
+	size_t off;
+	int i;
+
+	while (len && path[len - 1] == '/')
+		--len;
+	for (off = len; off && path[off - 1] != '/'; --off)
+		;
+	for (i = 0; bad[i]; ++i)
+		if (!strncmp(path + off, bad[i], (int)(len - off)))
+			goto error;
+	i = snprintf(buf, size, "%.*s-glue", (int)len, path);
+	if (i == -1 || (size_t)i >= size)
+		goto error;
+	return buf;
+error:
+	ERROR("unable to append \"-glue\" to last component of"
+	      " RTE_EAL_PMD_PATH (\"" RTE_EAL_PMD_PATH "\"),"
+	      " please re-configure DPDK");
+	return NULL;
+}
+
+/**
  * Initialization routine for run-time dependency on rdma-core.
  */
 static int
 mlx4_glue_init(void)
 {
+	char glue_path[sizeof(RTE_EAL_PMD_PATH) - 1 + sizeof("-glue")];
 	const char *path[] = {
 		/*
 		 * A basic security check is necessary before trusting
@@ -720,7 +766,13 @@ mlx4_glue_init(void)
 		 */
 		(geteuid() == getuid() && getegid() == getgid() ?
 		 getenv("MLX4_GLUE_PATH") : NULL),
-		RTE_EAL_PMD_PATH,
+		/*
+		 * When RTE_EAL_PMD_PATH is set, use its glue-suffixed
+		 * variant, otherwise let dlopen() look up libraries on its
+		 * own.
+		 */
+		(*RTE_EAL_PMD_PATH ?
+		 mlx4_glue_path(glue_path, sizeof(glue_path)) : ""),
 	};
 	unsigned int i = 0;
 	void *handle = NULL;

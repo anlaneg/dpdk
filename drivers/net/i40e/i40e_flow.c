@@ -1939,7 +1939,8 @@ static uint16_t
 i40e_get_outer_vlan(struct rte_eth_dev *dev)
 {
 	struct i40e_hw *hw = I40E_DEV_PRIVATE_TO_HW(dev->data->dev_private);
-	int qinq = dev->data->dev_conf.rxmode.hw_vlan_extend;
+	int qinq = dev->data->dev_conf.rxmode.offloads &
+		DEV_RX_OFFLOAD_VLAN_EXTEND;
 	uint64_t reg_r = 0;
 	uint16_t reg_id;
 	uint16_t tpid;
@@ -2400,7 +2401,7 @@ i40e_flow_fdir_get_pctype_value(struct i40e_pf *pf,
 		break;
 	}
 
-	if (cus_pctype)
+	if (cus_pctype && cus_pctype->valid)
 		return cus_pctype->pctype;
 
 	return I40E_FILTER_PCTYPE_INVALID;
@@ -4150,7 +4151,8 @@ i40e_flow_parse_rss_pattern(__rte_unused struct rte_eth_dev *dev,
 				if (vlan_mask->tci ==
 					rte_cpu_to_be_16(I40E_TCI_MASK)) {
 					info->region[0].user_priority[0] =
-						(vlan_spec->tci >> 13) & 0x7;
+						(rte_be_to_cpu_16(
+						vlan_spec->tci) >> 13) & 0x7;
 					info->region[0].user_priority_num = 1;
 					info->queue_region_number = 1;
 					*action_flag = 0;
@@ -4169,6 +4171,19 @@ i40e_flow_parse_rss_pattern(__rte_unused struct rte_eth_dev *dev,
 	return 0;
 }
 
+/**
+ * This function is used to parse rss queue index, total queue number and
+ * hash functions, If the purpose of this configuration is for queue region
+ * configuration, it will set queue_region_conf flag to TRUE, else to FALSE.
+ * In queue region configuration, it also need to parse hardware flowtype
+ * and user_priority from configuration, it will also cheeck the validity
+ * of these parameters. For example, The queue region sizes should
+ * be any of the following values: 1, 2, 4, 8, 16, 32, 64, the
+ * hw_flowtype or PCTYPE max index should be 63, the user priority
+ * max index should be 7, and so on. And also, queue index should be
+ * continuous sequence and queue region index should be part of rss
+ * queue index for this port.
+ */
 static int
 i40e_flow_parse_rss_action(struct rte_eth_dev *dev,
 			    const struct rte_flow_action *actions,
@@ -4214,36 +4229,67 @@ i40e_flow_parse_rss_action(struct rte_eth_dev *dev,
 		}
 	}
 
+	/**
+	 * Do some queue region related parameters check
+	 * in order to keep queue index for queue region to be
+	 * continuous sequence and also to be part of RSS
+	 * queue index for this port.
+	 */
+	if (conf_info->queue_region_number) {
+		for (i = 0; i < rss->num; i++) {
+			for (j = 0; j < rss_info->num; j++) {
+				if (rss->queue[i] == rss_info->queue[j])
+					break;
+			}
+			if (j == rss_info->num) {
+				rte_flow_error_set(error, EINVAL,
+					RTE_FLOW_ERROR_TYPE_ACTION,
+					act,
+					"no valid queues");
+				return -rte_errno;
+			}
+		}
+
+		for (i = 0; i < rss->num - 1; i++) {
+			if (rss->queue[i + 1] != rss->queue[i] + 1) {
+				rte_flow_error_set(error, EINVAL,
+					RTE_FLOW_ERROR_TYPE_ACTION,
+					act,
+					"no valid queues");
+				return -rte_errno;
+			}
+		}
+	}
+
+	/* Parse queue region related parameters from configuration */
 	for (n = 0; n < conf_info->queue_region_number; n++) {
 		if (conf_info->region[n].user_priority_num ||
 				conf_info->region[n].flowtype_num) {
 			if (!((rte_is_power_of_2(rss->num)) &&
 					rss->num <= 64)) {
-				PMD_DRV_LOG(ERR, "The region sizes should be any of the following values: 1, 2, 4, 8, 16, 32, 64 as long as the "
-				"total number of queues do not exceed the VSI allocation");
+				rte_flow_error_set(error, EINVAL,
+					RTE_FLOW_ERROR_TYPE_ACTION,
+					act,
+					"The region sizes should be any of the following values: 1, 2, 4, 8, 16, 32, 64 as long as the "
+					"total number of queues do not exceed the VSI allocation");
 				return -rte_errno;
 			}
 
 			if (conf_info->region[n].user_priority[n] >=
 					I40E_MAX_USER_PRIORITY) {
-				PMD_DRV_LOG(ERR, "the user priority max index is 7");
+				rte_flow_error_set(error, EINVAL,
+					RTE_FLOW_ERROR_TYPE_ACTION,
+					act,
+					"the user priority max index is 7");
 				return -rte_errno;
 			}
 
 			if (conf_info->region[n].hw_flowtype[n] >=
 					I40E_FILTER_PCTYPE_MAX) {
-				PMD_DRV_LOG(ERR, "the hw_flowtype or PCTYPE max index is 63");
-				return -rte_errno;
-			}
-
-			if (rss_info->num < rss->num ||
-				rss_info->queue[0] < rss->queue[0] ||
-				(rss->queue[0] + rss->num >
-					rss_info->num + rss_info->queue[0])) {
 				rte_flow_error_set(error, EINVAL,
 					RTE_FLOW_ERROR_TYPE_ACTION,
 					act,
-					"no valid queues");
+					"the hw_flowtype or PCTYPE max index is 63");
 				return -rte_errno;
 			}
 
@@ -4256,7 +4302,10 @@ i40e_flow_parse_rss_action(struct rte_eth_dev *dev,
 
 			if (i == info->queue_region_number) {
 				if (i > I40E_REGION_MAX_INDEX) {
-					PMD_DRV_LOG(ERR, "the queue region max index is 7");
+					rte_flow_error_set(error, EINVAL,
+						RTE_FLOW_ERROR_TYPE_ACTION,
+						act,
+						"the queue region max index is 7");
 					return -rte_errno;
 				}
 
@@ -4301,6 +4350,9 @@ i40e_flow_parse_rss_action(struct rte_eth_dev *dev,
 		rss_config->queue_region_conf = TRUE;
 	}
 
+	/**
+	 * Return function if this flow is used for queue region configuration
+	 */
 	if (rss_config->queue_region_conf)
 		return 0;
 
@@ -4321,6 +4373,8 @@ i40e_flow_parse_rss_action(struct rte_eth_dev *dev,
 			return -rte_errno;
 		}
 	}
+
+	/* Parse RSS related parameters from configuration */
 	if (rss->rss_conf)
 		rss_config->rss_conf = *rss->rss_conf;
 	else
@@ -4385,14 +4439,15 @@ i40e_config_rss_filter_set(struct rte_eth_dev *dev,
 {
 	struct i40e_pf *pf = I40E_DEV_PRIVATE_TO_PF(dev->data->dev_private);
 	struct i40e_hw *hw = I40E_DEV_PRIVATE_TO_HW(dev->data->dev_private);
+	int ret;
 
 	if (conf->queue_region_conf) {
-		i40e_flush_queue_region_all_conf(dev, hw, pf, 1);
+		ret = i40e_flush_queue_region_all_conf(dev, hw, pf, 1);
 		conf->queue_region_conf = 0;
 	} else {
-		i40e_config_rss_filter(pf, conf, 1);
+		ret = i40e_config_rss_filter(pf, conf, 1);
 	}
-	return 0;
+	return ret;
 }
 
 static int
@@ -4545,6 +4600,8 @@ i40e_flow_create(struct rte_eth_dev *dev,
 	case RTE_ETH_FILTER_HASH:
 		ret = i40e_config_rss_filter_set(dev,
 			    &cons_filter.rss_conf);
+		if (ret)
+			goto free_flow;
 		flow->rule = &pf->rss_info;
 		break;
 	default:

@@ -60,6 +60,13 @@ static void fm10k_set_tx_function(struct rte_eth_dev *dev);
 static int fm10k_check_ftag(struct rte_devargs *devargs);
 static int fm10k_link_update(struct rte_eth_dev *dev, int wait_to_complete);
 
+static void fm10k_dev_infos_get(struct rte_eth_dev *dev,
+				struct rte_eth_dev_info *dev_info);
+static uint64_t fm10k_get_rx_queue_offloads_capa(struct rte_eth_dev *dev);
+static uint64_t fm10k_get_rx_port_offloads_capa(struct rte_eth_dev *dev);
+static uint64_t fm10k_get_tx_queue_offloads_capa(struct rte_eth_dev *dev);
+static uint64_t fm10k_get_tx_port_offloads_capa(struct rte_eth_dev *dev);
+
 struct fm10k_xstats_name_off {
 	char name[RTE_ETH_XSTATS_NAME_SIZE];
 	unsigned offset;
@@ -441,11 +448,29 @@ static int
 fm10k_dev_configure(struct rte_eth_dev *dev)
 {
 	int ret;
+	struct rte_eth_dev_info dev_info;
+	uint64_t rx_offloads = dev->data->dev_conf.rxmode.offloads;
+	uint64_t tx_offloads = dev->data->dev_conf.txmode.offloads;
 
 	PMD_INIT_FUNC_TRACE();
 
-	if (dev->data->dev_conf.rxmode.hw_strip_crc == 0)
+	if ((rx_offloads & DEV_RX_OFFLOAD_CRC_STRIP) == 0)
 		PMD_INIT_LOG(WARNING, "fm10k always strip CRC");
+
+	fm10k_dev_infos_get(dev, &dev_info);
+	if ((rx_offloads & dev_info.rx_offload_capa) != rx_offloads) {
+		PMD_DRV_LOG(ERR, "Some Rx offloads are not supported "
+			    "requested 0x%" PRIx64 " supported 0x%" PRIx64,
+			    rx_offloads, dev_info.rx_offload_capa);
+		return -ENOTSUP;
+	}
+	if ((tx_offloads & dev_info.tx_offload_capa) != tx_offloads) {
+		PMD_DRV_LOG(ERR, "Some Tx offloads are not supported "
+			    "requested 0x%" PRIx64 " supported 0x%" PRIx64,
+			    tx_offloads, dev_info.tx_offload_capa);
+		return -ENOTSUP;
+	}
+
 	/* multipe queue mode checking */
 	ret  = fm10k_check_mq_mode(dev);
 	if (ret != 0) {
@@ -453,6 +478,8 @@ fm10k_dev_configure(struct rte_eth_dev *dev)
 			    ret);
 		return ret;
 	}
+
+	dev->data->scattered_rx = 0;
 
 	return 0;
 }
@@ -756,7 +783,7 @@ fm10k_dev_rx_init(struct rte_eth_dev *dev)
 		/* It adds dual VLAN length for supporting dual VLAN */
 		if ((dev->data->dev_conf.rxmode.max_rx_pkt_len +
 				2 * FM10K_VLAN_TAG_SIZE) > buf_size ||
-			dev->data->dev_conf.rxmode.enable_scatter) {
+			rxq->offloads & DEV_RX_OFFLOAD_SCATTER) {
 			uint32_t reg;
 			dev->data->scattered_rx = 1;
 			reg = FM10K_READ_REG(hw, FM10K_SRRCTL(i));
@@ -1377,7 +1404,6 @@ fm10k_dev_infos_get(struct rte_eth_dev *dev,
 
 	PMD_INIT_FUNC_TRACE();
 
-	dev_info->pci_dev            = pdev;
 	dev_info->min_rx_bufsize     = FM10K_MIN_RX_BUF_SIZE;
 	dev_info->max_rx_pktlen      = FM10K_MAX_PKT_SIZE;
 	dev_info->max_rx_queues      = hw->mac.max_queues;
@@ -1389,17 +1415,12 @@ fm10k_dev_infos_get(struct rte_eth_dev *dev,
 	dev_info->vmdq_queue_base    = 0;
 	dev_info->max_vmdq_pools     = ETH_32_POOLS;
 	dev_info->vmdq_queue_num     = FM10K_MAX_QUEUES_PF;
-	dev_info->rx_offload_capa =
-		DEV_RX_OFFLOAD_VLAN_STRIP |
-		DEV_RX_OFFLOAD_IPV4_CKSUM |
-		DEV_RX_OFFLOAD_UDP_CKSUM  |
-		DEV_RX_OFFLOAD_TCP_CKSUM;
-	dev_info->tx_offload_capa =
-		DEV_TX_OFFLOAD_VLAN_INSERT |
-		DEV_TX_OFFLOAD_IPV4_CKSUM  |
-		DEV_TX_OFFLOAD_UDP_CKSUM   |
-		DEV_TX_OFFLOAD_TCP_CKSUM   |
-		DEV_TX_OFFLOAD_TCP_TSO;
+	dev_info->rx_queue_offload_capa = fm10k_get_rx_queue_offloads_capa(dev);
+	dev_info->rx_offload_capa = fm10k_get_rx_port_offloads_capa(dev) |
+				    dev_info->rx_queue_offload_capa;
+	dev_info->tx_queue_offload_capa = fm10k_get_tx_queue_offloads_capa(dev);
+	dev_info->tx_offload_capa = fm10k_get_tx_port_offloads_capa(dev) |
+				    dev_info->tx_queue_offload_capa;
 
 	dev_info->hash_key_size = FM10K_RSSRK_SIZE * sizeof(uint32_t);
 	dev_info->reta_size = FM10K_MAX_RSS_INDICES;
@@ -1412,6 +1433,7 @@ fm10k_dev_infos_get(struct rte_eth_dev *dev,
 		},
 		.rx_free_thresh = FM10K_RX_FREE_THRESH_DEFAULT(0),
 		.rx_drop_en = 0,
+		.offloads = 0,
 	};
 
 	dev_info->default_txconf = (struct rte_eth_txconf) {
@@ -1423,6 +1445,7 @@ fm10k_dev_infos_get(struct rte_eth_dev *dev,
 		.tx_free_thresh = FM10K_TX_FREE_THRESH_DEFAULT(0),
 		.tx_rs_thresh = FM10K_TX_RS_THRESH_DEFAULT(0),
 		.txq_flags = FM10K_SIMPLE_TX_FLAG,
+		.offloads = 0,
 	};
 
 	dev_info->rx_desc_lim = (struct rte_eth_desc_lim) {
@@ -1571,19 +1594,22 @@ static int
 fm10k_vlan_offload_set(struct rte_eth_dev *dev, int mask)
 {
 	if (mask & ETH_VLAN_STRIP_MASK) {
-		if (!dev->data->dev_conf.rxmode.hw_vlan_strip)
+		if (!(dev->data->dev_conf.rxmode.offloads &
+			DEV_RX_OFFLOAD_VLAN_STRIP))
 			PMD_INIT_LOG(ERR, "VLAN stripping is "
 					"always on in fm10k");
 	}
 
 	if (mask & ETH_VLAN_EXTEND_MASK) {
-		if (dev->data->dev_conf.rxmode.hw_vlan_extend)
+		if (dev->data->dev_conf.rxmode.offloads &
+			DEV_RX_OFFLOAD_VLAN_EXTEND)
 			PMD_INIT_LOG(ERR, "VLAN QinQ is not "
 					"supported in fm10k");
 	}
 
 	if (mask & ETH_VLAN_FILTER_MASK) {
-		if (!dev->data->dev_conf.rxmode.hw_vlan_filter)
+		if (!(dev->data->dev_conf.rxmode.offloads &
+			DEV_RX_OFFLOAD_VLAN_FILTER))
 			PMD_INIT_LOG(ERR, "VLAN filter is always on in fm10k");
 	}
 
@@ -1781,6 +1807,43 @@ mempool_element_size_valid(struct rte_mempool *mp)
 	return 1;
 }
 
+static uint64_t fm10k_get_rx_queue_offloads_capa(struct rte_eth_dev *dev)
+{
+	RTE_SET_USED(dev);
+
+	return (uint64_t)(DEV_RX_OFFLOAD_SCATTER);
+}
+
+static uint64_t fm10k_get_rx_port_offloads_capa(struct rte_eth_dev *dev)
+{
+	RTE_SET_USED(dev);
+
+	return  (uint64_t)(DEV_RX_OFFLOAD_VLAN_STRIP  |
+			   DEV_RX_OFFLOAD_VLAN_FILTER |
+			   DEV_RX_OFFLOAD_IPV4_CKSUM  |
+			   DEV_RX_OFFLOAD_UDP_CKSUM   |
+			   DEV_RX_OFFLOAD_TCP_CKSUM   |
+			   DEV_RX_OFFLOAD_JUMBO_FRAME |
+			   DEV_RX_OFFLOAD_CRC_STRIP   |
+			   DEV_RX_OFFLOAD_HEADER_SPLIT);
+}
+
+static int
+fm10k_check_rx_queue_offloads(struct rte_eth_dev *dev, uint64_t requested)
+{
+	uint64_t port_offloads = dev->data->dev_conf.rxmode.offloads;
+	uint64_t queue_supported = fm10k_get_rx_queue_offloads_capa(dev);
+	uint64_t port_supported = fm10k_get_rx_port_offloads_capa(dev);
+
+	if ((requested & (queue_supported | port_supported)) != requested)
+		return 0;
+
+	if ((port_offloads ^ requested) & port_supported)
+		return 0;
+
+	return 1;
+}
+
 static int
 fm10k_rx_queue_setup(struct rte_eth_dev *dev, uint16_t queue_id,
 	uint16_t nb_desc, unsigned int socket_id,
@@ -1793,6 +1856,18 @@ fm10k_rx_queue_setup(struct rte_eth_dev *dev, uint16_t queue_id,
 	const struct rte_memzone *mz;
 
 	PMD_INIT_FUNC_TRACE();
+
+	if (!fm10k_check_rx_queue_offloads(dev, conf->offloads)) {
+		PMD_INIT_LOG(ERR, "%p: Rx queue offloads 0x%" PRIx64
+			" don't match port offloads 0x%" PRIx64
+			" or supported port offloads 0x%" PRIx64
+			" or supported queue offloads 0x%" PRIx64,
+			(void *)dev, conf->offloads,
+			dev->data->dev_conf.rxmode.offloads,
+			fm10k_get_rx_port_offloads_capa(dev),
+			fm10k_get_rx_queue_offloads_capa(dev));
+		return -ENOTSUP;
+	}
 
 	/* make sure the mempool element size can account for alignment. */
 	if (!mempool_element_size_valid(mp)) {
@@ -1838,6 +1913,7 @@ fm10k_rx_queue_setup(struct rte_eth_dev *dev, uint16_t queue_id,
 	q->queue_id = queue_id;
 	q->tail_ptr = (volatile uint32_t *)
 		&((uint32_t *)hw->hw_addr)[FM10K_RDT(queue_id)];
+	q->offloads = conf->offloads;
 	if (handle_rxconf(q, conf))
 		return -EINVAL;
 
@@ -1947,6 +2023,40 @@ handle_txconf(struct fm10k_tx_queue *q, const struct rte_eth_txconf *conf)
 	return 0;
 }
 
+static uint64_t fm10k_get_tx_queue_offloads_capa(struct rte_eth_dev *dev)
+{
+	RTE_SET_USED(dev);
+
+	return 0;
+}
+
+static uint64_t fm10k_get_tx_port_offloads_capa(struct rte_eth_dev *dev)
+{
+	RTE_SET_USED(dev);
+
+	return (uint64_t)(DEV_TX_OFFLOAD_VLAN_INSERT |
+			  DEV_TX_OFFLOAD_IPV4_CKSUM  |
+			  DEV_TX_OFFLOAD_UDP_CKSUM   |
+			  DEV_TX_OFFLOAD_TCP_CKSUM   |
+			  DEV_TX_OFFLOAD_TCP_TSO);
+}
+
+static int
+fm10k_check_tx_queue_offloads(struct rte_eth_dev *dev, uint64_t requested)
+{
+	uint64_t port_offloads = dev->data->dev_conf.txmode.offloads;
+	uint64_t queue_supported = fm10k_get_tx_queue_offloads_capa(dev);
+	uint64_t port_supported = fm10k_get_tx_port_offloads_capa(dev);
+
+	if ((requested & (queue_supported | port_supported)) != requested)
+		return 0;
+
+	if ((port_offloads ^ requested) & port_supported)
+		return 0;
+
+	return 1;
+}
+
 static int
 fm10k_tx_queue_setup(struct rte_eth_dev *dev, uint16_t queue_id,
 	uint16_t nb_desc, unsigned int socket_id,
@@ -1957,6 +2067,18 @@ fm10k_tx_queue_setup(struct rte_eth_dev *dev, uint16_t queue_id,
 	const struct rte_memzone *mz;
 
 	PMD_INIT_FUNC_TRACE();
+
+	if (!fm10k_check_tx_queue_offloads(dev, conf->offloads)) {
+		PMD_INIT_LOG(ERR, "%p: Tx queue offloads 0x%" PRIx64
+			" don't match port offloads 0x%" PRIx64
+			" or supported port offloads 0x%" PRIx64
+			" or supported queue offloads 0x%" PRIx64,
+			(void *)dev, conf->offloads,
+			dev->data->dev_conf.txmode.offloads,
+			fm10k_get_tx_port_offloads_capa(dev),
+			fm10k_get_tx_queue_offloads_capa(dev));
+		return -ENOTSUP;
+	}
 
 	/* make sure a valid number of descriptors have been requested */
 	if (check_nb_desc(FM10K_MIN_TX_DESC, FM10K_MAX_TX_DESC,
@@ -1995,6 +2117,7 @@ fm10k_tx_queue_setup(struct rte_eth_dev *dev, uint16_t queue_id,
 	q->port_id = dev->data->port_id;
 	q->queue_id = queue_id;
 	q->txq_flags = conf->txq_flags;
+	q->offloads = conf->offloads;
 	q->ops = &def_txq_ops;
 	q->tail_ptr = (volatile uint32_t *)
 		&((uint32_t *)hw->hw_addr)[FM10K_TDT(queue_id)];

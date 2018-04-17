@@ -192,6 +192,22 @@ static void __attribute__((constructor(prio), used)) func(void)
 #define RTE_ALIGN(val, align) RTE_ALIGN_CEIL(val, align)
 
 /**
+ * Macro to align a value to the multiple of given value. The resultant
+ * value will be of the same type as the first parameter and will be no lower
+ * than the first parameter.
+ */
+#define RTE_ALIGN_MUL_CEIL(v, mul) \
+	(((v + (typeof(v))(mul) - 1) / ((typeof(v))(mul))) * (typeof(v))(mul))
+
+/**
+ * Macro to align a value to the multiple of given value. The resultant
+ * value will be of the same type as the first parameter and will be no higher
+ * than the first parameter.
+ */
+#define RTE_ALIGN_MUL_FLOOR(v, mul) \
+	((v / ((typeof(v))(mul))) * (typeof(v))(mul))
+
+/**
  * Checks if a pointer is aligned to a given power-of-two value
  *
  * @param ptr
@@ -224,6 +240,51 @@ extern int RTE_BUILD_BUG_ON_detected_error;
 } while(0)
 #endif
 
+/**
+ * Combines 32b inputs most significant set bits into the least
+ * significant bits to construct a value with the same MSBs as x
+ * but all 1's under it.
+ *
+ * @param x
+ *    The integer whose MSBs need to be combined with its LSBs
+ * @return
+ *    The combined value.
+ */
+static inline uint32_t
+rte_combine32ms1b(register uint32_t x)
+{
+	x |= x >> 1;
+	x |= x >> 2;
+	x |= x >> 4;
+	x |= x >> 8;
+	x |= x >> 16;
+
+	return x;
+}
+
+/**
+ * Combines 64b inputs most significant set bits into the least
+ * significant bits to construct a value with the same MSBs as x
+ * but all 1's under it.
+ *
+ * @param v
+ *    The integer whose MSBs need to be combined with its LSBs
+ * @return
+ *    The combined value.
+ */
+static inline uint64_t
+rte_combine64ms1b(register uint64_t v)
+{
+	v |= v >> 1;
+	v |= v >> 2;
+	v |= v >> 4;
+	v |= v >> 8;
+	v |= v >> 16;
+	v |= v >> 32;
+
+	return v;
+}
+
 /*********** Macros to work with powers of 2 ********/
 
 /**
@@ -251,13 +312,26 @@ static inline uint32_t
 rte_align32pow2(uint32_t x)
 {
 	x--;
-	x |= x >> 1;
-	x |= x >> 2;
-	x |= x >> 4;
-	x |= x >> 8;
-	x |= x >> 16;
+	x = rte_combine32ms1b(x);
 
 	return x + 1;
+}
+
+/**
+ * Aligns input parameter to the previous power of 2
+ *
+ * @param x
+ *   The integer value to algin
+ *
+ * @return
+ *   Input parameter aligned to the previous power of 2
+ */
+static inline uint32_t
+rte_align32prevpow2(uint32_t x)
+{
+	x = rte_combine32ms1b(x);
+
+	return x - (x >> 1);
 }
 
 /**
@@ -273,14 +347,26 @@ static inline uint64_t
 rte_align64pow2(uint64_t v)
 {
 	v--;
-	v |= v >> 1;
-	v |= v >> 2;
-	v |= v >> 4;
-	v |= v >> 8;
-	v |= v >> 16;
-	v |= v >> 32;
+	v = rte_combine64ms1b(v);
 
 	return v + 1;
+}
+
+/**
+ * Aligns 64b input parameter to the previous power of 2
+ *
+ * @param v
+ *   The 64b value to align
+ *
+ * @return
+ *   Input parameter aligned to the previous power of 2
+ */
+static inline uint64_t
+rte_align64prevpow2(uint64_t v)
+{
+	v = rte_combine64ms1b(v);
+
+	return v - (v >> 1);
 }
 
 /*********** Macros for calculating min and max **********/

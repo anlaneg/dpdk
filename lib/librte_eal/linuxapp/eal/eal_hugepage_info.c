@@ -14,7 +14,9 @@
 #include <stdarg.h>
 #include <unistd.h>
 #include <errno.h>
+#include <sys/mman.h>
 #include <sys/queue.h>
+#include <sys/stat.h>
 
 #include <rte_memory.h>
 #include <rte_eal.h>
@@ -30,6 +32,40 @@
 #include "eal_filesystem.h"
 
 static const char sys_dir_path[] = "/sys/kernel/mm/hugepages";
+static const char sys_pages_numa_dir_path[] = "/sys/devices/system/node";
+
+/*
+ * Uses mmap to create a shared memory area for storage of data
+ * Used in this file to store the hugepage file map on disk
+ */
+static void *
+map_shared_memory(const char *filename, const size_t mem_size, int flags)
+{
+	void *retval;
+	int fd = open(filename, flags, 0666);
+	if (fd < 0)
+		return NULL;
+	if (ftruncate(fd, mem_size) < 0) {
+		close(fd);
+		return NULL;
+	}
+	retval = mmap(NULL, mem_size, PROT_READ | PROT_WRITE,
+			MAP_SHARED, fd, 0);
+	close(fd);
+	return retval;
+}
+
+static void *
+open_shared_memory(const char *filename, const size_t mem_size)
+{
+	return map_shared_memory(filename, mem_size, O_RDWR);
+}
+
+static void *
+create_shared_memory(const char *filename, const size_t mem_size)
+{
+	return map_shared_memory(filename, mem_size, O_RDWR | O_CREAT);
+}
 
 /* this function is only called from eal_hugepage_info_init which itself
  * is only called from a primary process */
@@ -67,6 +103,45 @@ get_num_hugepages(const char *subdir)
 
 	/* we want to return a uint32_t and more than this looks suspicious
 	 * anyway ... */
+	if (num_pages > UINT32_MAX)
+		num_pages = UINT32_MAX;
+
+	return num_pages;
+}
+
+static uint32_t
+get_num_hugepages_on_node(const char *subdir, unsigned int socket)
+{
+	char path[PATH_MAX], socketpath[PATH_MAX];
+	DIR *socketdir;
+	unsigned long num_pages = 0;
+	const char *nr_hp_file = "free_hugepages";
+
+	snprintf(socketpath, sizeof(socketpath), "%s/node%u/hugepages",
+		sys_pages_numa_dir_path, socket);
+
+	socketdir = opendir(socketpath);
+	if (socketdir) {
+		/* Keep calm and carry on */
+		closedir(socketdir);
+	} else {
+		/* Can't find socket dir, so ignore it */
+		return 0;
+	}
+
+	snprintf(path, sizeof(path), "%s/%s/%s",
+			socketpath, subdir, nr_hp_file);
+	if (eal_parse_sysfs_value(path, &num_pages) < 0)
+		return 0;
+
+	if (num_pages == 0)
+		RTE_LOG(WARNING, EAL, "No free hugepages reported in %s\n",
+				subdir);
+
+	/*
+	 * we want to return a uint32_t and more than this looks suspicious
+	 * anyway ...
+	 */
 	if (num_pages > UINT32_MAX)
 		num_pages = UINT32_MAX;
 
@@ -174,6 +249,18 @@ get_hugepage_dir(uint64_t hugepage_sz)
 }
 
 /*
+ * uses fstat to report the size of a file on disk
+ */
+static off_t
+get_file_size(int fd)
+{
+	struct stat st;
+	if (fstat(fd, &st) < 0)
+		return 0;
+	return st.st_size;
+}
+
+/*
  * Clear the hugepage directory of whatever hugepage files
  * there are. Checks if the file is locked (i.e.
  * if it's in use by another DPDK process).
@@ -204,6 +291,8 @@ clear_hugedir(const char * hugedir)
 	}
 
 	while(dirent != NULL){
+		struct flock lck = {0};
+
 		/* skip files that don't match the hugepage pattern */
 		if (fnmatch(filter, dirent->d_name, 0) > 0) {
 			dirent = readdir(dir);
@@ -221,12 +310,17 @@ clear_hugedir(const char * hugedir)
 
 		/* non-blocking lock */
 		//尝试锁住此fd
-		lck_result = flock(fd, LOCK_EX | LOCK_NB);
+		lck.l_type = F_RDLCK;
+		lck.l_whence = SEEK_SET;
+		lck.l_start = 0;
+		lck.l_len = get_file_size(fd);
+
+		lck_result = fcntl(fd, F_SETLK, &lck);
 
 		/* if lock succeeds, unlock and remove the file */
 		if (lck_result != -1) {
-			//如果锁成功，则移除此file
-			flock(fd, LOCK_UN);
+			lck.l_type = F_UNLCK;
+			fcntl(fd, F_SETLK, &lck);
 			unlinkat(dir_fd, dirent->d_name, 0);
 		}
 		//如果没有锁成功，则不处理
@@ -256,17 +350,11 @@ compare_hpi(const void *a, const void *b)
 	return hpi_b->hugepage_sz - hpi_a->hugepage_sz;
 }
 
-/*
- * when we initialize the hugepage info, everything goes
- * to socket 0 by default. it will later get sorted by memory
- * initialization procedure.
- */
-int
-eal_hugepage_info_init(void)
-{
-	const char dirent_start_text[] = "hugepages-";
+static int
+hugepage_info_init(void)
+{	const char dirent_start_text[] = "hugepages-";
 	const size_t dirent_start_len = sizeof(dirent_start_text) - 1;
-	unsigned i, num_sizes = 0;
+	unsigned int i, total_pages, num_sizes = 0;
 	DIR *dir;
 	struct dirent *dirent;
 
@@ -289,6 +377,7 @@ drwxr-xr-x 2 root root 0 1月  16 15:15 hugepages-2048kB
 
 	for (dirent = readdir(dir); dirent != NULL; dirent = readdir(dir)) {
 		struct hugepage_info *hpi;
+		const char *hugedir;
 
 		//如果不以$dirent_start_text开头，则忽略
 		if (strncmp(dirent->d_name, dirent_start_text,
@@ -303,11 +392,11 @@ drwxr-xr-x 2 root root 0 1月  16 15:15 hugepages-2048kB
 		hpi = &internal_config.hugepage_info[num_sizes];
 		hpi->hugepage_sz =
 			rte_str_to_size(&dirent->d_name[dirent_start_len]);//页大小
-		hpi->hugedir = get_hugepage_dir(hpi->hugepage_sz);//获取页大小为$hugepage_sz的挂载点
+		hugedir = get_hugepage_dir(hpi->hugepage_sz);//获取页大小为$hugepage_sz的挂载点
 
 		/* first, check if we have a mountpoint */
 		//检查此页大小是否有挂载点
-		if (hpi->hugedir == NULL) {
+		if (hugedir == NULL) {
 			uint32_t num_pages;
 
 			//告警，有reserved，但没有挂载
@@ -320,6 +409,7 @@ drwxr-xr-x 2 root root 0 1月  16 15:15 hugepages-2048kB
 					num_pages, hpi->hugepage_sz);
 			continue;
 		}
+		snprintf(hpi->hugedir, sizeof(hpi->hugedir), "%s", hugedir);
 
 		//锁住此大页目录，排除其它进程
 		/* try to obtain a writelock */
@@ -336,10 +426,29 @@ drwxr-xr-x 2 root root 0 1月  16 15:15 hugepages-2048kB
 		if (clear_hugedir(hpi->hugedir) == -1)
 			break;
 
-		/* for now, put all pages into socket 0,
-		 * later they will be sorted */
-		//获取此目录空闲的页大小（注意仅填充到socket 0)
-		hpi->num_pages[0] = get_num_hugepages(dirent->d_name);
+		/*
+		 * first, try to put all hugepages into relevant sockets, but
+		 * if first attempts fails, fall back to collecting all pages
+		 * in one socket and sorting them later
+		 */
+		total_pages = 0;
+		/* we also don't want to do this for legacy init */
+		if (!internal_config.legacy_mem)
+			for (i = 0; i < rte_socket_count(); i++) {
+				int socket = rte_socket_id_by_idx(i);
+				unsigned int num_pages =
+						get_num_hugepages_on_node(
+							dirent->d_name, socket);
+				hpi->num_pages[socket] = num_pages;
+				total_pages += num_pages;
+			}
+		/*
+		 * we failed to sort memory from the get go, so fall
+		 * back to old way
+		 */
+		if (total_pages == 0)
+			//获取此目录空闲的页大小（注意仅填充到socket 0)
+			hpi->num_pages[0] = get_num_hugepages(dirent->d_name);
 
 #ifndef RTE_ARCH_64
 		/* for 32-bit systems, limit number of hugepages to
@@ -366,11 +475,79 @@ drwxr-xr-x 2 root root 0 1月  16 15:15 hugepages-2048kB
 
 	/* now we have all info, check we have at least one valid size */
 	//至少要有一个有效的hugepage_info
-	for (i = 0; i < num_sizes; i++)
-		if (internal_config.hugepage_info[i].hugedir != NULL &&
-		    internal_config.hugepage_info[i].num_pages[0] > 0)
+	for (i = 0; i < num_sizes; i++) {
+		/* pages may no longer all be on socket 0, so check all */
+		unsigned int j, num_pages = 0;
+		struct hugepage_info *hpi = &internal_config.hugepage_info[i];
+
+		for (j = 0; j < RTE_MAX_NUMA_NODES; j++)
+			num_pages += hpi->num_pages[j];
+		if (strnlen(hpi->hugedir, sizeof(hpi->hugedir)) != 0 &&
+				num_pages > 0)
 			return 0;
+	}
 
 	/* no valid hugepage mounts available, return error */
 	return -1;
+}
+
+/*
+ * when we initialize the hugepage info, everything goes
+ * to socket 0 by default. it will later get sorted by memory
+ * initialization procedure.
+ */
+int
+eal_hugepage_info_init(void)
+{
+	struct hugepage_info *hpi, *tmp_hpi;
+	unsigned int i;
+
+	if (hugepage_info_init() < 0)
+		return -1;
+
+	hpi = &internal_config.hugepage_info[0];
+
+	tmp_hpi = create_shared_memory(eal_hugepage_info_path(),
+			sizeof(internal_config.hugepage_info));
+	if (tmp_hpi == NULL) {
+		RTE_LOG(ERR, EAL, "Failed to create shared memory!\n");
+		return -1;
+	}
+
+	memcpy(tmp_hpi, hpi, sizeof(internal_config.hugepage_info));
+
+	/* we've copied file descriptors along with everything else, but they
+	 * will be invalid in secondary process, so overwrite them
+	 */
+	for (i = 0; i < RTE_DIM(internal_config.hugepage_info); i++) {
+		struct hugepage_info *tmp = &tmp_hpi[i];
+		tmp->lock_descriptor = -1;
+	}
+
+	if (munmap(tmp_hpi, sizeof(internal_config.hugepage_info)) < 0) {
+		RTE_LOG(ERR, EAL, "Failed to unmap shared memory!\n");
+		return -1;
+	}
+	return 0;
+}
+
+int eal_hugepage_info_read(void)
+{
+	struct hugepage_info *hpi = &internal_config.hugepage_info[0];
+	struct hugepage_info *tmp_hpi;
+
+	tmp_hpi = open_shared_memory(eal_hugepage_info_path(),
+				  sizeof(internal_config.hugepage_info));
+	if (tmp_hpi == NULL) {
+		RTE_LOG(ERR, EAL, "Failed to open shared memory!\n");
+		return -1;
+	}
+
+	memcpy(hpi, tmp_hpi, sizeof(internal_config.hugepage_info));
+
+	if (munmap(tmp_hpi, sizeof(internal_config.hugepage_info)) < 0) {
+		RTE_LOG(ERR, EAL, "Failed to unmap shared memory!\n");
+		return -1;
+	}
+	return 0;
 }

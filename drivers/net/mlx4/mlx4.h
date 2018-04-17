@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: BSD-3-Clause
  * Copyright 2012 6WIND S.A.
- * Copyright 2012 Mellanox
+ * Copyright 2012 Mellanox Technologies, Ltd
  */
 
 #ifndef RTE_PMD_MLX4_H_
@@ -105,6 +105,7 @@ struct priv {
 	uint32_t isolated:1; /**< Toggle isolated mode. */
 	uint32_t hw_csum:1; /**< Checksum offload is supported. */
 	uint32_t hw_csum_l2tun:1; /**< Checksum support for L2 tunnels. */
+	uint32_t hw_fcs_strip:1; /**< FCS stripping toggling is supported. */
 	uint64_t hw_rss_sup; /**< Supported RSS hash fields (Verbs format). */
 	struct rte_intr_handle intr_handle; /**< Port interrupt handle. */
 	struct mlx4_drop *drop; /**< Shared resources for drop flow rules. */
@@ -131,7 +132,7 @@ void mlx4_allmulticast_disable(struct rte_eth_dev *dev);
 void mlx4_mac_addr_remove(struct rte_eth_dev *dev, uint32_t index);
 int mlx4_mac_addr_add(struct rte_eth_dev *dev, struct ether_addr *mac_addr,
 		      uint32_t index, uint32_t vmdq);
-void mlx4_mac_addr_set(struct rte_eth_dev *dev, struct ether_addr *mac_addr);
+int mlx4_mac_addr_set(struct rte_eth_dev *dev, struct ether_addr *mac_addr);
 int mlx4_vlan_filter_set(struct rte_eth_dev *dev, uint16_t vlan_id, int on);
 int mlx4_stats_get(struct rte_eth_dev *dev, struct rte_eth_stats *stats);
 void mlx4_stats_reset(struct rte_eth_dev *dev);

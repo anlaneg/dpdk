@@ -1,11 +1,17 @@
 /* SPDX-License-Identifier: BSD-3-Clause
  * Copyright 2018 6WIND S.A.
- * Copyright 2018 Mellanox Technologies, Ltd.
+ * Copyright 2018 Mellanox Technologies, Ltd
  */
 
 #include <errno.h>
 #include <stddef.h>
 #include <stdint.h>
+
+/*
+ * Not needed by this file; included to work around the lack of off_t
+ * definition for mlx5dv.h with unpatched rdma-core versions.
+ */
+#include <sys/types.h>
 
 /* Verbs headers do not support -pedantic. */
 #ifdef PEDANTIC

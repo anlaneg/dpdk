@@ -121,7 +121,9 @@ struct pmd_internal {
 	char *dev_name;
 	char *iface_name;
 	uint16_t max_queues;
+	uint16_t vid;
 	rte_atomic32_t started;
+	uint8_t vlan_strip;
 };
 
 struct internal_list {
@@ -425,6 +427,12 @@ eth_vhost_rx(void *q, struct rte_mbuf **bufs, uint16_t nb_bufs)
 
 	for (i = 0; likely(i < nb_rx); i++) {
 		bufs[i]->port = r->port;
+		bufs[i]->ol_flags = 0;
+		bufs[i]->vlan_tci = 0;
+
+		if (r->internal->vlan_strip)
+			rte_vlan_strip(bufs[i]);
+
 		r->stats.bytes += bufs[i]->pkt_len;
 	}
 
@@ -441,7 +449,7 @@ eth_vhost_tx(void *q, struct rte_mbuf **bufs, uint16_t nb_bufs)
 {
 	struct vhost_queue *r = q;
 	uint16_t i, nb_tx = 0;
-	uint16_t nb_send = nb_bufs;
+	uint16_t nb_send = 0;
 
 	if (unlikely(rte_atomic32_read(&r->allow_queuing) == 0))
 		return 0;
@@ -450,6 +458,22 @@ eth_vhost_tx(void *q, struct rte_mbuf **bufs, uint16_t nb_bufs)
 
 	if (unlikely(rte_atomic32_read(&r->allow_queuing) == 0))
 		goto out;
+
+	for (i = 0; i < nb_bufs; i++) {
+		struct rte_mbuf *m = bufs[i];
+
+		/* Do VLAN tag insertion */
+		if (m->ol_flags & PKT_TX_VLAN_PKT) {
+			int error = rte_vlan_insert(&m);
+			if (unlikely(error)) {
+				rte_pktmbuf_free(m);
+				continue;
+			}
+		}
+
+		bufs[nb_send] = m;
+		++nb_send;
+	}
 
 	/* Enqueue packets to guest RX queue */
 	while (nb_send) {
@@ -492,6 +516,16 @@ out:
 static int
 eth_dev_configure(struct rte_eth_dev *dev __rte_unused)
 {
+	struct pmd_internal *internal = dev->data->dev_private;
+	const struct rte_eth_rxmode *rxmode = &dev->data->dev_conf.rxmode;
+
+	internal->vlan_strip = rxmode->hw_vlan_strip;
+
+	if (rxmode->hw_vlan_filter)
+		RTE_LOG(WARNING, PMD,
+			"vhost(%s): vlan filtering not available\n",
+			internal->dev_name);
+
 	return 0;
 }
 
@@ -523,6 +557,136 @@ find_internal_resource(char *ifname)
 	return list;
 }
 
+static int
+eth_rxq_intr_enable(struct rte_eth_dev *dev, uint16_t qid)
+{
+	struct rte_vhost_vring vring;
+	struct vhost_queue *vq;
+	int ret = 0;
+
+	vq = dev->data->rx_queues[qid];
+	if (!vq) {
+		RTE_LOG(ERR, PMD, "rxq%d is not setup yet\n", qid);
+		return -1;
+	}
+
+	ret = rte_vhost_get_vhost_vring(vq->vid, (qid << 1) + 1, &vring);
+	if (ret < 0) {
+		RTE_LOG(ERR, PMD, "Failed to get rxq%d's vring\n", qid);
+		return ret;
+	}
+	RTE_LOG(INFO, PMD, "Enable interrupt for rxq%d\n", qid);
+	rte_vhost_enable_guest_notification(vq->vid, (qid << 1) + 1, 1);
+	rte_wmb();
+
+	return ret;
+}
+
+static int
+eth_rxq_intr_disable(struct rte_eth_dev *dev, uint16_t qid)
+{
+	struct rte_vhost_vring vring;
+	struct vhost_queue *vq;
+	int ret = 0;
+
+	vq = dev->data->rx_queues[qid];
+	if (!vq) {
+		RTE_LOG(ERR, PMD, "rxq%d is not setup yet\n", qid);
+		return -1;
+	}
+
+	ret = rte_vhost_get_vhost_vring(vq->vid, (qid << 1) + 1, &vring);
+	if (ret < 0) {
+		RTE_LOG(ERR, PMD, "Failed to get rxq%d's vring", qid);
+		return ret;
+	}
+	RTE_LOG(INFO, PMD, "Disable interrupt for rxq%d\n", qid);
+	rte_vhost_enable_guest_notification(vq->vid, (qid << 1) + 1, 0);
+	rte_wmb();
+
+	return 0;
+}
+
+static void
+eth_vhost_uninstall_intr(struct rte_eth_dev *dev)
+{
+	struct rte_intr_handle *intr_handle = dev->intr_handle;
+
+	if (intr_handle) {
+		if (intr_handle->intr_vec)
+			free(intr_handle->intr_vec);
+		free(intr_handle);
+	}
+
+	dev->intr_handle = NULL;
+}
+
+static int
+eth_vhost_install_intr(struct rte_eth_dev *dev)
+{
+	struct rte_vhost_vring vring;
+	struct vhost_queue *vq;
+	int count = 0;
+	int nb_rxq = dev->data->nb_rx_queues;
+	int i;
+	int ret;
+
+	/* uninstall firstly if we are reconnecting */
+	if (dev->intr_handle)
+		eth_vhost_uninstall_intr(dev);
+
+	dev->intr_handle = malloc(sizeof(*dev->intr_handle));
+	if (!dev->intr_handle) {
+		RTE_LOG(ERR, PMD, "Fail to allocate intr_handle\n");
+		return -ENOMEM;
+	}
+	memset(dev->intr_handle, 0, sizeof(*dev->intr_handle));
+
+	dev->intr_handle->efd_counter_size = sizeof(uint64_t);
+
+	dev->intr_handle->intr_vec =
+		malloc(nb_rxq * sizeof(dev->intr_handle->intr_vec[0]));
+
+	if (!dev->intr_handle->intr_vec) {
+		RTE_LOG(ERR, PMD,
+			"Failed to allocate memory for interrupt vector\n");
+		free(dev->intr_handle);
+		return -ENOMEM;
+	}
+
+	RTE_LOG(INFO, PMD, "Prepare intr vec\n");
+	for (i = 0; i < nb_rxq; i++) {
+		vq = dev->data->rx_queues[i];
+		if (!vq) {
+			RTE_LOG(INFO, PMD, "rxq-%d not setup yet, skip!\n", i);
+			continue;
+		}
+
+		ret = rte_vhost_get_vhost_vring(vq->vid, (i << 1) + 1, &vring);
+		if (ret < 0) {
+			RTE_LOG(INFO, PMD,
+				"Failed to get rxq-%d's vring, skip!\n", i);
+			continue;
+		}
+
+		if (vring.kickfd < 0) {
+			RTE_LOG(INFO, PMD,
+				"rxq-%d's kickfd is invalid, skip!\n", i);
+			continue;
+		}
+		dev->intr_handle->intr_vec[i] = RTE_INTR_VEC_RXTX_OFFSET + i;
+		dev->intr_handle->efds[i] = vring.kickfd;
+		count++;
+		RTE_LOG(INFO, PMD, "Installed intr vec for rxq-%d\n", i);
+	}
+
+	dev->intr_handle->nb_efd = count;
+	dev->intr_handle->max_intr = count + 1;
+	dev->intr_handle->type = RTE_INTR_HANDLE_VDEV;
+
+	return 0;
+}
+
 static void
 update_queuing_status(struct rte_eth_dev *dev)
 {
@@ -530,6 +694,9 @@ update_queuing_status(struct rte_eth_dev *dev)
 	struct vhost_queue *vq;
 	unsigned int i;
 	int allow_queuing = 1;
+
+	if (!dev->data->rx_queues || !dev->data->tx_queues)
+		return;
 
 	if (rte_atomic32_read(&internal->started) == 0 ||
 	    rte_atomic32_read(&internal->dev_attached) == 0)
@@ -555,13 +722,37 @@ update_queuing_status(struct rte_eth_dev *dev)
 	}
 }
 
+static void
+queue_setup(struct rte_eth_dev *eth_dev, struct pmd_internal *internal)
+{
+	struct vhost_queue *vq;
+	int i;
+
+	for (i = 0; i < eth_dev->data->nb_rx_queues; i++) {
+		vq = eth_dev->data->rx_queues[i];
+		if (!vq)
+			continue;
+		vq->vid = internal->vid;
+		vq->internal = internal;
+		vq->port = eth_dev->data->port_id;
+	}
+	for (i = 0; i < eth_dev->data->nb_tx_queues; i++) {
+		vq = eth_dev->data->tx_queues[i];
+		if (!vq)
+			continue;
+		vq->vid = internal->vid;
+		vq->internal = internal;
+		vq->port = eth_dev->data->port_id;
+	}
+}
+
 static int
 new_device(int vid)
 {
 	struct rte_eth_dev *eth_dev;
 	struct internal_list *list;
 	struct pmd_internal *internal;
-	struct vhost_queue *vq;
+	struct rte_eth_conf *dev_conf;
 	unsigned i;
 	char ifname[PATH_MAX];
 #ifdef RTE_LIBRTE_VHOST_NUMA
@@ -577,6 +768,7 @@ new_device(int vid)
 
 	eth_dev = list->eth_dev;
 	internal = eth_dev->data->dev_private;
+	dev_conf = &eth_dev->data->dev_conf;
 
 #ifdef RTE_LIBRTE_VHOST_NUMA
 	newnode = rte_vhost_get_numa_node(vid);
@@ -584,21 +776,19 @@ new_device(int vid)
 		eth_dev->data->numa_node = newnode;
 #endif
 
-	for (i = 0; i < eth_dev->data->nb_rx_queues; i++) {
-		vq = eth_dev->data->rx_queues[i];
-		if (vq == NULL)
-			continue;
-		vq->vid = vid;
-		vq->internal = internal;
-		vq->port = eth_dev->data->port_id;
-	}
-	for (i = 0; i < eth_dev->data->nb_tx_queues; i++) {
-		vq = eth_dev->data->tx_queues[i];
-		if (vq == NULL)
-			continue;
-		vq->vid = vid;
-		vq->internal = internal;
-		vq->port = eth_dev->data->port_id;
+	internal->vid = vid;
+	if (rte_atomic32_read(&internal->started) == 1) {
+		queue_setup(eth_dev, internal);
+
+		if (dev_conf->intr_conf.rxq) {
+			if (eth_vhost_install_intr(eth_dev) < 0) {
+				RTE_LOG(INFO, PMD,
+					"Failed to install interrupt handler.");
+					return -1;
+			}
+		}
+	} else {
+		RTE_LOG(INFO, PMD, "RX/TX queues not exist yet\n");
 	}
 
 	for (i = 0; i < rte_vhost_get_vring_num(vid); i++)
@@ -643,17 +833,19 @@ destroy_device(int vid)
 
 	eth_dev->data->dev_link.link_status = ETH_LINK_DOWN;
 
-	for (i = 0; i < eth_dev->data->nb_rx_queues; i++) {
-		vq = eth_dev->data->rx_queues[i];
-		if (vq == NULL)
-			continue;
-		vq->vid = -1;
-	}
-	for (i = 0; i < eth_dev->data->nb_tx_queues; i++) {
-		vq = eth_dev->data->tx_queues[i];
-		if (vq == NULL)
-			continue;
-		vq->vid = -1;
+	if (eth_dev->data->rx_queues && eth_dev->data->tx_queues) {
+		for (i = 0; i < eth_dev->data->nb_rx_queues; i++) {
+			vq = eth_dev->data->rx_queues[i];
+			if (!vq)
+				continue;
+			vq->vid = -1;
+		}
+		for (i = 0; i < eth_dev->data->nb_tx_queues; i++) {
+			vq = eth_dev->data->tx_queues[i];
+			if (!vq)
+				continue;
+			vq->vid = -1;
+		}
 	}
 
 	state = vring_states[eth_dev->data->port_id];
@@ -666,6 +858,7 @@ destroy_device(int vid)
 	rte_spinlock_unlock(&state->lock);
 
 	RTE_LOG(INFO, PMD, "Vhost device %d destroyed\n", vid);
+	eth_vhost_uninstall_intr(eth_dev);
 
 	_rte_eth_dev_callback_process(eth_dev, RTE_ETH_EVENT_INTR_LSC, NULL);
 }
@@ -774,12 +967,25 @@ rte_eth_vhost_get_vid_from_port_id(uint16_t port_id)
 }
 
 static int
-eth_dev_start(struct rte_eth_dev *dev)
+eth_dev_start(struct rte_eth_dev *eth_dev)
 {
-	struct pmd_internal *internal = dev->data->dev_private;
+	struct pmd_internal *internal = eth_dev->data->dev_private;
+	struct rte_eth_conf *dev_conf = &eth_dev->data->dev_conf;
+
+	queue_setup(eth_dev, internal);
+
+	if (rte_atomic32_read(&internal->dev_attached) == 1) {
+		if (dev_conf->intr_conf.rxq) {
+			if (eth_vhost_install_intr(eth_dev) < 0) {
+				RTE_LOG(INFO, PMD,
+					"Failed to install interrupt handler.");
+					return -1;
+			}
+		}
+	}
 
 	rte_atomic32_set(&internal->started, 1);
-	update_queuing_status(dev);
+	update_queuing_status(eth_dev);
 
 	return 0;
 }
@@ -817,10 +1023,13 @@ eth_dev_close(struct rte_eth_dev *dev)
 	pthread_mutex_unlock(&internal_list_lock);
 	rte_free(list);
 
-	for (i = 0; i < dev->data->nb_rx_queues; i++)
-		rte_free(dev->data->rx_queues[i]);
-	for (i = 0; i < dev->data->nb_tx_queues; i++)
-		rte_free(dev->data->tx_queues[i]);
+	if (dev->data->rx_queues)
+		for (i = 0; i < dev->data->nb_rx_queues; i++)
+			rte_free(dev->data->rx_queues[i]);
+
+	if (dev->data->tx_queues)
+		for (i = 0; i < dev->data->nb_tx_queues; i++)
+			rte_free(dev->data->tx_queues[i]);
 
 	rte_free(dev->data->mac_addrs);
 	free(internal->dev_name);
@@ -1016,6 +1225,8 @@ static const struct eth_dev_ops ops = {
 	.xstats_reset = vhost_dev_xstats_reset,
 	.xstats_get = vhost_dev_xstats_get,
 	.xstats_get_names = vhost_dev_xstats_get_names,
+	.rx_queue_intr_enable = eth_rxq_intr_enable,
+	.rx_queue_intr_disable = eth_rxq_intr_disable,
 };
 
 static struct rte_vdev_driver pmd_vhost_drv;

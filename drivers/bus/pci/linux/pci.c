@@ -119,25 +119,28 @@ rte_pci_unmap_device(struct rte_pci_device *dev)
 	}
 }
 
-//返回最大的虚拟地址
+//返回虚拟地址尾部
+static int
+find_max_end_va(const struct rte_memseg_list *msl, void *arg)
+{
+	size_t sz = msl->memseg_arr.len * msl->page_sz;
+	void *end_va = RTE_PTR_ADD(msl->base_va, sz);
+	void **max_va = arg;
+
+	if (*max_va < end_va)
+		*max_va = end_va;
+	return 0;
+}
+
 void *
 pci_find_max_end_va(void)
 {
-	const struct rte_memseg *seg = rte_eal_get_physmem_layout();
-	const struct rte_memseg *last = seg;
-	unsigned i = 0;
+	void *va = NULL;
 
-	for (i = 0; i < RTE_MAX_MEMSEG; i++, seg++) {
-		if (seg->addr == NULL)
-			break;
-
-		if (seg->addr > last->addr)
-			last = seg;//选择更大的地址
-
-	}
-	//返回最后端的一个虚拟地址
-	return RTE_PTR_ADD(last->addr, last->len);
+	rte_memseg_list_walk(find_max_end_va, &va);
+	return va;
 }
+
 
 /* parse one line of the "resource" sysfs file (note that the 'line'
  * string is modified)

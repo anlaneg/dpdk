@@ -20,7 +20,6 @@
 #include <rte_debug.h>
 #include <rte_pci.h>
 #include <rte_bus_pci.h>
-#include <rte_atomic.h>
 #include <rte_branch_prediction.h>
 #include <rte_memory.h>
 #include <rte_eal.h>
@@ -228,7 +227,7 @@ static void ixgbe_dev_interrupt_delayed_handler(void *param);
 static int ixgbe_add_rar(struct rte_eth_dev *dev, struct ether_addr *mac_addr,
 			 uint32_t index, uint32_t pool);
 static void ixgbe_remove_rar(struct rte_eth_dev *dev, uint32_t index);
-static void ixgbe_set_default_mac_addr(struct rte_eth_dev *dev,
+static int ixgbe_set_default_mac_addr(struct rte_eth_dev *dev,
 					   struct ether_addr *mac_addr);
 static void ixgbe_dcb_init(struct ixgbe_hw *hw, struct ixgbe_dcb_config *dcb_config);
 static bool is_device_supported(struct rte_eth_dev *dev,
@@ -286,7 +285,7 @@ static int ixgbevf_add_mac_addr(struct rte_eth_dev *dev,
 				struct ether_addr *mac_addr,
 				uint32_t index, uint32_t pool);
 static void ixgbevf_remove_mac_addr(struct rte_eth_dev *dev, uint32_t index);
-static void ixgbevf_set_default_mac_addr(struct rte_eth_dev *dev,
+static int ixgbevf_set_default_mac_addr(struct rte_eth_dev *dev,
 					     struct ether_addr *mac_addr);
 static int ixgbe_syn_filter_get(struct rte_eth_dev *dev,
 			struct rte_eth_syn_filter *filter);
@@ -786,58 +785,6 @@ static const struct rte_ixgbe_xstats_name_off rte_ixgbevf_stats_strings[] = {
 
 #define IXGBEVF_NB_XSTATS (sizeof(rte_ixgbevf_stats_strings) /	\
 		sizeof(rte_ixgbevf_stats_strings[0]))
-
-/**
- * Atomically reads the link status information from global
- * structure rte_eth_dev.
- *
- * @param dev
- *   - Pointer to the structure rte_eth_dev to read from.
- *   - Pointer to the buffer to be saved with the link status.
- *
- * @return
- *   - On success, zero.
- *   - On failure, negative value.
- */
-static inline int
-rte_ixgbe_dev_atomic_read_link_status(struct rte_eth_dev *dev,
-				struct rte_eth_link *link)
-{
-	struct rte_eth_link *dst = link;
-	struct rte_eth_link *src = &(dev->data->dev_link);
-
-	if (rte_atomic64_cmpset((uint64_t *)dst, *(uint64_t *)dst,
-					*(uint64_t *)src) == 0)
-		return -1;
-
-	return 0;
-}
-
-/**
- * Atomically writes the link status information into global
- * structure rte_eth_dev.
- *
- * @param dev
- *   - Pointer to the structure rte_eth_dev to read from.
- *   - Pointer to the buffer to be saved with the link status.
- *
- * @return
- *   - On success, zero.
- *   - On failure, negative value.
- */
-static inline int
-rte_ixgbe_dev_atomic_write_link_status(struct rte_eth_dev *dev,
-				struct rte_eth_link *link)
-{
-	struct rte_eth_link *dst = &(dev->data->dev_link);
-	struct rte_eth_link *src = link;
-
-	if (rte_atomic64_cmpset((uint64_t *)dst, *(uint64_t *)dst,
-					*(uint64_t *)src) == 0)
-		return -1;
-
-	return 0;
-}
 
 /*
  * This function is the same as ixgbe_is_sfp() in base/ixgbe.h.
@@ -1339,6 +1286,8 @@ eth_ixgbe_dev_uninit(struct rte_eth_dev *eth_dev)
 	struct rte_pci_device *pci_dev = RTE_ETH_DEV_TO_PCI(eth_dev);
 	struct rte_intr_handle *intr_handle = &pci_dev->intr_handle;
 	struct ixgbe_hw *hw;
+	int retries = 0;
+	int ret;
 
 	PMD_INIT_FUNC_TRACE();
 
@@ -1359,8 +1308,20 @@ eth_ixgbe_dev_uninit(struct rte_eth_dev *eth_dev)
 
 	/* disable uio intr before callback unregister */
 	rte_intr_disable(intr_handle);
-	rte_intr_callback_unregister(intr_handle,
-				     ixgbe_dev_interrupt_handler, eth_dev);
+
+	do {
+		ret = rte_intr_callback_unregister(intr_handle,
+				ixgbe_dev_interrupt_handler, eth_dev);
+		if (ret >= 0) {
+			break;
+		} else if (ret != -EAGAIN) {
+			PMD_INIT_LOG(ERR,
+				"intr callback unregister failed: %d",
+				ret);
+			return ret;
+		}
+		rte_delay_ms(100);
+	} while (retries++ < (10 + IXGBE_LINK_UP_TIME));
 
 	/* uninitialize PF if max_vfs not zero */
 	ixgbe_pf_host_uninit(eth_dev);
@@ -2003,64 +1964,6 @@ ixgbe_vlan_hw_strip_enable(struct rte_eth_dev *dev, uint16_t queue)
 	ixgbe_vlan_hw_strip_bitmap_set(dev, queue, 1);
 }
 
-void
-ixgbe_vlan_hw_strip_disable_all(struct rte_eth_dev *dev)
-{
-	struct ixgbe_hw *hw =
-		IXGBE_DEV_PRIVATE_TO_HW(dev->data->dev_private);
-	uint32_t ctrl;
-	uint16_t i;
-	struct ixgbe_rx_queue *rxq;
-
-	PMD_INIT_FUNC_TRACE();
-
-	if (hw->mac.type == ixgbe_mac_82598EB) {
-		ctrl = IXGBE_READ_REG(hw, IXGBE_VLNCTRL);
-		ctrl &= ~IXGBE_VLNCTRL_VME;
-		IXGBE_WRITE_REG(hw, IXGBE_VLNCTRL, ctrl);
-	} else {
-		/* Other 10G NIC, the VLAN strip can be setup per queue in RXDCTL */
-		for (i = 0; i < dev->data->nb_rx_queues; i++) {
-			rxq = dev->data->rx_queues[i];
-			ctrl = IXGBE_READ_REG(hw, IXGBE_RXDCTL(rxq->reg_idx));
-			ctrl &= ~IXGBE_RXDCTL_VME;
-			IXGBE_WRITE_REG(hw, IXGBE_RXDCTL(rxq->reg_idx), ctrl);
-
-			/* record those setting for HW strip per queue */
-			ixgbe_vlan_hw_strip_bitmap_set(dev, i, 0);
-		}
-	}
-}
-
-void
-ixgbe_vlan_hw_strip_enable_all(struct rte_eth_dev *dev)
-{
-	struct ixgbe_hw *hw =
-		IXGBE_DEV_PRIVATE_TO_HW(dev->data->dev_private);
-	uint32_t ctrl;
-	uint16_t i;
-	struct ixgbe_rx_queue *rxq;
-
-	PMD_INIT_FUNC_TRACE();
-
-	if (hw->mac.type == ixgbe_mac_82598EB) {
-		ctrl = IXGBE_READ_REG(hw, IXGBE_VLNCTRL);
-		ctrl |= IXGBE_VLNCTRL_VME;
-		IXGBE_WRITE_REG(hw, IXGBE_VLNCTRL, ctrl);
-	} else {
-		/* Other 10G NIC, the VLAN strip can be setup per queue in RXDCTL */
-		for (i = 0; i < dev->data->nb_rx_queues; i++) {
-			rxq = dev->data->rx_queues[i];
-			ctrl = IXGBE_READ_REG(hw, IXGBE_RXDCTL(rxq->reg_idx));
-			ctrl |= IXGBE_RXDCTL_VME;
-			IXGBE_WRITE_REG(hw, IXGBE_RXDCTL(rxq->reg_idx), ctrl);
-
-			/* record those setting for HW strip per queue */
-			ixgbe_vlan_hw_strip_bitmap_set(dev, i, 1);
-		}
-	}
-}
-
 static void
 ixgbe_vlan_hw_extend_disable(struct rte_eth_dev *dev)
 {
@@ -2116,25 +2019,71 @@ ixgbe_vlan_hw_extend_enable(struct rte_eth_dev *dev)
 	 */
 }
 
+void
+ixgbe_vlan_hw_strip_config(struct rte_eth_dev *dev)
+{
+	struct ixgbe_hw *hw =
+		IXGBE_DEV_PRIVATE_TO_HW(dev->data->dev_private);
+	struct rte_eth_rxmode *rxmode = &dev->data->dev_conf.rxmode;
+	uint32_t ctrl;
+	uint16_t i;
+	struct ixgbe_rx_queue *rxq;
+	bool on;
+
+	PMD_INIT_FUNC_TRACE();
+
+	if (hw->mac.type == ixgbe_mac_82598EB) {
+		if (rxmode->offloads & DEV_RX_OFFLOAD_VLAN_STRIP) {
+			ctrl = IXGBE_READ_REG(hw, IXGBE_VLNCTRL);
+			ctrl |= IXGBE_VLNCTRL_VME;
+			IXGBE_WRITE_REG(hw, IXGBE_VLNCTRL, ctrl);
+		} else {
+			ctrl = IXGBE_READ_REG(hw, IXGBE_VLNCTRL);
+			ctrl &= ~IXGBE_VLNCTRL_VME;
+			IXGBE_WRITE_REG(hw, IXGBE_VLNCTRL, ctrl);
+		}
+	} else {
+		/*
+		 * Other 10G NIC, the VLAN strip can be setup
+		 * per queue in RXDCTL
+		 */
+		for (i = 0; i < dev->data->nb_rx_queues; i++) {
+			rxq = dev->data->rx_queues[i];
+			ctrl = IXGBE_READ_REG(hw, IXGBE_RXDCTL(rxq->reg_idx));
+			if (rxq->offloads & DEV_RX_OFFLOAD_VLAN_STRIP) {
+				ctrl |= IXGBE_RXDCTL_VME;
+				on = TRUE;
+			} else {
+				ctrl &= ~IXGBE_RXDCTL_VME;
+				on = FALSE;
+			}
+			IXGBE_WRITE_REG(hw, IXGBE_RXDCTL(rxq->reg_idx), ctrl);
+
+			/* record those setting for HW strip per queue */
+			ixgbe_vlan_hw_strip_bitmap_set(dev, i, on);
+		}
+	}
+}
+
 static int
 ixgbe_vlan_offload_set(struct rte_eth_dev *dev, int mask)
 {
+	struct rte_eth_rxmode *rxmode;
+	rxmode = &dev->data->dev_conf.rxmode;
+
 	if (mask & ETH_VLAN_STRIP_MASK) {
-		if (dev->data->dev_conf.rxmode.hw_vlan_strip)
-			ixgbe_vlan_hw_strip_enable_all(dev);
-		else
-			ixgbe_vlan_hw_strip_disable_all(dev);
+		ixgbe_vlan_hw_strip_config(dev);
 	}
 
 	if (mask & ETH_VLAN_FILTER_MASK) {
-		if (dev->data->dev_conf.rxmode.hw_vlan_filter)
+		if (rxmode->offloads & DEV_RX_OFFLOAD_VLAN_FILTER)
 			ixgbe_vlan_hw_filter_enable(dev);
 		else
 			ixgbe_vlan_hw_filter_disable(dev);
 	}
 
 	if (mask & ETH_VLAN_EXTEND_MASK) {
-		if (dev->data->dev_conf.rxmode.hw_vlan_extend)
+		if (rxmode->offloads & DEV_RX_OFFLOAD_VLAN_EXTEND)
 			ixgbe_vlan_hw_extend_enable(dev);
 		else
 			ixgbe_vlan_hw_extend_disable(dev);
@@ -2349,6 +2298,9 @@ ixgbe_dev_configure(struct rte_eth_dev *dev)
 		IXGBE_DEV_PRIVATE_TO_INTR(dev->data->dev_private);
 	struct ixgbe_adapter *adapter =
 		(struct ixgbe_adapter *)dev->data->dev_private;
+	struct rte_eth_dev_info dev_info;
+	uint64_t rx_offloads;
+	uint64_t tx_offloads;
 	int ret;
 
 	PMD_INIT_FUNC_TRACE();
@@ -2358,6 +2310,22 @@ ixgbe_dev_configure(struct rte_eth_dev *dev)
 		PMD_DRV_LOG(ERR, "ixgbe_check_mq_mode fails with %d.",
 			    ret);
 		return ret;
+	}
+
+	ixgbe_dev_info_get(dev, &dev_info);
+	rx_offloads = dev->data->dev_conf.rxmode.offloads;
+	if ((rx_offloads & dev_info.rx_offload_capa) != rx_offloads) {
+		PMD_DRV_LOG(ERR, "Some Rx offloads are not supported "
+			    "requested 0x%" PRIx64 " supported 0x%" PRIx64,
+			    rx_offloads, dev_info.rx_offload_capa);
+		return -ENOTSUP;
+	}
+	tx_offloads = dev->data->dev_conf.txmode.offloads;
+	if ((tx_offloads & dev_info.tx_offload_capa) != tx_offloads) {
+		PMD_DRV_LOG(ERR, "Some Tx offloads are not supported "
+			    "requested 0x%" PRIx64 " supported 0x%" PRIx64,
+			    tx_offloads, dev_info.tx_offload_capa);
+		return -ENOTSUP;
 	}
 
 	/* set flag to update link status after init */
@@ -2482,6 +2450,7 @@ ixgbe_dev_start(struct rte_eth_dev *dev)
 	uint32_t intr_vector = 0;
 	int err, link_up = 0, negotiate = 0;
 	uint32_t speed = 0;
+	uint32_t allowed_speeds = 0;
 	int mask = 0;
 	int status;
 	uint16_t vf, idx;
@@ -2630,9 +2599,21 @@ ixgbe_dev_start(struct rte_eth_dev *dev)
 	if (err)
 		goto error;
 
+	switch (hw->mac.type) {
+	case ixgbe_mac_X550:
+	case ixgbe_mac_X550EM_x:
+	case ixgbe_mac_X550EM_a:
+		allowed_speeds = ETH_LINK_SPEED_100M | ETH_LINK_SPEED_1G |
+			ETH_LINK_SPEED_2_5G |  ETH_LINK_SPEED_5G |
+			ETH_LINK_SPEED_10G;
+		break;
+	default:
+		allowed_speeds = ETH_LINK_SPEED_100M | ETH_LINK_SPEED_1G |
+			ETH_LINK_SPEED_10G;
+	}
+
 	link_speeds = &dev->data->dev_conf.link_speeds;
-	if (*link_speeds & ~(ETH_LINK_SPEED_100M | ETH_LINK_SPEED_1G |
-			ETH_LINK_SPEED_10G)) {
+	if (*link_speeds & ~allowed_speeds) {
 		PMD_INIT_LOG(ERR, "Invalid link setting");
 		goto error;
 	}
@@ -2658,6 +2639,10 @@ ixgbe_dev_start(struct rte_eth_dev *dev)
 	} else {
 		if (*link_speeds & ETH_LINK_SPEED_10G)
 			speed |= IXGBE_LINK_SPEED_10GB_FULL;
+		if (*link_speeds & ETH_LINK_SPEED_5G)
+			speed |= IXGBE_LINK_SPEED_5GB_FULL;
+		if (*link_speeds & ETH_LINK_SPEED_2_5G)
+			speed |= IXGBE_LINK_SPEED_2_5GB_FULL;
 		if (*link_speeds & ETH_LINK_SPEED_1G)
 			speed |= IXGBE_LINK_SPEED_1GB_FULL;
 		if (*link_speeds & ETH_LINK_SPEED_100M)
@@ -2667,6 +2652,8 @@ ixgbe_dev_start(struct rte_eth_dev *dev)
 	err = ixgbe_setup_link(hw, speed, link_up);
 	if (err)
 		goto error;
+
+	ixgbe_dev_link_update(dev, 0);
 
 skip_link_setup:
 
@@ -2759,7 +2746,7 @@ ixgbe_dev_stop(struct rte_eth_dev *dev)
 
 	/* Clear recorded link status */
 	memset(&link, 0, sizeof(link));
-	rte_ixgbe_dev_atomic_write_link_status(dev, &link);
+	rte_eth_linkstatus_set(dev, &link);
 
 	if (!rte_intr_allow_others(intr_handle))
 		/* resume to the default handler */
@@ -3627,7 +3614,6 @@ ixgbe_dev_info_get(struct rte_eth_dev *dev, struct rte_eth_dev_info *dev_info)
 	struct ixgbe_hw *hw = IXGBE_DEV_PRIVATE_TO_HW(dev->data->dev_private);
 	struct rte_eth_conf *dev_conf = &dev->data->dev_conf;
 
-	dev_info->pci_dev = pci_dev;
 	dev_info->max_rx_queues = (uint16_t)hw->mac.max_rx_queues;
 	dev_info->max_tx_queues = (uint16_t)hw->mac.max_tx_queues;
 	if (RTE_ETH_DEV_SRIOV(dev).active == 0) {
@@ -3649,54 +3635,11 @@ ixgbe_dev_info_get(struct rte_eth_dev *dev, struct rte_eth_dev_info *dev_info)
 	else
 		dev_info->max_vmdq_pools = ETH_64_POOLS;
 	dev_info->vmdq_queue_num = dev_info->max_rx_queues;
-	dev_info->rx_offload_capa =
-		DEV_RX_OFFLOAD_VLAN_STRIP |
-		DEV_RX_OFFLOAD_IPV4_CKSUM |
-		DEV_RX_OFFLOAD_UDP_CKSUM  |
-		DEV_RX_OFFLOAD_TCP_CKSUM  |
-		DEV_RX_OFFLOAD_CRC_STRIP;
-
-	/*
-	 * RSC is only supported by 82599 and x540 PF devices in a non-SR-IOV
-	 * mode.
-	 */
-	if ((hw->mac.type == ixgbe_mac_82599EB ||
-	     hw->mac.type == ixgbe_mac_X540) &&
-	    !RTE_ETH_DEV_SRIOV(dev).active)
-		dev_info->rx_offload_capa |= DEV_RX_OFFLOAD_TCP_LRO;
-
-	if (hw->mac.type == ixgbe_mac_82599EB ||
-	    hw->mac.type == ixgbe_mac_X540)
-		dev_info->rx_offload_capa |= DEV_RX_OFFLOAD_MACSEC_STRIP;
-
-	if (hw->mac.type == ixgbe_mac_X550 ||
-	    hw->mac.type == ixgbe_mac_X550EM_x ||
-	    hw->mac.type == ixgbe_mac_X550EM_a)
-		dev_info->rx_offload_capa |= DEV_RX_OFFLOAD_OUTER_IPV4_CKSUM;
-
-	dev_info->tx_offload_capa =
-		DEV_TX_OFFLOAD_VLAN_INSERT |
-		DEV_TX_OFFLOAD_IPV4_CKSUM  |
-		DEV_TX_OFFLOAD_UDP_CKSUM   |
-		DEV_TX_OFFLOAD_TCP_CKSUM   |
-		DEV_TX_OFFLOAD_SCTP_CKSUM  |
-		DEV_TX_OFFLOAD_TCP_TSO;
-
-	if (hw->mac.type == ixgbe_mac_82599EB ||
-	    hw->mac.type == ixgbe_mac_X540)
-		dev_info->tx_offload_capa |= DEV_TX_OFFLOAD_MACSEC_INSERT;
-
-	if (hw->mac.type == ixgbe_mac_X550 ||
-	    hw->mac.type == ixgbe_mac_X550EM_x ||
-	    hw->mac.type == ixgbe_mac_X550EM_a)
-		dev_info->tx_offload_capa |= DEV_TX_OFFLOAD_OUTER_IPV4_CKSUM;
-
-#ifdef RTE_LIBRTE_SECURITY
-	if (dev->security_ctx) {
-		dev_info->rx_offload_capa |= DEV_RX_OFFLOAD_SECURITY;
-		dev_info->tx_offload_capa |= DEV_TX_OFFLOAD_SECURITY;
-	}
-#endif
+	dev_info->rx_queue_offload_capa = ixgbe_get_rx_queue_offloads(dev);
+	dev_info->rx_offload_capa = (ixgbe_get_rx_port_offloads(dev) |
+				     dev_info->rx_queue_offload_capa);
+	dev_info->tx_queue_offload_capa = ixgbe_get_tx_queue_offloads(dev);
+	dev_info->tx_offload_capa = ixgbe_get_tx_port_offloads(dev);
 
 	dev_info->default_rxconf = (struct rte_eth_rxconf) {
 		.rx_thresh = {
@@ -3706,6 +3649,7 @@ ixgbe_dev_info_get(struct rte_eth_dev *dev, struct rte_eth_dev_info *dev_info)
 		},
 		.rx_free_thresh = IXGBE_DEFAULT_RX_FREE_THRESH,
 		.rx_drop_en = 0,
+		.offloads = 0,
 	};
 
 	dev_info->default_txconf = (struct rte_eth_txconf) {
@@ -3717,7 +3661,9 @@ ixgbe_dev_info_get(struct rte_eth_dev *dev, struct rte_eth_dev_info *dev_info)
 		.tx_free_thresh = IXGBE_DEFAULT_TX_FREE_THRESH,
 		.tx_rs_thresh = IXGBE_DEFAULT_TX_RSBIT_THRESH,
 		.txq_flags = ETH_TXQ_FLAGS_NOMULTSEGS |
-				ETH_TXQ_FLAGS_NOOFFLOADS,
+			     ETH_TXQ_FLAGS_NOOFFLOADS |
+			     ETH_TXQ_FLAGS_IGNORE,
+		.offloads = 0,
 	};
 
 	dev_info->rx_desc_lim = rx_desc_lim;
@@ -3786,7 +3732,6 @@ ixgbevf_dev_info_get(struct rte_eth_dev *dev,
 	struct rte_pci_device *pci_dev = RTE_ETH_DEV_TO_PCI(dev);
 	struct ixgbe_hw *hw = IXGBE_DEV_PRIVATE_TO_HW(dev->data->dev_private);
 
-	dev_info->pci_dev = pci_dev;
 	dev_info->max_rx_queues = (uint16_t)hw->mac.max_rx_queues;
 	dev_info->max_tx_queues = (uint16_t)hw->mac.max_tx_queues;
 	dev_info->min_rx_bufsize = 1024; /* cf BSIZEPACKET in SRRCTL reg */
@@ -3798,17 +3743,11 @@ ixgbevf_dev_info_get(struct rte_eth_dev *dev,
 		dev_info->max_vmdq_pools = ETH_16_POOLS;
 	else
 		dev_info->max_vmdq_pools = ETH_64_POOLS;
-	dev_info->rx_offload_capa = DEV_RX_OFFLOAD_VLAN_STRIP |
-				DEV_RX_OFFLOAD_IPV4_CKSUM |
-				DEV_RX_OFFLOAD_UDP_CKSUM  |
-				DEV_RX_OFFLOAD_TCP_CKSUM  |
-				DEV_RX_OFFLOAD_CRC_STRIP;
-	dev_info->tx_offload_capa = DEV_TX_OFFLOAD_VLAN_INSERT |
-				DEV_TX_OFFLOAD_IPV4_CKSUM  |
-				DEV_TX_OFFLOAD_UDP_CKSUM   |
-				DEV_TX_OFFLOAD_TCP_CKSUM   |
-				DEV_TX_OFFLOAD_SCTP_CKSUM  |
-				DEV_TX_OFFLOAD_TCP_TSO;
+	dev_info->rx_queue_offload_capa = ixgbe_get_rx_queue_offloads(dev);
+	dev_info->rx_offload_capa = (ixgbe_get_rx_port_offloads(dev) |
+				     dev_info->rx_queue_offload_capa);
+	dev_info->tx_queue_offload_capa = ixgbe_get_tx_queue_offloads(dev);
+	dev_info->tx_offload_capa = ixgbe_get_tx_port_offloads(dev);
 
 	dev_info->default_rxconf = (struct rte_eth_rxconf) {
 		.rx_thresh = {
@@ -3818,6 +3757,7 @@ ixgbevf_dev_info_get(struct rte_eth_dev *dev,
 		},
 		.rx_free_thresh = IXGBE_DEFAULT_RX_FREE_THRESH,
 		.rx_drop_en = 0,
+		.offloads = 0,
 	};
 
 	dev_info->default_txconf = (struct rte_eth_txconf) {
@@ -3829,7 +3769,9 @@ ixgbevf_dev_info_get(struct rte_eth_dev *dev,
 		.tx_free_thresh = IXGBE_DEFAULT_TX_FREE_THRESH,
 		.tx_rs_thresh = IXGBE_DEFAULT_TX_RSBIT_THRESH,
 		.txq_flags = ETH_TXQ_FLAGS_NOMULTSEGS |
-				ETH_TXQ_FLAGS_NOOFFLOADS,
+			     ETH_TXQ_FLAGS_NOOFFLOADS |
+			     ETH_TXQ_FLAGS_IGNORE,
+		.offloads = 0,
 	};
 
 	dev_info->rx_desc_lim = rx_desc_lim;
@@ -3865,7 +3807,7 @@ ixgbevf_check_link(struct ixgbe_hw *hw, ixgbe_link_speed *speed,
 	/* for SFP+ modules and DA cables on 82599 it can take up to 500usecs
 	 * before the link status is correct
 	 */
-	if (mac->type == ixgbe_mac_82599_vf) {
+	if (mac->type == ixgbe_mac_82599_vf && wait_to_complete) {
 		int i;
 
 		for (i = 0; i < 5; i++) {
@@ -3948,7 +3890,7 @@ ixgbe_dev_link_update_share(struct rte_eth_dev *dev,
 			    int wait_to_complete, int vf)
 {
 	struct ixgbe_hw *hw = IXGBE_DEV_PRIVATE_TO_HW(dev->data->dev_private);
-	struct rte_eth_link link, old;
+	struct rte_eth_link link;
 	ixgbe_link_speed link_speed = IXGBE_LINK_SPEED_UNKNOWN;
 	struct ixgbe_interrupt *intr =
 		IXGBE_DEV_PRIVATE_TO_INTR(dev->data->dev_private);
@@ -3958,12 +3900,11 @@ ixgbe_dev_link_update_share(struct rte_eth_dev *dev,
 	int wait = 1;
 	bool autoneg = false;
 
+	memset(&link, 0, sizeof(link));
 	link.link_status = ETH_LINK_DOWN;
 	link.link_speed = 0;
 	link.link_duplex = ETH_LINK_HALF_DUPLEX;
 	link.link_autoneg = ETH_LINK_AUTONEG;
-	memset(&old, 0, sizeof(old));
-	rte_ixgbe_dev_atomic_read_link_status(dev, &old);
 
 	hw->mac.get_link_status = true;
 
@@ -3987,19 +3928,14 @@ ixgbe_dev_link_update_share(struct rte_eth_dev *dev,
 	if (diag != 0) {
 		link.link_speed = ETH_SPEED_NUM_100M;
 		link.link_duplex = ETH_LINK_FULL_DUPLEX;
-		rte_ixgbe_dev_atomic_write_link_status(dev, &link);
-		if (link.link_status == old.link_status)
-			return -1;
-		return 0;
+		return rte_eth_linkstatus_set(dev, &link);
 	}
 
 	if (link_up == 0) {
-		rte_ixgbe_dev_atomic_write_link_status(dev, &link);
 		intr->flags |= IXGBE_FLAG_NEED_LINK_CONFIG;
-		if (link.link_status == old.link_status)
-			return -1;
-		return 0;
+		return rte_eth_linkstatus_set(dev, &link);
 	}
+
 	intr->flags &= ~IXGBE_FLAG_NEED_LINK_CONFIG;
 	link.link_status = ETH_LINK_UP;
 	link.link_duplex = ETH_LINK_FULL_DUPLEX;
@@ -4031,12 +3967,8 @@ ixgbe_dev_link_update_share(struct rte_eth_dev *dev,
 		link.link_speed = ETH_SPEED_NUM_10G;
 		break;
 	}
-	rte_ixgbe_dev_atomic_write_link_status(dev, &link);
 
-	if (link.link_status == old.link_status)
-		return -1;
-
-	return 0;
+	return rte_eth_linkstatus_set(dev, &link);
 }
 
 static int
@@ -4235,8 +4167,8 @@ ixgbe_dev_link_status_print(struct rte_eth_dev *dev)
 	struct rte_pci_device *pci_dev = RTE_ETH_DEV_TO_PCI(dev);
 	struct rte_eth_link link;
 
-	memset(&link, 0, sizeof(link));
-	rte_ixgbe_dev_atomic_read_link_status(dev, &link);
+	rte_eth_linkstatus_get(dev, &link);
+
 	if (link.link_status) {
 		PMD_INIT_LOG(INFO, "Port %d: Link Up - speed %u Mbps - %s",
 					(int)(dev->data->port_id),
@@ -4271,7 +4203,6 @@ ixgbe_dev_interrupt_action(struct rte_eth_dev *dev,
 	struct ixgbe_interrupt *intr =
 		IXGBE_DEV_PRIVATE_TO_INTR(dev->data->dev_private);
 	int64_t timeout;
-	struct rte_eth_link link;
 	struct ixgbe_hw *hw =
 		IXGBE_DEV_PRIVATE_TO_HW(dev->data->dev_private);
 
@@ -4288,9 +4219,10 @@ ixgbe_dev_interrupt_action(struct rte_eth_dev *dev,
 	}
 
 	if (intr->flags & IXGBE_FLAG_NEED_LINK_UPDATE) {
+		struct rte_eth_link link;
+
 		/* get the link status before link update, for predicting later */
-		memset(&link, 0, sizeof(link));
-		rte_ixgbe_dev_atomic_read_link_status(dev, &link);
+		rte_eth_linkstatus_get(dev, &link);
 
 		ixgbe_dev_link_update(dev, 0);
 
@@ -4855,14 +4787,15 @@ ixgbe_remove_rar(struct rte_eth_dev *dev, uint32_t index)
 	ixgbe_clear_rar(hw, index);
 }
 
-static void
+static int
 ixgbe_set_default_mac_addr(struct rte_eth_dev *dev, struct ether_addr *addr)
 {
 	struct rte_pci_device *pci_dev = RTE_ETH_DEV_TO_PCI(dev);
 
 	ixgbe_remove_rar(dev, 0);
-
 	ixgbe_add_rar(dev, addr, 0, pci_dev->max_vfs);
+
+	return 0;
 }
 
 static bool
@@ -4911,10 +4844,12 @@ ixgbe_dev_mtu_set(struct rte_eth_dev *dev, uint16_t mtu)
 
 	/* switch to jumbo mode if needed */
 	if (frame_size > ETHER_MAX_LEN) {
-		dev->data->dev_conf.rxmode.jumbo_frame = 1;
+		dev->data->dev_conf.rxmode.offloads |=
+			DEV_RX_OFFLOAD_JUMBO_FRAME;
 		hlreg0 |= IXGBE_HLREG0_JUMBOEN;
 	} else {
-		dev->data->dev_conf.rxmode.jumbo_frame = 0;
+		dev->data->dev_conf.rxmode.offloads &=
+			~DEV_RX_OFFLOAD_JUMBO_FRAME;
 		hlreg0 &= ~IXGBE_HLREG0_JUMBOEN;
 	}
 	IXGBE_WRITE_REG(hw, IXGBE_HLREG0, hlreg0);
@@ -4963,23 +4898,42 @@ ixgbevf_dev_configure(struct rte_eth_dev *dev)
 	struct rte_eth_conf *conf = &dev->data->dev_conf;
 	struct ixgbe_adapter *adapter =
 			(struct ixgbe_adapter *)dev->data->dev_private;
+	struct rte_eth_dev_info dev_info;
+	uint64_t rx_offloads;
+	uint64_t tx_offloads;
 
 	PMD_INIT_LOG(DEBUG, "Configured Virtual Function port id: %d",
 		     dev->data->port_id);
+
+	ixgbevf_dev_info_get(dev, &dev_info);
+	rx_offloads = dev->data->dev_conf.rxmode.offloads;
+	if ((rx_offloads & dev_info.rx_offload_capa) != rx_offloads) {
+		PMD_DRV_LOG(ERR, "Some Rx offloads are not supported "
+			    "requested 0x%" PRIx64 " supported 0x%" PRIx64,
+			    rx_offloads, dev_info.rx_offload_capa);
+		return -ENOTSUP;
+	}
+	tx_offloads = dev->data->dev_conf.txmode.offloads;
+	if ((tx_offloads & dev_info.tx_offload_capa) != tx_offloads) {
+		PMD_DRV_LOG(ERR, "Some Tx offloads are not supported "
+			    "requested 0x%" PRIx64 " supported 0x%" PRIx64,
+			    tx_offloads, dev_info.tx_offload_capa);
+		return -ENOTSUP;
+	}
 
 	/*
 	 * VF has no ability to enable/disable HW CRC
 	 * Keep the persistent behavior the same as Host PF
 	 */
 #ifndef RTE_LIBRTE_IXGBE_PF_DISABLE_STRIP_CRC
-	if (!conf->rxmode.hw_strip_crc) {
+	if (!(conf->rxmode.offloads & DEV_RX_OFFLOAD_CRC_STRIP)) {
 		PMD_INIT_LOG(NOTICE, "VF can't disable HW CRC Strip");
-		conf->rxmode.hw_strip_crc = 1;
+		conf->rxmode.offloads |= DEV_RX_OFFLOAD_CRC_STRIP;
 	}
 #else
-	if (conf->rxmode.hw_strip_crc) {
+	if (conf->rxmode.offloads & DEV_RX_OFFLOAD_CRC_STRIP) {
 		PMD_INIT_LOG(NOTICE, "VF can't enable HW CRC Strip");
-		conf->rxmode.hw_strip_crc = 0;
+		conf->rxmode.offloads &= ~DEV_RX_OFFLOAD_CRC_STRIP;
 	}
 #endif
 
@@ -5040,6 +4994,8 @@ ixgbevf_dev_start(struct rte_eth_dev *dev)
 	}
 
 	ixgbevf_dev_rxtx_start(dev);
+
+	ixgbevf_dev_link_update(dev, 0);
 
 	/* check and configure queue intr-vector mapping */
 	if (rte_intr_cap_multiple(intr_handle) &&
@@ -5232,15 +5188,17 @@ ixgbevf_vlan_offload_set(struct rte_eth_dev *dev, int mask)
 {
 	struct ixgbe_hw *hw =
 		IXGBE_DEV_PRIVATE_TO_HW(dev->data->dev_private);
+	struct ixgbe_rx_queue *rxq;
 	uint16_t i;
 	int on = 0;
 
 	/* VF function only support hw strip feature, others are not support */
 	if (mask & ETH_VLAN_STRIP_MASK) {
-		on = !!(dev->data->dev_conf.rxmode.hw_vlan_strip);
-
-		for (i = 0; i < hw->mac.max_rx_queues; i++)
+		for (i = 0; i < hw->mac.max_rx_queues; i++) {
+			rxq = dev->data->rx_queues[i];
+			on = !!(rxq->offloads &	DEV_RX_OFFLOAD_VLAN_STRIP);
 			ixgbevf_vlan_strip_queue_set(dev, i, on);
+		}
 	}
 
 	return 0;
@@ -5865,6 +5823,7 @@ ixgbe_set_queue_rate_limit(struct rte_eth_dev *dev,
 			   uint16_t queue_idx, uint16_t tx_rate)
 {
 	struct ixgbe_hw *hw = IXGBE_DEV_PRIVATE_TO_HW(dev->data->dev_private);
+	struct rte_eth_rxmode *rxmode;
 	uint32_t rf_dec, rf_int;
 	uint32_t bcnrc_val;
 	uint16_t link_speed = dev->data->dev_link.link_speed;
@@ -5886,14 +5845,14 @@ ixgbe_set_queue_rate_limit(struct rte_eth_dev *dev,
 		bcnrc_val = 0;
 	}
 
+	rxmode = &dev->data->dev_conf.rxmode;
 	/*
 	 * Set global transmit compensation time to the MMW_SIZE in RTTBCNRM
 	 * register. MMW_SIZE=0x014 if 9728-byte jumbo is supported, otherwise
 	 * set as 0x4.
 	 */
-	if ((dev->data->dev_conf.rxmode.jumbo_frame == 1) &&
-		(dev->data->dev_conf.rxmode.max_rx_pkt_len >=
-				IXGBE_MAX_JUMBO_FRAME_SIZE))
+	if ((rxmode->offloads & DEV_RX_OFFLOAD_JUMBO_FRAME) &&
+	    (rxmode->max_rx_pkt_len >= IXGBE_MAX_JUMBO_FRAME_SIZE))
 		IXGBE_WRITE_REG(hw, IXGBE_RTTBCNRM,
 			IXGBE_MMW_SIZE_JUMBO_FRAME);
 	else
@@ -5985,12 +5944,14 @@ ixgbevf_remove_mac_addr(struct rte_eth_dev *dev, uint32_t index)
 	}
 }
 
-static void
+static int
 ixgbevf_set_default_mac_addr(struct rte_eth_dev *dev, struct ether_addr *addr)
 {
 	struct ixgbe_hw *hw = IXGBE_DEV_PRIVATE_TO_HW(dev->data->dev_private);
 
 	hw->mac.ops.set_rar(hw, 0, (void *)addr, 0, 0);
+
+	return 0;
 }
 
 int
@@ -6240,7 +6201,7 @@ ixgbevf_dev_set_mtu(struct rte_eth_dev *dev, uint16_t mtu)
 	/* refuse mtu that requires the support of scattered packets when this
 	 * feature has not been enabled before.
 	 */
-	if (!rx_conf->enable_scatter &&
+	if (!(rx_conf->offloads & DEV_RX_OFFLOAD_SCATTER) &&
 	    (max_frame + 2 * IXGBE_VLAN_TAG_SIZE >
 	     dev->data->min_rx_buf_size - RTE_PKTMBUF_HEADROOM))
 		return -EINVAL;
@@ -6814,9 +6775,8 @@ ixgbe_start_timecounters(struct rte_eth_dev *dev)
 	uint32_t shift = 0;
 
 	/* Get current link speed. */
-	memset(&link, 0, sizeof(link));
 	ixgbe_dev_link_update(dev, 1);
-	rte_ixgbe_dev_atomic_read_link_status(dev, &link);
+	rte_eth_linkstatus_get(dev, &link);
 
 	switch (link.link_speed) {
 	case ETH_SPEED_NUM_100M:

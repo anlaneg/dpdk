@@ -13,6 +13,7 @@ Network Interface Controller Drivers
     build_and_test
     ark
     avp
+    axgbe
     bnx2x
     bnxt
     cxgbe
@@ -30,7 +31,7 @@ Network Interface Controller Drivers
     liquidio
     mlx4
     mlx5
-    mrvl
+    mvpp2
     nfp
     octeontx
     qede

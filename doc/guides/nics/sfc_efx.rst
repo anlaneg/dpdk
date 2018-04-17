@@ -30,7 +30,8 @@ Solarflare libefx-based Poll Mode Driver
 ========================================
 
 The SFC EFX PMD (**librte_pmd_sfc_efx**) provides poll mode driver support
-for **Solarflare SFN7xxx and SFN8xxx** family of 10/40 Gbps adapters.
+for **Solarflare SFN7xxx and SFN8xxx** family of 10/40 Gbps adapters and
+**Solarflare XtremeScale X2xxx** family of 10/25/40/50/100 Gbps adapters.
 SFC EFX PMD has support for the latest Linux and FreeBSD operating systems.
 
 More information can be found at `Solarflare Communications website
@@ -87,6 +88,8 @@ SFC EFX PMD has support for:
 
 - Flow API
 
+- Loopback
+
 
 Non-supported Features
 ----------------------
@@ -96,8 +99,6 @@ The features not yet supported include:
 - Receive queue interupts
 
 - Priority-based flow control
-
-- Loopback
 
 - Configurable RX CRC stripping (always stripped)
 
@@ -123,19 +124,19 @@ It should be taken into account when mbuf pool for receive is created.
 Tunnels support
 ---------------
 
-NVGRE, VXLAN and GENEVE tunnels are supported on SFN8xxx family adapters
-with full-feature firmware variant running.
+NVGRE, VXLAN and GENEVE tunnels are supported on SFN8xxx and X2xxx family
+adapters with full-feature firmware variant running.
 **sfboot** should be used to configure NIC to run full-feature firmware variant.
 See Solarflare Server Adapter User's Guide for details.
 
-SFN8xxx family adapters provide either inner or outer packet classes.
+SFN8xxx and X2xxx family adapters provide either inner or outer packet classes.
 If adapter firmware advertises support for tunnels then the PMD
 configures the hardware to report inner classes, and outer classes are
 not reported in received packets.
 However, for VXLAN and GENEVE tunnels the PMD does report UDP as the
 outer layer 4 packet type.
 
-SFN8xxx family adapters report GENEVE packets as VXLAN.
+SFN8xxx and X2xxx family adapters report GENEVE packets as VXLAN.
 If UDP ports are configured for only one tunnel type then it is safe to
 treat VXLAN packet type indication as the corresponding UDP tunnel type.
 
@@ -152,7 +153,9 @@ Supported pattern items:
 - VOID
 
 - ETH (exact match of source/destination addresses, individual/group match
-  of destination address, EtherType)
+  of destination address, EtherType in the outer frame and exact match of
+  destination addresses, individual/group match of destination address in
+  the inner frame)
 
 - VLAN (exact match of VID, double-tagging is supported)
 
@@ -166,6 +169,13 @@ Supported pattern items:
 
 - UDP (exact match of source/destination ports)
 
+- VXLAN (exact match of VXLAN network identifier)
+
+- GENEVE (exact match of virtual network identifier, only Ethernet (0x6558)
+  protocol type is supported)
+
+- NVGRE (exact match of virtual subnet ID)
+
 Supported actions:
 
 - VOID
@@ -173,6 +183,8 @@ Supported actions:
 - QUEUE
 
 - RSS
+
+- DROP
 
 Validating flow rules depends on the firmware variant.
 
@@ -184,9 +196,30 @@ in the mask of destination address. If destinaton address in the spec is
 multicast, it matches all multicast (and broadcast) packets, oherwise it
 matches unicast packets that are not filtered by other flow rules.
 
+Exceptions to flow rules
+~~~~~~~~~~~~~~~~~~~~~~~~
+
+There is a list of exceptional flow rule patterns which will not be
+accepted by the PMD. A pattern will be rejected if at least one of the
+conditions is met:
+
+- Filtering by IPv4 or IPv6 EtherType without pattern items of internet
+  layer and above.
+
+- The last item is IPV4 or IPV6, and it's empty.
+
+- Filtering by TCP or UDP IP transport protocol without pattern items of
+  transport layer and above.
+
+- The last item is TCP or UDP, and it's empty.
+
 
 Supported NICs
 --------------
+
+- Solarflare XtremeScale Adapters:
+
+   - Solarflare X2522 Dual Port SFP28 10/25GbE Adapter
 
 - Solarflare Flareon [Ultra] Server Adapters:
 
@@ -264,7 +297,7 @@ boolean parameters value.
   **auto** allows the driver itself to make a choice based on firmware
   features available and required by the datapath implementation.
   **efx** chooses libefx-based datapath which supports Rx scatter.
-  **ef10** chooses EF10 (SFN7xxx, SFN8xxx) native datapath which is
+  **ef10** chooses EF10 (SFN7xxx, SFN8xxx, X2xxx) native datapath which is
   more efficient than libefx-based and provides richer packet type
   classification, but lacks Rx scatter support.
 
@@ -277,12 +310,12 @@ boolean parameters value.
   (full-feature firmware variant only), TSO and multi-segment mbufs.
   Mbuf segments may come from different mempools, and mbuf reference
   counters are treated responsibly.
-  **ef10** chooses EF10 (SFN7xxx, SFN8xxx) native datapath which is
+  **ef10** chooses EF10 (SFN7xxx, SFN8xxx, X2xxx) native datapath which is
   more efficient than libefx-based but has no VLAN insertion and TSO
   support yet.
   Mbuf segments may come from different mempools, and mbuf reference
   counters are treated responsibly.
-  **ef10_simple** chooses EF10 (SFN7xxx, SFN8xxx) native datapath which
+  **ef10_simple** chooses EF10 (SFN7xxx, SFN8xxx, X2xxx) native datapath which
   is even more faster then **ef10** but does not support multi-segment
   mbufs, disallows multiple mempools and neglects mbuf reference counters.
 
@@ -293,21 +326,57 @@ boolean parameters value.
   **auto** allows NIC firmware to make a choice based on
   installed licences and firmware variant configured using **sfboot**.
 
-- ``debug_init`` [bool] (default **n**)
-
-  Enable extra logging during device initialization and startup.
-
-- ``mcdi_logging`` [bool] (default **n**)
-
-  Enable extra logging of the communication with the NIC's management CPU.
-  The logging is done using RTE_LOG() with INFO level and PMD type.
-  The format is consumed by the Solarflare netlogdecode cross-platform tool.
-
 - ``stats_update_period_ms`` [long] (default **1000**)
 
   Adjust period in milliseconds to update port hardware statistics.
   The accepted range is 0 to 65535. The value of **0** may be used
   to disable periodic statistics update. One should note that it's
-  only possible to set an arbitrary value on SFN8xxx provided that
+  only possible to set an arbitrary value on SFN8xxx and X2xxx provided that
   firmware version is 6.2.1.1033 or higher, otherwise any positive
   value will select a fixed update period of **1000** milliseconds
+
+- ``fw_variant`` [dont-care|full-feature|ultra-low-latency|
+  capture-packed-stream] (default **dont-care**)
+
+  Choose the preferred firmware variant to use. In order for the selected
+  option to have an effect, the **sfboot** utility must be configured with the
+  **auto** firmware-variant option. The preferred firmware variant applies to
+  all ports on the NIC.
+  **dont-care** ensures that the driver can attach to an unprivileged function.
+  The datapath firmware type to use is controlled by the **sfboot**
+  utility.
+  **full-feature** chooses full featured firmware.
+  **ultra-low-latency** chooses firmware with fewer features but lower latency.
+  **capture-packed-stream** chooses firmware for SolarCapture packed stream
+  mode.
+
+
+Dynamic Logging Parameters
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+One may leverage EAL option "--log-level" to change default levels
+for the log types supported by the driver. The option is used with
+an argument typically consisting of two parts separated by a comma.
+
+Level value is the last part which takes an integer greater than 0.
+Log type is the former part which may contain a regular expression.
+Depending on the choice of the expression, the given log level may
+be used either for some specific log type or for a subset of types.
+
+SFC EFX PMD provides the following log types available for control:
+
+- ``pmd.net.sfc.driver`` (default level is **6** - ``RTE_LOG_NOTICE``)
+
+  Affects driver-wide messages unrelated to any particular devices.
+
+- ``pmd.net.sfc.main`` (default level is **6** - ``RTE_LOG_NOTICE``)
+
+  Matches a subset of per-port log types registered during runtime.
+  A full name for a particular type may be obtained by appending a
+  dot and a PCI device identifier (``XXXX:XX:XX.X``) to the prefix.
+
+- ``pmd.net.sfc.mcdi`` (default level is **6** - ``RTE_LOG_NOTICE``)
+
+  Extra logging of the communication with the NIC's management CPU.
+  The format of the log is consumed by the Solarflare netlogdecode
+  cross-platform tool. May be managed per-port, as explained above.

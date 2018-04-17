@@ -499,6 +499,9 @@ qede_start_vport(struct qede_dev *qdev, uint16_t mtu)
 	return 0;
 }
 
+#define QEDE_NPAR_TX_SWITCHING		"npar_tx_switching"
+#define QEDE_VF_TX_SWITCHING		"vf_tx_switching"
+
 /* Activate or deactivate vport via vport-update */
 int qede_activate_vport(struct rte_eth_dev *eth_dev, bool flg)
 {
@@ -516,10 +519,12 @@ int qede_activate_vport(struct rte_eth_dev *eth_dev, bool flg)
 	params.vport_active_rx_flg = flg;
 	params.vport_active_tx_flg = flg;
 	if (!qdev->enable_tx_switching) {
-		if (IS_VF(edev)) {
+		if ((QEDE_NPAR_TX_SWITCHING != NULL) ||
+		    ((QEDE_VF_TX_SWITCHING != NULL) && IS_VF(edev))) {
 			params.update_tx_switching_flg = 1;
 			params.tx_switching_flg = !flg;
-			DP_INFO(edev, "VF tx-switching is disabled\n");
+			DP_INFO(edev, "%s tx-switching is disabled\n",
+				QEDE_NPAR_TX_SWITCHING ? "NPAR" : "VF");
 		}
 	}
 	for_each_hwfn(edev, i) {
@@ -591,6 +596,8 @@ int qede_enable_tpa(struct rte_eth_dev *eth_dev, bool flg)
 		}
 	}
 	qdev->enable_lro = flg;
+	eth_dev->data->lro = flg;
+
 	DP_INFO(edev, "LRO is %s\n", flg ? "enabled" : "disabled");
 
 	return 0;
@@ -780,6 +787,36 @@ qede_geneve_enable(struct rte_eth_dev *eth_dev, uint8_t clss,
 }
 
 static int
+qede_ipgre_enable(struct rte_eth_dev *eth_dev, uint8_t clss,
+		  bool enable)
+{
+	struct qede_dev *qdev = QEDE_INIT_QDEV(eth_dev);
+	struct ecore_dev *edev = QEDE_INIT_EDEV(qdev);
+	enum _ecore_status_t rc = ECORE_INVAL;
+	struct ecore_tunnel_info tunn;
+
+	memset(&tunn, 0, sizeof(struct ecore_tunnel_info));
+	tunn.ip_gre.b_update_mode = true;
+	tunn.ip_gre.b_mode_enabled = enable;
+	tunn.ip_gre.tun_cls = clss;
+	tunn.ip_gre.tun_cls = clss;
+	tunn.b_update_rx_cls = true;
+	tunn.b_update_tx_cls = true;
+
+	rc = qede_tunnel_update(qdev, &tunn);
+	if (rc == ECORE_SUCCESS) {
+		qdev->ipgre.enable = enable;
+		DP_INFO(edev, "IPGRE is %s\n",
+			enable ? "enabled" : "disabled");
+	} else {
+		DP_ERR(edev, "Failed to update tunn_clss %u\n",
+		       clss);
+	}
+
+	return rc;
+}
+
+static int
 qede_tunn_enable(struct rte_eth_dev *eth_dev, uint8_t clss,
 		 enum rte_eth_tunnel_type tunn_type, bool enable)
 {
@@ -791,6 +828,9 @@ qede_tunn_enable(struct rte_eth_dev *eth_dev, uint8_t clss,
 		break;
 	case RTE_TUNNEL_TYPE_GENEVE:
 		rc = qede_geneve_enable(eth_dev, clss, enable);
+		break;
+	case RTE_TUNNEL_TYPE_IP_IN_GRE:
+		rc = qede_ipgre_enable(eth_dev, clss, enable);
 		break;
 	default:
 		rc = -EINVAL;
@@ -998,10 +1038,10 @@ qede_mac_addr_remove(struct rte_eth_dev *eth_dev, uint32_t index)
 	ether_addr_copy(&eth_dev->data->mac_addrs[index],
 			(struct ether_addr *)&ucast.mac);
 
-	ecore_filter_ucast_cmd(edev, &ucast, ECORE_SPQ_MODE_CB, NULL);
+	qede_mac_int_ops(eth_dev, &ucast, false);
 }
 
-static void
+static int
 qede_mac_addr_set(struct rte_eth_dev *eth_dev, struct ether_addr *mac_addr)
 {
 	struct qede_dev *qdev = QEDE_INIT_QDEV(eth_dev);
@@ -1010,12 +1050,11 @@ qede_mac_addr_set(struct rte_eth_dev *eth_dev, struct ether_addr *mac_addr)
 	if (IS_VF(edev) && !ecore_vf_check_mac(ECORE_LEADING_HWFN(edev),
 					       mac_addr->addr_bytes)) {
 		DP_ERR(edev, "Setting MAC address is not allowed\n");
-		ether_addr_copy(&qdev->primary_mac,
-				&eth_dev->data->mac_addrs[0]);
-		return;
+		return -EPERM;
 	}
 
 	qede_mac_addr_add(eth_dev, mac_addr, 0, 0);
+	return 0;
 }
 
 static void qede_config_accept_any_vlan(struct qede_dev *qdev, bool flg)
@@ -1166,10 +1205,10 @@ static int qede_vlan_offload_set(struct rte_eth_dev *eth_dev, int mask)
 {
 	struct qede_dev *qdev = QEDE_INIT_QDEV(eth_dev);
 	struct ecore_dev *edev = QEDE_INIT_EDEV(qdev);
-	struct rte_eth_rxmode *rxmode = &eth_dev->data->dev_conf.rxmode;
+	uint64_t rx_offloads = eth_dev->data->dev_conf.rxmode.offloads;
 
 	if (mask & ETH_VLAN_STRIP_MASK) {
-		if (rxmode->hw_vlan_strip)
+		if (rx_offloads & DEV_RX_OFFLOAD_VLAN_STRIP)
 			(void)qede_vlan_stripping(eth_dev, 1);
 		else
 			(void)qede_vlan_stripping(eth_dev, 0);
@@ -1177,7 +1216,7 @@ static int qede_vlan_offload_set(struct rte_eth_dev *eth_dev, int mask)
 
 	if (mask & ETH_VLAN_FILTER_MASK) {
 		/* VLAN filtering kicks in when a VLAN is added */
-		if (rxmode->hw_vlan_filter) {
+		if (rx_offloads & DEV_RX_OFFLOAD_VLAN_FILTER) {
 			qede_vlan_filter_set(eth_dev, 0, 1);
 		} else {
 			if (qdev->configured_vlans > 1) { /* Excluding VLAN0 */
@@ -1187,7 +1226,8 @@ static int qede_vlan_offload_set(struct rte_eth_dev *eth_dev, int mask)
 				/* Signal app that VLAN filtering is still
 				 * enabled
 				 */
-				rxmode->hw_vlan_filter = true;
+				eth_dev->data->dev_conf.rxmode.offloads |=
+						DEV_RX_OFFLOAD_VLAN_FILTER;
 			} else {
 				qede_vlan_filter_set(eth_dev, 0, 0);
 			}
@@ -1195,13 +1235,11 @@ static int qede_vlan_offload_set(struct rte_eth_dev *eth_dev, int mask)
 	}
 
 	if (mask & ETH_VLAN_EXTEND_MASK)
-		DP_INFO(edev, "No offloads are supported with VLAN Q-in-Q"
-			" and classification is based on outer tag only\n");
+		DP_ERR(edev, "Extend VLAN not supported\n");
 
 	qdev->vlan_offload_mask = mask;
 
-	DP_INFO(edev, "vlan offload mask %d vlan-strip %d vlan-filter %d\n",
-		mask, rxmode->hw_vlan_strip, rxmode->hw_vlan_filter);
+	DP_INFO(edev, "VLAN offload mask %d\n", mask);
 
 	return 0;
 }
@@ -1267,19 +1305,19 @@ static void qede_fastpath_start(struct ecore_dev *edev)
 
 static int qede_dev_start(struct rte_eth_dev *eth_dev)
 {
-	struct rte_eth_rxmode *rxmode = &eth_dev->data->dev_conf.rxmode;
 	struct qede_dev *qdev = QEDE_INIT_QDEV(eth_dev);
 	struct ecore_dev *edev = QEDE_INIT_EDEV(qdev);
+	struct rte_eth_rxmode *rxmode = &eth_dev->data->dev_conf.rxmode;
 
 	PMD_INIT_FUNC_TRACE(edev);
 
 	/* Configure TPA parameters */
-	if (rxmode->enable_lro) {
+	if (rxmode->offloads & DEV_RX_OFFLOAD_TCP_LRO) {
 		if (qede_enable_tpa(eth_dev, true))
 			return -EINVAL;
 		/* Enable scatter mode for LRO */
-		if (!rxmode->enable_scatter)
-			eth_dev->data->scattered_rx = 1;
+		if (!eth_dev->data->scattered_rx)
+			rxmode->offloads |= DEV_RX_OFFLOAD_SCATTER;
 	}
 
 	/* Start queues */
@@ -1294,7 +1332,7 @@ static int qede_dev_start(struct rte_eth_dev *eth_dev)
 	 * Also, we would like to retain similar behavior in PF case, so we
 	 * don't do PF/VF specific check here.
 	 */
-	if (rxmode->mq_mode == ETH_MQ_RX_RSS)
+	if (eth_dev->data->dev_conf.rxmode.mq_mode == ETH_MQ_RX_RSS)
 		if (qede_config_rss(eth_dev))
 			goto err;
 
@@ -1336,13 +1374,15 @@ static void qede_dev_stop(struct rte_eth_dev *eth_dev)
 	/* Disable traffic */
 	ecore_hw_stop_fastpath(edev); /* TBD - loop */
 
+	if (IS_PF(edev))
+		qede_mac_addr_remove(eth_dev, 0);
+
 	DP_INFO(edev, "Device is stopped\n");
 }
 
-#define QEDE_TX_SWITCHING		"vf_txswitch"
-
 const char *valid_args[] = {
-	QEDE_TX_SWITCHING,
+	QEDE_NPAR_TX_SWITCHING,
+	QEDE_VF_TX_SWITCHING,
 	NULL,
 };
 
@@ -1361,7 +1401,8 @@ static int qede_args_check(const char *key, const char *val, void *opaque)
 		return errno;
 	}
 
-	if (strcmp(QEDE_TX_SWITCHING, key) == 0)
+	if ((strcmp(QEDE_NPAR_TX_SWITCHING, key) == 0) ||
+	    (strcmp(QEDE_VF_TX_SWITCHING, key) == 0))
 		qdev->enable_tx_switching = !!tmp;
 
 	return ret;
@@ -1411,15 +1452,15 @@ static int qede_dev_configure(struct rte_eth_dev *eth_dev)
 	/* Check requirements for 100G mode */
 	if (ECORE_IS_CMT(edev)) {
 		if (eth_dev->data->nb_rx_queues < 2 ||
-				eth_dev->data->nb_tx_queues < 2) {
+		    eth_dev->data->nb_tx_queues < 2) {
 			DP_ERR(edev, "100G mode needs min. 2 RX/TX queues\n");
 			return -EINVAL;
 		}
 
 		if ((eth_dev->data->nb_rx_queues % 2 != 0) ||
-				(eth_dev->data->nb_tx_queues % 2 != 0)) {
+		    (eth_dev->data->nb_tx_queues % 2 != 0)) {
 			DP_ERR(edev,
-					"100G mode needs even no. of RX/TX queues\n");
+			       "100G mode needs even no. of RX/TX queues\n");
 			return -EINVAL;
 		}
 	}
@@ -1439,20 +1480,8 @@ static int qede_dev_configure(struct rte_eth_dev *eth_dev)
 	if (qede_args(eth_dev))
 		return -ENOTSUP;
 
-	/* Sanity checks and throw warnings */
-	if (rxmode->enable_scatter)
-		eth_dev->data->scattered_rx = 1;
-
-	if (!rxmode->hw_strip_crc)
-		DP_INFO(edev, "L2 CRC stripping is always enabled in hw\n");
-
-	if (!rxmode->hw_ip_checksum)
-		DP_INFO(edev, "IP/UDP/TCP checksum offload is always enabled "
-				"in hw\n");
-	if (rxmode->header_split)
-		DP_INFO(edev, "Header split enable is not supported\n");
-	if (!(rxmode->mq_mode == ETH_MQ_RX_NONE || rxmode->mq_mode ==
-				ETH_MQ_RX_RSS)) {
+	if (!(rxmode->mq_mode == ETH_MQ_RX_NONE ||
+	      rxmode->mq_mode == ETH_MQ_RX_RSS)) {
 		DP_ERR(edev, "Unsupported multi-queue mode\n");
 		return -ENOTSUP;
 	}
@@ -1467,19 +1496,23 @@ static int qede_dev_configure(struct rte_eth_dev *eth_dev)
 		return -ENOMEM;
 
 	/* If jumbo enabled adjust MTU */
-	if (eth_dev->data->dev_conf.rxmode.jumbo_frame)
+	if (rxmode->offloads & DEV_RX_OFFLOAD_JUMBO_FRAME)
 		eth_dev->data->mtu =
-				eth_dev->data->dev_conf.rxmode.max_rx_pkt_len -
-				ETHER_HDR_LEN - ETHER_CRC_LEN;
+			eth_dev->data->dev_conf.rxmode.max_rx_pkt_len -
+			ETHER_HDR_LEN - ETHER_CRC_LEN;
+
+	if (rxmode->offloads & DEV_RX_OFFLOAD_SCATTER)
+		eth_dev->data->scattered_rx = 1;
 
 	if (qede_start_vport(qdev, eth_dev->data->mtu))
 		return -1;
+
 	qdev->mtu = eth_dev->data->mtu;
 
 	/* Enable VLAN offloads by default */
 	ret = qede_vlan_offload_set(eth_dev, ETH_VLAN_STRIP_MASK  |
-			ETH_VLAN_FILTER_MASK |
-			ETH_VLAN_EXTEND_MASK);
+					     ETH_VLAN_FILTER_MASK |
+					     ETH_VLAN_EXTEND_MASK);
 	if (ret)
 		return ret;
 
@@ -1515,7 +1548,6 @@ qede_dev_info_get(struct rte_eth_dev *eth_dev,
 
 	PMD_INIT_FUNC_TRACE(edev);
 
-	dev_info->pci_dev = RTE_ETH_DEV_TO_PCI(eth_dev);
 	dev_info->min_rx_bufsize = (uint32_t)QEDE_MIN_RX_BUFF_SIZE;
 	dev_info->max_rx_pktlen = (uint32_t)ETH_TX_MAX_NON_LSO_PKT_LEN;
 	dev_info->rx_desc_lim = qede_rx_desc_lim;
@@ -1534,26 +1566,46 @@ qede_dev_info_get(struct rte_eth_dev *eth_dev,
 	dev_info->reta_size = ECORE_RSS_IND_TABLE_SIZE;
 	dev_info->hash_key_size = ECORE_RSS_KEY_SIZE * sizeof(uint32_t);
 	dev_info->flow_type_rss_offloads = (uint64_t)QEDE_RSS_OFFLOAD_ALL;
-
-	dev_info->default_txconf = (struct rte_eth_txconf) {
-		.txq_flags = QEDE_TXQ_FLAGS,
-	};
-
-	dev_info->rx_offload_capa = (DEV_RX_OFFLOAD_VLAN_STRIP	|
-				     DEV_RX_OFFLOAD_IPV4_CKSUM	|
+	dev_info->rx_offload_capa = (DEV_RX_OFFLOAD_IPV4_CKSUM	|
 				     DEV_RX_OFFLOAD_UDP_CKSUM	|
 				     DEV_RX_OFFLOAD_TCP_CKSUM	|
 				     DEV_RX_OFFLOAD_OUTER_IPV4_CKSUM |
-				     DEV_RX_OFFLOAD_TCP_LRO);
+				     DEV_RX_OFFLOAD_TCP_LRO	|
+				     DEV_RX_OFFLOAD_CRC_STRIP	|
+				     DEV_RX_OFFLOAD_SCATTER	|
+				     DEV_RX_OFFLOAD_JUMBO_FRAME |
+				     DEV_RX_OFFLOAD_VLAN_FILTER |
+				     DEV_RX_OFFLOAD_VLAN_STRIP);
+	dev_info->rx_queue_offload_capa = 0;
 
+	/* TX offloads are on a per-packet basis, so it is applicable
+	 * to both at port and queue levels.
+	 */
 	dev_info->tx_offload_capa = (DEV_TX_OFFLOAD_VLAN_INSERT	|
 				     DEV_TX_OFFLOAD_IPV4_CKSUM	|
 				     DEV_TX_OFFLOAD_UDP_CKSUM	|
 				     DEV_TX_OFFLOAD_TCP_CKSUM	|
 				     DEV_TX_OFFLOAD_OUTER_IPV4_CKSUM |
-				     DEV_TX_OFFLOAD_TCP_TSO |
+				     DEV_TX_OFFLOAD_QINQ_INSERT |
+				     DEV_TX_OFFLOAD_MULTI_SEGS  |
+				     DEV_TX_OFFLOAD_TCP_TSO	|
 				     DEV_TX_OFFLOAD_VXLAN_TNL_TSO |
 				     DEV_TX_OFFLOAD_GENEVE_TNL_TSO);
+	dev_info->tx_queue_offload_capa = dev_info->tx_offload_capa;
+
+	dev_info->default_txconf = (struct rte_eth_txconf) {
+		.txq_flags = DEV_TX_OFFLOAD_MULTI_SEGS,
+	};
+
+	dev_info->default_rxconf = (struct rte_eth_rxconf) {
+		/* Packets are always dropped if no descriptors are available */
+		.rx_drop_en = 1,
+		/* The below RX offloads are always enabled */
+		.offloads = (DEV_RX_OFFLOAD_CRC_STRIP  |
+			     DEV_RX_OFFLOAD_IPV4_CKSUM |
+			     DEV_RX_OFFLOAD_TCP_CKSUM  |
+			     DEV_RX_OFFLOAD_UDP_CKSUM),
+	};
 
 	memset(&link, 0, sizeof(struct qed_link_output));
 	qdev->ops->common->get_link(edev, &link);
@@ -2065,6 +2117,7 @@ qede_dev_supported_ptypes_get(struct rte_eth_dev *eth_dev)
 		RTE_PTYPE_TUNNEL_VXLAN,
 		RTE_PTYPE_L4_FRAG,
 		RTE_PTYPE_TUNNEL_GENEVE,
+		RTE_PTYPE_TUNNEL_GRE,
 		/* Inner */
 		RTE_PTYPE_INNER_L2_ETHER,
 		RTE_PTYPE_INNER_L2_ETHER_VLAN,
@@ -2391,6 +2444,9 @@ static int qede_set_mtu(struct rte_eth_dev *dev, uint16_t mtu)
 		dev->data->dev_started = 0;
 		qede_dev_stop(dev);
 		restart = true;
+	} else {
+		if (IS_PF(edev))
+			qede_mac_addr_remove(dev, 0);
 	}
 	rte_delay_ms(1000);
 	qede_start_vport(qdev, mtu); /* Recreate vport */
@@ -2418,7 +2474,9 @@ static int qede_set_mtu(struct rte_eth_dev *dev, uint16_t mtu)
 		dev->data->dev_conf.rxmode.jumbo_frame = 0;
 
 	/* Restore config lost due to vport stop */
-	qede_mac_addr_set(dev, &qdev->primary_mac);
+	if (IS_PF(edev))
+		qede_mac_addr_set(dev, &qdev->primary_mac);
+
 	if (dev->data->promiscuous)
 		qede_promiscuous_enable(dev);
 	else
@@ -2488,7 +2546,6 @@ qede_udp_dst_port_del(struct rte_eth_dev *eth_dev,
 					ECORE_TUNN_CLSS_MAC_VLAN, false);
 
 		break;
-
 	case RTE_TUNNEL_TYPE_GENEVE:
 		if (qdev->geneve.udp_port != tunnel_udp->udp_port) {
 			DP_ERR(edev, "UDP port %u doesn't exist\n",
@@ -2578,7 +2635,6 @@ qede_udp_dst_port_add(struct rte_eth_dev *eth_dev,
 
 		qdev->vxlan.udp_port = udp_port;
 		break;
-
 	case RTE_TUNNEL_TYPE_GENEVE:
 		if (qdev->geneve.udp_port == tunnel_udp->udp_port) {
 			DP_INFO(edev,
@@ -2616,7 +2672,6 @@ qede_udp_dst_port_add(struct rte_eth_dev *eth_dev,
 
 		qdev->geneve.udp_port = udp_port;
 		break;
-
 	default:
 		return ECORE_INVAL;
 	}
@@ -2782,7 +2837,8 @@ qede_tunn_filter_config(struct rte_eth_dev *eth_dev,
 			qdev->geneve.filter_type = conf->filter_type;
 		}
 
-		if (!qdev->vxlan.enable || !qdev->geneve.enable)
+		if (!qdev->vxlan.enable || !qdev->geneve.enable ||
+		    !qdev->ipgre.enable)
 			return qede_tunn_enable(eth_dev, clss,
 						conf->tunnel_type,
 						true);
@@ -2818,15 +2874,14 @@ int qede_dev_filter_ctrl(struct rte_eth_dev *eth_dev,
 		switch (filter_conf->tunnel_type) {
 		case RTE_TUNNEL_TYPE_VXLAN:
 		case RTE_TUNNEL_TYPE_GENEVE:
+		case RTE_TUNNEL_TYPE_IP_IN_GRE:
 			DP_INFO(edev,
 				"Packet steering to the specified Rx queue"
 				" is not supported with UDP tunneling");
 			return(qede_tunn_filter_config(eth_dev, filter_op,
 						      filter_conf));
-		/* Place holders for future tunneling support */
 		case RTE_TUNNEL_TYPE_TEREDO:
 		case RTE_TUNNEL_TYPE_NVGRE:
-		case RTE_TUNNEL_TYPE_IP_IN_GRE:
 		case RTE_L2_TUNNEL_TYPE_E_TAG:
 			DP_ERR(edev, "Unsupported tunnel type %d\n",
 				filter_conf->tunnel_type);
@@ -3125,19 +3180,23 @@ static int qede_common_dev_init(struct rte_eth_dev *eth_dev, bool is_vf)
 	/* VF tunnel offloads is enabled by default in PF driver */
 	adapter->vxlan.num_filters = 0;
 	adapter->geneve.num_filters = 0;
+	adapter->ipgre.num_filters = 0;
 	if (is_vf) {
 		adapter->vxlan.enable = true;
 		adapter->vxlan.filter_type = ETH_TUNNEL_FILTER_IMAC |
 					     ETH_TUNNEL_FILTER_IVLAN;
 		adapter->vxlan.udp_port = QEDE_VXLAN_DEF_PORT;
 		adapter->geneve.enable = true;
-
 		adapter->geneve.filter_type = ETH_TUNNEL_FILTER_IMAC |
 					      ETH_TUNNEL_FILTER_IVLAN;
 		adapter->geneve.udp_port = QEDE_GENEVE_DEF_PORT;
+		adapter->ipgre.enable = true;
+		adapter->ipgre.filter_type = ETH_TUNNEL_FILTER_IMAC |
+					     ETH_TUNNEL_FILTER_IVLAN;
 	} else {
 		adapter->vxlan.enable = false;
 		adapter->geneve.enable = false;
+		adapter->ipgre.enable = false;
 	}
 
 	DP_INFO(edev, "MAC address : %02x:%02x:%02x:%02x:%02x:%02x\n",

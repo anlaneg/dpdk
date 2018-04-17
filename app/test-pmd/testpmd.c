@@ -12,6 +12,7 @@
 #include <sys/mman.h>
 #include <sys/types.h>
 #include <errno.h>
+#include <stdbool.h>
 
 #include <sys/queue.h>
 #include <sys/stat.h>
@@ -210,9 +211,10 @@ queueid_t nb_txq = 1; /**< Number of TX queues per port. */
 
 /*
  * Configurable number of RX/TX ring descriptors.
+ * Defaults are supplied by drivers via ethdev.
  */
-#define RTE_TEST_RX_DESC_DEFAULT 1024
-#define RTE_TEST_TX_DESC_DEFAULT 1024
+#define RTE_TEST_RX_DESC_DEFAULT 0
+#define RTE_TEST_TX_DESC_DEFAULT 0
 uint16_t nb_rxd = RTE_TEST_RX_DESC_DEFAULT; /**< Number of RX descriptors. */
 uint16_t nb_txd = RTE_TEST_TX_DESC_DEFAULT; /**< Number of TX descriptors. */
 
@@ -283,6 +285,8 @@ uint8_t lsc_interrupt = 1; /* enabled by default */
  * Enable device removal notification.
  */
 uint8_t rmv_interrupt = 1; /* enabled by default */
+
+uint8_t hot_plug = 0; /**< hotplug disabled by default. */
 
 /*
  * Display or mask ether events
@@ -391,6 +395,12 @@ static void check_all_ports_link_status(uint32_t port_mask);
 static int eth_event_callback(portid_t port_id,
 			      enum rte_eth_event_type type,
 			      void *param, void *ret_param);
+static void eth_dev_event_callback(char *device_name,
+				enum rte_dev_event_type type,
+				void *param);
+static int eth_dev_event_callback_register(void);
+static int eth_dev_event_callback_unregister(void);
+
 
 /*
  * Check if all the ports are started.
@@ -1853,6 +1863,39 @@ reset_port(portid_t pid)
 	printf("Done\n");
 }
 
+static int
+eth_dev_event_callback_register(void)
+{
+	int ret;
+
+	/* register the device event callback */
+	ret = rte_dev_event_callback_register(NULL,
+		eth_dev_event_callback, NULL);
+	if (ret) {
+		printf("Failed to register device event callback\n");
+		return -1;
+	}
+
+	return 0;
+}
+
+
+static int
+eth_dev_event_callback_unregister(void)
+{
+	int ret;
+
+	/* unregister the device event callback */
+	ret = rte_dev_event_callback_unregister(NULL,
+		eth_dev_event_callback, NULL);
+	if (ret < 0) {
+		printf("Failed to unregister device event callback\n");
+		return -1;
+	}
+
+	return 0;
+}
+
 void
 attach_port(char *identifier)
 {
@@ -1916,6 +1959,7 @@ void
 pmd_test_exit(void)
 {
 	portid_t pt_id;
+	int ret;
 
 	if (test_done == 0)
 		stop_packet_forwarding();
@@ -1929,6 +1973,19 @@ pmd_test_exit(void)
 			close_port(pt_id);
 		}
 	}
+
+	if (hot_plug) {
+		ret = rte_dev_event_monitor_stop();
+		if (ret)
+			RTE_LOG(ERR, EAL,
+				"fail to stop device event monitor.");
+
+		ret = eth_dev_event_callback_unregister();
+		if (ret)
+			RTE_LOG(ERR, EAL,
+				"fail to unregister all event callbacks.");
+	}
+
 	printf("\nBye...\n");
 }
 
@@ -2057,6 +2114,37 @@ eth_event_callback(portid_t port_id, enum rte_eth_event_type type, void *param,
 		break;
 	}
 	return 0;
+}
+
+/* This function is used by the interrupt thread */
+static void
+eth_dev_event_callback(char *device_name, enum rte_dev_event_type type,
+			     __rte_unused void *arg)
+{
+	if (type >= RTE_DEV_EVENT_MAX) {
+		fprintf(stderr, "%s called upon invalid event %d\n",
+			__func__, type);
+		fflush(stderr);
+	}
+
+	switch (type) {
+	case RTE_DEV_EVENT_REMOVE:
+		RTE_LOG(ERR, EAL, "The device: %s has been removed!\n",
+			device_name);
+		/* TODO: After finish failure handle, begin to stop
+		 * packet forward, stop port, close port, detach port.
+		 */
+		break;
+	case RTE_DEV_EVENT_ADD:
+		RTE_LOG(ERR, EAL, "The device: %s has been added!\n",
+			device_name);
+		/* TODO: After finish kernel driver binding,
+		 * begin to attach port.
+		 */
+		break;
+	default:
+		break;
+	}
 }
 
 static int
@@ -2474,8 +2562,9 @@ signal_handler(int signum)
 int
 main(int argc, char** argv)
 {
-	int  diag;
+	int diag;
 	portid_t port_id;
+	int ret;
 
 	signal(SIGINT, signal_handler);
 	signal(SIGTERM, signal_handler);
@@ -2543,6 +2632,18 @@ main(int argc, char** argv)
 		       nb_rxq, nb_txq);
 
 	init_config();
+
+	if (hot_plug) {
+		/* enable hot plug monitoring */
+		ret = rte_dev_event_monitor_start();
+		if (ret) {
+			rte_errno = EINVAL;
+			return -1;
+		}
+		eth_dev_event_callback_register();
+
+	}
+
 	if (start_port(RTE_PORT_ALL) != 0)
 		rte_exit(EXIT_FAILURE, "Start ports failed\n");
 

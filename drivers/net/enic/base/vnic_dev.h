@@ -108,7 +108,8 @@ int vnic_dev_fw_info(struct vnic_dev *vdev,
 int vnic_dev_capable_adv_filters(struct vnic_dev *vdev);
 int vnic_dev_capable(struct vnic_dev *vdev, enum vnic_devcmd_cmd cmd);
 int vnic_dev_capable_filter_mode(struct vnic_dev *vdev, u32 *mode,
-				 u8 *filter_tags);
+				 u8 *filter_actions);
+int vnic_dev_capable_udp_rss(struct vnic_dev *vdev);
 int vnic_dev_asic_info(struct vnic_dev *vdev, u16 *asic_type, u16 *asic_rev);
 int vnic_dev_spec(struct vnic_dev *vdev, unsigned int offset, size_t size,
 	void *value);
@@ -165,6 +166,7 @@ struct vnic_dev *vnic_dev_register(struct vnic_dev *vdev,
 	void *priv, struct rte_pci_device *pdev, struct vnic_dev_bar *bar,
 	unsigned int num_bars);
 struct rte_pci_device *vnic_dev_get_pdev(struct vnic_dev *vdev);
+int vnic_dev_alloc_stats_mem(struct vnic_dev *vdev);
 int vnic_dev_cmd_init(struct vnic_dev *vdev, int fallback);
 int vnic_dev_get_size(void);
 int vnic_dev_int13(struct vnic_dev *vdev, u64 arg, u32 op);

@@ -27,6 +27,8 @@
 #include "sfc_dp.h"
 #include "sfc_dp_rx.h"
 
+uint32_t sfc_logtype_driver;
+
 static struct sfc_dp_list sfc_dp_head =
 	TAILQ_HEAD_INITIALIZER(sfc_dp_head);
 
@@ -87,7 +89,6 @@ sfc_dev_infos_get(struct rte_eth_dev *dev, struct rte_eth_dev_info *dev_info)
 
 	sfc_log_init(sa, "entry");
 
-	dev_info->pci_dev = RTE_ETH_DEV_TO_PCI(dev);
 	dev_info->max_rx_pktlen = EFX_MAC_PDU_MAX;
 
 	/* Autonegotiation may be disabled */
@@ -96,8 +97,14 @@ sfc_dev_infos_get(struct rte_eth_dev *dev, struct rte_eth_dev_info *dev_info)
 		dev_info->speed_capa |= ETH_LINK_SPEED_1G;
 	if (sa->port.phy_adv_cap_mask & EFX_PHY_CAP_10000FDX)
 		dev_info->speed_capa |= ETH_LINK_SPEED_10G;
+	if (sa->port.phy_adv_cap_mask & EFX_PHY_CAP_25000FDX)
+		dev_info->speed_capa |= ETH_LINK_SPEED_25G;
 	if (sa->port.phy_adv_cap_mask & EFX_PHY_CAP_40000FDX)
 		dev_info->speed_capa |= ETH_LINK_SPEED_40G;
+	if (sa->port.phy_adv_cap_mask & EFX_PHY_CAP_50000FDX)
+		dev_info->speed_capa |= ETH_LINK_SPEED_50G;
+	if (sa->port.phy_adv_cap_mask & EFX_PHY_CAP_100000FDX)
+		dev_info->speed_capa |= ETH_LINK_SPEED_100G;
 
 	dev_info->max_rx_queues = sa->rxq_max;
 	dev_info->max_tx_queues = sa->txq_max;
@@ -236,22 +243,13 @@ static int
 sfc_dev_link_update(struct rte_eth_dev *dev, int wait_to_complete)
 {
 	struct sfc_adapter *sa = dev->data->dev_private;
-	struct rte_eth_link *dev_link = &dev->data->dev_link;
-	struct rte_eth_link old_link;
 	struct rte_eth_link current_link;
+	int ret;
 
 	sfc_log_init(sa, "entry");
 
-retry:
-	EFX_STATIC_ASSERT(sizeof(*dev_link) == sizeof(rte_atomic64_t));
-	*(int64_t *)&old_link = rte_atomic64_read((rte_atomic64_t *)dev_link);
-
 	if (sa->state != SFC_ADAPTER_STARTED) {
 		sfc_port_link_mode_to_info(EFX_LINK_UNKNOWN, &current_link);
-		if (!rte_atomic64_cmpset((volatile uint64_t *)dev_link,
-					 *(uint64_t *)&old_link,
-					 *(uint64_t *)&current_link))
-			goto retry;
 	} else if (wait_to_complete) {
 		efx_link_mode_t link_mode;
 
@@ -259,21 +257,17 @@ retry:
 			link_mode = EFX_LINK_UNKNOWN;
 		sfc_port_link_mode_to_info(link_mode, &current_link);
 
-		if (!rte_atomic64_cmpset((volatile uint64_t *)dev_link,
-					 *(uint64_t *)&old_link,
-					 *(uint64_t *)&current_link))
-			goto retry;
 	} else {
 		sfc_ev_mgmt_qpoll(sa);
-		*(int64_t *)&current_link =
-			rte_atomic64_read((rte_atomic64_t *)dev_link);
+		rte_eth_linkstatus_get(dev, &current_link);
 	}
 
-	if (old_link.link_status != current_link.link_status)
-		sfc_info(sa, "Link status is %s",
-			 current_link.link_status ? "UP" : "DOWN");
+	ret = rte_eth_linkstatus_set(dev, &current_link);
+	if (ret == 0)
+		sfc_notice(sa, "Link status is %s",
+			   current_link.link_status ? "UP" : "DOWN");
 
-	return old_link.link_status == current_link.link_status ? 0 : -1;
+	return ret;
 }
 
 static void
@@ -920,13 +914,14 @@ fail_inval:
 	SFC_ASSERT(rc > 0);
 	return -rc;
 }
-static void
+static int
 sfc_mac_addr_set(struct rte_eth_dev *dev, struct ether_addr *mac_addr)
 {
 	struct sfc_adapter *sa = dev->data->dev_private;
 	const efx_nic_cfg_t *encp = efx_nic_cfg_get(sa->nic);
 	struct sfc_port *port = &sa->port;
-	int rc;
+	struct ether_addr *old_addr = &dev->data->mac_addrs[0];
+	int rc = 0;
 
 	sfc_adapter_lock(sa);
 
@@ -936,15 +931,22 @@ sfc_mac_addr_set(struct rte_eth_dev *dev, struct ether_addr *mac_addr)
 	 */
 	ether_addr_copy(mac_addr, &port->default_mac_addr);
 
+	/*
+	 * Neither of the two following checks can return
+	 * an error. The new MAC address is preserved in
+	 * the device private data and can be activated
+	 * on the next port start if the user prevents
+	 * isolated mode from being enabled.
+	 */
 	if (port->isolated) {
-		sfc_err(sa, "isolated mode is active on the port");
-		sfc_err(sa, "will not set MAC address");
+		sfc_warn(sa, "isolated mode is active on the port");
+		sfc_warn(sa, "will not set MAC address");
 		goto unlock;
 	}
 
 	if (sa->state != SFC_ADAPTER_STARTED) {
-		sfc_info(sa, "the port is not started");
-		sfc_info(sa, "the new MAC address will be set on port start");
+		sfc_notice(sa, "the port is not started");
+		sfc_notice(sa, "the new MAC address will be set on port start");
 
 		goto unlock;
 	}
@@ -962,8 +964,12 @@ sfc_mac_addr_set(struct rte_eth_dev *dev, struct ether_addr *mac_addr)
 		 * we also need to update unicast filters
 		 */
 		rc = sfc_set_rx_mode(sa);
-		if (rc != 0)
+		if (rc != 0) {
 			sfc_err(sa, "cannot set filter (rc = %u)", rc);
+			/* Rollback the old address */
+			(void)efx_mac_addr_set(sa->nic, old_addr->addr_bytes);
+			(void)sfc_set_rx_mode(sa);
+		}
 	} else {
 		sfc_warn(sa, "cannot set MAC address with filters installed");
 		sfc_warn(sa, "adapter will be restarted to pick the new MAC");
@@ -982,14 +988,13 @@ sfc_mac_addr_set(struct rte_eth_dev *dev, struct ether_addr *mac_addr)
 	}
 
 unlock:
-	/*
-	 * In the case of failure sa->port->default_mac_addr does not
-	 * need rollback since no error code is returned, and the upper
-	 * API will anyway update the external MAC address storage.
-	 * To be consistent with that new value it is better to keep
-	 * the device private value the same.
-	 */
+	if (rc != 0)
+		ether_addr_copy(old_addr, &port->default_mac_addr);
+
 	sfc_adapter_unlock(sa);
+
+	SFC_ASSERT(rc >= 0);
+	return -rc;
 }
 
 
@@ -1708,6 +1713,7 @@ sfc_eth_dev_set_ops(struct rte_eth_dev *dev)
 	switch (sa->family) {
 	case EFX_FAMILY_HUNTINGTON:
 	case EFX_FAMILY_MEDFORD:
+	case EFX_FAMILY_MEDFORD2:
 		avail_caps |= SFC_DP_HW_FW_CAP_EF10;
 		break;
 	default:
@@ -1749,7 +1755,7 @@ sfc_eth_dev_set_ops(struct rte_eth_dev *dev)
 		goto fail_dp_rx_name;
 	}
 
-	sfc_info(sa, "use %s Rx datapath", sa->dp_rx_name);
+	sfc_notice(sa, "use %s Rx datapath", sa->dp_rx_name);
 
 	dev->rx_pkt_burst = sa->dp_rx->pkt_burst;
 
@@ -1788,7 +1794,7 @@ sfc_eth_dev_set_ops(struct rte_eth_dev *dev)
 		goto fail_dp_tx_name;
 	}
 
-	sfc_info(sa, "use %s Tx datapath", sa->dp_tx_name);
+	sfc_notice(sa, "use %s Tx datapath", sa->dp_tx_name);
 
 	dev->tx_pkt_burst = sa->dp_tx->pkt_burst;
 
@@ -1935,14 +1941,12 @@ sfc_eth_dev_init(struct rte_eth_dev *dev)
 	/* Copy PCI device info to the dev->data */
 	rte_eth_copy_pci_info(dev, pci_dev);
 
+	sa->logtype_main = sfc_register_logtype(sa, SFC_LOGTYPE_MAIN_STR,
+						RTE_LOG_NOTICE);
+
 	rc = sfc_kvargs_parse(sa);
 	if (rc != 0)
 		goto fail_kvargs_parse;
-
-	rc = sfc_kvargs_process(sa, SFC_KVARG_DEBUG_INIT,
-				sfc_kvarg_bool_handler, &sa->debug_init);
-	if (rc != 0)
-		goto fail_kvarg_debug_init;
 
 	sfc_log_init(sa, "entry");
 
@@ -1997,7 +2001,6 @@ fail_probe:
 	dev->data->mac_addrs = NULL;
 
 fail_mac_addrs:
-fail_kvarg_debug_init:
 	sfc_kvargs_cleanup(sa);
 
 fail_kvargs_parse:
@@ -2048,6 +2051,8 @@ static const struct rte_pci_id pci_id_sfc_efx_map[] = {
 	{ RTE_PCI_DEVICE(EFX_PCI_VENID_SFC, EFX_PCI_DEVID_GREENPORT_VF) },
 	{ RTE_PCI_DEVICE(EFX_PCI_VENID_SFC, EFX_PCI_DEVID_MEDFORD) },
 	{ RTE_PCI_DEVICE(EFX_PCI_VENID_SFC, EFX_PCI_DEVID_MEDFORD_VF) },
+	{ RTE_PCI_DEVICE(EFX_PCI_VENID_SFC, EFX_PCI_DEVID_MEDFORD2) },
+	{ RTE_PCI_DEVICE(EFX_PCI_VENID_SFC, EFX_PCI_DEVID_MEDFORD2_VF) },
 	{ .vendor_id = 0 /* sentinel */ }
 };
 
@@ -2079,6 +2084,16 @@ RTE_PMD_REGISTER_PARAM_STRING(net_sfc_efx,
 	SFC_KVARG_RX_DATAPATH "=" SFC_KVARG_VALUES_RX_DATAPATH " "
 	SFC_KVARG_TX_DATAPATH "=" SFC_KVARG_VALUES_TX_DATAPATH " "
 	SFC_KVARG_PERF_PROFILE "=" SFC_KVARG_VALUES_PERF_PROFILE " "
-	SFC_KVARG_STATS_UPDATE_PERIOD_MS "=<long> "
-	SFC_KVARG_MCDI_LOGGING "=" SFC_KVARG_VALUES_BOOL " "
-	SFC_KVARG_DEBUG_INIT "=" SFC_KVARG_VALUES_BOOL);
+	SFC_KVARG_FW_VARIANT "=" SFC_KVARG_VALUES_FW_VARIANT " "
+	SFC_KVARG_STATS_UPDATE_PERIOD_MS "=<long>");
+
+RTE_INIT(sfc_driver_register_logtype);
+static void
+sfc_driver_register_logtype(void)
+{
+	int ret;
+
+	ret = rte_log_register_type_and_pick_level(SFC_LOGTYPE_PREFIX "driver",
+						   RTE_LOG_NOTICE);
+	sfc_logtype_driver = (ret < 0) ? RTE_LOGTYPE_PMD : ret;
+}

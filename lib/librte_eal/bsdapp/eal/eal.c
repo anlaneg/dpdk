@@ -64,8 +64,8 @@ static int mem_cfg_fd = -1;
 static struct flock wr_lock = {
 		.l_type = F_WRLCK,
 		.l_whence = SEEK_SET,
-		.l_start = offsetof(struct rte_mem_config, memseg),
-		.l_len = sizeof(early_mem_config.memseg),
+		.l_start = offsetof(struct rte_mem_config, memsegs),
+		.l_len = sizeof(early_mem_config.memsegs),
 };
 
 /* Address of global and public configuration */
@@ -289,7 +289,7 @@ eal_get_hugepage_mem_size(void)
 
 	for (i = 0; i < internal_config.num_hugepage_sizes; i++) {
 		struct hugepage_info *hpi = &internal_config.hugepage_info[i];
-		if (hpi->hugedir != NULL) {
+		if (strnlen(hpi->hugedir, sizeof(hpi->hugedir)) != 0) {
 			for (j = 0; j < RTE_MAX_NUMA_NODES; j++) {
 				size += hpi->hugepage_sz * hpi->num_pages[j];
 			}
@@ -430,24 +430,28 @@ out:
 	return ret;
 }
 
+static int
+check_socket(const struct rte_memseg_list *msl, void *arg)
+{
+	int *socket_id = arg;
+
+	if (msl->socket_id == *socket_id && msl->memseg_arr.count != 0)
+		return 1;
+
+	return 0;
+}
+
 static void
 eal_check_mem_on_local_socket(void)
 {
-	const struct rte_memseg *ms;
-	int i, socket_id;
+	int socket_id;
 
 	socket_id = rte_lcore_to_socket_id(rte_config.master_lcore);
 
-	ms = rte_eal_get_physmem_layout();
-
-	for (i = 0; i < RTE_MAX_MEMSEG; i++)
-		if (ms[i].socket_id == socket_id &&
-				ms[i].len > 0)
-			return;
-
-	RTE_LOG(WARNING, EAL, "WARNING: Master core has no "
-			"memory on local socket!\n");
+	if (rte_memseg_list_walk(check_socket, &socket_id) == 0)
+		RTE_LOG(WARNING, EAL, "WARNING: Master core has no memory on local socket!\n");
 }
+
 
 static int
 sync_func(__attribute__((unused)) void *arg)
@@ -535,6 +539,9 @@ rte_eal_init(int argc, char **argv)
 		return -1;
 	}
 
+	/* FreeBSD always uses legacy memory model */
+	internal_config.legacy_mem = true;
+
 	if (eal_plugins_init() < 0) {
 		rte_eal_init_alert("Cannot init plugins\n");
 		rte_errno = EINVAL;
@@ -559,13 +566,17 @@ rte_eal_init(int argc, char **argv)
 	/* autodetect the iova mapping mode (default is iova_pa) */
 	rte_eal_get_configuration()->iova_mode = rte_bus_get_iommu_class();
 
-	if (internal_config.no_hugetlbfs == 0 &&
-			internal_config.process_type != RTE_PROC_SECONDARY &&
-			eal_hugepage_info_init() < 0) {
-		rte_eal_init_alert("Cannot get hugepage information.");
-		rte_errno = EACCES;
-		rte_atomic32_clear(&run_once);
-		return -1;
+	if (internal_config.no_hugetlbfs == 0) {
+		/* rte_config isn't initialized yet */
+		ret = internal_config.process_type == RTE_PROC_PRIMARY ?
+			eal_hugepage_info_init() :
+			eal_hugepage_info_read();
+		if (ret < 0) {
+			rte_eal_init_alert("Cannot get hugepage information.");
+			rte_errno = EACCES;
+			rte_atomic32_clear(&run_once);
+			return -1;
+		}
 	}
 
 	if (internal_config.memory == 0 && internal_config.force_sockets == 0) {
@@ -598,14 +609,24 @@ rte_eal_init(int argc, char **argv)
 		}
 	}
 
+	/* in secondary processes, memory init may allocate additional fbarrays
+	 * not present in primary processes, so to avoid any potential issues,
+	 * initialize memzones first.
+	 */
+	if (rte_eal_memzone_init() < 0) {
+		rte_eal_init_alert("Cannot init memzone\n");
+		rte_errno = ENODEV;
+		return -1;
+	}
+
 	if (rte_eal_memory_init() < 0) {
 		rte_eal_init_alert("Cannot init memory\n");
 		rte_errno = ENOMEM;
 		return -1;
 	}
 
-	if (rte_eal_memzone_init() < 0) {
-		rte_eal_init_alert("Cannot init memzone\n");
+	if (rte_eal_malloc_heap_init() < 0) {
+		rte_eal_init_alert("Cannot init malloc heap\n");
 		rte_errno = ENODEV;
 		return -1;
 	}
@@ -751,6 +772,8 @@ int rte_vfio_enable(const char *modname);
 int rte_vfio_is_enabled(const char *modname);
 int rte_vfio_noiommu_is_enabled(void);
 int rte_vfio_clear_group(int vfio_group_fd);
+int rte_vfio_dma_map(uint64_t vaddr, uint64_t iova, uint64_t len);
+int rte_vfio_dma_unmap(uint64_t vaddr, uint64_t iova, uint64_t len);
 
 int rte_vfio_setup_device(__rte_unused const char *sysfs_base,
 		      __rte_unused const char *dev_addr,
@@ -785,4 +808,38 @@ int rte_vfio_noiommu_is_enabled(void)
 int rte_vfio_clear_group(__rte_unused int vfio_group_fd)
 {
 	return 0;
+}
+
+int __rte_experimental
+rte_vfio_dma_map(uint64_t __rte_unused vaddr, __rte_unused uint64_t iova,
+		  __rte_unused uint64_t len)
+{
+	return -1;
+}
+
+int __rte_experimental
+rte_vfio_dma_unmap(uint64_t __rte_unused vaddr, uint64_t __rte_unused iova,
+		    __rte_unused uint64_t len)
+{
+	return -1;
+}
+
+int __rte_experimental
+rte_vfio_get_group_num(__rte_unused const char *sysfs_base,
+		       __rte_unused const char *dev_addr,
+		       __rte_unused int *iommu_group_num)
+{
+	return -1;
+}
+
+int  __rte_experimental
+rte_vfio_get_container_fd(void)
+{
+	return -1;
+}
+
+int  __rte_experimental
+rte_vfio_get_group_fd(__rte_unused int iommu_group_num)
+{
+	return -1;
 }

@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: BSD-3-Clause
  * Copyright 2015 6WIND S.A.
- * Copyright 2015 Mellanox.
+ * Copyright 2015 Mellanox Technologies, Ltd
  */
 
 #include <assert.h>
@@ -86,6 +86,14 @@ mlx5_set_ptype_table(void)
 		     RTE_PTYPE_L4_TCP;
 	(*p)[0x06] = RTE_PTYPE_L2_ETHER | RTE_PTYPE_L3_IPV4_EXT_UNKNOWN |
 		     RTE_PTYPE_L4_TCP;
+	(*p)[0x0d] = RTE_PTYPE_L2_ETHER | RTE_PTYPE_L3_IPV6_EXT_UNKNOWN |
+		     RTE_PTYPE_L4_TCP;
+	(*p)[0x0e] = RTE_PTYPE_L2_ETHER | RTE_PTYPE_L3_IPV4_EXT_UNKNOWN |
+		     RTE_PTYPE_L4_TCP;
+	(*p)[0x11] = RTE_PTYPE_L2_ETHER | RTE_PTYPE_L3_IPV6_EXT_UNKNOWN |
+		     RTE_PTYPE_L4_TCP;
+	(*p)[0x12] = RTE_PTYPE_L2_ETHER | RTE_PTYPE_L3_IPV4_EXT_UNKNOWN |
+		     RTE_PTYPE_L4_TCP;
 	/* UDP */
 	(*p)[0x09] = RTE_PTYPE_L2_ETHER | RTE_PTYPE_L3_IPV6_EXT_UNKNOWN |
 		     RTE_PTYPE_L4_UDP;
@@ -103,6 +111,14 @@ mlx5_set_ptype_table(void)
 	(*p)[0x85] = RTE_PTYPE_L2_ETHER | RTE_PTYPE_L3_IPV6_EXT_UNKNOWN |
 		     RTE_PTYPE_L4_TCP;
 	(*p)[0x86] = RTE_PTYPE_L2_ETHER | RTE_PTYPE_L3_IPV4_EXT_UNKNOWN |
+		     RTE_PTYPE_L4_TCP;
+	(*p)[0x8d] = RTE_PTYPE_L2_ETHER | RTE_PTYPE_L3_IPV6_EXT_UNKNOWN |
+		     RTE_PTYPE_L4_TCP;
+	(*p)[0x8e] = RTE_PTYPE_L2_ETHER | RTE_PTYPE_L3_IPV4_EXT_UNKNOWN |
+		     RTE_PTYPE_L4_TCP;
+	(*p)[0x91] = RTE_PTYPE_L2_ETHER | RTE_PTYPE_L3_IPV6_EXT_UNKNOWN |
+		     RTE_PTYPE_L4_TCP;
+	(*p)[0x92] = RTE_PTYPE_L2_ETHER | RTE_PTYPE_L3_IPV4_EXT_UNKNOWN |
 		     RTE_PTYPE_L4_TCP;
 	(*p)[0x89] = RTE_PTYPE_L2_ETHER | RTE_PTYPE_L3_IPV6_EXT_UNKNOWN |
 		     RTE_PTYPE_L4_UDP;
@@ -141,10 +157,34 @@ mlx5_set_ptype_table(void)
 	(*p)[0x46] = RTE_PTYPE_L2_ETHER | RTE_PTYPE_L3_IPV4_EXT_UNKNOWN |
 		     RTE_PTYPE_INNER_L3_IPV4_EXT_UNKNOWN |
 		     RTE_PTYPE_INNER_L4_TCP;
+	(*p)[0x4d] = RTE_PTYPE_L2_ETHER | RTE_PTYPE_L3_IPV4_EXT_UNKNOWN |
+		     RTE_PTYPE_INNER_L3_IPV6_EXT_UNKNOWN |
+		     RTE_PTYPE_INNER_L4_TCP;
+	(*p)[0x4e] = RTE_PTYPE_L2_ETHER | RTE_PTYPE_L3_IPV4_EXT_UNKNOWN |
+		     RTE_PTYPE_INNER_L3_IPV4_EXT_UNKNOWN |
+		     RTE_PTYPE_INNER_L4_TCP;
+	(*p)[0x51] = RTE_PTYPE_L2_ETHER | RTE_PTYPE_L3_IPV4_EXT_UNKNOWN |
+		     RTE_PTYPE_INNER_L3_IPV6_EXT_UNKNOWN |
+		     RTE_PTYPE_INNER_L4_TCP;
+	(*p)[0x52] = RTE_PTYPE_L2_ETHER | RTE_PTYPE_L3_IPV4_EXT_UNKNOWN |
+		     RTE_PTYPE_INNER_L3_IPV4_EXT_UNKNOWN |
+		     RTE_PTYPE_INNER_L4_TCP;
 	(*p)[0xc5] = RTE_PTYPE_L2_ETHER | RTE_PTYPE_L3_IPV6_EXT_UNKNOWN |
 		     RTE_PTYPE_INNER_L3_IPV6_EXT_UNKNOWN |
 		     RTE_PTYPE_INNER_L4_TCP;
 	(*p)[0xc6] = RTE_PTYPE_L2_ETHER | RTE_PTYPE_L3_IPV6_EXT_UNKNOWN |
+		     RTE_PTYPE_INNER_L3_IPV4_EXT_UNKNOWN |
+		     RTE_PTYPE_INNER_L4_TCP;
+	(*p)[0xcd] = RTE_PTYPE_L2_ETHER | RTE_PTYPE_L3_IPV6_EXT_UNKNOWN |
+		     RTE_PTYPE_INNER_L3_IPV6_EXT_UNKNOWN |
+		     RTE_PTYPE_INNER_L4_TCP;
+	(*p)[0xce] = RTE_PTYPE_L2_ETHER | RTE_PTYPE_L3_IPV6_EXT_UNKNOWN |
+		     RTE_PTYPE_INNER_L3_IPV4_EXT_UNKNOWN |
+		     RTE_PTYPE_INNER_L4_TCP;
+	(*p)[0xd1] = RTE_PTYPE_L2_ETHER | RTE_PTYPE_L3_IPV6_EXT_UNKNOWN |
+		     RTE_PTYPE_INNER_L3_IPV6_EXT_UNKNOWN |
+		     RTE_PTYPE_INNER_L4_TCP;
+	(*p)[0xd2] = RTE_PTYPE_L2_ETHER | RTE_PTYPE_L3_IPV6_EXT_UNKNOWN |
 		     RTE_PTYPE_INNER_L3_IPV4_EXT_UNKNOWN |
 		     RTE_PTYPE_INNER_L4_TCP;
 	/* Tunneled - UDP */
@@ -1320,7 +1360,6 @@ txq_burst_empw(struct mlx5_txq_data *txq, struct rte_mbuf **pkts,
 	do {
 		struct rte_mbuf *buf = *(pkts++);
 		uintptr_t addr;
-		unsigned int n;
 		unsigned int do_inline = 0; /* Whether inline is possible. */
 		uint32_t length;
 		uint8_t cs_flags;
@@ -1382,7 +1421,7 @@ txq_burst_empw(struct mlx5_txq_data *txq, struct rte_mbuf **pkts,
 				(!txq->mpw_hdr_dseg ||
 				 mpw.total_len >= MLX5_WQE_SIZE);
 		}
-		if (do_inline) {
+		if (max_inline && do_inline) {
 			/* Inline packet into WQE. */
 			unsigned int max;
 
@@ -1440,11 +1479,8 @@ txq_burst_empw(struct mlx5_txq_data *txq, struct rte_mbuf **pkts,
 					((uintptr_t)mpw.data.raw +
 					 inl_pad);
 			(*txq->elts)[elts_head++ & elts_m] = buf;
-			addr = rte_pktmbuf_mtod(buf, uintptr_t);
-			for (n = 0; n * RTE_CACHE_LINE_SIZE < length; n++)
-				rte_prefetch2((void *)(addr +
-						n * RTE_CACHE_LINE_SIZE));
-			addr = rte_cpu_to_be_64(addr);
+			addr = rte_cpu_to_be_64(rte_pktmbuf_mtod(buf,
+								 uintptr_t));
 			*dseg = (rte_v128u32_t) {
 				rte_cpu_to_be_32(length),
 				mlx5_tx_mb2mr(txq, buf),
@@ -1899,11 +1935,10 @@ skip:
  *   Number of packets successfully transmitted (<= pkts_n).
  */
 uint16_t
-removed_tx_burst(void *dpdk_txq, struct rte_mbuf **pkts, uint16_t pkts_n)
+removed_tx_burst(void *dpdk_txq __rte_unused,
+		 struct rte_mbuf **pkts __rte_unused,
+		 uint16_t pkts_n __rte_unused)
 {
-	(void)dpdk_txq;
-	(void)pkts;
-	(void)pkts_n;
 	return 0;
 }
 
@@ -1924,11 +1959,10 @@ removed_tx_burst(void *dpdk_txq, struct rte_mbuf **pkts, uint16_t pkts_n)
  *   Number of packets successfully received (<= pkts_n).
  */
 uint16_t
-removed_rx_burst(void *dpdk_rxq, struct rte_mbuf **pkts, uint16_t pkts_n)
+removed_rx_burst(void *dpdk_txq __rte_unused,
+		 struct rte_mbuf **pkts __rte_unused,
+		 uint16_t pkts_n __rte_unused)
 {
-	(void)dpdk_rxq;
-	(void)pkts;
-	(void)pkts_n;
 	return 0;
 }
 
@@ -1940,58 +1974,49 @@ removed_rx_burst(void *dpdk_rxq, struct rte_mbuf **pkts, uint16_t pkts_n)
  */
 
 uint16_t __attribute__((weak))
-mlx5_tx_burst_raw_vec(void *dpdk_txq, struct rte_mbuf **pkts, uint16_t pkts_n)
+mlx5_tx_burst_raw_vec(void *dpdk_txq __rte_unused,
+		      struct rte_mbuf **pkts __rte_unused,
+		      uint16_t pkts_n __rte_unused)
 {
-	(void)dpdk_txq;
-	(void)pkts;
-	(void)pkts_n;
 	return 0;
 }
 
 uint16_t __attribute__((weak))
-mlx5_tx_burst_vec(void *dpdk_txq, struct rte_mbuf **pkts, uint16_t pkts_n)
+mlx5_tx_burst_vec(void *dpdk_txq __rte_unused,
+		  struct rte_mbuf **pkts __rte_unused,
+		  uint16_t pkts_n __rte_unused)
 {
-	(void)dpdk_txq;
-	(void)pkts;
-	(void)pkts_n;
 	return 0;
 }
 
 uint16_t __attribute__((weak))
-mlx5_rx_burst_vec(void *dpdk_rxq, struct rte_mbuf **pkts, uint16_t pkts_n)
+mlx5_rx_burst_vec(void *dpdk_txq __rte_unused,
+		  struct rte_mbuf **pkts __rte_unused,
+		  uint16_t pkts_n __rte_unused)
 {
-	(void)dpdk_rxq;
-	(void)pkts;
-	(void)pkts_n;
 	return 0;
 }
 
 int __attribute__((weak))
-priv_check_raw_vec_tx_support(struct priv *priv, struct rte_eth_dev *dev)
+mlx5_check_raw_vec_tx_support(struct rte_eth_dev *dev __rte_unused)
 {
-	(void)priv;
-	(void)dev;
 	return -ENOTSUP;
 }
 
 int __attribute__((weak))
-priv_check_vec_tx_support(struct priv *priv, struct rte_eth_dev *dev)
+mlx5_check_vec_tx_support(struct rte_eth_dev *dev __rte_unused)
 {
-	(void)priv;
-	(void)dev;
 	return -ENOTSUP;
 }
 
 int __attribute__((weak))
-rxq_check_vec_support(struct mlx5_rxq_data *rxq)
+mlx5_rxq_check_vec_support(struct mlx5_rxq_data *rxq __rte_unused)
 {
-	(void)rxq;
 	return -ENOTSUP;
 }
 
 int __attribute__((weak))
-priv_check_vec_rx_support(struct priv *priv)
+mlx5_check_vec_rx_support(struct rte_eth_dev *dev __rte_unused)
 {
-	(void)priv;
 	return -ENOTSUP;
 }

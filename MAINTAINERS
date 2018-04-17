@@ -27,6 +27,38 @@ M: Thomas Monjalon <thomas@monjalon.net>
 M: Ferruh Yigit <ferruh.yigit@intel.com>
 T: git://dpdk.org/dpdk
 
+Next-net Tree
+M: Ferruh Yigit <ferruh.yigit@intel.com>
+T: git://dpdk.org/next/dpdk-next-net
+
+Next-net-intel Tree
+M: Helin Zhang <helin.zhang@intel.com>
+T: git://dpdk.org/next/dpdk-next-net-intel
+
+Next-net-mlx Tree
+M: Shahaf Shuler <shahafs@mellanox.com>
+T: git://dpdk.org/next/dpdk-next-net-mlx
+
+Next-virtio Tree
+Maxime Coquelin <maxime.coquelin@redhat.com>
+T: git://dpdk.org/next/dpdk-next-virtio
+
+Next-crypto Tree
+M: Pablo de Lara <pablo.de.lara.guarch@intel.com>
+T: git://dpdk.org/next/dpdk-next-crypto
+
+Next-eventdev Tree
+M: Jerin Jacob <jerin.jacob@caviumnetworks.com>
+T: git://dpdk.org/next/dpdk-next-eventdev
+
+Next-qos Tree
+M: Cristian Dumitrescu <cristian.dumitrescu@intel.com>
+T: git://dpdk.org/next/dpdk-next-qos
+
+Next-pipeline Tree
+M: Cristian Dumitrescu <cristian.dumitrescu@intel.com>
+T: git://dpdk.org/next/dpdk-next-pipeline
+
 Stable Branches
 M: Yuanhan Liu <yliu@fridaylinux.org>
 M: Luca Boccassi <bluca@debian.org>
@@ -209,7 +241,7 @@ F: doc/guides/linux_gsg/
 
 Linux UIO
 M: Ferruh Yigit <ferruh.yigit@intel.com>
-F: lib/librte_eal/linuxapp/igb_uio/
+F: kernel/linux/igb_uio/
 F: drivers/bus/pci/linux/*uio*
 
 Linux VFIO
@@ -225,11 +257,11 @@ F: doc/guides/freebsd_gsg/
 
 FreeBSD contigmem
 M: Bruce Richardson <bruce.richardson@intel.com>
-F: lib/librte_eal/bsdapp/contigmem/
+F: kernel/freebsd/contigmem/
 
 FreeBSD UIO
 M: Bruce Richardson <bruce.richardson@intel.com>
-F: lib/librte_eal/bsdapp/nic_uio/
+F: kernel/freebsd/nic_uio/
 
 
 Core Libraries
@@ -282,7 +314,7 @@ Baseband API - EXPERIMENTAL
 M: Amr Mokhtar <amr.mokhtar@intel.com>
 F: lib/librte_bbdev/
 F: doc/guides/prog_guide/bbdev.rst
-F: drivers/bbdev/
+F: drivers/baseband/
 F: doc/guides/bbdevs/
 F: app/test-bbdev/
 F: doc/guides/tools/testbbdev.rst
@@ -349,6 +381,12 @@ M: Ferruh Yigit <ferruh.yigit@intel.com>
 T: git://dpdk.org/next/dpdk-next-net
 F: doc/guides/nics/features/default.ini
 
+AMD AXGBE PMD
+M: Ravi Kumar <ravi1.kumar@amd.com>
+F: drivers/net/axgbe/
+F: doc/guides/nics/axgbe.rst
+F: doc/guides/nics/features/axgbe.ini
+
 Link bonding
 M: Declan Doherty <declan.doherty@intel.com>
 F: drivers/net/bonding/
@@ -359,7 +397,7 @@ F: doc/guides/nics/features/bonding.ini
 
 Linux KNI
 M: Ferruh Yigit <ferruh.yigit@intel.com>
-F: lib/librte_eal/linuxapp/kni/
+F: kernel/linux/kni/
 F: lib/librte_kni/
 F: doc/guides/prog_guide/kernel_nic_interface.rst
 F: test/test/test_kni.c
@@ -412,6 +450,7 @@ F: doc/guides/nics/features/liquidio.ini
 Cavium OcteonTX
 M: Santosh Shukla <santosh.shukla@caviumnetworks.com>
 M: Jerin Jacob <jerin.jacob@caviumnetworks.com>
+F: drivers/common/octeontx/
 F: drivers/mempool/octeontx/
 F: drivers/net/octeontx/
 F: doc/guides/nics/octeontx.rst
@@ -467,6 +506,7 @@ F: doc/guides/nics/features/fm10k*.ini
 Intel avf
 M: Jingjing Wu <jingjing.wu@intel.com>
 M: Wenzhuo Lu <wenzhuo.lu@intel.com>
+T: git://dpdk.org/next/dpdk-next-net-intel
 F: drivers/net/avf/
 F: doc/guides/nics/features/avf*.ini
 
@@ -486,15 +526,15 @@ F: drivers/net/mlx5/
 F: doc/guides/nics/mlx5.rst
 F: doc/guides/nics/features/mlx5.ini
 
-Marvell mrvl
+Marvell mvpp2
 M: Jacek Siuda <jck@semihalf.com>
 M: Tomasz Duszynski <tdu@semihalf.com>
 M: Dmitri Epshtein <dima@marvell.com>
 M: Natalie Samsonov <nsamsono@marvell.com>
 M: Jianbo Liu <jianbo.liu@arm.com>
-F: drivers/net/mrvl/
-F: doc/guides/nics/mrvl.rst
-F: doc/guides/nics/features/mrvl.ini
+F: drivers/net/mvpp2/
+F: doc/guides/nics/mvpp2.rst
+F: doc/guides/nics/features/mvpp2.ini
 
 Microsoft vdev_netvsc - EXPERIMENTAL
 M: Matan Azrad <matan@mellanox.com>
@@ -552,14 +592,14 @@ F: doc/guides/nics/sfc_efx.rst
 F: doc/guides/nics/features/sfc_efx.ini
 
 VMware vmxnet3
-M: Shrikrishna Khare <skhare@vmware.com>
+M: Yong Wang <yongwang@vmware.com>
 F: drivers/net/vmxnet3/
 F: doc/guides/nics/vmxnet3.rst
 F: doc/guides/nics/features/vmxnet3.ini
 
 Vhost-user
-M: Yuanhan Liu <yliu@fridaylinux.org>
 M: Maxime Coquelin <maxime.coquelin@redhat.com>
+M: Jianfeng Tan <jianfeng.tan@intel.com>
 T: git://dpdk.org/next/dpdk-next-virtio
 F: lib/librte_vhost/
 F: doc/guides/prog_guide/vhost_lib.rst
@@ -567,17 +607,17 @@ F: examples/vhost/
 F: doc/guides/sample_app_ug/vhost.rst
 F: examples/vhost_scsi/
 F: doc/guides/sample_app_ug/vhost_scsi.rst
+F: examples/vhost_crypto/
 
 Vhost PMD
 M: Tetsuya Mukawa <mtetsuyah@gmail.com>
-M: Yuanhan Liu <yliu@fridaylinux.org>
 M: Maxime Coquelin <maxime.coquelin@redhat.com>
+M: Jianfeng Tan <jianfeng.tan@intel.com>
 T: git://dpdk.org/next/dpdk-next-virtio
 F: drivers/net/vhost/
 F: doc/guides/nics/features/vhost.ini
 
 Virtio PMD
-M: Yuanhan Liu <yliu@fridaylinux.org>
 M: Maxime Coquelin <maxime.coquelin@redhat.com>
 M: Tiwei Bie <tiwei.bie@intel.com>
 T: git://dpdk.org/next/dpdk-next-virtio
@@ -792,7 +832,6 @@ F: doc/guides/prog_guide/generic_receive_offload_lib.rst
 
 Generic Segmentation Offload
 M: Jiayu Hu <jiayu.hu@intel.com>
-M: Mark Kavanagh <mark.b.kavanagh@intel.com>
 F: lib/librte_gso/
 F: doc/guides/prog_guide/generic_segmentation_offload_lib.rst
 
@@ -1006,7 +1045,7 @@ F: test/test/test_event_ring.c
 Procinfo tool
 M: Maryam Tahhan <maryam.tahhan@intel.com>
 M: Reshma Pattan <reshma.pattan@intel.com>
-F: app/proc_info/
+F: app/proc-info/
 F: doc/guides/tools/proc_info.rst
 
 

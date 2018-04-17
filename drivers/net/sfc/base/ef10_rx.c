@@ -8,7 +8,7 @@
 #include "efx_impl.h"
 
 
-#if EFSYS_OPT_HUNTINGTON || EFSYS_OPT_MEDFORD
+#if EFSYS_OPT_HUNTINGTON || EFSYS_OPT_MEDFORD || EFSYS_OPT_MEDFORD2
 
 
 static	__checkReturn	efx_rc_t
@@ -36,6 +36,11 @@ efx_mcdi_init_rxq(
 	boolean_t want_outer_classes;
 
 	EFSYS_ASSERT3U(ndescs, <=, EFX_RXQ_MAXNDESCS);
+
+	if ((esmp == NULL) || (EFSYS_MEM_SIZE(esmp) < EFX_RXQ_SIZE(ndescs))) {
+		rc = EINVAL;
+		goto fail1;
+	}
 
 	if (ps_bufsize > 0)
 		dma_mode = MC_CMD_INIT_RXQ_EXT_IN_PACKED_STREAM;
@@ -103,11 +108,13 @@ efx_mcdi_init_rxq(
 
 	if (req.emr_rc != 0) {
 		rc = req.emr_rc;
-		goto fail1;
+		goto fail2;
 	}
 
 	return (0);
 
+fail2:
+	EFSYS_PROBE(fail2);
 fail1:
 	EFSYS_PROBE1(fail1, efx_rc_t, rc);
 
@@ -795,8 +802,8 @@ ef10_rx_qpush(
 	EFX_DMA_SYNC_QUEUE_FOR_DEVICE(erp->er_esmp, erp->er_mask + 1,
 	    wptr, pushed & erp->er_mask);
 	EFSYS_PIO_WRITE_BARRIER();
-	EFX_BAR_TBL_WRITED(enp, ER_DZ_RX_DESC_UPD_REG,
-			    erp->er_index, &dword, B_FALSE);
+	EFX_BAR_VI_WRITED(enp, ER_DZ_RX_DESC_UPD_REG,
+	    erp->er_index, &dword, B_FALSE);
 }
 
 #if EFSYS_OPT_RX_PACKED_STREAM
@@ -827,7 +834,7 @@ ef10_rx_qpush_ps_credits(
 	    ERF_DZ_RX_DESC_MAGIC_CMD,
 	    ERE_DZ_RX_DESC_MAGIC_CMD_PS_CREDITS,
 	    ERF_DZ_RX_DESC_MAGIC_DATA, credits);
-	EFX_BAR_TBL_WRITED(enp, ER_DZ_RX_DESC_UPD_REG,
+	EFX_BAR_VI_WRITED(enp, ER_DZ_RX_DESC_UPD_REG,
 	    erp->er_index, &dword, B_FALSE);
 
 	rxq_state->eers_rx_packed_stream_credits = 0;
@@ -1087,4 +1094,4 @@ ef10_rx_fini(
 #endif /* EFSYS_OPT_RX_SCALE */
 }
 
-#endif /* EFSYS_OPT_HUNTINGTON || EFSYS_OPT_MEDFORD */
+#endif /* EFSYS_OPT_HUNTINGTON || EFSYS_OPT_MEDFORD || EFSYS_OPT_MEDFORD2 */

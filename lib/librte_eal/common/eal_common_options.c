@@ -73,6 +73,8 @@ eal_long_options[] = {
 	{OPT_VDEV,              1, NULL, OPT_VDEV_NUM             },
 	{OPT_VFIO_INTR,         1, NULL, OPT_VFIO_INTR_NUM        },
 	{OPT_VMWARE_TSC_MAP,    0, NULL, OPT_VMWARE_TSC_MAP_NUM   },
+	{OPT_LEGACY_MEM,        0, NULL, OPT_LEGACY_MEM_NUM       },
+	{OPT_SINGLE_FILE_SEGMENTS, 0, NULL, OPT_SINGLE_FILE_SEGMENTS_NUM},
 	{0,                     0, NULL, 0                        }
 };
 
@@ -181,8 +183,11 @@ eal_reset_internal_config(struct internal_config *internal_cfg)
 	for (i = 0; i < RTE_MAX_NUMA_NODES; i++)
 		internal_cfg->socket_mem[i] = 0;
 	/* zero out hugedir descriptors */
-	for (i = 0; i < MAX_HUGEPAGE_SIZES; i++)
+	for (i = 0; i < MAX_HUGEPAGE_SIZES; i++) {
+		memset(&internal_cfg->hugepage_info[i], 0,
+				sizeof(internal_cfg->hugepage_info[0]));
 		internal_cfg->hugepage_info[i].lock_descriptor = -1;
+	}
 	internal_cfg->base_virtaddr = 0;
 
 	internal_cfg->syslog_facility = LOG_DAEMON;
@@ -198,6 +203,7 @@ eal_reset_internal_config(struct internal_config *internal_cfg)
 	internal_cfg->vmware_tsc_map = 0;
 	internal_cfg->create_uio_dev = 0;
 	internal_cfg->user_mbuf_pool_ops_name = NULL;
+	internal_cfg->init_complete = 0;
 }
 
 static int
@@ -984,6 +990,29 @@ eal_parse_log_level(const char *arg)
 		printf("cannot set log level %s,%lu\n",
 			type, tmp);
 		goto fail;
+	} else {
+		struct rte_eal_opt_loglevel *opt_ll;
+
+		/*
+		 * Save the type (regexp string) and the loglevel
+		 * in the global storage so that it could be used
+		 * to configure dynamic logtypes which are absent
+		 * at the moment of EAL option processing but may
+		 * be registered during runtime.
+		 */
+		opt_ll = malloc(sizeof(*opt_ll));
+		if (opt_ll == NULL)
+			goto fail;
+
+		opt_ll->re_type = strdup(type);
+		if (opt_ll->re_type == NULL) {
+			free(opt_ll);
+			goto fail;
+		}
+
+		opt_ll->level = tmp;
+
+		TAILQ_INSERT_HEAD(&opt_loglevel_list, opt_ll, next);
 	}
 
 	free(str);
@@ -1133,6 +1162,8 @@ eal_parse_common_option(int opt, const char *optarg,
 
 	case OPT_NO_HUGE_NUM:
 		conf->no_hugetlbfs = 1;
+		/* no-huge is legacy mem */
+		conf->legacy_mem = 1;
 		break;
 
 	case OPT_NO_PCI_NUM:
@@ -1205,6 +1236,12 @@ eal_parse_common_option(int opt, const char *optarg,
 		}
 
 		core_parsed = LCORE_OPT_MAP;
+		break;
+	case OPT_LEGACY_MEM_NUM:
+		conf->legacy_mem = 1;
+		break;
+	case OPT_SINGLE_FILE_SEGMENTS_NUM:
+		conf->single_file_segments = 1;
 		break;
 
 	/* don't know what to do, leave this to caller */

@@ -1,32 +1,6 @@
-..  BSD LICENSE
+..  SPDX-License-Identifier: BSD-3-Clause
     Copyright 2015 6WIND S.A.
-    Copyright 2015 Mellanox
-
-    Redistribution and use in source and binary forms, with or without
-    modification, are permitted provided that the following conditions
-    are met:
-
-    * Redistributions of source code must retain the above copyright
-    notice, this list of conditions and the following disclaimer.
-    * Redistributions in binary form must reproduce the above copyright
-    notice, this list of conditions and the following disclaimer in
-    the documentation and/or other materials provided with the
-    distribution.
-    * Neither the name of 6WIND S.A. nor the names of its
-    contributors may be used to endorse or promote products derived
-    from this software without specific prior written permission.
-
-    THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
-    "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
-    LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
-    A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
-    OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
-    SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
-    LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
-    DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
-    THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
-    (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
-    OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+    Copyright 2015 Mellanox Technologies, Ltd
 
 MLX5 poll mode driver
 =====================
@@ -135,6 +109,15 @@ Limitations
 - Flows with a VXLAN Network Identifier equal (or ends to be equal)
   to 0 are not supported.
 - VXLAN TSO and checksum offloads are not supported on VM.
+- VF: flow rules created on VF devices can only match traffic targeted at the
+  configured MAC addresses (see ``rte_eth_dev_mac_addr_add()``).
+
+.. note::
+
+   MAC addresses not already present in the bridge table of the associated
+   kernel network device will be added and cleaned up by the PMD when closing
+   the device. In case of ungraceful program termination, some entries may
+   remain present and should be removed manually by other means.
 
 Statistics
 ----------
@@ -171,9 +154,10 @@ These options can be modified in the ``.config`` file.
   missing with ``ldd(1)``.
 
   It works by moving these dependencies to a purpose-built rdma-core "glue"
-  plug-in, which must either be installed in ``CONFIG_RTE_EAL_PMD_PATH`` if
-  set, or in a standard location for the dynamic linker (e.g. ``/lib``) if
-  left to the default empty string (``""``).
+  plug-in which must either be installed in a directory whose name is based
+  on ``CONFIG_RTE_EAL_PMD_PATH`` suffixed with ``-glue`` if set, or in a
+  standard location for the dynamic linker (e.g. ``/lib``) if left to the
+  default empty string (``""``).
 
   This option has no performance impact.
 
@@ -333,6 +317,15 @@ Run-time configuration
   multi-segment otherwise this parameter is ignored.
 
   Enabled by default.
+
+- ``vf_nl_en`` parameter [int]
+
+  A nonzero value enables Netlink requests from the VF to add/remove MAC
+  addresses or/and enable/disable promiscuous/all multicast on the Netdevice.
+  Otherwise the relevant configuration must be run with Linux iproute2 tools.
+  This is a prerequisite to receive this kind of traffic.
+
+  Enabled by default, valid only on VF devices ignored otherwise.
 
 Prerequisites
 -------------

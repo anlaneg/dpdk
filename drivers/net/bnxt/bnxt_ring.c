@@ -1,34 +1,6 @@
-/*-
- *   BSD LICENSE
- *
- *   Copyright(c) Broadcom Limited.
- *   All rights reserved.
- *
- *   Redistribution and use in source and binary forms, with or without
- *   modification, are permitted provided that the following conditions
- *   are met:
- *
- *     * Redistributions of source code must retain the above copyright
- *       notice, this list of conditions and the following disclaimer.
- *     * Redistributions in binary form must reproduce the above copyright
- *       notice, this list of conditions and the following disclaimer in
- *       the documentation and/or other materials provided with the
- *       distribution.
- *     * Neither the name of Broadcom Corporation nor the names of its
- *       contributors may be used to endorse or promote products derived
- *       from this software without specific prior written permission.
- *
- *   THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
- *   "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
- *   LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
- *   A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
- *   OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
- *   SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
- *   LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
- *   DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
- *   THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
- *   (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- *   OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+/* SPDX-License-Identifier: BSD-3-Clause
+ * Copyright(c) 2014-2018 Broadcom
+ * All rights reserved.
  */
 
 #include <rte_bitmap.h>
@@ -98,6 +70,7 @@ int bnxt_alloc_rings(struct bnxt *bp, uint16_t qidx,
 	struct bnxt_ring *tx_ring;
 	struct bnxt_ring *rx_ring;
 	struct rte_pci_device *pdev = bp->pdev;
+	uint64_t rx_offloads = bp->eth_dev->data->dev_conf.rxmode.offloads;
 	const struct rte_memzone *mz = NULL;
 	char mz_name[RTE_MEMZONE_NAMESIZE];
 	rte_iova_t mz_phys_addr;
@@ -155,7 +128,7 @@ int bnxt_alloc_rings(struct bnxt *bp, uint16_t qidx,
 				       sizeof(struct bnxt_tpa_info)) : 0;
 
 	int total_alloc_len = tpa_info_start;
-	if (bp->eth_dev->data->dev_conf.rxmode.enable_lro)
+	if (rx_offloads & DEV_RX_OFFLOAD_TCP_LRO)
 		total_alloc_len += tpa_info_len;
 
 	snprintf(mz_name, RTE_MEMZONE_NAMESIZE,
@@ -166,10 +139,11 @@ int bnxt_alloc_rings(struct bnxt *bp, uint16_t qidx,
 	mz = rte_memzone_lookup(mz_name);
 	if (!mz) {
 		mz = rte_memzone_reserve_aligned(mz_name, total_alloc_len,
-					 SOCKET_ID_ANY,
-					 RTE_MEMZONE_2MB |
-					 RTE_MEMZONE_SIZE_HINT_ONLY,
-					 getpagesize());
+				SOCKET_ID_ANY,
+				RTE_MEMZONE_2MB |
+				RTE_MEMZONE_SIZE_HINT_ONLY |
+				RTE_MEMZONE_IOVA_CONTIG,
+				getpagesize());
 		if (mz == NULL)
 			return -ENOMEM;
 	}
@@ -252,7 +226,7 @@ int bnxt_alloc_rings(struct bnxt *bp, uint16_t qidx,
 				    ag_bitmap_start, ag_bitmap_len);
 
 		/* TPA info */
-		if (bp->eth_dev->data->dev_conf.rxmode.enable_lro)
+		if (rx_offloads & DEV_RX_OFFLOAD_TCP_LRO)
 			rx_ring_info->tpa_info =
 				((struct bnxt_tpa_info *)((char *)mz->addr +
 							  tpa_info_start));

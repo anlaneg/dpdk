@@ -18,10 +18,6 @@ extern "C" {
 
 #define SFC_KVARG_VALUES_BOOL		"[1|y|yes|on|0|n|no|off]"
 
-#define SFC_KVARG_DEBUG_INIT		"debug_init"
-
-#define SFC_KVARG_MCDI_LOGGING		"mcdi_logging"
-
 #define SFC_KVARG_PERF_PROFILE		"perf_profile"
 
 #define SFC_KVARG_PERF_PROFILE_AUTO		"auto"
@@ -48,6 +44,18 @@ extern "C" {
 	"[" SFC_KVARG_DATAPATH_EFX "|" \
 	    SFC_KVARG_DATAPATH_EF10 "|" \
 	    SFC_KVARG_DATAPATH_EF10_SIMPLE "]"
+
+#define SFC_KVARG_FW_VARIANT		"fw_variant"
+
+#define SFC_KVARG_FW_VARIANT_DONT_CARE		"dont-care"
+#define SFC_KVARG_FW_VARIANT_FULL_FEATURED	"full-feature"
+#define SFC_KVARG_FW_VARIANT_LOW_LATENCY	"ultra-low-latency"
+#define SFC_KVARG_FW_VARIANT_PACKED_STREAM	"capture-packed-stream"
+#define SFC_KVARG_VALUES_FW_VARIANT \
+	"[" SFC_KVARG_FW_VARIANT_DONT_CARE "|" \
+	    SFC_KVARG_FW_VARIANT_FULL_FEATURED "|" \
+	    SFC_KVARG_FW_VARIANT_LOW_LATENCY "|" \
+	    SFC_KVARG_FW_VARIANT_PACKED_STREAM "]"
 
 struct sfc_adapter;
 

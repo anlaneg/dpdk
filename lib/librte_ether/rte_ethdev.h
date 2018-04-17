@@ -988,11 +988,32 @@ struct rte_eth_conf {
 
 struct rte_pci_device;
 
+/*
+ * Fallback default preferred Rx/Tx port parameters.
+ * These are used if an application requests default parameters
+ * but the PMD does not provide preferred values.
+ */
+#define RTE_ETH_DEV_FALLBACK_RX_RINGSIZE 512
+#define RTE_ETH_DEV_FALLBACK_TX_RINGSIZE 512
+#define RTE_ETH_DEV_FALLBACK_RX_NBQUEUES 1
+#define RTE_ETH_DEV_FALLBACK_TX_NBQUEUES 1
+
+/**
+ * Preferred Rx/Tx port parameters.
+ * There are separate instances of this structure for transmission
+ * and reception respectively.
+ */
+struct rte_eth_dev_portconf {
+	uint16_t burst_size; /**< Device-preferred burst size */
+	uint16_t ring_size; /**< Device-preferred size of queue rings */
+	uint16_t nb_queues; /**< Device-preferred number of queues */
+};
+
 /**
  * Ethernet device information
  */
 struct rte_eth_dev_info {
-	struct rte_pci_device *pci_dev; /**< Device PCI information. */
+	struct rte_device *device; /** Generic device information */
 	const char *driver_name; /**< Device Driver name. */
 	unsigned int if_index; /**< Index to bound host interface, or 0 if none.
 		Use if_indextoname() to translate into an interface name. */
@@ -1029,6 +1050,10 @@ struct rte_eth_dev_info {
 	/** Configured number of rx/tx queues */
 	uint16_t nb_rx_queues; /**< Number of RX queues. */
 	uint16_t nb_tx_queues; /**< Number of TX queues. */
+	/** Rx parameter recommendations */
+	struct rte_eth_dev_portconf default_rxportconf;
+	/** Tx parameter recommendations */
+	struct rte_eth_dev_portconf default_txportconf;
 };
 
 /**
@@ -1116,8 +1141,6 @@ struct rte_eth_dcb_info {
  */
 #define RTE_ETH_QUEUE_STATE_STOPPED 0
 #define RTE_ETH_QUEUE_STATE_STARTED 1
-
-struct rte_eth_dev;
 
 #define RTE_ETH_ALL RTE_MAX_ETHPORTS
 
@@ -3005,6 +3028,8 @@ int rte_eth_dev_filter_ctrl(uint16_t port_id, enum rte_filter_type filter_type,
 int rte_eth_dev_get_dcb_info(uint16_t port_id,
 			     struct rte_eth_dcb_info *dcb_info);
 
+struct rte_eth_rxtx_callback;
+
 /**
  * Add a callback to be called on packet RX on a given port and queue.
  *
@@ -3029,7 +3054,8 @@ int rte_eth_dev_get_dcb_info(uint16_t port_id,
  *   NULL on error.
  *   On success, a pointer value which can later be used to remove the callback.
  */
-void *rte_eth_add_rx_callback(uint16_t port_id, uint16_t queue_id,
+const struct rte_eth_rxtx_callback *
+rte_eth_add_rx_callback(uint16_t port_id, uint16_t queue_id,
 		rte_rx_callback_fn fn, void *user_param);
 
 /**
@@ -3057,7 +3083,8 @@ void *rte_eth_add_rx_callback(uint16_t port_id, uint16_t queue_id,
  *   NULL on error.
  *   On success, a pointer value which can later be used to remove the callback.
  */
-void *rte_eth_add_first_rx_callback(uint16_t port_id, uint16_t queue_id,
+const struct rte_eth_rxtx_callback *
+rte_eth_add_first_rx_callback(uint16_t port_id, uint16_t queue_id,
 		rte_rx_callback_fn fn, void *user_param);
 
 /**
@@ -3084,10 +3111,9 @@ void *rte_eth_add_first_rx_callback(uint16_t port_id, uint16_t queue_id,
  *   NULL on error.
  *   On success, a pointer value which can later be used to remove the callback.
  */
-void *rte_eth_add_tx_callback(uint16_t port_id, uint16_t queue_id,
+const struct rte_eth_rxtx_callback *
+rte_eth_add_tx_callback(uint16_t port_id, uint16_t queue_id,
 		rte_tx_callback_fn fn, void *user_param);
-
-struct rte_eth_rxtx_callback;
 
 /**
  * Remove an RX packet callback from a given port and queue.
@@ -3120,7 +3146,7 @@ struct rte_eth_rxtx_callback;
  *               is NULL or not found for the port/queue.
  */
 int rte_eth_remove_rx_callback(uint16_t port_id, uint16_t queue_id,
-		struct rte_eth_rxtx_callback *user_cb);
+		const struct rte_eth_rxtx_callback *user_cb);
 
 /**
  * Remove a TX packet callback from a given port and queue.
@@ -3153,7 +3179,7 @@ int rte_eth_remove_rx_callback(uint16_t port_id, uint16_t queue_id,
  *               is NULL or not found for the port/queue.
  */
 int rte_eth_remove_tx_callback(uint16_t port_id, uint16_t queue_id,
-		struct rte_eth_rxtx_callback *user_cb);
+		const struct rte_eth_rxtx_callback *user_cb);
 
 /**
  * Retrieve information about given port's RX queue.
@@ -3531,7 +3557,7 @@ rte_eth_dev_pool_ops_supported(uint16_t port_id, const char *pool);
  *   - pointer to security context on success.
  */
 void *
-rte_eth_dev_get_sec_ctx(uint8_t port_id);
+rte_eth_dev_get_sec_ctx(uint16_t port_id);
 
 
 #include <rte_ethdev_core.h>

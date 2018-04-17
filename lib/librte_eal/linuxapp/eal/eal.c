@@ -74,8 +74,8 @@ static int mem_cfg_fd = -1;
 static struct flock wr_lock = {
 		.l_type = F_WRLCK,
 		.l_whence = SEEK_SET,
-		.l_start = offsetof(struct rte_mem_config, memseg),
-		.l_len = sizeof(early_mem_config.memseg),
+		.l_start = offsetof(struct rte_mem_config, memsegs),
+		.l_len = sizeof(early_mem_config.memsegs),
 };
 
 /* Address of global and public configuration */
@@ -352,6 +352,8 @@ eal_usage(const char *prgname)
 	       "  --"OPT_BASE_VIRTADDR"     Base virtual address\n"
 	       "  --"OPT_CREATE_UIO_DEV"    Create /dev/uioX (usually done by hotplug)\n"
 	       "  --"OPT_VFIO_INTR"         Interrupt mode for VFIO (legacy|msi|msix)\n"
+	       "  --"OPT_LEGACY_MEM"        Legacy memory mode (no dynamic allocation, contiguous segments)\n"
+	       "  --"OPT_SINGLE_FILE_SEGMENTS" Put all hugepage memory in single files\n"
 	       "\n");
 	/* Allow the application to print its usage message too if hook is set */
 	if ( rte_application_usage_hook ) {
@@ -655,23 +657,26 @@ out:
 	return ret;
 }
 
+static int
+check_socket(const struct rte_memseg_list *msl, void *arg)
+{
+	int *socket_id = arg;
+
+	if (msl->socket_id == *socket_id && msl->memseg_arr.count != 0)
+		return 1;
+
+	return 0;
+}
+
 static void
 eal_check_mem_on_local_socket(void)
 {
-	const struct rte_memseg *ms;
-	int i, socket_id;
+	int socket_id;
 
 	socket_id = rte_lcore_to_socket_id(rte_config.master_lcore);
 
-	ms = rte_eal_get_physmem_layout();
-
-	for (i = 0; i < RTE_MAX_MEMSEG; i++)
-		if (ms[i].socket_id == socket_id &&
-				ms[i].len > 0)
-			return;
-
-	RTE_LOG(WARNING, EAL, "WARNING: Master core has no "
-			"memory on local socket!\n");
+	if (rte_memseg_list_walk(check_socket, &socket_id) == 0)
+		RTE_LOG(WARNING, EAL, "WARNING: Master core has no memory on local socket!\n");
 }
 
 static int
@@ -686,6 +691,8 @@ rte_eal_mcfg_complete(void)
 	/* ALL shared mem_config related INIT DONE */
 	if (rte_config.process_type == RTE_PROC_PRIMARY)
 		rte_config.mem_config->magic = RTE_MAGIC;
+
+	internal_config.init_complete = 1;
 }
 
 /*
@@ -821,13 +828,17 @@ rte_eal_init(int argc, char **argv)
 	}
 
 	//初始化hugepage
-	if (internal_config.no_hugetlbfs == 0 &&
-			internal_config.process_type != RTE_PROC_SECONDARY &&
-			eal_hugepage_info_init() < 0) {
-		rte_eal_init_alert("Cannot get hugepage information.");
-		rte_errno = EACCES;
-		rte_atomic32_clear(&run_once);
-		return -1;
+	if (internal_config.no_hugetlbfs == 0) {
+		/* rte_config isn't initialized yet */
+		ret = internal_config.process_type == RTE_PROC_PRIMARY ?
+				eal_hugepage_info_init() :
+				eal_hugepage_info_read();
+		if (ret < 0) {
+			rte_eal_init_alert("Cannot get hugepage information.");
+			rte_errno = EACCES;
+			rte_atomic32_clear(&run_once);
+			return -1;
+		}
 	}
 
 	if (internal_config.memory == 0 && internal_config.force_sockets == 0) {
@@ -874,6 +885,15 @@ rte_eal_init(int argc, char **argv)
 		return -1;
 	}
 #endif
+	/* in secondary processes, memory init may allocate additional fbarrays
+	 * not present in primary processes, so to avoid any potential issues,
+	 * initialize memzones first.
+	 */
+	if (rte_eal_memzone_init() < 0) {
+		rte_eal_init_alert("Cannot init memzone\n");
+		rte_errno = ENODEV;
+		return -1;
+	}
 
 	if (rte_eal_memory_init() < 0) {
 		rte_eal_init_alert("Cannot init memory\n");
@@ -884,8 +904,8 @@ rte_eal_init(int argc, char **argv)
 	/* the directories are locked during eal_hugepage_info_init */
 	eal_hugedirs_unlock();
 
-	if (rte_eal_memzone_init() < 0) {
-		rte_eal_init_alert("Cannot init memzone\n");
+	if (rte_eal_malloc_heap_init() < 0) {
+		rte_eal_init_alert("Cannot init malloc heap\n");
 		rte_errno = ENODEV;
 		return -1;
 	}

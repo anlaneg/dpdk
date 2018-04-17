@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: BSD-3-Clause
  * Copyright 2015 6WIND S.A.
- * Copyright 2015 Mellanox.
+ * Copyright 2015 Mellanox Technologies, Ltd
  */
 
 #ifndef RTE_PMD_MLX5_H_
@@ -75,19 +75,20 @@ TAILQ_HEAD(mlx5_flows, rte_flow);
  */
 struct mlx5_dev_config {
 	unsigned int hw_csum:1; /* Checksum offload is supported. */
-	unsigned int hw_csum_l2tun:1; /* Same for L2 tunnels. */
 	unsigned int hw_vlan_strip:1; /* VLAN stripping is supported. */
 	unsigned int hw_fcs_strip:1; /* FCS stripping is supported. */
 	unsigned int hw_padding:1; /* End alignment padding is supported. */
-	unsigned int sriov:1; /* This is a VF or PF with VF devices. */
+	unsigned int vf:1; /* This is a VF. */
 	unsigned int mps:2; /* Multi-packet send supported mode. */
-	unsigned int tunnel_en:1; /* Whether tunnel is supported. */
+	unsigned int tunnel_en:1;
+	/* Whether tunnel stateless offloads are supported. */
 	unsigned int flow_counter_en:1; /* Whether flow counter is supported. */
 	unsigned int cqe_comp:1; /* CQE compression is enabled. */
 	unsigned int tso:1; /* Whether TSO is supported. */
 	unsigned int tx_vec_en:1; /* Tx vector is enabled. */
 	unsigned int rx_vec_en:1; /* Rx vector is enabled. */
 	unsigned int mpw_hdr_dseg:1; /* Enable DSEGs in the title WQEBB. */
+	unsigned int vf_nl_en:1; /* Enable Netlink requests in VF mode. */
 	unsigned int tso_max_payload_sz; /* Maximum TCP payload for TSO. */
 	unsigned int ind_table_max_size; /* Maximum indirection table size. */
 	int txq_inline; /* Maximum packet size for inlining. */
@@ -120,12 +121,13 @@ struct priv {
 	struct ibv_pd *pd; /* Protection Domain. */
 	char ibdev_path[IBV_SYSFS_PATH_MAX]; /* IB device path for secondary */
 	struct ether_addr mac[MLX5_MAX_MAC_ADDRESSES]; /* MAC addresses. */
+	BITFIELD_DECLARE(mac_own, uint64_t, MLX5_MAX_MAC_ADDRESSES);
+	/* Bit-field of MAC addresses owned by the PMD. */
 	uint16_t vlan_filter[MLX5_MAX_VLAN_IDS]; /* VLAN filters table. */
 	unsigned int vlan_filter_n; /* Number of configured VLAN filters. */
 	/* Device properties. */
 	uint16_t mtu; /* Configured MTU. */
 	uint8_t port; /* Physical port number. */
-	unsigned int pending_alarm:1; /* An alarm is pending. */
 	unsigned int isolated:1; /* Whether isolated mode is enabled. */
 	/* RX/TX queues. */
 	unsigned int rxqs_n; /* RX queues array size. */
@@ -149,55 +151,16 @@ struct priv {
 	LIST_HEAD(ind_tables, mlx5_ind_table_ibv) ind_tbls;
 	uint32_t link_speed_capa; /* Link speed capabilities. */
 	struct mlx5_xstats_ctrl xstats_ctrl; /* Extended stats control. */
-	rte_spinlock_t lock; /* Lock for control functions. */
+	rte_spinlock_t mr_lock; /* MR Lock. */
 	int primary_socket; /* Unix socket for primary process. */
 	void *uar_base; /* Reserved address space for UAR mapping */
 	struct rte_intr_handle intr_handle_socket; /* Interrupt handler. */
 	struct mlx5_dev_config config; /* Device configuration. */
 	struct mlx5_verbs_alloc_ctx verbs_alloc_ctx;
 	/* Context for Verbs allocator. */
+	int nl_socket; /* Netlink socket. */
+	uint32_t nl_sn; /* Netlink message sequence number. */
 };
-
-/**
- * Lock private structure to protect it from concurrent access in the
- * control path.
- *
- * @param priv
- *   Pointer to private structure.
- */
-static inline void
-priv_lock(struct priv *priv)
-{
-	rte_spinlock_lock(&priv->lock);
-}
-
-/**
- * Try to lock private structure to protect it from concurrent access in the
- * control path.
- *
- * @param priv
- *   Pointer to private structure.
- *
- * @return
- *   1 if the lock is successfully taken; 0 otherwise.
- */
-static inline int
-priv_trylock(struct priv *priv)
-{
-	return rte_spinlock_trylock(&priv->lock);
-}
-
-/**
- * Unlock private structure.
- *
- * @param priv
- *   Pointer to private structure.
- */
-static inline void
-priv_unlock(struct priv *priv)
-{
-	rte_spinlock_unlock(&priv->lock);
-}
 
 /* mlx5.c */
 
@@ -205,131 +168,152 @@ int mlx5_getenv_int(const char *);
 
 /* mlx5_ethdev.c */
 
-struct priv *mlx5_get_priv(struct rte_eth_dev *dev);
-int mlx5_is_secondary(void);
-int priv_get_ifname(const struct priv *, char (*)[IF_NAMESIZE]);
-int priv_ifreq(const struct priv *, int req, struct ifreq *);
-int priv_is_ib_cntr(const char *);
-int priv_get_cntr_sysfs(struct priv *, const char *, uint64_t *);
-int priv_get_num_vfs(struct priv *, uint16_t *);
-int priv_get_mtu(struct priv *, uint16_t *);
-int priv_set_flags(struct priv *, unsigned int, unsigned int);
-int mlx5_dev_configure(struct rte_eth_dev *);
-void mlx5_dev_infos_get(struct rte_eth_dev *, struct rte_eth_dev_info *);
+int mlx5_get_ifname(const struct rte_eth_dev *dev, char (*ifname)[IF_NAMESIZE]);
+int mlx5_ifindex(const struct rte_eth_dev *dev);
+int mlx5_ifreq(const struct rte_eth_dev *dev, int req, struct ifreq *ifr);
+int mlx5_get_mtu(struct rte_eth_dev *dev, uint16_t *mtu);
+int mlx5_set_flags(struct rte_eth_dev *dev, unsigned int keep,
+		   unsigned int flags);
+int mlx5_dev_configure(struct rte_eth_dev *dev);
+void mlx5_dev_infos_get(struct rte_eth_dev *dev, struct rte_eth_dev_info *info);
 const uint32_t *mlx5_dev_supported_ptypes_get(struct rte_eth_dev *dev);
-int priv_link_update(struct priv *, int);
-int priv_force_link_status_change(struct priv *, int);
-int mlx5_link_update(struct rte_eth_dev *, int);
-int mlx5_dev_set_mtu(struct rte_eth_dev *, uint16_t);
-int mlx5_dev_get_flow_ctrl(struct rte_eth_dev *, struct rte_eth_fc_conf *);
-int mlx5_dev_set_flow_ctrl(struct rte_eth_dev *, struct rte_eth_fc_conf *);
-int mlx5_ibv_device_to_pci_addr(const struct ibv_device *,
-				struct rte_pci_addr *);
-void mlx5_dev_link_status_handler(void *);
-void mlx5_dev_interrupt_handler(void *);
-void priv_dev_interrupt_handler_uninstall(struct priv *, struct rte_eth_dev *);
-void priv_dev_interrupt_handler_install(struct priv *, struct rte_eth_dev *);
+int mlx5_link_update(struct rte_eth_dev *dev, int wait_to_complete);
+int mlx5_force_link_status_change(struct rte_eth_dev *dev, int status);
+int mlx5_dev_set_mtu(struct rte_eth_dev *dev, uint16_t mtu);
+int mlx5_dev_get_flow_ctrl(struct rte_eth_dev *dev,
+			   struct rte_eth_fc_conf *fc_conf);
+int mlx5_dev_set_flow_ctrl(struct rte_eth_dev *dev,
+			   struct rte_eth_fc_conf *fc_conf);
+int mlx5_ibv_device_to_pci_addr(const struct ibv_device *device,
+				struct rte_pci_addr *pci_addr);
+void mlx5_dev_link_status_handler(void *arg);
+void mlx5_dev_interrupt_handler(void *arg);
+void mlx5_dev_interrupt_handler_uninstall(struct rte_eth_dev *dev);
+void mlx5_dev_interrupt_handler_install(struct rte_eth_dev *dev);
 int mlx5_set_link_down(struct rte_eth_dev *dev);
 int mlx5_set_link_up(struct rte_eth_dev *dev);
 int mlx5_is_removed(struct rte_eth_dev *dev);
-eth_tx_burst_t priv_select_tx_function(struct priv *, struct rte_eth_dev *);
-eth_rx_burst_t priv_select_rx_function(struct priv *, struct rte_eth_dev *);
+eth_tx_burst_t mlx5_select_tx_function(struct rte_eth_dev *dev);
+eth_rx_burst_t mlx5_select_rx_function(struct rte_eth_dev *dev);
 
 /* mlx5_mac.c */
 
-int priv_get_mac(struct priv *, uint8_t (*)[ETHER_ADDR_LEN]);
-void mlx5_mac_addr_remove(struct rte_eth_dev *, uint32_t);
-int mlx5_mac_addr_add(struct rte_eth_dev *, struct ether_addr *, uint32_t,
-		      uint32_t);
-void mlx5_mac_addr_set(struct rte_eth_dev *, struct ether_addr *);
+int mlx5_get_mac(struct rte_eth_dev *dev, uint8_t (*mac)[ETHER_ADDR_LEN]);
+void mlx5_mac_addr_remove(struct rte_eth_dev *dev, uint32_t index);
+int mlx5_mac_addr_add(struct rte_eth_dev *dev, struct ether_addr *mac,
+		      uint32_t index, uint32_t vmdq);
+int mlx5_mac_addr_set(struct rte_eth_dev *dev, struct ether_addr *mac_addr);
 
 /* mlx5_rss.c */
 
-int mlx5_rss_hash_update(struct rte_eth_dev *, struct rte_eth_rss_conf *);
-int mlx5_rss_hash_conf_get(struct rte_eth_dev *, struct rte_eth_rss_conf *);
-int priv_rss_reta_index_resize(struct priv *, unsigned int);
-int mlx5_dev_rss_reta_query(struct rte_eth_dev *,
-			    struct rte_eth_rss_reta_entry64 *, uint16_t);
-int mlx5_dev_rss_reta_update(struct rte_eth_dev *,
-			     struct rte_eth_rss_reta_entry64 *, uint16_t);
+int mlx5_rss_hash_update(struct rte_eth_dev *dev,
+			 struct rte_eth_rss_conf *rss_conf);
+int mlx5_rss_hash_conf_get(struct rte_eth_dev *dev,
+			   struct rte_eth_rss_conf *rss_conf);
+int mlx5_rss_reta_index_resize(struct rte_eth_dev *dev, unsigned int reta_size);
+int mlx5_dev_rss_reta_query(struct rte_eth_dev *dev,
+			    struct rte_eth_rss_reta_entry64 *reta_conf,
+			    uint16_t reta_size);
+int mlx5_dev_rss_reta_update(struct rte_eth_dev *dev,
+			     struct rte_eth_rss_reta_entry64 *reta_conf,
+			     uint16_t reta_size);
 
 /* mlx5_rxmode.c */
 
-void mlx5_promiscuous_enable(struct rte_eth_dev *);
-void mlx5_promiscuous_disable(struct rte_eth_dev *);
-void mlx5_allmulticast_enable(struct rte_eth_dev *);
-void mlx5_allmulticast_disable(struct rte_eth_dev *);
+void mlx5_promiscuous_enable(struct rte_eth_dev *dev);
+void mlx5_promiscuous_disable(struct rte_eth_dev *dev);
+void mlx5_allmulticast_enable(struct rte_eth_dev *dev);
+void mlx5_allmulticast_disable(struct rte_eth_dev *dev);
 
 /* mlx5_stats.c */
 
-void priv_xstats_init(struct priv *);
-int mlx5_stats_get(struct rte_eth_dev *, struct rte_eth_stats *);
-void mlx5_stats_reset(struct rte_eth_dev *);
-int mlx5_xstats_get(struct rte_eth_dev *,
-		    struct rte_eth_xstat *, unsigned int);
-void mlx5_xstats_reset(struct rte_eth_dev *);
-int mlx5_xstats_get_names(struct rte_eth_dev *,
-			  struct rte_eth_xstat_name *, unsigned int);
+void mlx5_xstats_init(struct rte_eth_dev *dev);
+int mlx5_stats_get(struct rte_eth_dev *dev, struct rte_eth_stats *stats);
+void mlx5_stats_reset(struct rte_eth_dev *dev);
+int mlx5_xstats_get(struct rte_eth_dev *dev, struct rte_eth_xstat *stats,
+		    unsigned int n);
+void mlx5_xstats_reset(struct rte_eth_dev *dev);
+int mlx5_xstats_get_names(struct rte_eth_dev *dev __rte_unused,
+			  struct rte_eth_xstat_name *xstats_names,
+			  unsigned int n);
 
 /* mlx5_vlan.c */
 
-int mlx5_vlan_filter_set(struct rte_eth_dev *, uint16_t, int);
-int mlx5_vlan_offload_set(struct rte_eth_dev *, int);
-void mlx5_vlan_strip_queue_set(struct rte_eth_dev *, uint16_t, int);
+int mlx5_vlan_filter_set(struct rte_eth_dev *dev, uint16_t vlan_id, int on);
+void mlx5_vlan_strip_queue_set(struct rte_eth_dev *dev, uint16_t queue, int on);
+int mlx5_vlan_offload_set(struct rte_eth_dev *dev, int mask);
 
 /* mlx5_trigger.c */
 
-int mlx5_dev_start(struct rte_eth_dev *);
-void mlx5_dev_stop(struct rte_eth_dev *);
-int priv_dev_traffic_enable(struct priv *, struct rte_eth_dev *);
-int priv_dev_traffic_disable(struct priv *, struct rte_eth_dev *);
-int priv_dev_traffic_restart(struct priv *, struct rte_eth_dev *);
-int mlx5_traffic_restart(struct rte_eth_dev *);
+int mlx5_dev_start(struct rte_eth_dev *dev);
+void mlx5_dev_stop(struct rte_eth_dev *dev);
+int mlx5_traffic_enable(struct rte_eth_dev *dev);
+void mlx5_traffic_disable(struct rte_eth_dev *dev);
+int mlx5_traffic_restart(struct rte_eth_dev *dev);
 
 /* mlx5_flow.c */
 
-int mlx5_dev_filter_ctrl(struct rte_eth_dev *, enum rte_filter_type,
-			 enum rte_filter_op, void *);
-int mlx5_flow_validate(struct rte_eth_dev *, const struct rte_flow_attr *,
-		       const struct rte_flow_item [],
-		       const struct rte_flow_action [],
-		       struct rte_flow_error *);
-struct rte_flow *mlx5_flow_create(struct rte_eth_dev *,
-				  const struct rte_flow_attr *,
-				  const struct rte_flow_item [],
-				  const struct rte_flow_action [],
-				  struct rte_flow_error *);
-int mlx5_flow_destroy(struct rte_eth_dev *, struct rte_flow *,
-		      struct rte_flow_error *);
-void priv_flow_flush(struct priv *, struct mlx5_flows *);
-int mlx5_flow_flush(struct rte_eth_dev *, struct rte_flow_error *);
-int mlx5_flow_query(struct rte_eth_dev *, struct rte_flow *,
-		    enum rte_flow_action_type, void *,
-		    struct rte_flow_error *);
-int mlx5_flow_isolate(struct rte_eth_dev *, int, struct rte_flow_error *);
-int priv_flow_start(struct priv *, struct mlx5_flows *);
-void priv_flow_stop(struct priv *, struct mlx5_flows *);
-int priv_flow_verify(struct priv *);
-int mlx5_ctrl_flow_vlan(struct rte_eth_dev *, struct rte_flow_item_eth *,
-			struct rte_flow_item_eth *, struct rte_flow_item_vlan *,
-			struct rte_flow_item_vlan *);
-int mlx5_ctrl_flow(struct rte_eth_dev *, struct rte_flow_item_eth *,
-		   struct rte_flow_item_eth *);
-int priv_flow_create_drop_queue(struct priv *);
-void priv_flow_delete_drop_queue(struct priv *);
+int mlx5_flow_validate(struct rte_eth_dev *dev,
+		       const struct rte_flow_attr *attr,
+		       const struct rte_flow_item items[],
+		       const struct rte_flow_action actions[],
+		       struct rte_flow_error *error);
+struct rte_flow *mlx5_flow_create(struct rte_eth_dev *dev,
+				  const struct rte_flow_attr *attr,
+				  const struct rte_flow_item items[],
+				  const struct rte_flow_action actions[],
+				  struct rte_flow_error *error);
+int mlx5_flow_destroy(struct rte_eth_dev *dev, struct rte_flow *flow,
+		      struct rte_flow_error *error);
+void mlx5_flow_list_flush(struct rte_eth_dev *dev, struct mlx5_flows *list);
+int mlx5_flow_flush(struct rte_eth_dev *dev, struct rte_flow_error *error);
+int mlx5_flow_query(struct rte_eth_dev *dev, struct rte_flow *flow,
+		    enum rte_flow_action_type action, void *data,
+		    struct rte_flow_error *error);
+int mlx5_flow_isolate(struct rte_eth_dev *dev, int enable,
+		      struct rte_flow_error *error);
+int mlx5_dev_filter_ctrl(struct rte_eth_dev *dev,
+			 enum rte_filter_type filter_type,
+			 enum rte_filter_op filter_op,
+			 void *arg);
+int mlx5_flow_start(struct rte_eth_dev *dev, struct mlx5_flows *list);
+void mlx5_flow_stop(struct rte_eth_dev *dev, struct mlx5_flows *list);
+int mlx5_flow_verify(struct rte_eth_dev *dev);
+int mlx5_ctrl_flow_vlan(struct rte_eth_dev *dev,
+			struct rte_flow_item_eth *eth_spec,
+			struct rte_flow_item_eth *eth_mask,
+			struct rte_flow_item_vlan *vlan_spec,
+			struct rte_flow_item_vlan *vlan_mask);
+int mlx5_ctrl_flow(struct rte_eth_dev *dev,
+		   struct rte_flow_item_eth *eth_spec,
+		   struct rte_flow_item_eth *eth_mask);
+int mlx5_flow_create_drop_queue(struct rte_eth_dev *dev);
+void mlx5_flow_delete_drop_queue(struct rte_eth_dev *dev);
 
 /* mlx5_socket.c */
 
-int priv_socket_init(struct priv *priv);
-int priv_socket_uninit(struct priv *priv);
-void priv_socket_handle(struct priv *priv);
-int priv_socket_connect(struct priv *priv);
+int mlx5_socket_init(struct rte_eth_dev *priv);
+void mlx5_socket_uninit(struct rte_eth_dev *priv);
+void mlx5_socket_handle(struct rte_eth_dev *priv);
+int mlx5_socket_connect(struct rte_eth_dev *priv);
 
 /* mlx5_mr.c */
 
-struct mlx5_mr *priv_mr_new(struct priv *, struct rte_mempool *);
-struct mlx5_mr *priv_mr_get(struct priv *, struct rte_mempool *);
-int priv_mr_release(struct priv *, struct mlx5_mr *);
-int priv_mr_verify(struct priv *);
+struct mlx5_mr *mlx5_mr_new(struct rte_eth_dev *dev, struct rte_mempool *mp);
+struct mlx5_mr *mlx5_mr_get(struct rte_eth_dev *dev, struct rte_mempool *mp);
+int mlx5_mr_release(struct mlx5_mr *mr);
+int mlx5_mr_verify(struct rte_eth_dev *dev);
+
+/* mlx5_nl.c */
+
+int mlx5_nl_init(uint32_t nlgroups);
+int mlx5_nl_mac_addr_add(struct rte_eth_dev *dev, struct ether_addr *mac,
+			 uint32_t index);
+int mlx5_nl_mac_addr_remove(struct rte_eth_dev *dev, struct ether_addr *mac,
+			    uint32_t index);
+void mlx5_nl_mac_addr_sync(struct rte_eth_dev *dev);
+void mlx5_nl_mac_addr_flush(struct rte_eth_dev *dev);
+int mlx5_nl_promisc(struct rte_eth_dev *dev, int enable);
+int mlx5_nl_allmulti(struct rte_eth_dev *dev, int enable);
 
 #endif /* RTE_PMD_MLX5_H_ */

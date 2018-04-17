@@ -186,6 +186,7 @@ usage(char* progname)
 	printf("  --flow-isolate-all: "
 	       "requests flow API isolated mode on all ports at initialization time.\n");
 	printf("  --tx-offloads=0xXXXXXXXX: hexadecimal bitmask of TX queue offloads\n");
+	printf("  --hot-plug: enable hot plug for device.\n");
 }
 
 #ifdef RTE_LIBRTE_CMDLINE
@@ -544,6 +545,8 @@ launch_args_parse(int argc, char** argv)
 	/* Default offloads for all ports. */
 	uint64_t rx_offloads = rx_mode.offloads;
 	uint64_t tx_offloads = tx_mode.offloads;
+	struct rte_eth_dev_info dev_info;
+	uint16_t rec_nb_pkts;
 
 	static struct option lgopts[] = {
 		{ "help",			0, 0, 0 },
@@ -621,6 +624,7 @@ launch_args_parse(int argc, char** argv)
 		{ "print-event",		1, 0, 0 },
 		{ "mask-event",			1, 0, 0 },
 		{ "tx-offloads",		1, 0, 0 },
+		{ "hot-plug",			0, 0, 0 },
 		{ 0, 0, 0, 0 },
 	};
 
@@ -658,9 +662,8 @@ launch_args_parse(int argc, char** argv)
 			if (!strcmp(lgopts[opt_idx].name, "cmdline-file")) {
 				printf("CLI commands to be read from %s\n",
 				       optarg);
-				snprintf(cmdline_filename,
-					 sizeof(cmdline_filename), "%s",
-					 optarg);
+				strlcpy(cmdline_filename, optarg,
+					sizeof(cmdline_filename));
 			}
 			if (!strcmp(lgopts[opt_idx].name, "auto-start")) {
 				printf("Auto-start selected\n");
@@ -948,12 +951,38 @@ launch_args_parse(int argc, char** argv)
 			}
 			if (!strcmp(lgopts[opt_idx].name, "burst")) {
 				n = atoi(optarg);
-				if ((n >= 1) && (n <= MAX_PKT_BURST))
-					nb_pkt_per_burst = (uint16_t) n;
-				else
+				if (n == 0) {
+					/* A burst size of zero means that the
+					 * PMD should be queried for
+					 * recommended Rx burst size. Since
+					 * testpmd uses a single size for all
+					 * ports, port 0 is queried for the
+					 * value, on the assumption that all
+					 * ports are of the same NIC model.
+					 */
+					rte_eth_dev_info_get(0, &dev_info);
+					rec_nb_pkts = dev_info
+						.default_rxportconf.burst_size;
+
+					if (rec_nb_pkts == 0)
+						rte_exit(EXIT_FAILURE,
+							"PMD does not recommend a burst size. "
+							"Provided value must be between "
+							"1 and %d\n", MAX_PKT_BURST);
+					else if (rec_nb_pkts > MAX_PKT_BURST)
+						rte_exit(EXIT_FAILURE,
+							"PMD recommended burst size of %d"
+							" exceeds maximum value of %d\n",
+							rec_nb_pkts, MAX_PKT_BURST);
+					printf("Using PMD-provided burst value of %d\n",
+						rec_nb_pkts);
+					nb_pkt_per_burst = rec_nb_pkts;
+				} else if (n > MAX_PKT_BURST)
 					rte_exit(EXIT_FAILURE,
-						 "burst must >= 1 and <= %d]",
-						 MAX_PKT_BURST);
+						"burst must be between1 and %d\n",
+						MAX_PKT_BURST);
+				else
+					nb_pkt_per_burst = (uint16_t) n;
 			}
 			if (!strcmp(lgopts[opt_idx].name, "mbcache")) {
 				n = atoi(optarg);
@@ -1102,7 +1131,8 @@ launch_args_parse(int argc, char** argv)
 					rte_exit(EXIT_FAILURE,
 						 "invalid mask-event argument\n");
 				}
-
+			if (!strcmp(lgopts[opt_idx].name, "hot-plug"))
+				hot_plug = 1;
 			break;
 		case 'h':
 			usage(argv[0]);

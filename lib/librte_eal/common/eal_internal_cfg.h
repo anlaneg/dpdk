@@ -21,10 +21,10 @@
  */
 struct hugepage_info {
 	uint64_t hugepage_sz;   /**< size of a huge page */ //每个大页的类型(页大小）
-	const char *hugedir;    /**< dir where hugetlbfs is mounted */ //挂载目录名称
+	char hugedir[PATH_MAX];    /**< dir where hugetlbfs is mounted *///挂载目录名称
 	uint32_t num_pages[RTE_MAX_NUMA_NODES];
-				/**< number of hugepages of that size on each socket */
-	int lock_descriptor;    /**< file descriptor for hugepage dir */ //大页目录对应的文件描述符，用于lock
+	/**< number of hugepages of that size on each socket */
+	int lock_descriptor;    /**< file descriptor for hugepage dir *///大页目录对应的文件描述符，用于lock
 };
 
 /**
@@ -50,15 +50,27 @@ struct internal_config {
 	//每个numa上的内存大小
 	volatile uint64_t socket_mem[RTE_MAX_NUMA_NODES]; /**< amount of memory per socket */
 	uintptr_t base_virtaddr;          /**< base address to try and reserve memory from */
+	volatile unsigned legacy_mem;
+	/**< true to enable legacy memory behavior (no dynamic allocation,
+	 * IOVA-contiguous segments).
+	 */
+	volatile unsigned single_file_segments;
+	/**< true if storing all pages within single files (per-page-size,
+	 * per-node) non-legacy mode only.
+	 */
 	//指定sys日志输出位置（默认是LOG_DAEMON）
 	volatile int syslog_facility;	  /**< facility passed to openlog() */
 	/** default interrupt mode for VFIO */
 	volatile enum rte_intr_mode vfio_intr_mode;
-	const char *hugefile_prefix;      /**< the base filename of hugetlbfs files */ //大页文件前缀（默认rte)
-	const char *hugepage_dir;         /**< specific hugetlbfs directory to use */ //采用那个大页目录
-	const char *mbuf_pool_ops_name;   /**< mbuf pool ops name */
-	unsigned num_hugepage_sizes;      /**< how many sizes on this system */ //有多少种大页类型
+	const char *hugefile_prefix;      /**< the base filename of hugetlbfs files *///大页文件前缀（默认rte)
+	const char *hugepage_dir;         /**< specific hugetlbfs directory to use *///采用那个大页目录
+
+	const char *user_mbuf_pool_ops_name;
+			/**< user defined mbuf pool ops name */
+	unsigned num_hugepage_sizes;      /**< how many sizes on this system *///有多少种大页类型
 	struct hugepage_info hugepage_info[MAX_HUGEPAGE_SIZES];//每种大页的信息
+	volatile unsigned int init_complete;
+	/**< indicates whether EAL has completed initialization */
 };
 extern struct internal_config internal_config; /**< Global EAL configuration. */
 

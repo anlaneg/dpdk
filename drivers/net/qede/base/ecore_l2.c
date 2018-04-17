@@ -77,7 +77,8 @@ enum _ecore_status_t ecore_l2_alloc(struct ecore_hwfn *p_hwfn)
 	}
 
 #ifdef CONFIG_ECORE_LOCK_ALLOC
-	OSAL_MUTEX_ALLOC(p_hwfn, &p_l2_info->lock);
+	if (OSAL_MUTEX_ALLOC(p_hwfn, &p_l2_info->lock))
+		return ECORE_NOMEM;
 #endif
 
 	return ECORE_SUCCESS;
@@ -110,6 +111,7 @@ void ecore_l2_free(struct ecore_hwfn *p_hwfn)
 			break;
 		OSAL_VFREE(p_hwfn->p_dev,
 			   p_hwfn->p_l2_info->pp_qid_usage[i]);
+		p_hwfn->p_l2_info->pp_qid_usage[i] = OSAL_NULL;
 	}
 
 #ifdef CONFIG_ECORE_LOCK_ALLOC
@@ -119,6 +121,7 @@ void ecore_l2_free(struct ecore_hwfn *p_hwfn)
 #endif
 
 	OSAL_VFREE(p_hwfn->p_dev, p_hwfn->p_l2_info->pp_qid_usage);
+	p_hwfn->p_l2_info->pp_qid_usage = OSAL_NULL;
 
 out_l2_info:
 	OSAL_VFREE(p_hwfn->p_dev, p_hwfn->p_l2_info);
@@ -1185,11 +1188,20 @@ ecore_eth_pf_tx_queue_start(struct ecore_hwfn *p_hwfn,
 			    void OSAL_IOMEM * *pp_doorbell)
 {
 	enum _ecore_status_t rc;
+	u16 pq_id;
 
-	/* TODO - set tc in the pq_params for multi-cos */
-	rc = ecore_eth_txq_start_ramrod(p_hwfn, p_cid,
-					pbl_addr, pbl_size,
-					ecore_get_cm_pq_idx_mcos(p_hwfn, tc));
+	/* TODO - set tc in the pq_params for multi-cos.
+	 * If pacing is enabled then select queue according to
+	 * rate limiter availability otherwise select queue based
+	 * on multi cos.
+	 */
+	if (IS_ECORE_PACING(p_hwfn))
+		pq_id = ecore_get_cm_pq_idx_rl(p_hwfn, p_cid->rel.queue_id);
+	else
+		pq_id = ecore_get_cm_pq_idx_mcos(p_hwfn, tc);
+
+	rc = ecore_eth_txq_start_ramrod(p_hwfn, p_cid, pbl_addr,
+					pbl_size, pq_id);
 	if (rc != ECORE_SUCCESS)
 		return rc;
 
@@ -1945,6 +1957,11 @@ static void __ecore_get_vport_port_stats(struct ecore_hwfn *p_hwfn,
 		p_ah->tx_1519_to_max_byte_packets =
 			port_stats.eth.u1.ah1.t1519_to_max;
 	}
+
+	p_common->link_change_count = ecore_rd(p_hwfn, p_ptt,
+					       p_hwfn->mcp_info->port_addr +
+					       OFFSETOF(struct public_port,
+							link_change_count));
 }
 
 void __ecore_get_vport_stats(struct ecore_hwfn *p_hwfn,
@@ -2061,11 +2078,14 @@ void ecore_reset_vport_stats(struct ecore_dev *p_dev)
 
 	/* PORT statistics are not necessarily reset, so we need to
 	 * read and create a baseline for future statistics.
+	 * Link change stat is maintained by MFW, return its value as is.
 	 */
 	if (!p_dev->reset_stats)
 		DP_INFO(p_dev, "Reset stats not allocated\n");
-	else
+	else {
 		_ecore_get_vport_stats(p_dev, p_dev->reset_stats);
+		p_dev->reset_stats->common.link_change_count = 0;
+	}
 }
 
 void ecore_arfs_mode_configure(struct ecore_hwfn *p_hwfn,
@@ -2150,7 +2170,7 @@ ecore_configure_rfs_ntuple_filter(struct ecore_hwfn *p_hwfn,
 	p_ramrod->flow_id_valid = 0;
 	p_ramrod->flow_id = 0;
 
-	p_ramrod->vport_id = abs_vport_id;
+	p_ramrod->vport_id = OSAL_CPU_TO_LE16((u16)abs_vport_id);
 	p_ramrod->filter_action = b_is_add ? GFT_ADD_FILTER
 					   : GFT_DELETE_FILTER;
 
@@ -2266,4 +2286,23 @@ out:
 	ecore_ptt_release(p_hwfn, p_ptt);
 
 	return rc;
+}
+
+enum _ecore_status_t
+ecore_eth_tx_queue_maxrate(struct ecore_hwfn *p_hwfn,
+			   struct ecore_ptt *p_ptt,
+			   struct ecore_queue_cid *p_cid, u32 rate)
+{
+	struct ecore_mcp_link_state *p_link;
+	u8 vport;
+
+	vport = (u8)ecore_get_qm_vport_idx_rl(p_hwfn, p_cid->rel.queue_id);
+	p_link = &ECORE_LEADING_HWFN(p_hwfn->p_dev)->mcp_info->link_output;
+
+	DP_VERBOSE(p_hwfn, ECORE_MSG_LINK,
+		   "About to rate limit qm vport %d for queue %d with rate %d\n",
+		   vport, p_cid->rel.queue_id, rate);
+
+	return ecore_init_vport_rl(p_hwfn, p_ptt, vport, rate,
+				   p_link->speed);
 }

@@ -19,7 +19,6 @@
 #include <rte_interrupts.h>
 #include <rte_log.h>
 #include <rte_debug.h>
-#include <rte_pci.h>
 #include <rte_atomic.h>
 #include <rte_branch_prediction.h>
 #include <rte_memory.h>
@@ -235,7 +234,7 @@ int rte_dpaa_portal_init(void *arg)
 
 	BUS_INIT_FUNC_TRACE();
 
-	if ((uint64_t)arg == 1 || cpu == LCORE_ID_ANY)
+	if ((size_t)arg == 1 || cpu == LCORE_ID_ANY)
 		cpu = rte_get_master_lcore();
 	/* if the core id is not supported */
 	else
@@ -309,9 +308,15 @@ rte_dpaa_portal_fq_init(void *arg, struct qman_fq *fq)
 	/* Affine above created portal with channel*/
 	u32 sdqcr;
 	struct qman_portal *qp;
+	int ret;
 
-	if (unlikely(!RTE_PER_LCORE(dpaa_io)))
-		rte_dpaa_portal_init(arg);
+	if (unlikely(!RTE_PER_LCORE(dpaa_io))) {
+		ret = rte_dpaa_portal_init(arg);
+		if (ret < 0) {
+			DPAA_BUS_LOG(ERR, "portal initialization failure");
+			return ret;
+		}
+	}
 
 	/* Initialise qman specific portals */
 	qp = fsl_qman_portal_create();

@@ -608,7 +608,7 @@ sfc_rx_qflush(struct sfc_adapter *sa, unsigned int sw_index)
 			sfc_err(sa, "RxQ %u flush failed", sw_index);
 
 		if (rxq->state & SFC_RXQ_FLUSHED)
-			sfc_info(sa, "RxQ %u flushed", sw_index);
+			sfc_notice(sa, "RxQ %u flushed", sw_index);
 	}
 
 	sa->dp_rx->qpurge(rxq->dp);
@@ -887,7 +887,7 @@ sfc_rx_mbuf_data_alignment(struct rte_mempool *mb_pool)
 
 	order = MIN(order, rte_bsf32(data_off));
 
-	return 1u << (order - 1);
+	return 1u << order;
 }
 
 static uint16_t
@@ -1079,6 +1079,7 @@ sfc_rx_qinit(struct sfc_adapter *sa, unsigned int sw_index,
 	info.evq_hw_ring = evq->mem.esm_base;
 	info.hw_index = rxq->hw_index;
 	info.mem_bar = sa->mem_bar.esb_base;
+	info.vi_window_shift = encp->enc_vi_window_shift;
 
 	rc = sa->dp_rx->qcreate(sa->eth_dev->data->port_id, sw_index,
 				&RTE_ETH_DEV_TO_PCI(sa->eth_dev)->addr,

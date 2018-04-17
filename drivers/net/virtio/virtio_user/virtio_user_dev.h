@@ -6,6 +6,7 @@
 #define _VIRTIO_USER_DEV_H
 
 #include <limits.h>
+#include <stdbool.h>
 #include "../virtio_pci.h"
 #include "../virtio_ring.h"
 #include "vhost.h"
@@ -13,6 +14,8 @@
 struct virtio_user_dev {
 	/* for vhost_user backend */
 	int		vhostfd;
+	int		listenfd;   /* listening fd */
+	bool		is_server;  /* server or client mode */
 
 	/* for vhost_kernel backend */
 	char		*ifname;//设备名称
@@ -31,7 +34,7 @@ struct virtio_user_dev {
 				   */
 	uint64_t	device_features; /* supported features by device */
 	uint8_t		status;
-	uint8_t		port_id;
+	uint16_t	port_id;
 	uint8_t		mac_addr[ETHER_ADDR_LEN];//设备的mac地址
 	char		path[PATH_MAX];//unix socet位置
 	struct vring	vrings[VIRTIO_MAX_VIRTQUEUES];

@@ -76,19 +76,24 @@ int enic_get_vnic_config(struct enic *enic)
 		 ? "" : "not "));
 
 	err = vnic_dev_capable_filter_mode(enic->vdev, &enic->flow_filter_mode,
-					   &enic->filter_tags);
+					   &enic->filter_actions);
 	if (err) {
 		dev_err(enic_get_dev(enic),
 			"Error getting filter modes, %d\n", err);
 		return err;
 	}
 
-	dev_info(enic, "Flow api filter mode: %s, Filter tagging %savailable\n",
+	dev_info(enic, "Flow api filter mode: %s Actions: %s%s%s\n",
 		((enic->flow_filter_mode == FILTER_DPDK_1) ? "DPDK" :
 		((enic->flow_filter_mode == FILTER_USNIC_IP) ? "USNIC" :
 		((enic->flow_filter_mode == FILTER_IPV4_5TUPLE) ? "5TUPLE" :
 		"NONE"))),
-		((enic->filter_tags) ? "" : "not "));
+		((enic->filter_actions & FILTER_ACTION_RQ_STEERING_FLAG) ?
+		 "steer " : ""),
+		((enic->filter_actions & FILTER_ACTION_FILTER_ID_FLAG) ?
+		 "tag " : ""),
+		((enic->filter_actions & FILTER_ACTION_DROP_FLAG) ?
+		 "drop " : ""));
 
 	c->wq_desc_count =
 		min_t(u32, ENIC_MAX_WQ_DESCS,
@@ -127,6 +132,31 @@ int enic_get_vnic_config(struct enic *enic)
 		"unknown",
 		c->intr_timer_usec,
 		c->loop_tag);
+
+	/* RSS settings from vNIC */
+	enic->reta_size = ENIC_RSS_RETA_SIZE;
+	enic->hash_key_size = ENIC_RSS_HASH_KEY_SIZE;
+	enic->flow_type_rss_offloads = 0;
+	if (ENIC_SETTING(enic, RSSHASH_IPV4))
+		enic->flow_type_rss_offloads |= ETH_RSS_IPV4;
+	if (ENIC_SETTING(enic, RSSHASH_TCPIPV4))
+		enic->flow_type_rss_offloads |= ETH_RSS_NONFRAG_IPV4_TCP;
+	if (ENIC_SETTING(enic, RSSHASH_IPV6))
+		enic->flow_type_rss_offloads |= ETH_RSS_IPV6;
+	if (ENIC_SETTING(enic, RSSHASH_TCPIPV6))
+		enic->flow_type_rss_offloads |= ETH_RSS_NONFRAG_IPV6_TCP;
+	if (ENIC_SETTING(enic, RSSHASH_IPV6_EX))
+		enic->flow_type_rss_offloads |= ETH_RSS_IPV6_EX;
+	if (ENIC_SETTING(enic, RSSHASH_TCPIPV6_EX))
+		enic->flow_type_rss_offloads |= ETH_RSS_IPV6_TCP_EX;
+	if (vnic_dev_capable_udp_rss(enic->vdev)) {
+		enic->flow_type_rss_offloads |=
+			ETH_RSS_NONFRAG_IPV4_UDP | ETH_RSS_NONFRAG_IPV6_UDP;
+	}
+
+	/* Zero offloads if RSS is not enabled */
+	if (!ENIC_SETTING(enic, RSS))
+		enic->flow_type_rss_offloads = 0;
 
 	return 0;
 }
@@ -202,7 +232,8 @@ void enic_free_vnic_resources(struct enic *enic)
 			vnic_rq_free(&enic->rq[i]);
 	for (i = 0; i < enic->cq_count; i++)
 		vnic_cq_free(&enic->cq[i]);
-	vnic_intr_free(&enic->intr);
+	for (i = 0; i < enic->intr_count; i++)
+		vnic_intr_free(&enic->intr[i]);
 }
 
 void enic_get_res_counts(struct enic *enic)

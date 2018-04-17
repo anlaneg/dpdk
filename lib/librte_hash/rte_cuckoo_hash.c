@@ -553,7 +553,8 @@ __rte_hash_add_key_with_hash(const struct rte_hash *h, const void *key,
 				 * Return index where key is stored,
 				 * subtracting the first dummy index
 				 */
-				return prim_bkt->key_idx[i] - 1;
+				ret = prim_bkt->key_idx[i] - 1;
+				goto failure;
 			}
 		}
 	}
@@ -573,7 +574,8 @@ __rte_hash_add_key_with_hash(const struct rte_hash *h, const void *key,
 				 * Return index where key is stored,
 				 * subtracting the first dummy index
 				 */
-				return sec_bkt->key_idx[i] - 1;
+				ret = sec_bkt->key_idx[i] - 1;
+				goto failure;
 			}
 		}
 	}

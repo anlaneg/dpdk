@@ -29,20 +29,17 @@
 void rte_free(void *addr)
 {
 	if (addr == NULL) return;
-	if (malloc_elem_free(malloc_elem_from_data(addr)) < 0)
-		rte_panic("Fatal error: Invalid memory\n");
+	if (malloc_heap_free(malloc_elem_from_data(addr)) < 0)
+		RTE_LOG(ERR, EAL, "Error: Invalid memory\n");
 }
 
 /*
  * Allocate memory on specified heap.
  */
 void *
-rte_malloc_socket(const char *type, size_t size, unsigned align, int socket_arg)
+rte_malloc_socket(const char *type, size_t size, unsigned int align,
+		int socket_arg)
 {
-	struct rte_mem_config *mcfg = rte_eal_get_configuration()->mem_config;
-	int socket, i;
-	void *ret;
-
 	/* return NULL if size is 0 or alignment is not power-of-2 */
 	//参数检查
 	if (size == 0 || (align && !rte_is_power_of_2(align)))
@@ -52,37 +49,13 @@ rte_malloc_socket(const char *type, size_t size, unsigned align, int socket_arg)
 		//没有配置大页内存时，强制变更为socket不相关申请
 		socket_arg = SOCKET_ID_ANY;
 
-	if (socket_arg == SOCKET_ID_ANY)
-		//获取当前线程numa编号
-		socket = malloc_get_numa_socket();
-	else
-		socket = socket_arg;
-
 	/* Check socket parameter */
-	if (socket >= RTE_MAX_NUMA_NODES)
+	if (socket_arg >= RTE_MAX_NUMA_NODES)
 		return NULL;
 
 	//指定在$socket堆上进行申请
-	ret = malloc_heap_alloc(&mcfg->malloc_heaps[socket], type,
-				size, 0, align == 0 ? 1 : align, 0);
-	if (ret != NULL || socket_arg != SOCKET_ID_ANY)
-		//如果指明需要在socket上申请，但没有申请到，则直接返回失败
-		return ret;
-
-	//在期望的numa节点上无法申请到内存，尝试其它numa节点
-	/* try other heaps */
-	for (i = 0; i < RTE_MAX_NUMA_NODES; i++) {
-		/* we already tried this one */
-		if (i == socket)
-			continue;
-
-		ret = malloc_heap_alloc(&mcfg->malloc_heaps[i], type,
-					size, 0, align == 0 ? 1 : align, 0);
-		if (ret != NULL)
-			return ret;
-	}
-
-	return NULL;
+	return malloc_heap_alloc(type, size, socket_arg, 0,
+			align == 0 ? 1 : align, 0, false);
 }
 
 /*
@@ -142,13 +115,15 @@ rte_realloc(void *ptr, size_t size, unsigned align)
 		return rte_malloc(NULL, size, align);
 
 	struct malloc_elem *elem = malloc_elem_from_data(ptr);
-	if (elem == NULL)
-		rte_panic("Fatal error: memory corruption detected\n");
+	if (elem == NULL) {
+		RTE_LOG(ERR, EAL, "Error: memory corruption detected\n");
+		return NULL;
+	}
 
 	size = RTE_CACHE_LINE_ROUNDUP(size), align = RTE_CACHE_LINE_ROUNDUP(align);
 	/* check alignment matches first, and if ok, see if we can resize block */
 	if (RTE_PTR_ALIGN(ptr,align) == ptr &&
-			malloc_elem_resize(elem, size) == 0)
+			malloc_heap_resize(elem, size) == 0)
 		return ptr;
 
 	/* either alignment is off, or we have no room to expand,
@@ -187,6 +162,23 @@ rte_malloc_get_socket_stats(int socket,
 		return -1;
 
 	return malloc_heap_get_stats(&mcfg->malloc_heaps[socket], socket_stats);
+}
+
+/*
+ * Function to dump contents of all heaps
+ */
+void __rte_experimental
+rte_malloc_dump_heaps(FILE *f)
+{
+	struct rte_mem_config *mcfg = rte_eal_get_configuration()->mem_config;
+	unsigned int idx;
+
+	for (idx = 0; idx < rte_socket_count(); idx++) {
+		unsigned int socket = rte_socket_id_by_idx(idx);
+		fprintf(f, "Heap on socket %i:\n", socket);
+		malloc_heap_dump(&mcfg->malloc_heaps[socket], f);
+	}
+
 }
 
 /*
@@ -230,17 +222,21 @@ rte_malloc_set_limit(__rte_unused const char *type,
 rte_iova_t
 rte_malloc_virt2iova(const void *addr)
 {
-	rte_iova_t iova;
-	const struct malloc_elem *elem = malloc_elem_from_data(addr);
+	const struct rte_memseg *ms;
+	struct malloc_elem *elem = malloc_elem_from_data(addr);
+
 	if (elem == NULL)
-		return RTE_BAD_IOVA;
-	if (elem->ms->iova == RTE_BAD_IOVA)
 		return RTE_BAD_IOVA;
 
 	if (rte_eal_iova_mode() == RTE_IOVA_VA)
-		iova = (uintptr_t)addr;
-	else
-		iova = elem->ms->iova +
-			RTE_PTR_DIFF(addr, elem->ms->addr);
-	return iova;
+		return (uintptr_t) addr;
+
+	ms = rte_mem_virt2memseg(addr, elem->msl);
+	if (ms == NULL)
+		return RTE_BAD_IOVA;
+
+	if (ms->iova == RTE_BAD_IOVA)
+		return RTE_BAD_IOVA;
+
+	return ms->iova + RTE_PTR_DIFF(addr, ms->addr);
 }

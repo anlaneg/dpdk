@@ -17,6 +17,7 @@
 #include <rte_bus_vdev.h>
 #include <rte_alarm.h>
 #include <rte_cycles.h>
+#include <rte_string_fns.h>
 
 #include "rte_eth_bond.h"
 #include "rte_eth_bond_private.h"
@@ -617,7 +618,7 @@ mode6_debug(const char __attribute__((unused)) *info, struct ether_hdr *eth_h,
 	uint16_t offset = get_vlan_offset(eth_h, &ether_type);
 
 #ifdef RTE_LIBRTE_BOND_DEBUG_ALB
-	snprintf(buf, 16, "%s", info);
+	strlcpy(buf, info, 16);
 #endif
 
 	if (ether_type == rte_cpu_to_be_16(ETHER_TYPE_IPv4)) {
@@ -1818,8 +1819,13 @@ slave_configure(struct rte_eth_dev *bonded_eth_dev,
 				bonded_eth_dev->data->dev_conf.rxmode.mq_mode;
 	}
 
-	slave_eth_dev->data->dev_conf.rxmode.hw_vlan_filter =
-			bonded_eth_dev->data->dev_conf.rxmode.hw_vlan_filter;
+	if (bonded_eth_dev->data->dev_conf.rxmode.offloads &
+			DEV_RX_OFFLOAD_VLAN_FILTER)
+		slave_eth_dev->data->dev_conf.rxmode.offloads |=
+				DEV_RX_OFFLOAD_VLAN_FILTER;
+	else
+		slave_eth_dev->data->dev_conf.rxmode.offloads &=
+				~DEV_RX_OFFLOAD_VLAN_FILTER;
 
 	nb_rx_queues = bonded_eth_dev->data->nb_rx_queues;
 	nb_tx_queues = bonded_eth_dev->data->nb_tx_queues;
@@ -1829,6 +1835,14 @@ slave_configure(struct rte_eth_dev *bonded_eth_dev,
 			nb_rx_queues++;
 			nb_tx_queues++;
 		}
+	}
+
+	errval = rte_eth_dev_set_mtu(slave_eth_dev->data->port_id,
+				     bonded_eth_dev->data->mtu);
+	if (errval != 0 && errval != -ENOTSUP) {
+		RTE_BOND_LOG(ERR, "rte_eth_dev_set_mtu: port %u, err (%d)",
+				slave_eth_dev->data->port_id, errval);
+		return errval;
 	}
 
 	/* Configure device */
@@ -2026,7 +2040,7 @@ bond_ethdev_start(struct rte_eth_dev *eth_dev)
 
 	if (internals->slave_count == 0) {
 		RTE_BOND_LOG(ERR, "Cannot start port since there are no slave devices");
-		return -1;
+		goto out_err;
 	}
 
 	if (internals->user_defined_mac == 0) {
@@ -2037,18 +2051,18 @@ bond_ethdev_start(struct rte_eth_dev *eth_dev)
 				new_mac_addr = &internals->slaves[i].persisted_mac_addr;
 
 		if (new_mac_addr == NULL)
-			return -1;
+			goto out_err;
 
 		if (mac_address_set(eth_dev, new_mac_addr) != 0) {
 			RTE_BOND_LOG(ERR, "bonded port (%d) failed to update MAC address",
 					eth_dev->data->port_id);
-			return -1;
+			goto out_err;
 		}
 	}
 
 	/* Update all slave devices MACs*/
 	if (mac_address_slaves_update(eth_dev) != 0)
-		return -1;
+		goto out_err;
 
 	/* If bonded device is configure in promiscuous mode then re-apply config */
 	if (internals->promiscuous_en)
@@ -2073,7 +2087,7 @@ bond_ethdev_start(struct rte_eth_dev *eth_dev)
 				"bonded port (%d) failed to reconfigure slave device (%d)",
 				eth_dev->data->port_id,
 				internals->slaves[i].port_id);
-			return -1;
+			goto out_err;
 		}
 		/* We will need to poll for link status if any slave doesn't
 		 * support interrupts
@@ -2081,6 +2095,7 @@ bond_ethdev_start(struct rte_eth_dev *eth_dev)
 		if (internals->slaves[i].link_status_poll_enabled)
 			internals->link_status_polling_enabled = 1;
 	}
+
 	/* start polling if needed */
 	if (internals->link_status_polling_enabled) {
 		rte_eal_alarm_set(
@@ -2100,6 +2115,10 @@ bond_ethdev_start(struct rte_eth_dev *eth_dev)
 		bond_tlb_enable(internals);
 
 	return 0;
+
+out_err:
+	eth_dev->data->dev_started = 0;
+	return -1;
 }
 
 static void
@@ -2244,6 +2263,8 @@ bond_ethdev_info(struct rte_eth_dev *dev, struct rte_eth_dev_info *dev_info)
 
 	dev_info->rx_offload_capa = internals->rx_offload_capa;
 	dev_info->tx_offload_capa = internals->tx_offload_capa;
+	dev_info->rx_queue_offload_capa = internals->rx_queue_offload_capa;
+	dev_info->tx_queue_offload_capa = internals->tx_queue_offload_capa;
 	dev_info->flow_type_rss_offloads = internals->flow_type_rss_offloads;
 
 	dev_info->reta_size = internals->reta_size;
@@ -2851,11 +2872,15 @@ bond_ethdev_mtu_set(struct rte_eth_dev *dev, uint16_t mtu)
 	return 0;
 }
 
-static void
+static int
 bond_ethdev_mac_address_set(struct rte_eth_dev *dev, struct ether_addr *addr)
 {
-	if (mac_address_set(dev, addr))
+	if (mac_address_set(dev, addr)) {
 		RTE_BOND_LOG(ERR, "Failed to update MAC address");
+		return -EINVAL;
+	}
+
+	return 0;
 }
 
 const struct eth_dev_ops default_dev_ops = {
@@ -2936,6 +2961,8 @@ bond_alloc(struct rte_vdev_device *dev, uint8_t mode)
 	internals->active_slave_count = 0;
 	internals->rx_offload_capa = 0;
 	internals->tx_offload_capa = 0;
+	internals->rx_queue_offload_capa = 0;
+	internals->tx_queue_offload_capa = 0;
 	internals->candidate_max_rx_pktlen = 0;
 	internals->max_rx_pktlen = 0;
 
@@ -2948,7 +2975,7 @@ bond_alloc(struct rte_vdev_device *dev, uint8_t mode)
 	/* Set mode 4 default configuration */
 	bond_mode_8023ad_setup(eth_dev, NULL);
 	if (bond_ethdev_mode_set(eth_dev, mode)) {
-		RTE_BOND_LOG(ERR, "Failed to set bonded device %d mode too %d",
+		RTE_BOND_LOG(ERR, "Failed to set bonded device %d mode to %d\n",
 				 eth_dev->data->port_id, mode);
 		goto err;
 	}
@@ -3118,6 +3145,10 @@ bond_remove(struct rte_vdev_device *dev)
 	eth_dev->tx_pkt_burst = NULL;
 
 	internals = eth_dev->data->dev_private;
+	/* Try to release mempool used in mode6. If the bond
+	 * device is not mode6, free the NULL is not problem.
+	 */
+	rte_mempool_free(internals->mode6.mempool);
 	rte_bitmap_free(internals->vlan_filter_bmp);
 	rte_free(internals->vlan_filter_bmpmem);
 	rte_free(eth_dev->data->dev_private);

@@ -1,33 +1,6 @@
-#   BSD LICENSE
-#
+#   SPDX-License-Identifier: BSD-3-Clause
 #   Copyright 2015 6WIND S.A.
-#   Copyright 2015 Mellanox.
-#
-#   Redistribution and use in source and binary forms, with or without
-#   modification, are permitted provided that the following conditions
-#   are met:
-#
-#     * Redistributions of source code must retain the above copyright
-#       notice, this list of conditions and the following disclaimer.
-#     * Redistributions in binary form must reproduce the above copyright
-#       notice, this list of conditions and the following disclaimer in
-#       the documentation and/or other materials provided with the
-#       distribution.
-#     * Neither the name of 6WIND S.A. nor the names of its
-#       contributors may be used to endorse or promote products derived
-#       from this software without specific prior written permission.
-#
-#   THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
-#   "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
-#   LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
-#   A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
-#   OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
-#   SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
-#   LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
-#   DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
-#   THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
-#   (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
-#   OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+#   Copyright 2015 Mellanox Technologies, Ltd
 
 include $(RTE_SDK)/mk/rte.vars.mk
 
@@ -59,6 +32,7 @@ SRCS-$(CONFIG_RTE_LIBRTE_MLX5_PMD) += mlx5_rss.c
 SRCS-$(CONFIG_RTE_LIBRTE_MLX5_PMD) += mlx5_mr.c
 SRCS-$(CONFIG_RTE_LIBRTE_MLX5_PMD) += mlx5_flow.c
 SRCS-$(CONFIG_RTE_LIBRTE_MLX5_PMD) += mlx5_socket.c
+SRCS-$(CONFIG_RTE_LIBRTE_MLX5_PMD) += mlx5_nl.c
 
 ifeq ($(CONFIG_RTE_LIBRTE_MLX5_DLOPEN_DEPS),y)
 INSTALL-$(CONFIG_RTE_LIBRTE_MLX5_PMD)-lib += $(LIB_GLUE)
@@ -91,6 +65,9 @@ CFLAGS += -Wno-error=cast-qual
 
 EXPORT_MAP := rte_pmd_mlx5_version.map
 LIBABIVER := 1
+
+# memseg walk is not part of stable API
+CFLAGS += -DALLOW_EXPERIMENTAL_API
 
 # DEBUG which is usually provided on the command-line may enable
 # CONFIG_RTE_LIBRTE_MLX5_DEBUG.
@@ -125,9 +102,9 @@ mlx5_autoconf.h.new: FORCE
 mlx5_autoconf.h.new: $(RTE_SDK)/buildtools/auto-config-h.sh
 	$Q $(RM) -f -- '$@'
 	$Q sh -- '$<' '$@' \
-		HAVE_IBV_DEVICE_VXLAN_SUPPORT \
-		infiniband/verbs.h \
-		enum IBV_DEVICE_VXLAN_SUPPORT \
+		HAVE_IBV_DEVICE_TUNNEL_SUPPORT \
+		infiniband/mlx5dv.h \
+		enum MLX5DV_CONTEXT_MASK_TUNNEL_OFFLOADS \
 		$(AUTOCONF_OUTPUT)
 	$Q sh -- '$<' '$@' \
 		HAVE_IBV_WQ_FLAG_RX_END_PADDING \
@@ -181,8 +158,13 @@ ifeq ($(CONFIG_RTE_LIBRTE_MLX5_DLOPEN_DEPS),y)
 
 $(LIB): $(LIB_GLUE)
 
+ifeq ($(LINK_USING_CC),1)
+GLUE_LDFLAGS := $(call linkerprefix,$(LDFLAGS))
+else
+GLUE_LDFLAGS := $(LDFLAGS)
+endif
 $(LIB_GLUE): mlx5_glue.o
-	$Q $(LD) $(LDFLAGS) $(EXTRA_LDFLAGS) \
+	$Q $(LD) $(GLUE_LDFLAGS) $(EXTRA_LDFLAGS) \
 		-Wl,-h,$(LIB_GLUE) \
 		-s -shared -o $@ $< -libverbs -lmlx5
 

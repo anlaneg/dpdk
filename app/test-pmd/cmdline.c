@@ -60,7 +60,7 @@
 #include <rte_eth_bond.h>
 #include <rte_eth_bond_8023ad.h>
 #endif
-#ifdef RTE_LIBRTE_DPAA_PMD
+#if defined RTE_LIBRTE_DPAA_BUS && defined RTE_LIBRTE_DPAA_PMD
 #include <rte_pmd_dpaa.h>
 #endif
 #ifdef RTE_LIBRTE_IXGBE_PMD
@@ -806,6 +806,9 @@ static void cmd_help_long_parsed(void *parsed_result,
 			" duplex (half|full|auto)\n"
 			"    Set speed and duplex for all ports or port_id\n\n"
 
+			"port config (port_id|all) loopback (mode)\n"
+			"    Set loopback mode for all ports or port_id\n\n"
+
 			"port config all (rxq|txq|rxd|txd) (value)\n"
 			"    Set number for rxq/txq/rxd/txd.\n\n"
 
@@ -1483,6 +1486,122 @@ cmdline_parse_inst_t cmd_config_speed_specific = {
 		(void *)&cmd_config_speed_specific_value1,
 		(void *)&cmd_config_speed_specific_item2,
 		(void *)&cmd_config_speed_specific_value2,
+		NULL,
+	},
+};
+
+/* *** configure loopback for all ports *** */
+struct cmd_config_loopback_all {
+	cmdline_fixed_string_t port;
+	cmdline_fixed_string_t keyword;
+	cmdline_fixed_string_t all;
+	cmdline_fixed_string_t item;
+	uint32_t mode;
+};
+
+static void
+cmd_config_loopback_all_parsed(void *parsed_result,
+			__attribute__((unused)) struct cmdline *cl,
+			__attribute__((unused)) void *data)
+{
+	struct cmd_config_loopback_all *res = parsed_result;
+	portid_t pid;
+
+	if (!all_ports_stopped()) {
+		printf("Please stop all ports first\n");
+		return;
+	}
+
+	RTE_ETH_FOREACH_DEV(pid) {
+		ports[pid].dev_conf.lpbk_mode = res->mode;
+	}
+
+	cmd_reconfig_device_queue(RTE_PORT_ALL, 1, 1);
+}
+
+cmdline_parse_token_string_t cmd_config_loopback_all_port =
+	TOKEN_STRING_INITIALIZER(struct cmd_config_loopback_all, port, "port");
+cmdline_parse_token_string_t cmd_config_loopback_all_keyword =
+	TOKEN_STRING_INITIALIZER(struct cmd_config_loopback_all, keyword,
+							"config");
+cmdline_parse_token_string_t cmd_config_loopback_all_all =
+	TOKEN_STRING_INITIALIZER(struct cmd_config_loopback_all, all, "all");
+cmdline_parse_token_string_t cmd_config_loopback_all_item =
+	TOKEN_STRING_INITIALIZER(struct cmd_config_loopback_all, item,
+							"loopback");
+cmdline_parse_token_num_t cmd_config_loopback_all_mode =
+	TOKEN_NUM_INITIALIZER(struct cmd_config_loopback_all, mode, UINT32);
+
+cmdline_parse_inst_t cmd_config_loopback_all = {
+	.f = cmd_config_loopback_all_parsed,
+	.data = NULL,
+	.help_str = "port config all loopback <mode>",
+	.tokens = {
+		(void *)&cmd_config_loopback_all_port,
+		(void *)&cmd_config_loopback_all_keyword,
+		(void *)&cmd_config_loopback_all_all,
+		(void *)&cmd_config_loopback_all_item,
+		(void *)&cmd_config_loopback_all_mode,
+		NULL,
+	},
+};
+
+/* *** configure loopback for specific port *** */
+struct cmd_config_loopback_specific {
+	cmdline_fixed_string_t port;
+	cmdline_fixed_string_t keyword;
+	uint16_t port_id;
+	cmdline_fixed_string_t item;
+	uint32_t mode;
+};
+
+static void
+cmd_config_loopback_specific_parsed(void *parsed_result,
+				__attribute__((unused)) struct cmdline *cl,
+				__attribute__((unused)) void *data)
+{
+	struct cmd_config_loopback_specific *res = parsed_result;
+
+	if (port_id_is_invalid(res->port_id, ENABLED_WARN))
+		return;
+
+	if (!port_is_stopped(res->port_id)) {
+		printf("Please stop port %u first\n", res->port_id);
+		return;
+	}
+
+	ports[res->port_id].dev_conf.lpbk_mode = res->mode;
+
+	cmd_reconfig_device_queue(res->port_id, 1, 1);
+}
+
+
+cmdline_parse_token_string_t cmd_config_loopback_specific_port =
+	TOKEN_STRING_INITIALIZER(struct cmd_config_loopback_specific, port,
+								"port");
+cmdline_parse_token_string_t cmd_config_loopback_specific_keyword =
+	TOKEN_STRING_INITIALIZER(struct cmd_config_loopback_specific, keyword,
+								"config");
+cmdline_parse_token_num_t cmd_config_loopback_specific_id =
+	TOKEN_NUM_INITIALIZER(struct cmd_config_loopback_specific, port_id,
+								UINT16);
+cmdline_parse_token_string_t cmd_config_loopback_specific_item =
+	TOKEN_STRING_INITIALIZER(struct cmd_config_loopback_specific, item,
+								"loopback");
+cmdline_parse_token_num_t cmd_config_loopback_specific_mode =
+	TOKEN_NUM_INITIALIZER(struct cmd_config_loopback_specific, mode,
+			      UINT32);
+
+cmdline_parse_inst_t cmd_config_loopback_specific = {
+	.f = cmd_config_loopback_specific_parsed,
+	.data = NULL,
+	.help_str = "port config <port_id> loopback <mode>",
+	.tokens = {
+		(void *)&cmd_config_loopback_specific_port,
+		(void *)&cmd_config_loopback_specific_keyword,
+		(void *)&cmd_config_loopback_specific_id,
+		(void *)&cmd_config_loopback_specific_item,
+		(void *)&cmd_config_loopback_specific_mode,
 		NULL,
 	},
 };
@@ -2599,6 +2718,8 @@ cmd_config_burst_parsed(void *parsed_result,
 			__attribute__((unused)) void *data)
 {
 	struct cmd_config_burst *res = parsed_result;
+	struct rte_eth_dev_info dev_info;
+	uint16_t rec_nb_pkts;
 
 	if (!all_ports_stopped()) {
 		printf("Please stop all ports first\n");
@@ -2606,11 +2727,34 @@ cmd_config_burst_parsed(void *parsed_result,
 	}
 
 	if (!strcmp(res->name, "burst")) {
-		if (res->value < 1 || res->value > MAX_PKT_BURST) {
+		if (res->value == 0) {
+			/* If user gives a value of zero, query the PMD for
+			 * its recommended Rx burst size. Testpmd uses a single
+			 * size for all ports, so assume all ports are the same
+			 * NIC model and use the values from Port 0.
+			 */
+			rte_eth_dev_info_get(0, &dev_info);
+			rec_nb_pkts = dev_info.default_rxportconf.burst_size;
+
+			if (rec_nb_pkts == 0) {
+				printf("PMD does not recommend a burst size.\n"
+					"User provided value must be between"
+					" 1 and %d\n", MAX_PKT_BURST);
+				return;
+			} else if (rec_nb_pkts > MAX_PKT_BURST) {
+				printf("PMD recommended burst size of %d"
+					" exceeds maximum value of %d\n",
+					rec_nb_pkts, MAX_PKT_BURST);
+				return;
+			}
+			printf("Using PMD-provided burst value of %d\n",
+				rec_nb_pkts);
+			nb_pkt_per_burst = rec_nb_pkts;
+		} else if (res->value > MAX_PKT_BURST) {
 			printf("burst must be >= 1 && <= %d\n", MAX_PKT_BURST);
 			return;
-		}
-		nb_pkt_per_burst = res->value;
+		} else
+			nb_pkt_per_burst = res->value;
 	} else {
 		printf("Unknown parameter\n");
 		return;
@@ -12861,7 +13005,7 @@ cmd_set_tx_loopback_parsed(
 	if (ret == -ENOTSUP)
 		ret = rte_pmd_bnxt_set_tx_loopback(res->port_id, is_on);
 #endif
-#ifdef RTE_LIBRTE_DPAA_PMD
+#if defined RTE_LIBRTE_DPAA_BUS && defined RTE_LIBRTE_DPAA_PMD
 	if (ret == -ENOTSUP)
 		ret = rte_pmd_dpaa_set_tx_loopback(res->port_id, is_on);
 #endif
@@ -16130,6 +16274,8 @@ cmdline_parse_ctx_t main_ctx[] = {
 	(cmdline_parse_inst_t *)&cmd_operate_detach_port,
 	(cmdline_parse_inst_t *)&cmd_config_speed_all,
 	(cmdline_parse_inst_t *)&cmd_config_speed_specific,
+	(cmdline_parse_inst_t *)&cmd_config_loopback_all,
+	(cmdline_parse_inst_t *)&cmd_config_loopback_specific,
 	(cmdline_parse_inst_t *)&cmd_config_rx_tx,
 	(cmdline_parse_inst_t *)&cmd_config_mtu,
 	(cmdline_parse_inst_t *)&cmd_config_max_pkt_len,

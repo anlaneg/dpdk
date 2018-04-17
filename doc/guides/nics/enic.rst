@@ -114,10 +114,15 @@ Configuration information
 
   - **Interrupts**
 
-    Only one interrupt per vNIC interface should be configured in the UCS
+    At least one interrupt per vNIC interface should be configured in the UCS
     manager regardless of the number receive/transmit queues. The ENIC PMD
     uses this interrupt to get information about link status and errors
     in the fast path.
+
+    In addition to the interrupt for link status and errors, when using Rx queue
+    interrupts, increase the number of configured interrupts so that there is at
+    least one interrupt for each Rx queue. For example, if the app uses 3 Rx
+    queues and wants to use per-queue interrupts, configure 4 (3 + 1) interrupts.
 
 .. _enic-flow-director:
 
@@ -227,7 +232,7 @@ Generic Flow API is supported. The baseline support is:
   - Actions: queue and void
   - Selectors: 'is'
 
-- **1300 series VICS with advanced filters disabled**
+- **1300 and later series VICS with advanced filters disabled**
 
   With advanced filters disabled, an IPv4 or IPv6 item must be specified
   in the pattern.
@@ -238,11 +243,11 @@ Generic Flow API is supported. The baseline support is:
   - Selectors: 'is', 'spec' and 'mask'. 'last' is not supported
   - In total, up to 64 bytes of mask is allowed across all headers
 
-- **1300 series VICS with advanced filters enabled**
+- **1300 and later series VICS with advanced filters enabled**
 
   - Attributes: ingress
   - Items: eth, ipv4, ipv6, udp, tcp, vxlan, inner eth, ipv4, ipv6, udp, tcp
-  - Actions: queue, mark, flag and void
+  - Actions: queue, mark, drop, flag and void
   - Selectors: 'is', 'spec' and 'mask'. 'last' is not supported
   - In total, up to 64 bytes of mask is allowed across all headers
 
@@ -305,6 +310,24 @@ Limitations
     were added. Since there currently is no grouping or priority support,
     'catch-all' filters should be added last.
 
+- **Statistics**
+
+  - ``rx_good_bytes`` (ibytes) always includes VLAN header (4B) and CRC bytes (4B).
+    This behavior applies to 1300 and older series VIC adapters.
+    1400 series VICs do not count CRC bytes, and count VLAN header only when VLAN
+    stripping is disabled.
+  - When the NIC drops a packet because the Rx queue has no free buffers,
+    ``rx_good_bytes`` still increments by 4B if the packet is not VLAN tagged or
+    VLAN stripping is disabled, or by 8B if the packet is VLAN tagged and stripping
+    is enabled.
+    This behavior applies to 1300 and older series VIC adapters. 1400 series VICs
+    do not increment this byte counter when packets are dropped.
+
+- **RSS Hashing**
+
+  - Hardware enables and disables UDP and TCP RSS hashing together. The driver
+    cannot control UDP and TCP hashing individually.
+
 How to build the suite
 ----------------------
 
@@ -322,17 +345,9 @@ Supported Cisco VIC adapters
 
 ENIC PMD supports all recent generations of Cisco VIC adapters including:
 
-- VIC 1280
-- VIC 1240
-- VIC 1225
-- VIC 1285
-- VIC 1225T
-- VIC 1227
-- VIC 1227T
-- VIC 1380
-- VIC 1340
-- VIC 1385
-- VIC 1387
+- VIC 1200 series
+- VIC 1300 series
+- VIC 1400 series
 
 Supported Operating Systems
 ---------------------------
@@ -356,6 +371,7 @@ Supported features
 - VLAN filtering (supported via UCSM/CIMC only)
 - Execution of application by unprivileged system users
 - IPV4, IPV6 and TCP RSS hashing
+- UDP hashing (1400 series and later adapters)
 - Scattered Rx
 - MTU update
 - SR-IOV on UCS managed servers connected to Fabric Interconnects
@@ -369,8 +385,8 @@ Known bugs and unsupported features in this release
 - VLAN based flow direction
 - Non-IPV4 flow direction
 - Setting of extended VLAN
-- UDP RSS hashing
 - MTU update only works if Scattered Rx mode is disabled
+- Maximum receive packet length is ignored if Scattered Rx mode is used
 
 Prerequisites
 -------------

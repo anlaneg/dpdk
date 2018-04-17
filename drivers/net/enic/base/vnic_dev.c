@@ -10,6 +10,7 @@
 #include "vnic_dev.h"
 #include "vnic_resource.h"
 #include "vnic_devcmd.h"
+#include "vnic_nic.h"
 #include "vnic_stats.h"
 
 
@@ -484,7 +485,7 @@ int vnic_dev_capable_adv_filters(struct vnic_dev *vdev)
  *   Retrun true in filter_tags if supported
  */
 int vnic_dev_capable_filter_mode(struct vnic_dev *vdev, u32 *mode,
-				 u8 *filter_tags)
+				 u8 *filter_actions)
 {
 	u64 args[4];
 	int err;
@@ -492,14 +493,10 @@ int vnic_dev_capable_filter_mode(struct vnic_dev *vdev, u32 *mode,
 
 	err = vnic_dev_advanced_filters_cap(vdev, args, 4);
 
-	/* determine if filter tags are available */
-	if (err)
-		*filter_tags = 0;
-	if ((args[2] == FILTER_CAP_MODE_V1) &&
-	    (args[3] & FILTER_ACTION_FILTER_ID_FLAG))
-		*filter_tags = 1;
-	else
-		*filter_tags = 0;
+	/* determine supported filter actions */
+	*filter_actions = FILTER_ACTION_RQ_STEERING_FLAG; /* always available */
+	if (args[2] == FILTER_CAP_MODE_V1)
+		*filter_actions = args[3];
 
 	if (err || ((args[0] == 1) && (args[1] == 0))) {
 		/* Adv filter Command not supported or adv filters available but
@@ -529,6 +526,23 @@ parse_max_level:
 	else
 		*mode = FILTER_IPV4_5TUPLE;
 	return 0;
+}
+
+int vnic_dev_capable_udp_rss(struct vnic_dev *vdev)
+{
+	u64 a0 = CMD_NIC_CFG, a1 = 0;
+	u64 rss_hash_type;
+	int wait = 1000;
+	int err;
+
+	err = vnic_dev_cmd(vdev, CMD_CAPABILITY, &a0, &a1, wait);
+	if (err)
+		return 0;
+	if (a0 == 0)
+		return 0;
+	rss_hash_type = (a1 >> NIC_CFG_RSS_HASH_TYPE_SHIFT) &
+		NIC_CFG_RSS_HASH_TYPE_MASK_FIELD;
+	return ((rss_hash_type & NIC_CFG_RSS_HASH_TYPE_UDP) ? 1 : 0);
 }
 
 int vnic_dev_capable(struct vnic_dev *vdev, enum vnic_devcmd_cmd cmd)
@@ -587,17 +601,9 @@ int vnic_dev_stats_dump(struct vnic_dev *vdev, struct vnic_stats **stats)
 {
 	u64 a0, a1;
 	int wait = 1000;
-	static u32 instance;
-	char name[NAME_MAX];
 
-	if (!vdev->stats) {
-		snprintf((char *)name, sizeof(name),
-			"vnic_stats-%u", instance++);
-		vdev->stats = vdev->alloc_consistent(vdev->priv,
-			sizeof(struct vnic_stats), &vdev->stats_pa, (u8 *)name);
-		if (!vdev->stats)
-			return -ENOMEM;
-	}
+	if (!vdev->stats)
+		return -ENOMEM;
 
 	*stats = vdev->stats;
 	a0 = vdev->stats_pa;
@@ -920,6 +926,18 @@ u32 vnic_dev_intr_coal_timer_hw_to_usec(struct vnic_dev *vdev, u32 hw_cycles)
 u32 vnic_dev_get_intr_coal_timer_max(struct vnic_dev *vdev)
 {
 	return vdev->intr_coal_timer_info.max_usec;
+}
+
+int vnic_dev_alloc_stats_mem(struct vnic_dev *vdev)
+{
+	char name[NAME_MAX];
+	static u32 instance;
+
+	snprintf((char *)name, sizeof(name), "vnic_stats-%u", instance++);
+	vdev->stats = vdev->alloc_consistent(vdev->priv,
+					     sizeof(struct vnic_stats),
+					     &vdev->stats_pa, (u8 *)name);
+	return vdev->stats == NULL ? -ENOMEM : 0;
 }
 
 void vnic_dev_unregister(struct vnic_dev *vdev)

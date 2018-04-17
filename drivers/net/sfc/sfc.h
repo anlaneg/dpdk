@@ -104,7 +104,7 @@ struct sfc_mcdi {
 	efsys_mem_t			mem;
 	enum sfc_mcdi_state		state;
 	efx_mcdi_transport_t		transport;
-	bool				logging;
+	uint32_t			logtype;
 	uint32_t			proxy_handle;
 	efx_rc_t			proxy_result;
 };
@@ -170,7 +170,7 @@ struct sfc_adapter {
 	uint16_t			port_id;
 	struct rte_eth_dev		*eth_dev;
 	struct rte_kvargs		*kvargs;
-	bool				debug_init;
+	uint32_t			logtype_main;
 	int				socket_id;
 	efsys_bar_t			mem_bar;
 	efx_family_t			family;
@@ -301,6 +301,10 @@ sfc_get_system_msecs(void)
 int sfc_dma_alloc(const struct sfc_adapter *sa, const char *name, uint16_t id,
 		  size_t len, int socket_id, efsys_mem_t *esmp);
 void sfc_dma_free(const struct sfc_adapter *sa, efsys_mem_t *esmp);
+
+uint32_t sfc_register_logtype(struct sfc_adapter *sa,
+			      const char *lt_prefix_str,
+			      uint32_t ll_default);
 
 int sfc_probe(struct sfc_adapter *sa);
 void sfc_unprobe(struct sfc_adapter *sa);

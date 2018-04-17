@@ -140,11 +140,13 @@ static int
 bnx2x_dev_configure(struct rte_eth_dev *dev)
 {
 	struct bnx2x_softc *sc = dev->data->dev_private;
+	struct rte_eth_rxmode *rxmode = &dev->data->dev_conf.rxmode;
+
 	int mp_ncpus = sysconf(_SC_NPROCESSORS_CONF);
 
 	PMD_INIT_FUNC_TRACE();
 
-	if (dev->data->dev_conf.rxmode.jumbo_frame)
+	if (rxmode->offloads & DEV_RX_OFFLOAD_JUMBO_FRAME)
 		sc->mtu = dev->data->dev_conf.rxmode.max_rx_pkt_len;
 
 	if (dev->data->nb_tx_queues > dev->data->nb_rx_queues) {
@@ -447,13 +449,13 @@ static void
 bnx2x_dev_infos_get(struct rte_eth_dev *dev, struct rte_eth_dev_info *dev_info)
 {
 	struct bnx2x_softc *sc = dev->data->dev_private;
-	dev_info->pci_dev = RTE_ETH_DEV_TO_PCI(dev);
 	dev_info->max_rx_queues  = sc->max_rx_queues;
 	dev_info->max_tx_queues  = sc->max_tx_queues;
 	dev_info->min_rx_bufsize = BNX2X_MIN_RX_BUF_SIZE;
 	dev_info->max_rx_pktlen  = BNX2X_MAX_RX_PKT_LEN;
 	dev_info->max_mac_addrs  = BNX2X_MAX_MAC_ADDRS;
 	dev_info->speed_capa = ETH_LINK_SPEED_10G | ETH_LINK_SPEED_20G;
+	dev_info->rx_offload_capa = DEV_RX_OFFLOAD_JUMBO_FRAME;
 }
 
 static int

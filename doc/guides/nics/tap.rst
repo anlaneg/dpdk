@@ -1,8 +1,8 @@
 ..  SPDX-License-Identifier: BSD-3-Clause
     Copyright(c) 2016 Intel Corporation.
 
-Tap Poll Mode Driver
-====================
+Tun|Tap Poll Mode Driver
+========================
 
 The ``rte_eth_tap.c`` PMD creates a device using TAP interfaces on the
 local host. The PMD allows for DPDK and the host to communicate using a raw
@@ -36,6 +36,12 @@ The MAC address will have a fixed value with the last octet incrementing by one
 for each interface string containing ``mac=fixed``. The MAC address is formatted
 as 00:'d':'t':'a':'p':[00-FF]. Convert the characters to hex and you get the
 actual MAC address: ``00:64:74:61:70:[00-FF]``.
+
+   --vdev=net_tap0,mac="00:64:74:61:70:11"
+
+The MAC address will have a user value passed as string. The MAC address is in
+format with delimeter ``:``. The string is byte converted to hex and you get
+the actual MAC address: ``00:64:74:61:70:11``.
 
 It is possible to specify a remote netdevice to capture packets from by adding
 ``remote=foo1``, for example::
@@ -76,6 +82,17 @@ If you have a Network Stack in your DPDK application or something like it you
 can utilize that stack to handle the network protocols. Plus you would be able
 to address the interface using an IP address assigned to the internal
 interface.
+
+The TUN PMD allows user to create a TUN device on host. The PMD allows user
+to transmit and receive packets via DPDK API calls with L3 header and payload.
+The devices in host can be accessed via ``ifconfig`` or ``ip`` command. TUN
+interfaces are passed to DPDK ``rte_eal_init`` arguments as ``--vdev=net_tunX``,
+where X stands for unique id, example::
+
+   --vdev=net_tun0 --vdev=net_tun1,iface=foo1, ...
+
+Unlike TAP PMD, TUN PMD does not support user arguments as ``MAC`` or ``remote`` user
+options. Default interface name is ``dtunX``, where X stands for unique id.
 
 Flow API support
 ----------------
