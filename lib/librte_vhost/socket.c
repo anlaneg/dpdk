@@ -39,7 +39,7 @@ struct vhost_user_socket {
 	bool reconnect;//是否开启重连接
 	bool dequeue_zero_copy;//是否开启出队zero copy
 	bool iommu_support;
-	bool use_builtin_virtio_net;
+	bool use_builtin_virtio_net;//是否使用内建的virtio_net
 
 	/*
 	 * The "supported_features" indicates the feature bits the
@@ -218,7 +218,7 @@ vhost_user_add_connection(int fd, struct vhost_user_socket *vsocket)
 	}
 
 	size = strnlen(vsocket->path, PATH_MAX);
-	vhost_set_ifname(vid, vsocket->path, size);
+	vhost_set_ifname(vid, vsocket->path, size);//设置设备名称
 
 	vhost_set_builtin_virtio_net(vid, vsocket->use_builtin_virtio_net);
 
@@ -230,7 +230,7 @@ vhost_user_add_connection(int fd, struct vhost_user_socket *vsocket)
 
 	RTE_LOG(INFO, VHOST_CONFIG, "new device, handle is %d\n", vid);
 
-	//通知出现一个新连接
+	//如果有通知回调，则通知出现一个新连接
 	if (vsocket->notify_ops->new_connection) {
 		ret = vsocket->notify_ops->new_connection(vid);
 		if (ret < 0) {

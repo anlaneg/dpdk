@@ -923,7 +923,7 @@ vhost_user_set_vring_call(struct virtio_net *dev, struct VhostUserMsg *pmsg)
 	if (vq->callfd >= 0)
 		close(vq->callfd);
 
-	vq->callfd = file.fd;
+	vq->callfd = file.fd;//设置通知用的fd
 }
 
 static void
@@ -1632,6 +1632,7 @@ vhost_user_msg_handler(int vid, int fd)
 	case VHOST_USER_SET_VRING_KICK:
 		vhost_user_set_vring_kick(&dev, &msg);
 		break;
+		//设置通知用的fd
 	case VHOST_USER_SET_VRING_CALL:
 		vhost_user_set_vring_call(dev, &msg);
 		break;

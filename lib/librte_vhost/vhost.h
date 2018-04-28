@@ -89,7 +89,7 @@ struct vhost_virtqueue {
 	int			backend;
 	int			enabled;
 	int			access_ok;
-	rte_spinlock_t		access_lock;
+	rte_spinlock_t		access_lock;//队列保护（防多线程写，读）
 
 	/* Used to notify the guest (trigger interrupt) */
 	int			callfd;
@@ -397,6 +397,7 @@ gpa_to_hpa(struct virtio_net *dev, uint64_t gpa, uint64_t size)
 	return 0;
 }
 
+//取编号为vid的virtio设备
 static __rte_always_inline struct virtio_net *
 get_device(int vid)
 {
@@ -466,6 +467,7 @@ vhost_need_event(uint16_t event_idx, uint16_t new_idx, uint16_t old)
 	return (uint16_t)(new_idx - event_idx - 1) < (uint16_t)(new_idx - old);
 }
 
+//通过eventfd知会对端收包
 static __rte_always_inline void
 vhost_vring_call(struct virtio_net *dev, struct vhost_virtqueue *vq)
 {
@@ -490,6 +492,7 @@ vhost_vring_call(struct virtio_net *dev, struct vhost_virtqueue *vq)
 		/* Kick the guest if necessary. */
 		if (!(vq->avail->flags & VRING_AVAIL_F_NO_INTERRUPT)
 				&& (vq->callfd >= 0))
+			//触发收包通知
 			eventfd_write(vq->callfd, (eventfd_t)1);
 	}
 }

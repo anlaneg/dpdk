@@ -223,9 +223,9 @@ struct virtio_net_hdr {
 #define VIRTIO_NET_HDR_GSO_ECN      0x80 /**< TCP has ECN set */
 	uint8_t gso_type;
 	uint16_t hdr_len;     /**< Ethernet + IP + tcp/udp hdrs */
-	uint16_t gso_size;    /**< Bytes to append to hdr_len per frame */
-	uint16_t csum_start;  /**< Position to start checksumming from */
-	uint16_t csum_offset; /**< Offset after that to place checksum */
+	uint16_t gso_size;    /**< Bytes to append to hdr_len per frame */ //gso的大小（例如tso segment)
+	uint16_t csum_start;  /**< Position to start checksumming from */ //用来计算checksum的起始位置
+	uint16_t csum_offset; /**< Offset after that to place checksum */　//checksum数据头部偏移（例如跳过tcp头，udp头，scp头）
 };
 
 /**

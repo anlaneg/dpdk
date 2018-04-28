@@ -287,6 +287,7 @@ vhost_new_device(void)
 		return -1;
 	}
 
+	//填充virtio设备
 	vhost_devices[i] = dev;
 	dev->vid = i;
 	dev->flags = VIRTIO_DEV_BUILTIN_VIRTIO_NET;
@@ -327,7 +328,6 @@ vhost_destroy_device(int vid)
 	vhost_devices[vid] = NULL;
 }
 
-//设置vhost接口名称
 void
 vhost_attach_vdpa_device(int vid, int did)
 {
@@ -353,6 +353,7 @@ vhost_detach_vdpa_device(int vid)
 	dev->vdpa_dev_id = -1;
 }
 
+//设置virtio_net设备名称
 void
 vhost_set_ifname(int vid, const char *if_name, unsigned int if_len)
 {

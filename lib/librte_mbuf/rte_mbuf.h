@@ -233,7 +233,7 @@ extern "C" {
  *    and set it in the TCP header. Refer to rte_ipv4_phdr_cksum() and
  *    rte_ipv6_phdr_cksum() that can be used as helpers.
  */
-#define PKT_TX_TCP_SEG       (1ULL << 50)
+#define PKT_TX_TCP_SEG       (1ULL << 50)　//tso功能标记
 
 #define PKT_TX_IEEE1588_TMST (1ULL << 51) /**< TX IEEE1588 packet to timestamp. */
 
@@ -252,6 +252,7 @@ extern "C" {
 #define PKT_TX_TCP_CKSUM     (1ULL << 52) /**< TCP cksum of TX pkt. computed by NIC. */
 #define PKT_TX_SCTP_CKSUM    (2ULL << 52) /**< SCTP cksum of TX pkt. computed by NIC. */
 #define PKT_TX_UDP_CKSUM     (3ULL << 52) /**< UDP cksum of TX pkt. computed by NIC. */
+//硬件计算4层checksum　mask
 #define PKT_TX_L4_MASK       (3ULL << 52) /**< Mask for L4 cksum offload request. */
 
 /**
@@ -261,7 +262,7 @@ extern "C" {
  *  - set the IP checksum field in the packet to 0
  *  - fill the mbuf offload information: l2_len, l3_len
  */
-#define PKT_TX_IP_CKSUM      (1ULL << 54)
+#define PKT_TX_IP_CKSUM      (1ULL << 54) //ip层checksum
 
 /**
  * Packet is IPv4. This flag must be set when using any offload feature
@@ -269,7 +270,7 @@ extern "C" {
  * packet. If the packet is a tunneled packet, this flag is related to
  * the inner headers.
  */
-#define PKT_TX_IPV4          (1ULL << 55)
+#define PKT_TX_IPV4          (1ULL << 55)//指明报文为ipv4,为了使用tso需要告知网卡报文为ipv4
 
 /**
  * Packet is IPv6. This flag must be set when using an offload feature
@@ -409,6 +410,7 @@ typedef uint64_t MARKER64[0]; /**< marker that allows us to overwrite 8 bytes
 struct rte_mbuf {
 	MARKER cacheline0;// 这种写法很帅气
 
+	//mbuf的数据缓冲起始地址
 	void *buf_addr;           /**< Virtual address of segment buffer. */
 	/**
 	 * Physical address of segment buffer.
@@ -418,13 +420,13 @@ struct rte_mbuf {
 	 */
 	RTE_STD_C11
 	union {
-		rte_iova_t buf_iova;
+		rte_iova_t buf_iova;//buf_addr的物理地址
 		rte_iova_t buf_physaddr; /**< deprecated */
 	} __rte_aligned(sizeof(rte_iova_t));
 
 	/* next 8 bytes are initialised on RX descriptor rearm */
 	MARKER64 rearm_data;
-	uint16_t data_off;
+	uint16_t data_off;//真实存放数据的位置（自buf_addr偏移data_off)
 
 	/**
 	 * Reference counter. Its size should at least equal to the size
@@ -1530,7 +1532,7 @@ static inline struct rte_mbuf *rte_pktmbuf_lastseg(struct rte_mbuf *m)
  * @param t
  *   The type to cast the result into.
  */
-//使eth头向后偏o长度
+//buf_addr + data_off可以找到真正数据的起始位置，在这个位置处再进行o的偏移，以便扩大或缩小headroom的空间
 #define rte_pktmbuf_mtod_offset(m, t, o)	\
 	((t)((char *)(m)->buf_addr + (m)->data_off + (o)))
 
@@ -1546,6 +1548,8 @@ static inline struct rte_mbuf *rte_pktmbuf_lastseg(struct rte_mbuf *m)
  * @param t
  *   The type to cast the result into.
  */
+//mtod ＝ move to data
+//返回指向数据区起始位置的指针
 #define rte_pktmbuf_mtod(m, t) rte_pktmbuf_mtod_offset(m, t, 0)
 
 /**
@@ -1611,15 +1615,16 @@ static inline struct rte_mbuf *rte_pktmbuf_lastseg(struct rte_mbuf *m)
  *   A pointer to the start of the newly prepended data, or
  *   NULL if there is not enough headroom space in the first segment
  */
+//尝试在m的headroom中分配一个len长度的空间用于存放报文，如果无法分配返回NULL
 static inline char *rte_pktmbuf_prepend(struct rte_mbuf *m,
 					uint16_t len)
 {
 	__rte_mbuf_sanity_check(m, 1);
 
 	if (unlikely(len > rte_pktmbuf_headroom(m)))
-		return NULL;
+		return NULL;//超过headroom，返回NULL
 
-	m->data_off -= len;
+	m->data_off -= len;//data_off前移
 	m->data_len = (uint16_t)(m->data_len + len);
 	m->pkt_len  = (m->pkt_len + len);
 

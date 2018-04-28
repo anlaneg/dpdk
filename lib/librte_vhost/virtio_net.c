@@ -112,12 +112,14 @@ do_data_copy_dequeue(struct vhost_virtqueue *vq)
 		(var) = (val);			\
 } while (0)
 
+//offload参数转换
 static void
 virtio_enqueue_offload(struct rte_mbuf *m_buf, struct virtio_net_hdr *net_hdr)
 {
 	//入队时，将mbuf上的标记，转到net_hdr中
 	uint64_t csum_l4 = m_buf->ol_flags & PKT_TX_L4_MASK;
 
+	//如果支持tso,则需要计算tcp checksum，准备checksum参数（4层checksum计算起始位置）
 	if (m_buf->ol_flags & PKT_TX_TCP_SEG)
 		csum_l4 |= PKT_TX_TCP_CKSUM;
 
@@ -140,6 +142,7 @@ virtio_enqueue_offload(struct rte_mbuf *m_buf, struct virtio_net_hdr *net_hdr)
 			break;
 		}
 	} else {
+		//硬件计处算checksum被disable,清0
 		ASSIGN_UNLESS_EQUAL(net_hdr->csum_start, 0);
 		ASSIGN_UNLESS_EQUAL(net_hdr->csum_offset, 0);
 		ASSIGN_UNLESS_EQUAL(net_hdr->flags, 0);
@@ -151,17 +154,18 @@ virtio_enqueue_offload(struct rte_mbuf *m_buf, struct virtio_net_hdr *net_hdr)
 
 		ipv4_hdr = rte_pktmbuf_mtod_offset(m_buf, struct ipv4_hdr *,
 						   m_buf->l2_len);
-		ipv4_hdr->hdr_checksum = rte_ipv4_cksum(ipv4_hdr);
+		ipv4_hdr->hdr_checksum = rte_ipv4_cksum(ipv4_hdr);//计算ipv4头部checksum
 	}
 
+	//设置gso类型及其相关参数，例如gso大小，头部长度
 	if (m_buf->ol_flags & PKT_TX_TCP_SEG) {
 		if (m_buf->ol_flags & PKT_TX_IPV4)
-			net_hdr->gso_type = VIRTIO_NET_HDR_GSO_TCPV4;
+			net_hdr->gso_type = VIRTIO_NET_HDR_GSO_TCPV4;//tso
 		else
 			net_hdr->gso_type = VIRTIO_NET_HDR_GSO_TCPV6;
-		net_hdr->gso_size = m_buf->tso_segsz;
+		net_hdr->gso_size = m_buf->tso_segsz;//设置分的块大小
 		net_hdr->hdr_len = m_buf->l2_len + m_buf->l3_len
-					+ m_buf->l4_len;
+					+ m_buf->l4_len;//指定4层头
 	} else if (m_buf->ol_flags & PKT_TX_UDP_SEG) {
 		net_hdr->gso_type = VIRTIO_NET_HDR_GSO_UDP;
 		net_hdr->gso_size = m_buf->tso_segsz;
@@ -174,6 +178,7 @@ virtio_enqueue_offload(struct rte_mbuf *m_buf, struct virtio_net_hdr *net_hdr)
 	}
 }
 
+//将数据搬迁到描述符中
 static __rte_always_inline int
 copy_mbuf_to_desc(struct virtio_net *dev, struct vhost_virtqueue *vq,
 		  struct vring_desc *descs, struct rte_mbuf *m,
@@ -190,9 +195,9 @@ copy_mbuf_to_desc(struct virtio_net *dev, struct vhost_virtqueue *vq,
 	uint16_t copy_nb = vq->batch_copy_nb_elems;
 	int error = 0;
 
-	desc = &descs[desc_idx];
+	desc = &descs[desc_idx];//取描述符
 	desc_addr = vhost_iova_to_vva(dev, vq, desc->addr,
-					desc->len, VHOST_ACCESS_RW);
+					desc->len, VHOST_ACCESS_RW);//将guest的物理地址（desc->addr）转为host机的虚拟地址
 	/*
 	 * Checking of 'desc_addr' placed outside of 'unlikely' macro to avoid
 	 * performance issue with some versions of gcc (4.8.4 and 5.3.0) which
@@ -205,17 +210,19 @@ copy_mbuf_to_desc(struct virtio_net *dev, struct vhost_virtqueue *vq,
 
 	rte_prefetch0((void *)(uintptr_t)desc_addr);
 
+	//填充描述符
 	virtio_enqueue_offload(m, (struct virtio_net_hdr *)(uintptr_t)desc_addr);
 	vhost_log_write(dev, desc->addr, dev->vhost_hlen);
 	PRINT_PACKET(dev, (uintptr_t)desc_addr, dev->vhost_hlen, 0);
 
 	desc_offset = dev->vhost_hlen;
-	desc_avail  = desc->len - dev->vhost_hlen;
+	desc_avail  = desc->len - dev->vhost_hlen;//当前描述符可存放多少字节数据
 
-	mbuf_avail  = rte_pktmbuf_data_len(m);
+	mbuf_avail  = rte_pktmbuf_data_len(m);//当前mbuf中的数据长度
 	mbuf_offset = 0;
 	while (mbuf_avail != 0 || m->next != NULL) {
 		/* done with current mbuf, fetch next */
+		//当前mbuf已处理完在，切到下一个mbuf（这种情况下报文为巨帧）
 		if (mbuf_avail == 0) {
 			m = m->next;
 
@@ -225,11 +232,14 @@ copy_mbuf_to_desc(struct virtio_net *dev, struct vhost_virtqueue *vq,
 
 		/* done with current desc buf, fetch next */
 		if (desc_avail == 0) {
+			//当前描述符中已没有空间可以存放数据了，需要切一个新的描述符
 			if ((desc->flags & VRING_DESC_F_NEXT) == 0) {
 				/* Room in vring buffer is not enough */
 				error = -1;
 				goto out;
 			}
+
+			//描述符无法分配，报错
 			if (unlikely(desc->next >= size || ++nr_desc > size)) {
 				error = -1;
 				goto out;
@@ -248,8 +258,10 @@ copy_mbuf_to_desc(struct virtio_net *dev, struct vhost_virtqueue *vq,
 			desc_avail  = desc->len;
 		}
 
+		//可写入的大小
 		cpy_len = RTE_MIN(desc_avail, mbuf_avail);
 		if (likely(cpy_len > MAX_BATCH_LEN || copy_nb >= vq->size)) {
+			//将mbuf中的数据搬迁到描述符中
 			rte_memcpy((void *)((uintptr_t)(desc_addr +
 							desc_offset)),
 				rte_pktmbuf_mtod_offset(m, void *, mbuf_offset),
@@ -258,6 +270,7 @@ copy_mbuf_to_desc(struct virtio_net *dev, struct vhost_virtqueue *vq,
 			PRINT_PACKET(dev, (uintptr_t)(desc_addr + desc_offset),
 				     cpy_len, 0);
 		} else {
+			//对于小片copy,将其组织到一个batch_copy中，后续完成数据搬迁
 			batch_copy[copy_nb].dst =
 				(void *)((uintptr_t)(desc_addr + desc_offset));
 			batch_copy[copy_nb].src =
@@ -310,6 +323,7 @@ virtio_dev_rx(struct virtio_net *dev, uint16_t queue_id,
 
 	rte_spinlock_lock(&vq->access_lock);
 
+	//队列未enable处理
 	if (unlikely(vq->enabled == 0))
 		goto out_access_unlock;
 
@@ -327,11 +341,11 @@ virtio_dev_rx(struct virtio_net *dev, uint16_t queue_id,
 	//本函数数组最大长度）
 	avail_idx = *((volatile uint16_t *)&vq->avail->idx);
 	start_idx = vq->last_used_idx;
-	free_entries = avail_idx - start_idx;
+	free_entries = avail_idx - start_idx;//可用的描述符数量
 	count = RTE_MIN(count, free_entries);
 	count = RTE_MIN(count, (uint32_t)MAX_PKT_BURST);
 	if (count == 0)
-		//只能发送0个，退出
+		//只能发送0个，本次退出
 		goto out;
 
 	VHOST_LOG_DEBUG(VHOST_DATA, "(%d) start_idx %d | end_idx %d\n",
@@ -340,10 +354,11 @@ virtio_dev_rx(struct virtio_net *dev, uint16_t queue_id,
 	vq->batch_copy_nb_elems = 0;
 
 	/* Retrieve all of the desc indexes first to avoid caching issues. */
-	//预取描述符idx(可预取32个）
+	//预取描述符idx(由于每个占用2字节，故最好情况下可预取32个，最坏1个）
+	//这个预取可以优化
 	rte_prefetch0(&vq->avail->ring[start_idx & (vq->size - 1)]);
 
-	//填充used->ring
+	//填充可用描述符索引，填充used->ring
 	for (i = 0; i < count; i++) {
 		used_idx = (start_idx + i) & (vq->size - 1);
 		desc_indexes[i] = vq->avail->ring[used_idx];
@@ -361,7 +376,6 @@ virtio_dev_rx(struct virtio_net *dev, uint16_t queue_id,
 		uint16_t desc_idx = desc_indexes[i];
 		int err;
 
-		//描述符要求按list写
 		if (vq->desc[desc_idx].flags & VRING_DESC_F_INDIRECT) {
 			descs = (struct vring_desc *)(uintptr_t)
 				vhost_iova_to_vva(dev,
@@ -380,6 +394,7 @@ virtio_dev_rx(struct virtio_net *dev, uint16_t queue_id,
 			sz = vq->size;
 		}
 
+		//descs是描述符表，sz是描述符表的大小，pkts[i]是要发送的报文，desc_idx是要用的描述符id号
 		err = copy_mbuf_to_desc(dev, vq, descs, pkts[i], desc_idx, sz);
 		if (unlikely(err)) {
 			count = i;
@@ -390,16 +405,19 @@ virtio_dev_rx(struct virtio_net *dev, uint16_t queue_id,
 			rte_prefetch0(&vq->desc[desc_indexes[i+1]]);
 	}
 
+	//刚才将小片的数据搬迁都存在batch_copy_elems中了，这里将其统一搬迁
 	do_data_copy_enqueue(dev, vq);
 
 	rte_smp_wmb();
 
+	//用了count个描述符
 	*(volatile uint16_t *)&vq->used->idx += count;
 	vq->last_used_idx += count;
 	vhost_log_used_vring(dev, vq,
 		offsetof(struct vring_used, idx),
 		sizeof(vq->used->idx));
 
+	//通知对端
 	vhost_vring_call(dev, vq);
 out:
 	if (dev->features & (1ULL << VIRTIO_F_IOMMU_PLATFORM))
@@ -710,6 +728,7 @@ out_access_unlock:
 }
 
 //vhost报文入队处理（发送）
+//向接口vid发送数量为count个的报文pkts，要求报文存入queue_id队列
 uint16_t
 rte_vhost_enqueue_burst(int vid, uint16_t queue_id,
 	struct rte_mbuf **pkts, uint16_t count)

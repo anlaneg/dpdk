@@ -392,6 +392,7 @@ vhost_update_packet_xstats(struct vhost_queue *vq,
 	}
 }
 
+//vhost收包函数
 static uint16_t
 eth_vhost_rx(void *q, struct rte_mbuf **bufs, uint16_t nb_bufs)
 {
@@ -444,6 +445,7 @@ out:
 	return nb_rx;
 }
 
+//vhost发包函数
 static uint16_t
 eth_vhost_tx(void *q, struct rte_mbuf **bufs, uint16_t nb_bufs)
 {
@@ -459,14 +461,16 @@ eth_vhost_tx(void *q, struct rte_mbuf **bufs, uint16_t nb_bufs)
 	if (unlikely(rte_atomic32_read(&r->allow_queuing) == 0))
 		goto out;
 
+	//vlan offload处理
 	for (i = 0; i < nb_bufs; i++) {
 		struct rte_mbuf *m = bufs[i];
 
 		/* Do VLAN tag insertion */
+		//支持tx vlan的offload功能（由于是vhost设备，故需要软件实现）
 		if (m->ol_flags & PKT_TX_VLAN_PKT) {
 			int error = rte_vlan_insert(&m);
 			if (unlikely(error)) {
-				rte_pktmbuf_free(m);
+				rte_pktmbuf_free(m);//无法处理vlan头的插入，丢包
 				continue;
 			}
 		}
@@ -476,6 +480,7 @@ eth_vhost_tx(void *q, struct rte_mbuf **bufs, uint16_t nb_bufs)
 	}
 
 	/* Enqueue packets to guest RX queue */
+	//死循环发送，直接发送成功
 	while (nb_send) {
 		uint16_t nb_pkts;
 		uint16_t num = (uint16_t)RTE_MIN(nb_send,
@@ -490,6 +495,7 @@ eth_vhost_tx(void *q, struct rte_mbuf **bufs, uint16_t nb_bufs)
 			break;
 	}
 
+	//统计处理
 	r->stats.pkts += nb_tx;
 	r->stats.missed_pkts += nb_bufs - nb_tx;
 
@@ -1231,6 +1237,7 @@ static const struct eth_dev_ops ops = {
 
 static struct rte_vdev_driver pmd_vhost_drv;
 
+//创建vhost设备
 static int
 eth_dev_vhost_create(struct rte_vdev_device *dev, char *iface_name,
 	int16_t queues, const unsigned int numa_node, uint64_t flags)
@@ -1300,8 +1307,9 @@ eth_dev_vhost_create(struct rte_vdev_device *dev, char *iface_name,
 	rte_memcpy(data, eth_dev->data, sizeof(*data));
 	eth_dev->data = data;
 
-	data->nb_rx_queues = queues;//收发队列数
-	data->nb_tx_queues = queues;
+	//收发队列数保证相同
+	data->nb_rx_queues = queues;//收队列数
+	data->nb_tx_queues = queues;//发队列数
 	internal->max_queues = queues;
 	data->dev_link = pmd_link;
 	data->mac_addrs = eth_addr;

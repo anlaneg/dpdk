@@ -351,12 +351,14 @@ static inline int rte_vlan_strip(struct rte_mbuf *m)
  *   -EPERM: mbuf is is shared overwriting would be unsafe
  *   -ENOSPC: not enough headroom in mbuf
  */
+//软件实现vlan头的插入
 static inline int rte_vlan_insert(struct rte_mbuf **m)
 {
 	struct ether_hdr *oh, *nh;
 	struct vlan_hdr *vh;
 
 	/* Can't insert header if mbuf is shared */
+	//针对共享的mbuf，直接clone一份再来修改
 	if (rte_mbuf_refcnt_read(*m) > 1) {
 		struct rte_mbuf *copy;
 
@@ -369,17 +371,17 @@ static inline int rte_vlan_insert(struct rte_mbuf **m)
 
 	oh = rte_pktmbuf_mtod(*m, struct ether_hdr *);
 	nh = (struct ether_hdr *)
-		rte_pktmbuf_prepend(*m, sizeof(struct vlan_hdr));
+		rte_pktmbuf_prepend(*m, sizeof(struct vlan_hdr));//在headroom中分配vlan头空间
 	if (nh == NULL)
 		return -ENOSPC;
 
-	memmove(nh, oh, 2 * ETHER_ADDR_LEN);
-	nh->ether_type = rte_cpu_to_be_16(ETHER_TYPE_VLAN);
+	memmove(nh, oh, 2 * ETHER_ADDR_LEN);//旧的以太头中目的mac,源mac前移到vlan头前
+	nh->ether_type = rte_cpu_to_be_16(ETHER_TYPE_VLAN);//通过0x8100指定为vlan头
 
-	vh = (struct vlan_hdr *) (nh + 1);
-	vh->vlan_tci = rte_cpu_to_be_16((*m)->vlan_tci);
+	vh = (struct vlan_hdr *) (nh + 1);//经过移动vlan头的合理位置为nh+1
+	vh->vlan_tci = rte_cpu_to_be_16((*m)->vlan_tci);//设置vlan id
 
-	(*m)->ol_flags &= ~PKT_RX_VLAN_STRIPPED;
+	(*m)->ol_flags &= ~PKT_RX_VLAN_STRIPPED;//软件已实现offload功能，清除相应标记
 
 	return 0;
 }
