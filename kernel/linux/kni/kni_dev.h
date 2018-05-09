@@ -86,7 +86,7 @@ struct kni_dev {
 	unsigned long synchro;
 
 	/* buffers */
-	void *pa[MBUF_BURST_SZ];
+	void *pa[MBUF_BURST_SZ];//用于缓冲收到的报文指针
 	void *va[MBUF_BURST_SZ];
 	void *alloc_pa[MBUF_BURST_SZ];
 	void *alloc_va[MBUF_BURST_SZ];

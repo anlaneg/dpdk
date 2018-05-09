@@ -54,11 +54,11 @@ struct rte_kni_request {
  * Writing should never overwrite the read position
  */
 struct rte_kni_fifo {
-	volatile unsigned write;     /**< Next position to be written*/
-	volatile unsigned read;      /**< Next position to be read */
-	unsigned len;                /**< Circular buffer length */
-	unsigned elem_size;          /**< Pointer size - for 32/64 bit OS */
-	void *volatile buffer[];     /**< The buffer contains mbuf pointers */
+	volatile unsigned write;     /**< Next position to be written*/ //写起始位置
+	volatile unsigned read;      /**< Next position to be read */ //读起始位置
+	unsigned len;                /**< Circular buffer length */ //循环队列长度，总为2的整数次方
+	unsigned elem_size;          /**< Pointer size - for 32/64 bit OS */ //元素大小
+	void *volatile buffer[];     /**< The buffer contains mbuf pointers */ //队列
 };
 
 /*

@@ -216,12 +216,14 @@ kni_net_tx(struct sk_buff *skb, struct net_device *dev)
 	/* dequeue a mbuf from alloc_q */
 	ret = kni_fifo_get(kni->alloc_q, &pkt_pa, 1);
 	if (likely(ret == 1)) {
+		//无空闲buf
 		void *data_kva;
 
 		pkt_kva = pa2kva(pkt_pa);
 		data_kva = kva2data_kva(pkt_kva);
 		pkt_va = pa2va(pkt_pa, pkt_kva);
 
+		//填充mbuf->data
 		len = skb->len;
 		memcpy(data_kva, skb->data, len);
 		if (unlikely(len < ETH_ZLEN)) {
@@ -232,6 +234,7 @@ kni_net_tx(struct sk_buff *skb, struct net_device *dev)
 		pkt_kva->data_len = len;
 
 		/* enqueue mbuf into tx_q */
+		//将其存放在tx_q队列
 		ret = kni_fifo_put(kni->tx_q, &pkt_va, 1);
 		if (unlikely(ret != 1)) {
 			/* Failing should not happen */
@@ -245,6 +248,7 @@ kni_net_tx(struct sk_buff *skb, struct net_device *dev)
 	}
 
 	/* Free skb and update statistics */
+	//将源有的skb释放掉
 	dev_kfree_skb(skb);
 	kni->stats.tx_bytes += len;
 	kni->stats.tx_packets++;
@@ -274,9 +278,11 @@ kni_net_rx_normal(struct kni_dev *kni)
 	struct net_device *dev = kni->net_dev;
 
 	/* Get the number of free entries in free_q */
+	//先检查free_q上有多少个空间可用于存放空闲的mbuf
 	num_fq = kni_fifo_free_count(kni->free_q);
 	if (num_fq == 0) {
 		/* No room on the free_q, bail out */
+		//无空闲空间，则直接返回，不能收取
 		return;
 	}
 
@@ -290,11 +296,14 @@ kni_net_rx_normal(struct kni_dev *kni)
 
 	/* Transfer received packets to netif */
 	for (i = 0; i < num_rx; i++) {
+		//已知的是物理地址，由物理地址反推kernel的虚地址
+		//然后kernel就可以访问这个buffer了
 		kva = pa2kva(kni->pa[i]);
-		len = kva->pkt_len;
+		len = kva->pkt_len;//取报文长度
 		data_kva = kva2data_kva(kva);
 		kni->va[i] = pa2va(kni->pa[i], kva);
 
+		//申请skb
 		skb = dev_alloc_skb(len + 2);
 		if (!skb) {
 			/* Update statistics */
@@ -303,11 +312,13 @@ kni_net_rx_normal(struct kni_dev *kni)
 		}
 
 		/* Align IP on 16B boundary */
-		skb_reserve(skb, 2);
+		skb_reserve(skb, 2);//预留两个字节
 
+		//将mbuf中的内容copy到skb中
 		if (kva->nb_segs == 1) {
 			memcpy(skb_put(skb, len), data_kva, len);
 		} else {
+			//如果存在多片，则合并成一个skb
 			int nb_segs;
 			int kva_nb_segs = kva->nb_segs;
 
@@ -323,11 +334,13 @@ kni_net_rx_normal(struct kni_dev *kni)
 			}
 		}
 
+		//填充入接口，二层协议
 		skb->dev = dev;
 		skb->protocol = eth_type_trans(skb, dev);
 		skb->ip_summed = CHECKSUM_UNNECESSARY;
 
 		/* Call netif interface */
+		//使kernel收此接口报文（转入kernel协议栈）
 		netif_rx_ni(skb);
 
 		/* Update statistics */
@@ -336,6 +349,7 @@ kni_net_rx_normal(struct kni_dev *kni)
 	}
 
 	/* Burst enqueue mbufs into free_q */
+	//将mbuf入队列free_q，交给用户态去释放
 	ret = kni_fifo_put(kni->free_q, kni->va, num_rx);
 	if (ret != num_rx)
 		/* Failing should not happen */
@@ -710,6 +724,7 @@ static const struct net_device_ops kni_net_netdev_ops = {
 	.ndo_stop = kni_net_release,
 	.ndo_set_config = kni_net_config,
 	.ndo_change_rx_flags = kni_net_set_promiscusity,
+	//kni发包回调
 	.ndo_start_xmit = kni_net_tx,
 	.ndo_change_mtu = kni_net_change_mtu,
 	.ndo_do_ioctl = kni_net_ioctl,

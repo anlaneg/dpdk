@@ -127,10 +127,12 @@ kni_memzone_pool_alloc(void)
 	rte_spinlock_lock(&kni_memzone_pool.mutex);
 
 	if (!kni_memzone_pool.free) {
+		//无空闲的pool,返回null
 		rte_spinlock_unlock(&kni_memzone_pool.mutex);
 		return NULL;
 	}
 
+	//有空闲的，自空闲链上摘取一个
 	slot = kni_memzone_pool.free;
 	kni_memzone_pool.free = slot->next;
 	slot->in_use = 1;
@@ -174,6 +176,7 @@ rte_kni_init(unsigned int max_kni_ifaces)
 
 	/* Immediately return if KNI is already initialized */
 	if (kni_memzone_pool.initialized) {
+		//重复初始化检测，已初始化即报错
 		RTE_LOG(WARNING, KNI, "Double call to rte_kni_init()");
 		return;
 	}
@@ -187,6 +190,7 @@ rte_kni_init(unsigned int max_kni_ifaces)
 
 	/* Check FD and open */
 	if (kni_fd < 0) {
+		//打开/dev/kni设备
 		kni_fd = open("/dev/" KNI_DEVICE, O_RDWR);
 		if (kni_fd < 0) {
 			RTE_LOG(ERR, KNI,
@@ -627,6 +631,7 @@ rte_kni_tx_burst(struct rte_kni *kni, struct rte_mbuf **mbufs, unsigned num)
 	return ret;
 }
 
+//自tx_q队列中取num个mbuf
 unsigned
 rte_kni_rx_burst(struct rte_kni *kni, struct rte_mbuf **mbufs, unsigned num)
 {
@@ -639,6 +644,7 @@ rte_kni_rx_burst(struct rte_kni *kni, struct rte_mbuf **mbufs, unsigned num)
 	return ret;
 }
 
+//自free_q中取出报文，并逐个释放
 static void
 kni_free_mbufs(struct rte_kni *kni)
 {
