@@ -74,12 +74,12 @@ Features
 - RX interrupts.
 - Statistics query including Basic, Extended and per queue.
 - Rx HW timestamp.
+- Tunnel types: VXLAN, L3 VXLAN, VXLAN-GPE, GRE.
+- Tunnel HW offloads: packet type, inner/outer RSS, IP and UDP checksum verification.
 
 Limitations
 -----------
 
-- Inner RSS for VXLAN frames is not supported yet.
-- Hardware checksum RX offloads for VXLAN inner header are not supported yet.
 - For secondary process:
 
   - Forked secondary process not supported.
@@ -326,6 +326,32 @@ Run-time configuration
   This is a prerequisite to receive this kind of traffic.
 
   Enabled by default, valid only on VF devices ignored otherwise.
+
+- ``l3_vxlan_en`` parameter [int]
+
+  A nonzero value allows L3 VXLAN and VXLAN-GPE flow creation. To enable
+  L3 VXLAN or VXLAN-GPE, users has to configure firmware and enable this
+  parameter. This is a prerequisite to receive this kind of traffic.
+
+  Disabled by default.
+
+Firmware configuration
+~~~~~~~~~~~~~~~~~~~~~~
+
+- L3 VXLAN and VXLAN-GPE destination UDP port
+
+   .. code-block:: console
+
+     mlxconfig -d <mst device> set IP_OVER_VXLAN_EN=1
+     mlxconfig -d <mst device> set IP_OVER_VXLAN_PORT=<udp dport>
+
+  Verify configurations are set:
+
+   .. code-block:: console
+
+     mlxconfig -d <mst device> query | grep IP_OVER_VXLAN
+     IP_OVER_VXLAN_EN                    True(1)
+     IP_OVER_VXLAN_PORT                  <udp dport>
 
 Prerequisites
 -------------

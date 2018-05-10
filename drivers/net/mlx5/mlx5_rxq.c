@@ -1045,8 +1045,6 @@ mlx5_rxq_new(struct rte_eth_dev *dev, uint16_t idx, uint16_t desc,
 	}
 	/* Toggle RX checksum offload if hardware supports it. */
 	tmpl->rxq.csum = !!(conf->offloads & DEV_RX_OFFLOAD_CHECKSUM);
-	tmpl->rxq.csum_l2tun = (!!(conf->offloads & DEV_RX_OFFLOAD_CHECKSUM) &&
-				priv->config.tunnel_en);
 	tmpl->rxq.hw_timestamp = !!(conf->offloads & DEV_RX_OFFLOAD_TIMESTAMP);
 	/* Configure VLAN stripping. */
 	tmpl->rxq.vlan_strip = !!(conf->offloads & DEV_RX_OFFLOAD_VLAN_STRIP);
@@ -1218,8 +1216,8 @@ mlx5_rxq_verify(struct rte_eth_dev *dev)
  *   The Verbs object initialised, NULL otherwise and rte_errno is set.
  */
 struct mlx5_ind_table_ibv *
-mlx5_ind_table_ibv_new(struct rte_eth_dev *dev, uint16_t queues[],
-		       uint16_t queues_n)
+mlx5_ind_table_ibv_new(struct rte_eth_dev *dev, const uint16_t *queues,
+		       uint32_t queues_n)
 {
 	struct priv *priv = dev->data->dev_private;
 	struct mlx5_ind_table_ibv *ind_tbl;
@@ -1261,9 +1259,9 @@ mlx5_ind_table_ibv_new(struct rte_eth_dev *dev, uint16_t queues[],
 	}
 	rte_atomic32_inc(&ind_tbl->refcnt);
 	LIST_INSERT_HEAD(&priv->ind_tbls, ind_tbl, next);
-	DRV_LOG(DEBUG, "port %u indirection table %p: refcnt %d",
-		dev->data->port_id, (void *)ind_tbl,
-		rte_atomic32_read(&ind_tbl->refcnt));
+	DEBUG("port %u new indirection table %p: queues:%u refcnt:%d",
+	      dev->data->port_id, (void *)ind_tbl, 1 << wq_n,
+	      rte_atomic32_read(&ind_tbl->refcnt));
 	return ind_tbl;
 error:
 	rte_free(ind_tbl);
@@ -1286,8 +1284,8 @@ error:
  *   An indirection table if found.
  */
 struct mlx5_ind_table_ibv *
-mlx5_ind_table_ibv_get(struct rte_eth_dev *dev, uint16_t queues[],
-		       uint16_t queues_n)
+mlx5_ind_table_ibv_get(struct rte_eth_dev *dev, const uint16_t *queues,
+		       uint32_t queues_n)
 {
 	struct priv *priv = dev->data->dev_private;
 	struct mlx5_ind_table_ibv *ind_tbl;
@@ -1332,9 +1330,12 @@ mlx5_ind_table_ibv_release(struct rte_eth_dev *dev,
 	DRV_LOG(DEBUG, "port %u indirection table %p: refcnt %d",
 		((struct priv *)dev->data->dev_private)->port,
 		(void *)ind_tbl, rte_atomic32_read(&ind_tbl->refcnt));
-	if (rte_atomic32_dec_and_test(&ind_tbl->refcnt))
+	if (rte_atomic32_dec_and_test(&ind_tbl->refcnt)) {
 		claim_zero(mlx5_glue->destroy_rwq_ind_table
 			   (ind_tbl->ind_table));
+		DEBUG("port %u delete indirection table %p: queues: %u",
+		      dev->data->port_id, (void *)ind_tbl, ind_tbl->queues_n);
+	}
 	for (i = 0; i != ind_tbl->queues_n; ++i)
 		claim_nonzero(mlx5_rxq_release(dev, ind_tbl->queues[i]));
 	if (!rte_atomic32_read(&ind_tbl->refcnt)) {
@@ -1386,19 +1387,29 @@ mlx5_ind_table_ibv_verify(struct rte_eth_dev *dev)
  *   first queue index will be taken for the indirection table.
  * @param queues_n
  *   Number of queues.
+ * @param tunnel
+ *   Tunnel type, implies tunnel offloading like inner checksum if available.
+ * @param rss_level
+ *   RSS hash on tunnel level.
  *
  * @return
  *   The Verbs object initialised, NULL otherwise and rte_errno is set.
  */
 struct mlx5_hrxq *
-mlx5_hrxq_new(struct rte_eth_dev *dev, uint8_t *rss_key, uint8_t rss_key_len,
-	      uint64_t hash_fields, uint16_t queues[], uint16_t queues_n)
+mlx5_hrxq_new(struct rte_eth_dev *dev,
+	      const uint8_t *rss_key, uint32_t rss_key_len,
+	      uint64_t hash_fields,
+	      const uint16_t *queues, uint32_t queues_n,
+	      uint32_t tunnel, uint32_t rss_level)
 {
 	struct priv *priv = dev->data->dev_private;
 	struct mlx5_hrxq *hrxq;
 	struct mlx5_ind_table_ibv *ind_tbl;
 	struct ibv_qp *qp;
 	int err;
+#ifdef HAVE_IBV_DEVICE_TUNNEL_SUPPORT
+	struct mlx5dv_qp_init_attr qp_init_attr = {0};
+#endif
 
 	queues_n = hash_fields ? queues_n : 1;
 	ind_tbl = mlx5_ind_table_ibv_get(dev, queues, queues_n);
@@ -1408,6 +1419,47 @@ mlx5_hrxq_new(struct rte_eth_dev *dev, uint8_t *rss_key, uint8_t rss_key_len,
 		rte_errno = ENOMEM;
 		return NULL;
 	}
+	if (!rss_key_len) {
+		rss_key_len = rss_hash_default_key_len;
+		rss_key = rss_hash_default_key;
+	}
+#ifdef HAVE_IBV_DEVICE_TUNNEL_SUPPORT
+	if (tunnel) {
+		qp_init_attr.comp_mask =
+				MLX5DV_QP_INIT_ATTR_MASK_QP_CREATE_FLAGS;
+		qp_init_attr.create_flags = MLX5DV_QP_CREATE_TUNNEL_OFFLOADS;
+	}
+	qp = mlx5_glue->dv_create_qp
+		(priv->ctx,
+		 &(struct ibv_qp_init_attr_ex){
+			.qp_type = IBV_QPT_RAW_PACKET,
+			.comp_mask =
+				IBV_QP_INIT_ATTR_PD |
+				IBV_QP_INIT_ATTR_IND_TABLE |
+				IBV_QP_INIT_ATTR_RX_HASH,
+			.rx_hash_conf = (struct ibv_rx_hash_conf){
+				.rx_hash_function = IBV_RX_HASH_FUNC_TOEPLITZ,
+				.rx_hash_key_len = rss_key_len ? rss_key_len :
+						   rss_hash_default_key_len,
+				.rx_hash_key = rss_key ?
+					       (void *)(uintptr_t)rss_key :
+					       rss_hash_default_key,
+				.rx_hash_fields_mask = hash_fields |
+					(tunnel && rss_level > 1 ?
+					(uint32_t)IBV_RX_HASH_INNER : 0),
+			},
+			.rwq_ind_tbl = ind_tbl->ind_table,
+			.pd = priv->pd,
+		 },
+		 &qp_init_attr);
+	DEBUG("port %u new QP:%p ind_tbl:%p hash_fields:0x%" PRIx64
+	      " tunnel:0x%x level:%u dv_attr:comp_mask:0x%" PRIx64
+	      " create_flags:0x%x",
+	      dev->data->port_id, (void *)qp, (void *)ind_tbl,
+	      (tunnel && rss_level == 2 ? (uint32_t)IBV_RX_HASH_INNER : 0) |
+	      hash_fields, tunnel, rss_level,
+	      qp_init_attr.comp_mask, qp_init_attr.create_flags);
+#else
 	qp = mlx5_glue->create_qp_ex
 		(priv->ctx,
 		 &(struct ibv_qp_init_attr_ex){
@@ -1418,13 +1470,21 @@ mlx5_hrxq_new(struct rte_eth_dev *dev, uint8_t *rss_key, uint8_t rss_key_len,
 				IBV_QP_INIT_ATTR_RX_HASH,
 			.rx_hash_conf = (struct ibv_rx_hash_conf){
 				.rx_hash_function = IBV_RX_HASH_FUNC_TOEPLITZ,
-				.rx_hash_key_len = rss_key_len,
-				.rx_hash_key = rss_key,
+				.rx_hash_key_len = rss_key_len ? rss_key_len :
+						   rss_hash_default_key_len,
+				.rx_hash_key = rss_key ?
+					       (void *)(uintptr_t)rss_key :
+					       rss_hash_default_key,
 				.rx_hash_fields_mask = hash_fields,
 			},
 			.rwq_ind_tbl = ind_tbl->ind_table,
 			.pd = priv->pd,
 		 });
+	DEBUG("port %u new QP:%p ind_tbl:%p hash_fields:0x%" PRIx64
+	      " tunnel:0x%x level:%hhu",
+	      dev->data->port_id, (void *)qp, (void *)ind_tbl,
+	      hash_fields, tunnel, rss_level);
+#endif
 	if (!qp) {
 		rte_errno = errno;
 		goto error;
@@ -1436,6 +1496,8 @@ mlx5_hrxq_new(struct rte_eth_dev *dev, uint8_t *rss_key, uint8_t rss_key_len,
 	hrxq->qp = qp;
 	hrxq->rss_key_len = rss_key_len;
 	hrxq->hash_fields = hash_fields;
+	hrxq->tunnel = tunnel;
+	hrxq->rss_level = rss_level;
 	memcpy(hrxq->rss_key, rss_key, rss_key_len);
 	rte_atomic32_inc(&hrxq->refcnt);
 	LIST_INSERT_HEAD(&priv->hrxqs, hrxq, next);
@@ -1464,13 +1526,20 @@ error:
  *   first queue index will be taken for the indirection table.
  * @param queues_n
  *   Number of queues.
+ * @param tunnel
+ *   Tunnel type, implies tunnel offloading like inner checksum if available.
+ * @param rss_level
+ *   RSS hash on tunnel level
  *
  * @return
  *   An hash Rx queue on success.
  */
 struct mlx5_hrxq *
-mlx5_hrxq_get(struct rte_eth_dev *dev, uint8_t *rss_key, uint8_t rss_key_len,
-	      uint64_t hash_fields, uint16_t queues[], uint16_t queues_n)
+mlx5_hrxq_get(struct rte_eth_dev *dev,
+	      const uint8_t *rss_key, uint32_t rss_key_len,
+	      uint64_t hash_fields,
+	      const uint16_t *queues, uint32_t queues_n,
+	      uint32_t tunnel, uint32_t rss_level)
 {
 	struct priv *priv = dev->data->dev_private;
 	struct mlx5_hrxq *hrxq;
@@ -1484,6 +1553,10 @@ mlx5_hrxq_get(struct rte_eth_dev *dev, uint8_t *rss_key, uint8_t rss_key_len,
 		if (memcmp(hrxq->rss_key, rss_key, rss_key_len))
 			continue;
 		if (hrxq->hash_fields != hash_fields)
+			continue;
+		if (hrxq->tunnel != tunnel)
+			continue;
+		if (hrxq->rss_level != rss_level)
 			continue;
 		ind_tbl = mlx5_ind_table_ibv_get(dev, queues, queues_n);
 		if (!ind_tbl)
@@ -1520,6 +1593,10 @@ mlx5_hrxq_release(struct rte_eth_dev *dev, struct mlx5_hrxq *hrxq)
 		(void *)hrxq, rte_atomic32_read(&hrxq->refcnt));
 	if (rte_atomic32_dec_and_test(&hrxq->refcnt)) {
 		claim_zero(mlx5_glue->destroy_qp(hrxq->qp));
+		DEBUG("port %u delete QP %p: hash: 0x%" PRIx64 ", tunnel:"
+		      " 0x%x, level: %u",
+		      dev->data->port_id, (void *)hrxq, hrxq->hash_fields,
+		      hrxq->tunnel, hrxq->rss_level);
 		mlx5_ind_table_ibv_release(dev, hrxq->ind_table);
 		LIST_REMOVE(hrxq, next);
 		rte_free(hrxq);

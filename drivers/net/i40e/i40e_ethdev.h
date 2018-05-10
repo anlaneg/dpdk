@@ -5,13 +5,18 @@
 #ifndef _I40E_ETHDEV_H_
 #define _I40E_ETHDEV_H_
 
+#include <stdint.h>
+
 #include <rte_eth_ctrl.h>
 #include <rte_time.h>
 #include <rte_kvargs.h>
 #include <rte_hash.h>
+#include <rte_flow.h>
 #include <rte_flow_driver.h>
 #include <rte_tm_driver.h>
 #include "rte_pmd_i40e.h"
+
+#include "base/i40e_register.h"
 
 #define I40E_VLAN_TAG_SIZE        4
 
@@ -878,9 +883,11 @@ struct i40e_customized_pctype {
 };
 
 struct i40e_rte_flow_rss_conf {
-	struct rte_eth_rss_conf rss_conf; /**< RSS parameters. */
+	struct rte_flow_action_rss conf; /**< RSS parameters. */
 	uint16_t queue_region_conf; /**< Queue region config flag */
-	uint16_t num; /**< Number of entries in queue[]. */
+	uint8_t key[(I40E_VFQF_HKEY_MAX_INDEX > I40E_PFQF_HKEY_MAX_INDEX ?
+		     I40E_VFQF_HKEY_MAX_INDEX : I40E_PFQF_HKEY_MAX_INDEX) + 1 *
+		    sizeof(uint32_t)]; /* Hash key. */
 	uint16_t queue[I40E_MAX_Q_PER_TC]; /**< Queues indices to use. */
 };
 
@@ -957,6 +964,8 @@ struct i40e_pf {
 	bool gtp_support; /* 1 - support GTP-C and GTP-U */
 	/* customer customized pctype */
 	struct i40e_customized_pctype customized_pctype[I40E_CUSTOMIZED_MAX];
+	/* Switch Domain Id */
+	uint16_t switch_domain_id;
 };
 
 enum pending_msg {
@@ -1060,6 +1069,18 @@ struct i40e_adapter {
 	uint64_t pctypes_tbl[I40E_FLOW_TYPE_MAX] __rte_cache_min_aligned;
 	uint64_t flow_types_mask;
 	uint64_t pctypes_mask;
+};
+
+/**
+ * Strucute to store private data for each VF representor instance
+ */
+struct i40e_vf_representor {
+	uint16_t switch_domain_id;
+	/**< Virtual Function ID */
+	uint16_t vf_id;
+	/**< Virtual Function ID */
+	struct i40e_adapter *adapter;
+	/**< Private data store of assocaiated physical function */
 };
 
 extern const struct rte_flow_ops i40e_flow_ops;
@@ -1219,8 +1240,14 @@ void i40e_init_queue_region_conf(struct rte_eth_dev *dev);
 void i40e_flex_payload_reg_set_default(struct i40e_hw *hw);
 int i40e_set_rss_key(struct i40e_vsi *vsi, uint8_t *key, uint8_t key_len);
 int i40e_set_rss_lut(struct i40e_vsi *vsi, uint8_t *lut, uint16_t lut_size);
+int i40e_rss_conf_init(struct i40e_rte_flow_rss_conf *out,
+		       const struct rte_flow_action_rss *in);
+int i40e_action_rss_same(const struct rte_flow_action_rss *comp,
+			 const struct rte_flow_action_rss *with);
 int i40e_config_rss_filter(struct i40e_pf *pf,
 		struct i40e_rte_flow_rss_conf *conf, bool add);
+int i40e_vf_representor_init(struct rte_eth_dev *ethdev, void *init_params);
+int i40e_vf_representor_uninit(struct rte_eth_dev *ethdev);
 
 #define I40E_DEV_TO_PCI(eth_dev) \
 	RTE_DEV_TO_PCI((eth_dev)->device)

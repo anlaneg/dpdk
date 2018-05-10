@@ -7,6 +7,7 @@
 
 #include <rte_ethdev.h>
 #include <rte_bus_pci.h>
+#include <rte_string_fns.h>
 
 #include "kni.h"
 #include "mempool.h"
@@ -67,7 +68,7 @@ kni_config_network_interface(uint16_t port_id, uint8_t if_up)
 {
 	int ret = 0;
 
-	if (port_id >= rte_eth_dev_count())
+	if (!rte_eth_dev_is_valid_port(port_id))
 		return -EINVAL;
 
 	ret = (if_up) ?
@@ -82,7 +83,7 @@ kni_change_mtu(uint16_t port_id, unsigned int new_mtu)
 {
 	int ret;
 
-	if (port_id >= rte_eth_dev_count())
+	if (!rte_eth_dev_is_valid_port(port_id))
 		return -EINVAL;
 
 	if (new_mtu > ETHER_MAX_LEN)
@@ -153,7 +154,7 @@ kni_create(const char *name, struct kni_params *params)
 		return NULL;
 
 	/* Node fill in */
-	strncpy(kni->name, name, sizeof(kni->name));
+	strlcpy(kni->name, name, sizeof(kni->name));
 	kni->k = k;
 
 	/* Node add to list */

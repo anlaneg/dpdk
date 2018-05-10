@@ -996,7 +996,7 @@ ef10_get_datapath_caps(
 	efx_nic_cfg_t *encp = &(enp->en_nic_cfg);
 	efx_mcdi_req_t req;
 	uint8_t payload[MAX(MC_CMD_GET_CAPABILITIES_IN_LEN,
-			    MC_CMD_GET_CAPABILITIES_V4_OUT_LEN)];
+			    MC_CMD_GET_CAPABILITIES_V5_OUT_LEN)];
 	efx_rc_t rc;
 
 	if ((rc = ef10_mcdi_get_pf_count(enp, &encp->enc_hw_pf_count)) != 0)
@@ -1008,7 +1008,7 @@ ef10_get_datapath_caps(
 	req.emr_in_buf = payload;
 	req.emr_in_length = MC_CMD_GET_CAPABILITIES_IN_LEN;
 	req.emr_out_buf = payload;
-	req.emr_out_length = MC_CMD_GET_CAPABILITIES_V4_OUT_LEN;
+	req.emr_out_length = MC_CMD_GET_CAPABILITIES_V5_OUT_LEN;
 
 	efx_mcdi_execute_quiet(enp, &req);
 
@@ -1040,6 +1040,12 @@ ef10_get_datapath_caps(
 		goto fail4;
 	}
 	encp->enc_rx_prefix_size = 14;
+
+	/* Check if the firmware supports additional RSS modes */
+	if (CAP_FLAGS1(req, ADDITIONAL_RSS_MODES))
+		encp->enc_rx_scale_additional_modes_supported = B_TRUE;
+	else
+		encp->enc_rx_scale_additional_modes_supported = B_FALSE;
 
 	/* Check if the firmware supports TSO */
 	if (CAP_FLAGS1(req, TX_TSO))
@@ -1107,6 +1113,12 @@ ef10_get_datapath_caps(
 		encp->enc_rx_var_packed_stream_supported = B_TRUE;
 	else
 		encp->enc_rx_var_packed_stream_supported = B_FALSE;
+
+	/* Check if the firmware supports equal stride super-buffer mode */
+	if (CAP_FLAGS2(req, EQUAL_STRIDE_SUPER_BUFFER))
+		encp->enc_rx_es_super_buffer_supported = B_TRUE;
+	else
+		encp->enc_rx_es_super_buffer_supported = B_FALSE;
 
 	/* Check if the firmware supports FW subvariant w/o Tx checksumming */
 	if (CAP_FLAGS2(req, FW_SUBVARIANT_NO_TX_CSUM))
@@ -1233,11 +1245,80 @@ ef10_get_datapath_caps(
 	else
 		encp->enc_fec_counters = B_FALSE;
 
+	if (CAP_FLAGS1(req, RX_RSS_LIMITED)) {
+		/* Only one exclusive RSS context is available per port. */
+		encp->enc_rx_scale_max_exclusive_contexts = 1;
+
+		switch (enp->en_family) {
+		case EFX_FAMILY_MEDFORD2:
+			encp->enc_rx_scale_hash_alg_mask =
+			    (1U << EFX_RX_HASHALG_TOEPLITZ);
+			break;
+
+		case EFX_FAMILY_MEDFORD:
+		case EFX_FAMILY_HUNTINGTON:
+			/*
+			 * Packed stream firmware variant maintains a
+			 * non-standard algorithm for hash computation.
+			 * It implies explicit XORing together
+			 * source + destination IP addresses (or last
+			 * four bytes in the case of IPv6) and using the
+			 * resulting value as the input to a Toeplitz hash.
+			 */
+			encp->enc_rx_scale_hash_alg_mask =
+			    (1U << EFX_RX_HASHALG_PACKED_STREAM);
+			break;
+
+		default:
+			rc = EINVAL;
+			goto fail5;
+		}
+
+		/* Port numbers cannot contribute to the hash value */
+		encp->enc_rx_scale_l4_hash_supported = B_FALSE;
+	} else {
+		/*
+		 * Maximum number of exclusive RSS contexts.
+		 * EF10 hardware supports 64 in total, but 6 are reserved
+		 * for shared contexts. They are a global resource so
+		 * not all may be available.
+		 */
+		encp->enc_rx_scale_max_exclusive_contexts = 64 - 6;
+
+		encp->enc_rx_scale_hash_alg_mask =
+		    (1U << EFX_RX_HASHALG_TOEPLITZ);
+
+		/*
+		 * It is possible to use port numbers as
+		 * the input data for hash computation.
+		 */
+		encp->enc_rx_scale_l4_hash_supported = B_TRUE;
+	}
+	/* Check if the firmware supports "FLAG" and "MARK" filter actions */
+	if (CAP_FLAGS2(req, FILTER_ACTION_FLAG))
+		encp->enc_filter_action_flag_supported = B_TRUE;
+	else
+		encp->enc_filter_action_flag_supported = B_FALSE;
+
+	if (CAP_FLAGS2(req, FILTER_ACTION_MARK))
+		encp->enc_filter_action_mark_supported = B_TRUE;
+	else
+		encp->enc_filter_action_mark_supported = B_FALSE;
+
+	/* Get maximum supported value for "MARK" filter action */
+	if (req.emr_out_length_used >= MC_CMD_GET_CAPABILITIES_V5_OUT_LEN)
+		encp->enc_filter_action_mark_max = MCDI_OUT_DWORD(req,
+		    GET_CAPABILITIES_V5_OUT_FILTER_ACTION_MARK_MAX);
+	else
+		encp->enc_filter_action_mark_max = 0;
+
 #undef CAP_FLAGS1
 #undef CAP_FLAGS2
 
 	return (0);
 
+fail5:
+	EFSYS_PROBE(fail5);
 fail4:
 	EFSYS_PROBE(fail4);
 fail3:
@@ -1706,13 +1787,6 @@ ef10_nic_board_cfg(
 
 	/* Alignment for WPTR updates */
 	encp->enc_rx_push_align = EF10_RX_WPTR_ALIGN;
-
-	/*
-	 * Maximum number of exclusive RSS contexts. EF10 hardware supports 64
-	 * in total, but 6 are reserved for shared contexts. They are a global
-	 * resource so not all may be available.
-	 */
-	encp->enc_rx_scale_max_exclusive_contexts = 64 - 6;
 
 	encp->enc_tx_dma_desc_size_max = EFX_MASK32(ESF_DZ_RX_KER_BYTE_CNT);
 	/* No boundary crossing limits */

@@ -967,13 +967,15 @@ extern		void
 ef10_rx_qenable(
 	__in		efx_rxq_t *erp);
 
+union efx_rxq_type_data_u;
+
 extern	__checkReturn	efx_rc_t
 ef10_rx_qcreate(
 	__in		efx_nic_t *enp,
 	__in		unsigned int index,
 	__in		unsigned int label,
 	__in		efx_rxq_type_t type,
-	__in		uint32_t type_data,
+	__in		const union efx_rxq_type_data_u *type_data,
 	__in		efsys_mem_t *esmp,
 	__in		size_t ndescs,
 	__in		uint32_t id,
@@ -1213,6 +1215,16 @@ efx_mcdi_set_nic_global(
 #define	EFX_RX_PACKED_STREAM_MAX_CREDITS 127
 
 #endif /* EFSYS_OPT_RX_PACKED_STREAM */
+
+#if EFSYS_OPT_RX_ES_SUPER_BUFFER
+
+/*
+ * Maximum DMA length and buffer stride alignment.
+ * (see SF-119419-TC, 3.2)
+ */
+#define	EFX_RX_ES_SUPER_BUFFER_BUF_ALIGNMENT	64
+
+#endif
 
 #ifdef	__cplusplus
 }

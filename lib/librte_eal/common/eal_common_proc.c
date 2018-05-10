@@ -108,7 +108,7 @@ mp_send(struct rte_mp_msg *msg, const char *peer, int type);
 
 
 static struct pending_request *
-find_sync_request(const char *dst, const char *act_name)
+find_pending_request(const char *dst, const char *act_name)
 {
 	struct pending_request *r;
 
@@ -129,7 +129,7 @@ create_socket_path(const char *name, char *buf, int len)
 	if (strlen(name) > 0)
 		snprintf(buf, len, "%s_%s", prefix, name);
 	else
-		snprintf(buf, len, "%s", prefix);
+		strlcpy(buf, prefix, len);
 }
 
 int
@@ -200,7 +200,7 @@ rte_mp_action_register(const char *name, rte_mp_t action)
 		rte_errno = ENOMEM;
 		return -1;
 	}
-	strcpy(entry->action_name, name);
+	strlcpy(entry->action_name, name, sizeof(entry->action_name));
 	entry->action = action;
 
 	pthread_mutex_lock(&mp_mutex_action);
@@ -282,7 +282,7 @@ read_msg(struct mp_msg_internal *m, struct sockaddr_un *s)
 static void
 process_msg(struct mp_msg_internal *m, struct sockaddr_un *s)
 {
-	struct pending_request *sync_req;
+	struct pending_request *pending_req;
 	struct action_entry *entry;
 	struct rte_mp_msg *msg = &m->msg;
 	rte_mp_t action = NULL;
@@ -291,15 +291,16 @@ process_msg(struct mp_msg_internal *m, struct sockaddr_un *s)
 
 	if (m->type == MP_REP || m->type == MP_IGN) {
 		pthread_mutex_lock(&pending_requests.lock);
-		sync_req = find_sync_request(s->sun_path, msg->name);
-		if (sync_req) {
-			memcpy(sync_req->reply, msg, sizeof(*msg));
+		pending_req = find_pending_request(s->sun_path, msg->name);
+		if (pending_req) {
+			memcpy(pending_req->reply, msg, sizeof(*msg));
 			/* -1 indicates that we've been asked to ignore */
-			sync_req->reply_received = m->type == MP_REP ? 1 : -1;
+			pending_req->reply_received =
+				m->type == MP_REP ? 1 : -1;
 
-			if (sync_req->type == REQUEST_TYPE_SYNC)
-				pthread_cond_signal(&sync_req->sync.cond);
-			else if (sync_req->type == REQUEST_TYPE_ASYNC)
+			if (pending_req->type == REQUEST_TYPE_SYNC)
+				pthread_cond_signal(&pending_req->sync.cond);
+			else if (pending_req->type == REQUEST_TYPE_ASYNC)
 				pthread_cond_signal(
 					&pending_requests.async_cond);
 		} else
@@ -322,7 +323,9 @@ process_msg(struct mp_msg_internal *m, struct sockaddr_un *s)
 			 * yet ready to process this request.
 			 */
 			struct rte_mp_msg dummy;
+
 			memset(&dummy, 0, sizeof(dummy));
+			strlcpy(dummy.name, msg->name, sizeof(dummy.name));
 			mp_send(&dummy, s->sun_path, MP_IGN);
 		} else {
 			RTE_LOG(ERR, EAL, "Cannot find action: %s\n",
@@ -416,7 +419,13 @@ process_async_request(struct pending_request *sr, const struct timespec *now)
 	} else if (sr->reply_received == -1) {
 		/* we were asked to ignore this process */
 		reply->nb_sent--;
+	} else if (timeout) {
+		/* count it as processed response, but don't increment
+		 * nb_received.
+		 */
+		param->n_responses_processed++;
 	}
+
 	free(sr->reply);
 
 	last_msg = param->n_responses_processed == reply->nb_sent;
@@ -441,89 +450,112 @@ trigger_async_action(struct pending_request *sr)
 	free(sr->request);
 }
 
+static struct pending_request *
+check_trigger(struct timespec *ts)
+{
+	struct pending_request *next, *cur, *trigger = NULL;
+
+	TAILQ_FOREACH_SAFE(cur, &pending_requests.requests, next, next) {
+		enum async_action action;
+		if (cur->type != REQUEST_TYPE_ASYNC)
+			continue;
+
+		action = process_async_request(cur, ts);
+		if (action == ACTION_FREE) {
+			TAILQ_REMOVE(&pending_requests.requests, cur, next);
+			free(cur);
+		} else if (action == ACTION_TRIGGER) {
+			TAILQ_REMOVE(&pending_requests.requests, cur, next);
+			trigger = cur;
+			break;
+		}
+	}
+	return trigger;
+}
+
+static void
+wait_for_async_messages(void)
+{
+	struct pending_request *sr;
+	struct timespec timeout;
+	bool timedwait = false;
+	bool nowait = false;
+	int ret;
+
+	/* scan through the list and see if there are any timeouts that
+	 * are earlier than our current timeout.
+	 */
+	TAILQ_FOREACH(sr, &pending_requests.requests, next) {
+		if (sr->type != REQUEST_TYPE_ASYNC)
+			continue;
+		if (!timedwait || timespec_cmp(&sr->async.param->end,
+				&timeout) < 0) {
+			memcpy(&timeout, &sr->async.param->end,
+				sizeof(timeout));
+			timedwait = true;
+		}
+
+		/* sometimes, we don't even wait */
+		if (sr->reply_received) {
+			nowait = true;
+			break;
+		}
+	}
+
+	if (nowait)
+		return;
+
+	do {
+		ret = timedwait ?
+			pthread_cond_timedwait(
+				&pending_requests.async_cond,
+				&pending_requests.lock,
+				&timeout) :
+			pthread_cond_wait(
+				&pending_requests.async_cond,
+				&pending_requests.lock);
+	} while (ret != 0 && ret != ETIMEDOUT);
+
+	/* we've been woken up or timed out */
+}
+
 static void *
 async_reply_handle(void *arg __rte_unused)
 {
-	struct pending_request *sr;
 	struct timeval now;
-	struct timespec timeout, ts_now;
+	struct timespec ts_now;
 	while (1) {
 		struct pending_request *trigger = NULL;
-		int ret;
-		bool nowait = false;
-		bool timedwait = false;
 
 		pthread_mutex_lock(&pending_requests.lock);
 
-		/* scan through the list and see if there are any timeouts that
-		 * are earlier than our current timeout.
-		 */
-		TAILQ_FOREACH(sr, &pending_requests.requests, next) {
-			if (sr->type != REQUEST_TYPE_ASYNC)
-				continue;
-			if (!timedwait || timespec_cmp(&sr->async.param->end,
-					&timeout) < 0) {
-				memcpy(&timeout, &sr->async.param->end,
-					sizeof(timeout));
-				timedwait = true;
-			}
-
-			/* sometimes, we don't even wait */
-			if (sr->reply_received) {
-				nowait = true;
-				break;
-			}
-		}
-
-		if (nowait)
-			ret = 0;
-		else if (timedwait)
-			ret = pthread_cond_timedwait(
-					&pending_requests.async_cond,
-					&pending_requests.lock, &timeout);
-		else
-			ret = pthread_cond_wait(&pending_requests.async_cond,
-					&pending_requests.lock);
+		/* we exit this function holding the lock */
+		wait_for_async_messages();
 
 		if (gettimeofday(&now, NULL) < 0) {
+			pthread_mutex_unlock(&pending_requests.lock);
 			RTE_LOG(ERR, EAL, "Cannot get current time\n");
 			break;
 		}
 		ts_now.tv_nsec = now.tv_usec * 1000;
 		ts_now.tv_sec = now.tv_sec;
 
-		if (ret == 0 || ret == ETIMEDOUT) {
-			struct pending_request *next;
-			/* we've either been woken up, or we timed out */
+		do {
+			trigger = check_trigger(&ts_now);
+			/* unlock request list */
+			pthread_mutex_unlock(&pending_requests.lock);
 
-			/* we have still the lock, check if anything needs
-			 * processing.
-			 */
-			TAILQ_FOREACH_SAFE(sr, &pending_requests.requests, next,
-					next) {
-				enum async_action action;
-				if (sr->type != REQUEST_TYPE_ASYNC)
-					continue;
+			if (trigger) {
+				trigger_async_action(trigger);
+				free(trigger);
 
-				action = process_async_request(sr, &ts_now);
-				if (action == ACTION_FREE) {
-					TAILQ_REMOVE(&pending_requests.requests,
-							sr, next);
-					free(sr);
-				} else if (action == ACTION_TRIGGER &&
-						trigger == NULL) {
-					TAILQ_REMOVE(&pending_requests.requests,
-							sr, next);
-					trigger = sr;
-				}
+				/* we've triggered a callback, but there may be
+				 * more, so lock the list and check again.
+				 */
+				pthread_mutex_lock(&pending_requests.lock);
 			}
-		}
-		pthread_mutex_unlock(&pending_requests.lock);
-		if (trigger) {
-			trigger_async_action(trigger);
-			free(trigger);
-		}
-	};
+		} while (trigger);
+	}
 
 	RTE_LOG(ERR, EAL, "ERROR: asynchronous requests disabled\n");
 
@@ -590,18 +622,17 @@ unlink_sockets(const char *filter)
 int
 rte_mp_channel_init(void)
 {
-	char thread_name[RTE_MAX_THREAD_NAME_LEN];
 	char path[PATH_MAX];
 	int dir_fd;
 	pthread_t mp_handle_tid, async_reply_handle_tid;
 
 	/* create filter path */
 	create_socket_path("*", path, sizeof(path));
-	snprintf(mp_filter, sizeof(mp_filter), "%s", basename(path));
+	strlcpy(mp_filter, basename(path), sizeof(mp_filter));
 
 	/* path may have been modified, so recreate it */
 	create_socket_path("*", path, sizeof(path));
-	snprintf(mp_dir_path, sizeof(mp_dir_path), "%s", dirname(path));
+	strlcpy(mp_dir_path, dirname(path), sizeof(mp_dir_path));
 
 	/* lock the directory */
 	dir_fd = open(mp_dir_path, O_RDONLY);
@@ -630,16 +661,8 @@ rte_mp_channel_init(void)
 		return -1;
 	}
 
-	if (pthread_create(&mp_handle_tid, NULL, mp_handle, NULL) < 0) {
-		RTE_LOG(ERR, EAL, "failed to create mp thead: %s\n",
-			strerror(errno));
-		close(mp_fd);
-		mp_fd = -1;
-		return -1;
-	}
-
-	if (pthread_create(&async_reply_handle_tid, NULL,
-			async_reply_handle, NULL) < 0) {
+	if (rte_ctrl_thread_create(&mp_handle_tid, "rte_mp_handle",
+			NULL, mp_handle, NULL) < 0) {
 		RTE_LOG(ERR, EAL, "failed to create mp thead: %s\n",
 			strerror(errno));
 		close(mp_fd);
@@ -648,13 +671,16 @@ rte_mp_channel_init(void)
 		return -1;
 	}
 
-	/* try best to set thread name */
-	snprintf(thread_name, RTE_MAX_THREAD_NAME_LEN, "rte_mp_handle");
-	rte_thread_setname(mp_handle_tid, thread_name);
-
-	/* try best to set thread name */
-	snprintf(thread_name, RTE_MAX_THREAD_NAME_LEN, "rte_mp_async_handle");
-	rte_thread_setname(async_reply_handle_tid, thread_name);
+	if (rte_ctrl_thread_create(&async_reply_handle_tid,
+			"rte_mp_async", NULL,
+			async_reply_handle, NULL) < 0) {
+		RTE_LOG(ERR, EAL, "failed to create mp thead: %s\n",
+			strerror(errno));
+		close(mp_fd);
+		close(dir_fd);
+		mp_fd = -1;
+		return -1;
+	}
 
 	/* unlock the directory */
 	flock(dir_fd, LOCK_UN);
@@ -686,7 +712,7 @@ send_msg(const char *dst_path, struct rte_mp_msg *msg, int type)
 
 	memset(&dst, 0, sizeof(dst));
 	dst.sun_family = AF_UNIX;
-	snprintf(dst.sun_path, sizeof(dst.sun_path), "%s", dst_path);
+	strlcpy(dst.sun_path, dst_path, sizeof(dst.sun_path));
 
 	memset(&msgh, 0, sizeof(msgh));
 	memset(control, 0, sizeof(control));
@@ -830,33 +856,29 @@ mp_request_async(const char *dst, struct rte_mp_msg *req,
 		struct async_request_param *param)
 {
 	struct rte_mp_msg *reply_msg;
-	struct pending_request *sync_req, *exist;
+	struct pending_request *pending_req, *exist;
 	int ret;
 
-	sync_req = malloc(sizeof(*sync_req));
-	reply_msg = malloc(sizeof(*reply_msg));
-	if (sync_req == NULL || reply_msg == NULL) {
+	pending_req = calloc(1, sizeof(*pending_req));
+	reply_msg = calloc(1, sizeof(*reply_msg));
+	if (pending_req == NULL || reply_msg == NULL) {
 		RTE_LOG(ERR, EAL, "Could not allocate space for sync request\n");
 		rte_errno = ENOMEM;
 		ret = -1;
 		goto fail;
 	}
 
-	memset(sync_req, 0, sizeof(*sync_req));
-	memset(reply_msg, 0, sizeof(*reply_msg));
-
-	sync_req->type = REQUEST_TYPE_ASYNC;
-	strcpy(sync_req->dst, dst);
-	sync_req->request = req;
-	sync_req->reply = reply_msg;
-	sync_req->async.param = param;
+	pending_req->type = REQUEST_TYPE_ASYNC;
+	strlcpy(pending_req->dst, dst, sizeof(pending_req->dst));
+	strcpy(pending_req->dst, dst);
+	pending_req->request = req;
+	pending_req->reply = reply_msg;
+	pending_req->async.param = param;
 
 	/* queue already locked by caller */
 
-	exist = find_sync_request(dst, req->name);
-	if (!exist) {
-		TAILQ_INSERT_TAIL(&pending_requests.requests, sync_req, next);
-	} else {
+	exist = find_pending_request(dst, req->name);
+	if (exist) {
 		RTE_LOG(ERR, EAL, "A pending request %s:%s\n", dst, req->name);
 		rte_errno = EEXIST;
 		ret = -1;
@@ -873,12 +895,13 @@ mp_request_async(const char *dst, struct rte_mp_msg *req,
 		ret = 0;
 		goto fail;
 	}
+	TAILQ_INSERT_TAIL(&pending_requests.requests, pending_req, next);
 
 	param->user_reply.nb_sent++;
 
 	return 0;
 fail:
-	free(sync_req);
+	free(pending_req);
 	free(reply_msg);
 	return ret;
 }
@@ -889,23 +912,19 @@ mp_request_sync(const char *dst, struct rte_mp_msg *req,
 {
 	int ret;
 	struct rte_mp_msg msg, *tmp;
-	struct pending_request sync_req, *exist;
+	struct pending_request pending_req, *exist;
 
-	sync_req.type = REQUEST_TYPE_SYNC;
-	sync_req.reply_received = 0;
-	strcpy(sync_req.dst, dst);
-	sync_req.request = req;
-	sync_req.reply = &msg;
-	pthread_cond_init(&sync_req.sync.cond, NULL);
+	pending_req.type = REQUEST_TYPE_SYNC;
+	pending_req.reply_received = 0;
+	strlcpy(pending_req.dst, dst, sizeof(pending_req.dst));
+	pending_req.request = req;
+	pending_req.reply = &msg;
+	pthread_cond_init(&pending_req.sync.cond, NULL);
 
-	pthread_mutex_lock(&pending_requests.lock);
-	exist = find_sync_request(dst, req->name);
-	if (!exist)
-		TAILQ_INSERT_TAIL(&pending_requests.requests, &sync_req, next);
+	exist = find_pending_request(dst, req->name);
 	if (exist) {
 		RTE_LOG(ERR, EAL, "A pending request %s:%s\n", dst, req->name);
 		rte_errno = EEXIST;
-		pthread_mutex_unlock(&pending_requests.lock);
 		return -1;
 	}
 
@@ -917,24 +936,24 @@ mp_request_sync(const char *dst, struct rte_mp_msg *req,
 	} else if (ret == 0)
 		return 0;
 
+	TAILQ_INSERT_TAIL(&pending_requests.requests, &pending_req, next);
+
 	reply->nb_sent++;
 
 	do {
-		ret = pthread_cond_timedwait(&sync_req.sync.cond,
+		ret = pthread_cond_timedwait(&pending_req.sync.cond,
 				&pending_requests.lock, ts);
 	} while (ret != 0 && ret != ETIMEDOUT);
 
-	/* We got the lock now */
-	TAILQ_REMOVE(&pending_requests.requests, &sync_req, next);
-	pthread_mutex_unlock(&pending_requests.lock);
+	TAILQ_REMOVE(&pending_requests.requests, &pending_req, next);
 
-	if (sync_req.reply_received == 0) {
+	if (pending_req.reply_received == 0) {
 		RTE_LOG(ERR, EAL, "Fail to recv reply for request %s:%s\n",
 			dst, req->name);
 		rte_errno = ETIMEDOUT;
 		return -1;
 	}
-	if (sync_req.reply_received == -1) {
+	if (pending_req.reply_received == -1) {
 		RTE_LOG(DEBUG, EAL, "Asked to ignore response\n");
 		/* not receiving this message is not an error, so decrement
 		 * number of sent messages
@@ -985,8 +1004,12 @@ rte_mp_request_sync(struct rte_mp_msg *req, struct rte_mp_reply *reply,
 	reply->msgs = NULL;
 
 	/* for secondary process, send request to the primary process only */
-	if (rte_eal_process_type() == RTE_PROC_SECONDARY)
-		return mp_request_sync(eal_mp_socket_path(), req, reply, &end);
+	if (rte_eal_process_type() == RTE_PROC_SECONDARY) {
+		pthread_mutex_lock(&pending_requests.lock);
+		ret = mp_request_sync(eal_mp_socket_path(), req, reply, &end);
+		pthread_mutex_unlock(&pending_requests.lock);
+		return ret;
+	}
 
 	/* for primary process, broadcast request, and collect reply 1 by 1 */
 	mp_dir = opendir(mp_dir_path);
@@ -1006,6 +1029,7 @@ rte_mp_request_sync(struct rte_mp_msg *req, struct rte_mp_reply *reply,
 		return -1;
 	}
 
+	pthread_mutex_lock(&pending_requests.lock);
 	while ((ent = readdir(mp_dir))) {
 		char path[PATH_MAX];
 
@@ -1015,9 +1039,13 @@ rte_mp_request_sync(struct rte_mp_msg *req, struct rte_mp_reply *reply,
 		snprintf(path, sizeof(path), "%s/%s", mp_dir_path,
 			 ent->d_name);
 
+		/* unlocks the mutex while waiting for response,
+		 * locks on receive
+		 */
 		if (mp_request_sync(path, req, reply, &end))
 			ret = -1;
 	}
+	pthread_mutex_unlock(&pending_requests.lock);
 	/* unlock the directory */
 	flock(dir_fd, LOCK_UN);
 
@@ -1050,18 +1078,14 @@ rte_mp_request_async(struct rte_mp_msg *req, const struct timespec *ts,
 		rte_errno = errno;
 		return -1;
 	}
-	copy = malloc(sizeof(*copy));
-	dummy = malloc(sizeof(*dummy));
-	param = malloc(sizeof(*param));
+	copy = calloc(1, sizeof(*copy));
+	dummy = calloc(1, sizeof(*dummy));
+	param = calloc(1, sizeof(*param));
 	if (copy == NULL || dummy == NULL || param == NULL) {
 		RTE_LOG(ERR, EAL, "Failed to allocate memory for async reply\n");
 		rte_errno = ENOMEM;
 		goto fail;
 	}
-
-	memset(copy, 0, sizeof(*copy));
-	memset(dummy, 0, sizeof(*dummy));
-	memset(param, 0, sizeof(*param));
 
 	/* copy message */
 	memcpy(copy, req, sizeof(*copy));

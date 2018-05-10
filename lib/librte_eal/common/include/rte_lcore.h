@@ -280,6 +280,32 @@ void rte_thread_get_affinity(rte_cpuset_t *cpusetp);
 int rte_thread_setname(pthread_t id, const char *name);
 
 /**
+ * Create a control thread.
+ *
+ * Wrapper to pthread_create(), pthread_setname_np() and
+ * pthread_setaffinity_np(). The dataplane and service lcores are
+ * excluded from the affinity of the new thread.
+ *
+ * @param thread
+ *   Filled with the thread id of the new created thread.
+ * @param name
+ *   The name of the control thread (max 16 characters including '\0').
+ * @param attr
+ *   Attributes for the new thread.
+ * @param start_routine
+ *   Function to be executed by the new thread.
+ * @param arg
+ *   Argument passed to start_routine.
+ * @return
+ *   On success, returns 0; on error, it returns a negative value
+ *   corresponding to the error number.
+ */
+__rte_experimental int
+rte_ctrl_thread_create(pthread_t *thread, const char *name,
+		const pthread_attr_t *attr,
+		void *(*start_routine)(void *), void *arg);
+
+/**
  * Test if the core supplied has a specific role
  *
  * @param lcore_id
@@ -288,7 +314,7 @@ int rte_thread_setname(pthread_t id, const char *name);
  * @param role
  *   The role to be checked against.
  * @return
- *   On success, return 0; otherwise return a negative value.
+ *   Boolean value: positive if test is true; otherwise returns 0.
  */
 int
 rte_lcore_has_role(unsigned int lcore_id, enum rte_lcore_role_t role);

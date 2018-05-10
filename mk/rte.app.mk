@@ -80,7 +80,6 @@ _LDLIBS-$(CONFIG_RTE_LIBRTE_BITRATE)        += -lrte_bitratestats
 _LDLIBS-$(CONFIG_RTE_LIBRTE_LATENCY_STATS)  += -lrte_latencystats
 _LDLIBS-$(CONFIG_RTE_LIBRTE_POWER)          += -lrte_power
 
-_LDLIBS-$(CONFIG_RTE_LIBRTE_TIMER)          += -lrte_timer
 _LDLIBS-$(CONFIG_RTE_LIBRTE_EFD)            += -lrte_efd
 
 _LDLIBS-y += --whole-archive
@@ -98,6 +97,7 @@ _LDLIBS-$(CONFIG_RTE_LIBRTE_CRYPTODEV)      += -lrte_cryptodev
 _LDLIBS-$(CONFIG_RTE_LIBRTE_SECURITY)       += -lrte_security
 _LDLIBS-$(CONFIG_RTE_LIBRTE_EVENTDEV)       += -lrte_eventdev
 _LDLIBS-$(CONFIG_RTE_LIBRTE_RAWDEV)         += -lrte_rawdev
+_LDLIBS-$(CONFIG_RTE_LIBRTE_TIMER)          += -lrte_timer
 _LDLIBS-$(CONFIG_RTE_LIBRTE_MEMPOOL)        += -lrte_mempool
 _LDLIBS-$(CONFIG_RTE_DRIVER_MEMPOOL_RING)   += -lrte_mempool_ring
 _LDLIBS-$(CONFIG_RTE_LIBRTE_RING)           += -lrte_ring
@@ -125,6 +125,7 @@ endif
 ifeq ($(CONFIG_RTE_BUILD_SHARED_LIB),n)
 # plugins (link only if static libraries)
 
+_LDLIBS-$(CONFIG_RTE_DRIVER_MEMPOOL_BUCKET) += -lrte_mempool_bucket
 _LDLIBS-$(CONFIG_RTE_DRIVER_MEMPOOL_STACK)  += -lrte_mempool_stack
 ifeq ($(CONFIG_RTE_LIBRTE_DPAA_BUS),y)
 _LDLIBS-$(CONFIG_RTE_LIBRTE_DPAA_MEMPOOL)   += -lrte_mempool_dpaa
@@ -186,6 +187,9 @@ _LDLIBS-$(CONFIG_RTE_LIBRTE_VDEV_NETVSC_PMD) += -lrte_pmd_vdev_netvsc
 _LDLIBS-$(CONFIG_RTE_LIBRTE_VIRTIO_PMD)     += -lrte_pmd_virtio
 ifeq ($(CONFIG_RTE_LIBRTE_VHOST),y)
 _LDLIBS-$(CONFIG_RTE_LIBRTE_PMD_VHOST)      += -lrte_pmd_vhost
+ifeq ($(CONFIG_RTE_EAL_VFIO),y)
+_LDLIBS-$(CONFIG_RTE_LIBRTE_IFCVF_VDPA_PMD) += -lrte_ifcvf_vdpa
+endif # $(CONFIG_RTE_EAL_VFIO)
 endif # $(CONFIG_RTE_LIBRTE_VHOST)
 _LDLIBS-$(CONFIG_RTE_LIBRTE_VMXNET3_PMD)    += -lrte_pmd_vmxnet3_uio
 
@@ -203,9 +207,10 @@ endif # CONFIG_RTE_LIBRTE_BBDEV
 
 ifeq ($(CONFIG_RTE_LIBRTE_CRYPTODEV),y)
 _LDLIBS-$(CONFIG_RTE_LIBRTE_PMD_AESNI_MB)    += -lrte_pmd_aesni_mb
-_LDLIBS-$(CONFIG_RTE_LIBRTE_PMD_AESNI_MB)    += -L$(AESNI_MULTI_BUFFER_LIB_PATH) -lIPSec_MB
+_LDLIBS-$(CONFIG_RTE_LIBRTE_PMD_AESNI_MB)    += -lIPSec_MB
 _LDLIBS-$(CONFIG_RTE_LIBRTE_PMD_AESNI_GCM)   += -lrte_pmd_aesni_gcm
-_LDLIBS-$(CONFIG_RTE_LIBRTE_PMD_AESNI_GCM)   += -L$(AESNI_MULTI_BUFFER_LIB_PATH) -lIPSec_MB
+_LDLIBS-$(CONFIG_RTE_LIBRTE_PMD_AESNI_GCM)   += -lIPSec_MB
+_LDLIBS-$(CONFIG_RTE_LIBRTE_PMD_CCP)         += -lrte_pmd_ccp -lcrypto
 _LDLIBS-$(CONFIG_RTE_LIBRTE_PMD_OPENSSL)     += -lrte_pmd_openssl -lcrypto
 _LDLIBS-$(CONFIG_RTE_LIBRTE_PMD_NULL_CRYPTO) += -lrte_pmd_null_crypto
 _LDLIBS-$(CONFIG_RTE_LIBRTE_PMD_QAT)         += -lrte_pmd_qat -lcrypto
@@ -225,7 +230,7 @@ endif # CONFIG_RTE_LIBRTE_FSLMC_BUS
 ifeq ($(CONFIG_RTE_LIBRTE_DPAA_BUS),y)
 _LDLIBS-$(CONFIG_RTE_LIBRTE_PMD_DPAA_SEC)   += -lrte_pmd_dpaa_sec
 endif # CONFIG_RTE_LIBRTE_DPAA_BUS
-
+_LDLIBS-$(CONFIG_RTE_LIBRTE_PMD_VIRTIO_CRYPTO) += -lrte_pmd_virtio_crypto
 endif # CONFIG_RTE_LIBRTE_CRYPTODEV
 
 ifeq ($(CONFIG_RTE_LIBRTE_EVENTDEV),y)
@@ -246,6 +251,10 @@ endif # CONFIG_RTE_LIBRTE_EVENTDEV
 
 ifeq ($(CONFIG_RTE_LIBRTE_RAWDEV),y)
 _LDLIBS-$(CONFIG_RTE_LIBRTE_PMD_SKELETON_RAWDEV) += -lrte_pmd_skeleton_rawdev
+ifeq ($(CONFIG_RTE_EAL_VFIO)$(CONFIG_RTE_LIBRTE_FSLMC_BUS),yy)
+_LDLIBS-$(CONFIG_RTE_LIBRTE_PMD_DPAA2_CMDIF_RAWDEV) += -lrte_pmd_dpaa2_cmdif
+_LDLIBS-$(CONFIG_RTE_LIBRTE_PMD_DPAA2_QDMA_RAWDEV) += -lrte_pmd_dpaa2_qdma
+endif # CONFIG_RTE_LIBRTE_FSLMC_BUS
 endif # CONFIG_RTE_LIBRTE_RAWDEV
 
 

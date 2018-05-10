@@ -121,6 +121,21 @@ required in the receive buffer.
 It should be taken into account when mbuf pool for receive is created.
 
 
+Equal stride super-buffer mode
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+When the receive queue uses equal stride super-buffer DMA mode, one HW Rx
+descriptor carries many Rx buffers which contiguously follow each other
+with some stride (equal to total size of rte_mbuf as mempool object).
+Each Rx buffer is an independent rte_mbuf.
+However dedicated mempool manager must be used when mempool for the Rx
+queue is created. The manager must support dequeue of the contiguous
+block of objects and provide mempool info API to get the block size.
+
+Another limitation of a equal stride super-buffer mode, imposed by the
+firmware, is that it allows for a single RSS context.
+
+
 Tunnels support
 ---------------
 
@@ -185,6 +200,10 @@ Supported actions:
 - RSS
 
 - DROP
+
+- FLAG (supported only with ef10_essb Rx datapath)
+
+- MARK (supported only with ef10_essb Rx datapath)
 
 Validating flow rules depends on the firmware variant.
 
@@ -291,7 +310,7 @@ whitelist option like "-w 02:00.0,arg1=value1,...".
 Case-insensitive 1/y/yes/on or 0/n/no/off may be used to specify
 boolean parameters value.
 
-- ``rx_datapath`` [auto|efx|ef10] (default **auto**)
+- ``rx_datapath`` [auto|efx|ef10|ef10_esps] (default **auto**)
 
   Choose receive datapath implementation.
   **auto** allows the driver itself to make a choice based on firmware
@@ -300,6 +319,9 @@ boolean parameters value.
   **ef10** chooses EF10 (SFN7xxx, SFN8xxx, X2xxx) native datapath which is
   more efficient than libefx-based and provides richer packet type
   classification, but lacks Rx scatter support.
+  **ef10_esps** chooses SFNX2xxx equal stride packed stream datapath
+  which may be used on DPDK firmware variant only
+  (see notes about its limitations above).
 
 - ``tx_datapath`` [auto|efx|ef10|ef10_simple] (default **auto**)
 
@@ -336,7 +358,7 @@ boolean parameters value.
   value will select a fixed update period of **1000** milliseconds
 
 - ``fw_variant`` [dont-care|full-feature|ultra-low-latency|
-  capture-packed-stream] (default **dont-care**)
+  capture-packed-stream|dpdk] (default **dont-care**)
 
   Choose the preferred firmware variant to use. In order for the selected
   option to have an effect, the **sfboot** utility must be configured with the
@@ -349,6 +371,22 @@ boolean parameters value.
   **ultra-low-latency** chooses firmware with fewer features but lower latency.
   **capture-packed-stream** chooses firmware for SolarCapture packed stream
   mode.
+  **dpdk** chooses DPDK firmware with equal stride super-buffer Rx mode
+  for higher Rx packet rate and packet marks support and firmware subvariant
+  without checksumming on transmit for higher Tx packet rate if
+  checksumming is not required.
+
+- ``rxd_wait_timeout_ns`` [long] (default **200 us**)
+
+  Adjust timeout in nanoseconds to head-of-line block to wait for
+  Rx descriptors.
+  The accepted range is 0 to 400 ms.
+  Flow control should be enabled to make it work.
+  The value of **0** disables it and packets are dropped immediately.
+  When a packet is dropped because of no Rx descriptors,
+  ``rx_nodesc_drop_cnt`` counter grows.
+  The feature is supported only by the DPDK firmware variant when equal
+  stride super-buffer Rx mode is used.
 
 
 Dynamic Logging Parameters
@@ -356,26 +394,26 @@ Dynamic Logging Parameters
 
 One may leverage EAL option "--log-level" to change default levels
 for the log types supported by the driver. The option is used with
-an argument typically consisting of two parts separated by a comma.
+an argument typically consisting of two parts separated by a colon.
 
-Level value is the last part which takes an integer greater than 0.
-Log type is the former part which may contain a regular expression.
+Level value is the last part which takes a symbolic name (or integer).
+Log type is the former part which may shell match syntax.
 Depending on the choice of the expression, the given log level may
 be used either for some specific log type or for a subset of types.
 
 SFC EFX PMD provides the following log types available for control:
 
-- ``pmd.net.sfc.driver`` (default level is **6** - ``RTE_LOG_NOTICE``)
+- ``pmd.net.sfc.driver`` (default level is **notice**)
 
   Affects driver-wide messages unrelated to any particular devices.
 
-- ``pmd.net.sfc.main`` (default level is **6** - ``RTE_LOG_NOTICE``)
+- ``pmd.net.sfc.main`` (default level is **notice**)
 
   Matches a subset of per-port log types registered during runtime.
   A full name for a particular type may be obtained by appending a
   dot and a PCI device identifier (``XXXX:XX:XX.X``) to the prefix.
 
-- ``pmd.net.sfc.mcdi`` (default level is **6** - ``RTE_LOG_NOTICE``)
+- ``pmd.net.sfc.mcdi`` (default level is **notice**)
 
   Extra logging of the communication with the NIC's management CPU.
   The format of the log is consumed by the Solarflare netlogdecode

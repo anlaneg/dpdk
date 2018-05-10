@@ -5,6 +5,7 @@
 
 #include <sys/queue.h>
 
+#include <rte_byteorder.h>
 #include <rte_log.h>
 #include <rte_malloc.h>
 #include <rte_flow.h>
@@ -68,9 +69,9 @@ void bnxt_init_filters(struct bnxt *bp)
 	STAILQ_INIT(&bp->free_filter_list);
 	for (i = 0; i < max_filters; i++) {
 		filter = &bp->filter_info[i];
-		filter->fw_l2_filter_id = -1;
-		filter->fw_em_filter_id = -1;
-		filter->fw_ntuple_filter_id = -1;
+		filter->fw_l2_filter_id = UINT64_MAX;
+		filter->fw_em_filter_id = UINT64_MAX;
+		filter->fw_ntuple_filter_id = UINT64_MAX;
 		STAILQ_INSERT_TAIL(&bp->free_filter_list, filter, next);
 	}
 }
@@ -131,6 +132,14 @@ void bnxt_free_filter_mem(struct bnxt *bp)
 
 	rte_free(bp->filter_info);
 	bp->filter_info = NULL;
+
+	for (i = 0; i < bp->pf.max_vfs; i++) {
+		STAILQ_FOREACH(filter, &bp->pf.vf_info[i].filter, next) {
+			rte_free(filter);
+			STAILQ_REMOVE(&bp->pf.vf_info[i].filter, filter,
+				      bnxt_filter_info, next);
+		}
+	}
 }
 
 int bnxt_alloc_filter_mem(struct bnxt *bp)
@@ -274,6 +283,7 @@ bnxt_filter_type_check(const struct rte_flow_item pattern[],
 
 static int
 bnxt_validate_and_parse_flow_type(struct bnxt *bp,
+				  const struct rte_flow_attr *attr,
 				  const struct rte_flow_item pattern[],
 				  struct rte_flow_error *error,
 				  struct bnxt_filter_info *filter)
@@ -298,6 +308,7 @@ bnxt_validate_and_parse_flow_type(struct bnxt *bp,
 	uint32_t vf = 0;
 	int use_ntuple;
 	uint32_t en = 0;
+	uint32_t en_ethertype;
 	int dflt_vnic;
 
 	use_ntuple = bnxt_filter_type_check(pattern, error);
@@ -307,6 +318,9 @@ bnxt_validate_and_parse_flow_type(struct bnxt *bp,
 
 	filter->filter_type = use_ntuple ?
 		HWRM_CFA_NTUPLE_FILTER : HWRM_CFA_EM_FILTER;
+	en_ethertype = use_ntuple ?
+		NTUPLE_FLTR_ALLOC_INPUT_EN_ETHERTYPE :
+		EM_FLOW_ALLOC_INPUT_EN_ETHERTYPE;
 
 	while (item->type != RTE_FLOW_ITEM_TYPE_END) {
 		if (item->last) {
@@ -346,7 +360,8 @@ bnxt_validate_and_parse_flow_type(struct bnxt *bp,
 			}
 
 			/* Mask is not allowed. Only exact matches are */
-			if ((eth_mask->type & UINT16_MAX) != UINT16_MAX) {
+			if (eth_mask->type &&
+			    eth_mask->type != RTE_BE16(0xffff)) {
 				rte_flow_error_set(error, EINVAL,
 						   RTE_FLOW_ERROR_TYPE_ITEM,
 						   item,
@@ -372,30 +387,51 @@ bnxt_validate_and_parse_flow_type(struct bnxt *bp,
 			   *  RTE_LOG(ERR, PMD, "Handle this condition\n");
 			   * }
 			   */
-			if (eth_spec->type) {
+			if (eth_mask->type) {
 				filter->ethertype =
 					rte_be_to_cpu_16(eth_spec->type);
-				en |= use_ntuple ?
-					NTUPLE_FLTR_ALLOC_INPUT_EN_ETHERTYPE :
-					EM_FLOW_ALLOC_INPUT_EN_ETHERTYPE;
+				en |= en_ethertype;
 			}
 
 			break;
 		case RTE_FLOW_ITEM_TYPE_VLAN:
 			vlan_spec = item->spec;
 			vlan_mask = item->mask;
-			if (vlan_mask->tci & 0xFFFF && !vlan_mask->tpid) {
+			if (en & en_ethertype) {
+				rte_flow_error_set(error, EINVAL,
+						   RTE_FLOW_ERROR_TYPE_ITEM,
+						   item,
+						   "VLAN TPID matching is not"
+						   " supported");
+				return -rte_errno;
+			}
+			if (vlan_mask->tci &&
+			    vlan_mask->tci == RTE_BE16(0x0fff)) {
 				/* Only the VLAN ID can be matched. */
 				filter->l2_ovlan =
 					rte_be_to_cpu_16(vlan_spec->tci &
-							 0xFFF);
+							 RTE_BE16(0x0fff));
 				en |= EM_FLOW_ALLOC_INPUT_EN_OVLAN_VID;
-			} else {
+			} else if (vlan_mask->tci) {
 				rte_flow_error_set(error, EINVAL,
 						   RTE_FLOW_ERROR_TYPE_ITEM,
 						   item,
 						   "VLAN mask is invalid");
 				return -rte_errno;
+			}
+			if (vlan_mask->inner_type &&
+			    vlan_mask->inner_type != RTE_BE16(0xffff)) {
+				rte_flow_error_set(error, EINVAL,
+						   RTE_FLOW_ERROR_TYPE_ITEM,
+						   item,
+						   "inner ethertype mask not"
+						   " valid");
+				return -rte_errno;
+			}
+			if (vlan_mask->inner_type) {
+				filter->ethertype =
+					rte_be_to_cpu_16(vlan_spec->inner_type);
+				en |= en_ethertype;
 			}
 
 			break;
@@ -672,6 +708,16 @@ bnxt_validate_and_parse_flow_type(struct bnxt *bp,
 				return -rte_errno;
 			}
 
+			if (!attr->transfer) {
+				rte_flow_error_set(error, ENOTSUP,
+					   RTE_FLOW_ERROR_TYPE_ITEM,
+					   item,
+					   "Matching VF traffic without"
+					   " affecting it (transfer attribute)"
+					   " is unsupported");
+				return -rte_errno;
+			}
+
 			filter->mirror_vnic_id =
 			dflt_vnic = bnxt_hwrm_func_qcfg_vf_dflt_vnic_id(bp, vf);
 			if (dflt_vnic < 0) {
@@ -798,7 +844,8 @@ bnxt_validate_and_parse_flow(struct rte_eth_dev *dev,
 		goto ret;
 	}
 
-	rc = bnxt_validate_and_parse_flow_type(bp, pattern, error, filter);
+	rc = bnxt_validate_and_parse_flow_type(bp, attr, pattern, error,
+					       filter);
 	if (rc != 0)
 		goto ret;
 
@@ -806,7 +853,8 @@ bnxt_validate_and_parse_flow(struct rte_eth_dev *dev,
 	if (rc != 0)
 		goto ret;
 	//Since we support ingress attribute only - right now.
-	filter->flags = HWRM_CFA_EM_FLOW_ALLOC_INPUT_FLAGS_PATH_RX;
+	if (filter->filter_type == HWRM_CFA_EM_FILTER)
+		filter->flags = HWRM_CFA_EM_FLOW_ALLOC_INPUT_FLAGS_PATH_RX;
 
 	switch (act->type) {
 	case RTE_FLOW_ACTION_TYPE_QUEUE:
@@ -918,11 +966,6 @@ bnxt_validate_and_parse_flow(struct rte_eth_dev *dev,
 		goto ret;
 	}
 
-	if (filter1) {
-		bnxt_free_filter(bp, filter1);
-		filter1->fw_l2_filter_id = -1;
-	}
-
 	act = nxt_non_void_action(++act);
 	if (act->type != RTE_FLOW_ACTION_TYPE_END) {
 		rte_flow_error_set(error, EINVAL,
@@ -959,7 +1002,7 @@ bnxt_flow_validate(struct rte_eth_dev *dev,
 	ret = bnxt_validate_and_parse_flow(dev, pattern, actions, attr,
 					   error, filter);
 	/* No need to hold on to this filter if we are just validating flow */
-	filter->fw_l2_filter_id = -1;
+	filter->fw_l2_filter_id = UINT64_MAX;
 	bnxt_free_filter(bp, filter);
 
 	return ret;
@@ -1148,8 +1191,8 @@ bnxt_flow_destroy(struct rte_eth_dev *dev,
 		ret = bnxt_hwrm_clear_em_filter(bp, filter);
 	if (filter->filter_type == HWRM_CFA_NTUPLE_FILTER)
 		ret = bnxt_hwrm_clear_ntuple_filter(bp, filter);
-
-	bnxt_hwrm_clear_l2_filter(bp, filter);
+	else
+		ret = bnxt_hwrm_clear_l2_filter(bp, filter);
 	if (!ret) {
 		STAILQ_REMOVE(&vnic->flow_list, flow, rte_flow, next);
 		rte_free(flow);

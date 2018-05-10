@@ -771,6 +771,12 @@ static void cmd_help_long_parsed(void *parsed_result,
 			" (priority) (weight)\n"
 			"	Set port tm node parent.\n\n"
 
+			"suspend port tm node (port_id) (node_id)"
+			"       Suspend tm node.\n\n"
+
+			"resume port tm node (port_id) (node_id)"
+			"       Resume tm node.\n\n"
+
 			"port tm hierarchy commit (port_id) (clean_on_fail)\n"
 			"	Commit tm hierarchy.\n\n"
 
@@ -821,8 +827,8 @@ static void cmd_help_long_parsed(void *parsed_result,
 			"    Set crc-strip/scatter/rx-checksum/hardware-vlan/drop_en"
 			" for ports.\n\n"
 
-			"port config all rss (all|ip|tcp|udp|sctp|ether|port|vxlan|"
-			"geneve|nvgre|none|<flowtype_id>)\n"
+			"port config all rss (all|default|ip|tcp|udp|sctp|"
+			"ether|port|vxlan|geneve|nvgre|none|<flowtype_id>)\n"
 			"    Set the RSS mode.\n\n"
 
 			"port config port-id rss reta (hash,queue)[,(hash,queue)]\n"
@@ -846,9 +852,17 @@ static void cmd_help_long_parsed(void *parsed_result,
 			"port config mtu X value\n"
 			"    Set the MTU of port X to a given value\n\n"
 
+			"port config (port_id) (rxq|txq) (queue_id) ring_size (value)\n"
+			"    Set a rx/tx queue's ring size configuration, the new"
+			" value will take effect after command that (re-)start the port"
+			" or command that setup the specific queue\n\n"
+
 			"port (port_id) (rxq|txq) (queue_id) (start|stop)\n"
 			"    Start/stop a rx/tx queue of port X. Only take effect"
 			" when port X is started\n\n"
+
+			"port (port_id) (rxq|txq) (queue_id) setup\n"
+			"    Setup a rx/tx queue of port X.\n\n"
 
 			"port config (port_id|all) l2-tunnel E-tag ether-type"
 			" (value)\n"
@@ -873,6 +887,9 @@ static void cmd_help_long_parsed(void *parsed_result,
 			"port config (port_id) pctype (pctype_id) hash_inset|"
 			"fdir_inset|fdir_flx_inset clear all"
 			"    Clear RSS|FDIR|FDIR_FLX input set completely for some pctype\n\n"
+
+			"port config (port_id) udp_tunnel_port add|rm vxlan|geneve (udp_port)\n\n"
+			"    Add/remove UDP tunnel port for tunneling offload\n\n"
 		);
 	}
 
@@ -1418,7 +1435,7 @@ cmdline_parse_inst_t cmd_config_speed_all = {
 struct cmd_config_speed_specific {
 	cmdline_fixed_string_t port;
 	cmdline_fixed_string_t keyword;
-	uint8_t id;
+	portid_t id;
 	cmdline_fixed_string_t item1;
 	cmdline_fixed_string_t item2;
 	cmdline_fixed_string_t value1;
@@ -1458,7 +1475,7 @@ cmdline_parse_token_string_t cmd_config_speed_specific_keyword =
 	TOKEN_STRING_INITIALIZER(struct cmd_config_speed_specific, keyword,
 								"config");
 cmdline_parse_token_num_t cmd_config_speed_specific_id =
-	TOKEN_NUM_INITIALIZER(struct cmd_config_speed_specific, id, UINT8);
+	TOKEN_NUM_INITIALIZER(struct cmd_config_speed_specific, id, UINT16);
 cmdline_parse_token_string_t cmd_config_speed_specific_item1 =
 	TOKEN_STRING_INITIALIZER(struct cmd_config_speed_specific, item1,
 								"speed");
@@ -1998,8 +2015,11 @@ cmd_config_rss_parsed(void *parsed_result,
 {
 	struct cmd_config_rss *res = parsed_result;
 	struct rte_eth_rss_conf rss_conf = { .rss_key_len = 0, };
+	struct rte_eth_dev_info dev_info = { .flow_type_rss_offloads = 0, };
+	int use_default = 0;
+	int all_updated = 1;
 	int diag;
-	uint8_t i;
+	uint16_t i;
 
 	if (!strcmp(res->value, "all"))
 		rss_conf.rss_hf = ETH_RSS_IP | ETH_RSS_TCP |
@@ -2025,6 +2045,8 @@ cmd_config_rss_parsed(void *parsed_result,
 		rss_conf.rss_hf = ETH_RSS_NVGRE;
 	else if (!strcmp(res->value, "none"))
 		rss_conf.rss_hf = 0;
+	else if (!strcmp(res->value, "default"))
+		use_default = 1;
 	else if (isdigit(res->value[0]) && atoi(res->value) > 0 &&
 						atoi(res->value) < 64)
 		rss_conf.rss_hf = 1ULL << atoi(res->value);
@@ -2033,13 +2055,22 @@ cmd_config_rss_parsed(void *parsed_result,
 		return;
 	}
 	rss_conf.rss_key = NULL;
-	for (i = 0; i < rte_eth_dev_count(); i++) {
+	/* Update global configuration for RSS types. */
+	RTE_ETH_FOREACH_DEV(i) {
+		if (use_default) {
+			rte_eth_dev_info_get(i, &dev_info);
+			rss_conf.rss_hf = dev_info.flow_type_rss_offloads;
+		}
 		diag = rte_eth_dev_rss_hash_update(i, &rss_conf);
-		if (diag < 0)
+		if (diag < 0) {
+			all_updated = 0;
 			printf("Configuration of RSS hash at ethernet port %d "
 				"failed with error (%d): %s.\n",
 				i, -diag, strerror(-diag));
+		}
 	}
+	if (all_updated && !use_default)
+		rss_hf = rss_conf.rss_hf;
 }
 
 cmdline_parse_token_string_t cmd_config_rss_port =
@@ -2057,7 +2088,7 @@ cmdline_parse_inst_t cmd_config_rss = {
 	.f = cmd_config_rss_parsed,
 	.data = NULL,
 	.help_str = "port config all rss "
-		"all|ip|tcp|udp|sctp|ether|port|vxlan|geneve|nvgre|none|<flowtype_id>",
+		"all|default|ip|tcp|udp|sctp|ether|port|vxlan|geneve|nvgre|none|<flowtype_id>",
 	.tokens = {
 		(void *)&cmd_config_rss_port,
 		(void *)&cmd_config_rss_keyword,
@@ -2186,6 +2217,102 @@ cmdline_parse_inst_t cmd_config_rss_hash_key = {
 	},
 };
 
+/* *** configure port rxq/txq ring size *** */
+struct cmd_config_rxtx_ring_size {
+	cmdline_fixed_string_t port;
+	cmdline_fixed_string_t config;
+	portid_t portid;
+	cmdline_fixed_string_t rxtxq;
+	uint16_t qid;
+	cmdline_fixed_string_t rsize;
+	uint16_t size;
+};
+
+static void
+cmd_config_rxtx_ring_size_parsed(void *parsed_result,
+				 __attribute__((unused)) struct cmdline *cl,
+				 __attribute__((unused)) void *data)
+{
+	struct cmd_config_rxtx_ring_size *res = parsed_result;
+	struct rte_port *port;
+	uint8_t isrx;
+
+	if (port_id_is_invalid(res->portid, ENABLED_WARN))
+		return;
+
+	if (res->portid == (portid_t)RTE_PORT_ALL) {
+		printf("Invalid port id\n");
+		return;
+	}
+
+	port = &ports[res->portid];
+
+	if (!strcmp(res->rxtxq, "rxq"))
+		isrx = 1;
+	else if (!strcmp(res->rxtxq, "txq"))
+		isrx = 0;
+	else {
+		printf("Unknown parameter\n");
+		return;
+	}
+
+	if (isrx && rx_queue_id_is_invalid(res->qid))
+		return;
+	else if (!isrx && tx_queue_id_is_invalid(res->qid))
+		return;
+
+	if (isrx && res->size != 0 && res->size <= rx_free_thresh) {
+		printf("Invalid rx ring_size, must > rx_free_thresh: %d\n",
+		       rx_free_thresh);
+		return;
+	}
+
+	if (isrx)
+		port->nb_rx_desc[res->qid] = res->size;
+	else
+		port->nb_tx_desc[res->qid] = res->size;
+
+	cmd_reconfig_device_queue(res->portid, 0, 1);
+}
+
+cmdline_parse_token_string_t cmd_config_rxtx_ring_size_port =
+	TOKEN_STRING_INITIALIZER(struct cmd_config_rxtx_ring_size,
+				 port, "port");
+cmdline_parse_token_string_t cmd_config_rxtx_ring_size_config =
+	TOKEN_STRING_INITIALIZER(struct cmd_config_rxtx_ring_size,
+				 config, "config");
+cmdline_parse_token_num_t cmd_config_rxtx_ring_size_portid =
+	TOKEN_NUM_INITIALIZER(struct cmd_config_rxtx_ring_size,
+				 portid, UINT16);
+cmdline_parse_token_string_t cmd_config_rxtx_ring_size_rxtxq =
+	TOKEN_STRING_INITIALIZER(struct cmd_config_rxtx_ring_size,
+				 rxtxq, "rxq#txq");
+cmdline_parse_token_num_t cmd_config_rxtx_ring_size_qid =
+	TOKEN_NUM_INITIALIZER(struct cmd_config_rxtx_ring_size,
+			      qid, UINT16);
+cmdline_parse_token_string_t cmd_config_rxtx_ring_size_rsize =
+	TOKEN_STRING_INITIALIZER(struct cmd_config_rxtx_ring_size,
+				 rsize, "ring_size");
+cmdline_parse_token_num_t cmd_config_rxtx_ring_size_size =
+	TOKEN_NUM_INITIALIZER(struct cmd_config_rxtx_ring_size,
+			      size, UINT16);
+
+cmdline_parse_inst_t cmd_config_rxtx_ring_size = {
+	.f = cmd_config_rxtx_ring_size_parsed,
+	.data = NULL,
+	.help_str = "port config <port_id> rxq|txq <queue_id> ring_size <value>",
+	.tokens = {
+		(void *)&cmd_config_rxtx_ring_size_port,
+		(void *)&cmd_config_rxtx_ring_size_config,
+		(void *)&cmd_config_rxtx_ring_size_portid,
+		(void *)&cmd_config_rxtx_ring_size_rxtxq,
+		(void *)&cmd_config_rxtx_ring_size_qid,
+		(void *)&cmd_config_rxtx_ring_size_rsize,
+		(void *)&cmd_config_rxtx_ring_size_size,
+		NULL,
+	},
+};
+
 /* *** configure port rxq/txq start/stop *** */
 struct cmd_config_rxtx_queue {
 	cmdline_fixed_string_t port;
@@ -2271,7 +2398,7 @@ cmdline_parse_inst_t cmd_config_rxtx_queue = {
 	.data = NULL,
 	.help_str = "port <port_id> rxq|txq <queue_id> start|stop",
 	.tokens = {
-		(void *)&cmd_config_speed_all_port,
+		(void *)&cmd_config_rxtx_queue_port,
 		(void *)&cmd_config_rxtx_queue_portid,
 		(void *)&cmd_config_rxtx_queue_rxtxq,
 		(void *)&cmd_config_rxtx_queue_qid,
@@ -2279,6 +2406,117 @@ cmdline_parse_inst_t cmd_config_rxtx_queue = {
 		NULL,
 	},
 };
+
+/* *** configure port rxq/txq setup *** */
+struct cmd_setup_rxtx_queue {
+	cmdline_fixed_string_t port;
+	portid_t portid;
+	cmdline_fixed_string_t rxtxq;
+	uint16_t qid;
+	cmdline_fixed_string_t setup;
+};
+
+/* Common CLI fields for queue setup */
+cmdline_parse_token_string_t cmd_setup_rxtx_queue_port =
+	TOKEN_STRING_INITIALIZER(struct cmd_setup_rxtx_queue, port, "port");
+cmdline_parse_token_num_t cmd_setup_rxtx_queue_portid =
+	TOKEN_NUM_INITIALIZER(struct cmd_setup_rxtx_queue, portid, UINT16);
+cmdline_parse_token_string_t cmd_setup_rxtx_queue_rxtxq =
+	TOKEN_STRING_INITIALIZER(struct cmd_setup_rxtx_queue, rxtxq, "rxq#txq");
+cmdline_parse_token_num_t cmd_setup_rxtx_queue_qid =
+	TOKEN_NUM_INITIALIZER(struct cmd_setup_rxtx_queue, qid, UINT16);
+cmdline_parse_token_string_t cmd_setup_rxtx_queue_setup =
+	TOKEN_STRING_INITIALIZER(struct cmd_setup_rxtx_queue, setup, "setup");
+
+static void
+cmd_setup_rxtx_queue_parsed(
+	void *parsed_result,
+	__attribute__((unused)) struct cmdline *cl,
+	__attribute__((unused)) void *data)
+{
+	struct cmd_setup_rxtx_queue *res = parsed_result;
+	struct rte_port *port;
+	struct rte_mempool *mp;
+	unsigned int socket_id;
+	uint8_t isrx = 0;
+	int ret;
+
+	if (port_id_is_invalid(res->portid, ENABLED_WARN))
+		return;
+
+	if (res->portid == (portid_t)RTE_PORT_ALL) {
+		printf("Invalid port id\n");
+		return;
+	}
+
+	if (!strcmp(res->rxtxq, "rxq"))
+		isrx = 1;
+	else if (!strcmp(res->rxtxq, "txq"))
+		isrx = 0;
+	else {
+		printf("Unknown parameter\n");
+		return;
+	}
+
+	if (isrx && rx_queue_id_is_invalid(res->qid)) {
+		printf("Invalid rx queue\n");
+		return;
+	} else if (!isrx && tx_queue_id_is_invalid(res->qid)) {
+		printf("Invalid tx queue\n");
+		return;
+	}
+
+	port = &ports[res->portid];
+	if (isrx) {
+		socket_id = rxring_numa[res->portid];
+		if (!numa_support || socket_id == NUMA_NO_CONFIG)
+			socket_id = port->socket_id;
+
+		mp = mbuf_pool_find(socket_id);
+		if (mp == NULL) {
+			printf("Failed to setup RX queue: "
+				"No mempool allocation"
+				" on the socket %d\n",
+				rxring_numa[res->portid]);
+			return;
+		}
+		ret = rte_eth_rx_queue_setup(res->portid,
+					     res->qid,
+					     port->nb_rx_desc[res->qid],
+					     socket_id,
+					     &port->rx_conf[res->qid],
+					     mp);
+		if (ret)
+			printf("Failed to setup RX queue\n");
+	} else {
+		socket_id = txring_numa[res->portid];
+		if (!numa_support || socket_id == NUMA_NO_CONFIG)
+			socket_id = port->socket_id;
+
+		ret = rte_eth_tx_queue_setup(res->portid,
+					     res->qid,
+					     port->nb_tx_desc[res->qid],
+					     socket_id,
+					     &port->tx_conf[res->qid]);
+		if (ret)
+			printf("Failed to setup TX queue\n");
+	}
+}
+
+cmdline_parse_inst_t cmd_setup_rxtx_queue = {
+	.f = cmd_setup_rxtx_queue_parsed,
+	.data = NULL,
+	.help_str = "port <port_id> rxq|txq <queue_idx> setup",
+	.tokens = {
+		(void *)&cmd_setup_rxtx_queue_port,
+		(void *)&cmd_setup_rxtx_queue_portid,
+		(void *)&cmd_setup_rxtx_queue_rxtxq,
+		(void *)&cmd_setup_rxtx_queue_qid,
+		(void *)&cmd_setup_rxtx_queue_setup,
+		NULL,
+	},
+};
+
 
 /* *** Configure RSS RETA *** */
 struct cmd_config_rss_reta {
@@ -4157,6 +4395,12 @@ check_tunnel_tso_nic_support(portid_t port_id)
 	if (!(dev_info.tx_offload_capa & DEV_TX_OFFLOAD_GENEVE_TNL_TSO))
 		printf("Warning: GENEVE TUNNEL TSO not supported therefore "
 		       "not enabled for port %d\n", port_id);
+	if (!(dev_info.tx_offload_capa & DEV_TX_OFFLOAD_IP_TNL_TSO))
+		printf("Warning: IP TUNNEL TSO not supported therefore "
+		       "not enabled for port %d\n", port_id);
+	if (!(dev_info.tx_offload_capa & DEV_TX_OFFLOAD_UDP_TNL_TSO))
+		printf("Warning: UDP TUNNEL TSO not supported therefore "
+		       "not enabled for port %d\n", port_id);
 	return dev_info;
 }
 
@@ -4184,13 +4428,17 @@ cmd_tunnel_tso_set_parsed(void *parsed_result,
 			~(DEV_TX_OFFLOAD_VXLAN_TNL_TSO |
 			  DEV_TX_OFFLOAD_GRE_TNL_TSO |
 			  DEV_TX_OFFLOAD_IPIP_TNL_TSO |
-			  DEV_TX_OFFLOAD_GENEVE_TNL_TSO);
+			  DEV_TX_OFFLOAD_GENEVE_TNL_TSO |
+			  DEV_TX_OFFLOAD_IP_TNL_TSO |
+			  DEV_TX_OFFLOAD_UDP_TNL_TSO);
 		printf("TSO for tunneled packets is disabled\n");
 	} else {
 		uint64_t tso_offloads = (DEV_TX_OFFLOAD_VXLAN_TNL_TSO |
 					 DEV_TX_OFFLOAD_GRE_TNL_TSO |
 					 DEV_TX_OFFLOAD_IPIP_TNL_TSO |
-					 DEV_TX_OFFLOAD_GENEVE_TNL_TSO);
+					 DEV_TX_OFFLOAD_GENEVE_TNL_TSO |
+					 DEV_TX_OFFLOAD_IP_TNL_TSO |
+					 DEV_TX_OFFLOAD_UDP_TNL_TSO);
 
 		ports[res->port_id].dev_conf.txmode.offloads |=
 			(tso_offloads & dev_info.tx_offload_capa);
@@ -5546,7 +5794,7 @@ static void cmd_create_bonded_device_parsed(void *parsed_result,
 				port_id);
 
 		/* Update number of ports */
-		nb_ports = rte_eth_dev_count();
+		nb_ports = rte_eth_dev_count_avail();
 		reconfig(port_id, res->socket);
 		rte_eth_promiscuous_enable(port_id);
 	}
@@ -5655,11 +5903,6 @@ static void cmd_set_bond_mon_period_parsed(void *parsed_result,
 	struct cmd_set_bond_mon_period_result *res = parsed_result;
 	int ret;
 
-	if (res->port_num >= nb_ports) {
-		printf("Port id %d must be less than %d\n", res->port_num, nb_ports);
-		return;
-	}
-
 	ret = rte_eth_bond_link_monitoring_set(res->port_num, res->period_ms);
 
 	/* check the return value and print it if is < 0 */
@@ -5715,12 +5958,6 @@ cmd_set_bonding_agg_mode(void *parsed_result,
 {
 	struct cmd_set_bonding_agg_mode_policy_result *res = parsed_result;
 	uint8_t policy = AGG_BANDWIDTH;
-
-	if (res->port_num >= nb_ports) {
-		printf("Port id %d must be less than %d\n",
-				res->port_num, nb_ports);
-		return;
-	}
 
 	if (!strcmp(res->policy, "bandwidth"))
 		policy = AGG_BANDWIDTH;
@@ -8422,6 +8659,89 @@ cmdline_parse_inst_t cmd_tunnel_udp_config = {
 	},
 };
 
+struct cmd_config_tunnel_udp_port {
+	cmdline_fixed_string_t port;
+	cmdline_fixed_string_t config;
+	portid_t port_id;
+	cmdline_fixed_string_t udp_tunnel_port;
+	cmdline_fixed_string_t action;
+	cmdline_fixed_string_t tunnel_type;
+	uint16_t udp_port;
+};
+
+static void
+cmd_cfg_tunnel_udp_port_parsed(void *parsed_result,
+			       __attribute__((unused)) struct cmdline *cl,
+			       __attribute__((unused)) void *data)
+{
+	struct cmd_config_tunnel_udp_port *res = parsed_result;
+	struct rte_eth_udp_tunnel tunnel_udp;
+	int ret = 0;
+
+	if (port_id_is_invalid(res->port_id, ENABLED_WARN))
+		return;
+
+	tunnel_udp.udp_port = res->udp_port;
+
+	if (!strcmp(res->tunnel_type, "vxlan")) {
+		tunnel_udp.prot_type = RTE_TUNNEL_TYPE_VXLAN;
+	} else if (!strcmp(res->tunnel_type, "geneve")) {
+		tunnel_udp.prot_type = RTE_TUNNEL_TYPE_GENEVE;
+	} else {
+		printf("Invalid tunnel type\n");
+		return;
+	}
+
+	if (!strcmp(res->action, "add"))
+		ret = rte_eth_dev_udp_tunnel_port_add(res->port_id,
+						      &tunnel_udp);
+	else
+		ret = rte_eth_dev_udp_tunnel_port_delete(res->port_id,
+							 &tunnel_udp);
+
+	if (ret < 0)
+		printf("udp tunneling port add error: (%s)\n", strerror(-ret));
+}
+
+cmdline_parse_token_string_t cmd_config_tunnel_udp_port_port =
+	TOKEN_STRING_INITIALIZER(struct cmd_config_tunnel_udp_port, port,
+				 "port");
+cmdline_parse_token_string_t cmd_config_tunnel_udp_port_config =
+	TOKEN_STRING_INITIALIZER(struct cmd_config_tunnel_udp_port, config,
+				 "config");
+cmdline_parse_token_num_t cmd_config_tunnel_udp_port_port_id =
+	TOKEN_NUM_INITIALIZER(struct cmd_config_tunnel_udp_port, port_id,
+			      UINT16);
+cmdline_parse_token_string_t cmd_config_tunnel_udp_port_tunnel_port =
+	TOKEN_STRING_INITIALIZER(struct cmd_config_tunnel_udp_port,
+				 udp_tunnel_port,
+				 "udp_tunnel_port");
+cmdline_parse_token_string_t cmd_config_tunnel_udp_port_action =
+	TOKEN_STRING_INITIALIZER(struct cmd_config_tunnel_udp_port, action,
+				 "add#rm");
+cmdline_parse_token_string_t cmd_config_tunnel_udp_port_tunnel_type =
+	TOKEN_STRING_INITIALIZER(struct cmd_config_tunnel_udp_port, tunnel_type,
+				 "vxlan#geneve");
+cmdline_parse_token_num_t cmd_config_tunnel_udp_port_value =
+	TOKEN_NUM_INITIALIZER(struct cmd_config_tunnel_udp_port, udp_port,
+			      UINT16);
+
+cmdline_parse_inst_t cmd_cfg_tunnel_udp_port = {
+	.f = cmd_cfg_tunnel_udp_port_parsed,
+	.data = NULL,
+	.help_str = "port config <port_id> udp_tunnel_port add|rm vxlan|geneve <udp_port>",
+	.tokens = {
+		(void *)&cmd_config_tunnel_udp_port_port,
+		(void *)&cmd_config_tunnel_udp_port_config,
+		(void *)&cmd_config_tunnel_udp_port_port_id,
+		(void *)&cmd_config_tunnel_udp_port_tunnel_port,
+		(void *)&cmd_config_tunnel_udp_port_action,
+		(void *)&cmd_config_tunnel_udp_port_tunnel_type,
+		(void *)&cmd_config_tunnel_udp_port_value,
+		NULL,
+	},
+};
+
 /* *** GLOBAL CONFIG *** */
 struct cmd_global_config_result {
 	cmdline_fixed_string_t cmd;
@@ -8765,7 +9085,7 @@ static void cmd_dump_parsed(void *parsed_result,
 	else if (!strcmp(res->dump, "dump_mempool"))
 		rte_mempool_list_dump(stdout);
 	else if (!strcmp(res->dump, "dump_devargs"))
-		rte_eal_devargs_dump(stdout);
+		rte_devargs_dump(stdout);
 	else if (!strcmp(res->dump, "dump_log_types"))
 		rte_log_dump(stdout);
 }
@@ -10869,11 +11189,6 @@ cmd_flow_director_mask_parsed(void *parsed_result,
 	struct rte_eth_fdir_masks *mask;
 	struct rte_port *port;
 
-	if (res->port_id > nb_ports) {
-		printf("Invalid port, range is [0, %d]\n", nb_ports - 1);
-		return;
-	}
-
 	port = &ports[res->port_id];
 	/** Check if the port is not started **/
 	if (port->port_status != RTE_PORT_STOPPED) {
@@ -11070,11 +11385,6 @@ cmd_flow_director_flex_mask_parsed(void *parsed_result,
 	uint16_t i;
 	int ret;
 
-	if (res->port_id > nb_ports) {
-		printf("Invalid port, range is [0, %d]\n", nb_ports - 1);
-		return;
-	}
-
 	port = &ports[res->port_id];
 	/** Check if the port is not started **/
 	if (port->port_status != RTE_PORT_STOPPED) {
@@ -11225,11 +11535,6 @@ cmd_flow_director_flxpld_parsed(void *parsed_result,
 	struct rte_eth_flex_payload_cfg flex_cfg;
 	struct rte_port *port;
 	int ret = 0;
-
-	if (res->port_id > nb_ports) {
-		printf("Invalid port, range is [0, %d]\n", nb_ports - 1);
-		return;
-	}
 
 	port = &ports[res->port_id];
 	/** Check if the port is not started **/
@@ -11872,7 +12177,7 @@ struct cmd_config_l2_tunnel_eth_type_result {
 	cmdline_fixed_string_t port;
 	cmdline_fixed_string_t config;
 	cmdline_fixed_string_t all;
-	uint8_t id;
+	portid_t id;
 	cmdline_fixed_string_t l2_tunnel;
 	cmdline_fixed_string_t l2_tunnel_type;
 	cmdline_fixed_string_t eth_type;
@@ -11894,7 +12199,7 @@ cmdline_parse_token_string_t cmd_config_l2_tunnel_eth_type_all_str =
 cmdline_parse_token_num_t cmd_config_l2_tunnel_eth_type_id =
 	TOKEN_NUM_INITIALIZER
 		(struct cmd_config_l2_tunnel_eth_type_result,
-		 id, UINT8);
+		 id, UINT16);
 cmdline_parse_token_string_t cmd_config_l2_tunnel_eth_type_l2_tunnel =
 	TOKEN_STRING_INITIALIZER
 		(struct cmd_config_l2_tunnel_eth_type_result,
@@ -12007,7 +12312,7 @@ struct cmd_config_l2_tunnel_en_dis_result {
 	cmdline_fixed_string_t port;
 	cmdline_fixed_string_t config;
 	cmdline_fixed_string_t all;
-	uint8_t id;
+	portid_t id;
 	cmdline_fixed_string_t l2_tunnel;
 	cmdline_fixed_string_t l2_tunnel_type;
 	cmdline_fixed_string_t en_dis;
@@ -12028,7 +12333,7 @@ cmdline_parse_token_string_t cmd_config_l2_tunnel_en_dis_all_str =
 cmdline_parse_token_num_t cmd_config_l2_tunnel_en_dis_id =
 	TOKEN_NUM_INITIALIZER
 		(struct cmd_config_l2_tunnel_en_dis_result,
-		 id, UINT8);
+		 id, UINT16);
 cmdline_parse_token_string_t cmd_config_l2_tunnel_en_dis_l2_tunnel =
 	TOKEN_STRING_INITIALIZER
 		(struct cmd_config_l2_tunnel_en_dis_result,
@@ -14611,11 +14916,6 @@ cmd_ddp_add_parsed(
 	int file_num;
 	int ret = -ENOTSUP;
 
-	if (res->port_id > nb_ports) {
-		printf("Invalid port, range is [0, %d]\n", nb_ports - 1);
-		return;
-	}
-
 	if (!all_ports_stopped()) {
 		printf("Please stop all ports first\n");
 		return;
@@ -14692,11 +14992,6 @@ cmd_ddp_del_parsed(
 	uint8_t *buff;
 	uint32_t size;
 	int ret = -ENOTSUP;
-
-	if (res->port_id > nb_ports) {
-		printf("Invalid port, range is [0, %d]\n", nb_ports - 1);
-		return;
-	}
 
 	if (!all_ports_stopped()) {
 		printf("Please stop all ports first\n");
@@ -14994,12 +15289,12 @@ cmdline_parse_token_num_t cmd_ddp_get_list_port_id =
 
 static void
 cmd_ddp_get_list_parsed(
-	void *parsed_result,
+	__attribute__((unused)) void *parsed_result,
 	__attribute__((unused)) struct cmdline *cl,
 	__attribute__((unused)) void *data)
 {
-	struct cmd_ddp_get_list_result *res = parsed_result;
 #ifdef RTE_LIBRTE_I40E_PMD
+	struct cmd_ddp_get_list_result *res = parsed_result;
 	struct rte_pmd_i40e_profile_list *p_list;
 	struct rte_pmd_i40e_profile_info *p_info;
 	uint32_t p_num;
@@ -15007,11 +15302,6 @@ cmd_ddp_get_list_parsed(
 	uint32_t i;
 #endif
 	int ret = -ENOTSUP;
-
-	if (res->port_id > nb_ports) {
-		printf("Invalid port, range is [0, %d]\n", nb_ports - 1);
-		return;
-	}
 
 #ifdef RTE_LIBRTE_I40E_PMD
 	size = PROFILE_INFO_SIZE * MAX_PROFILE_NUM + 4;
@@ -15075,21 +15365,16 @@ struct cmd_cfg_input_set_result {
 
 static void
 cmd_cfg_input_set_parsed(
-	void *parsed_result,
+	__attribute__((unused)) void *parsed_result,
 	__attribute__((unused)) struct cmdline *cl,
 	__attribute__((unused)) void *data)
 {
-	struct cmd_cfg_input_set_result *res = parsed_result;
 #ifdef RTE_LIBRTE_I40E_PMD
+	struct cmd_cfg_input_set_result *res = parsed_result;
 	enum rte_pmd_i40e_inset_type inset_type = INSET_NONE;
 	struct rte_pmd_i40e_inset inset;
 #endif
 	int ret = -ENOTSUP;
-
-	if (res->port_id > nb_ports) {
-		printf("Invalid port, range is [0, %d]\n", nb_ports - 1);
-		return;
-	}
 
 	if (!all_ports_stopped()) {
 		printf("Please stop all ports first\n");
@@ -15203,21 +15488,16 @@ struct cmd_clear_input_set_result {
 
 static void
 cmd_clear_input_set_parsed(
-	void *parsed_result,
+	__attribute__((unused)) void *parsed_result,
 	__attribute__((unused)) struct cmdline *cl,
 	__attribute__((unused)) void *data)
 {
-	struct cmd_clear_input_set_result *res = parsed_result;
 #ifdef RTE_LIBRTE_I40E_PMD
+	struct cmd_clear_input_set_result *res = parsed_result;
 	enum rte_pmd_i40e_inset_type inset_type = INSET_NONE;
 	struct rte_pmd_i40e_inset inset;
 #endif
 	int ret = -ENOTSUP;
-
-	if (res->port_id > nb_ports) {
-		printf("Invalid port, range is [0, %d]\n", nb_ports - 1);
-		return;
-	}
 
 	if (!all_ports_stopped()) {
 		printf("Please stop all ports first\n");
@@ -16281,7 +16561,9 @@ cmdline_parse_ctx_t main_ctx[] = {
 	(cmdline_parse_inst_t *)&cmd_config_max_pkt_len,
 	(cmdline_parse_inst_t *)&cmd_config_rx_mode_flag,
 	(cmdline_parse_inst_t *)&cmd_config_rss,
+	(cmdline_parse_inst_t *)&cmd_config_rxtx_ring_size,
 	(cmdline_parse_inst_t *)&cmd_config_rxtx_queue,
+	(cmdline_parse_inst_t *)&cmd_setup_rxtx_queue,
 	(cmdline_parse_inst_t *)&cmd_config_rss_reta,
 	(cmdline_parse_inst_t *)&cmd_showport_reta,
 	(cmdline_parse_inst_t *)&cmd_config_burst,
@@ -16417,7 +16699,10 @@ cmdline_parse_ctx_t main_ctx[] = {
 	(cmdline_parse_inst_t *)&cmd_add_port_tm_leaf_node,
 	(cmdline_parse_inst_t *)&cmd_del_port_tm_node,
 	(cmdline_parse_inst_t *)&cmd_set_port_tm_node_parent,
+	(cmdline_parse_inst_t *)&cmd_suspend_port_tm_node,
+	(cmdline_parse_inst_t *)&cmd_resume_port_tm_node,
 	(cmdline_parse_inst_t *)&cmd_port_tm_hierarchy_commit,
+	(cmdline_parse_inst_t *)&cmd_cfg_tunnel_udp_port,
 	NULL,
 };
 

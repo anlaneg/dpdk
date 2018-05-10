@@ -1192,6 +1192,17 @@ typedef struct efx_nic_cfg_s {
 	uint32_t		enc_rx_buf_align_start;
 	uint32_t		enc_rx_buf_align_end;
 	uint32_t		enc_rx_scale_max_exclusive_contexts;
+	/*
+	 * Mask of supported hash algorithms.
+	 * Hash algorithm types are used as the bit indices.
+	 */
+	uint32_t		enc_rx_scale_hash_alg_mask;
+	/*
+	 * Indicates whether port numbers can be included to the
+	 * input data for hash computation.
+	 */
+	boolean_t		enc_rx_scale_l4_hash_supported;
+	boolean_t		enc_rx_scale_additional_modes_supported;
 #if EFSYS_OPT_LOOPBACK
 	efx_qword_t		enc_loopback_types[EFX_LINK_NMODES];
 #endif	/* EFSYS_OPT_LOOPBACK */
@@ -1259,6 +1270,7 @@ typedef struct efx_nic_cfg_s {
 	boolean_t		enc_init_evq_v2_supported;
 	boolean_t		enc_rx_packed_stream_supported;
 	boolean_t		enc_rx_var_packed_stream_supported;
+	boolean_t		enc_rx_es_super_buffer_supported;
 	boolean_t		enc_fw_subvariant_no_tx_csum_supported;
 	boolean_t		enc_pm_and_rxdp_counters;
 	boolean_t		enc_mac_stats_40g_tx_size_bins;
@@ -1281,6 +1293,10 @@ typedef struct efx_nic_cfg_s {
 	/* Firmware support for extended MAC_STATS buffer */
 	uint32_t		enc_mac_stats_nstats;
 	boolean_t		enc_fec_counters;
+	/* Firmware support for "FLAG" and "MARK" filter actions */
+	boolean_t		enc_filter_action_flag_supported;
+	boolean_t		enc_filter_action_mark_supported;
+	uint32_t		enc_filter_action_mark_max;
 } efx_nic_cfg_t;
 
 #define	EFX_PCI_FUNCTION_IS_PF(_encp)	((_encp)->enc_vf == 0xffff)
@@ -1852,7 +1868,7 @@ typedef	__checkReturn	boolean_t
 	__in		uint32_t size,
 	__in		uint16_t flags);
 
-#if EFSYS_OPT_RX_PACKED_STREAM
+#if EFSYS_OPT_RX_PACKED_STREAM || EFSYS_OPT_RX_ES_SUPER_BUFFER
 
 /*
  * Packed stream mode is documented in SF-112241-TC.
@@ -1862,6 +1878,13 @@ typedef	__checkReturn	boolean_t
  * packets are put there in a continuous stream.
  * The main advantage of such an approach is that RX queue refilling
  * happens much less frequently.
+ *
+ * Equal stride packed stream mode is documented in SF-119419-TC.
+ * The general idea is to utilize advantages of the packed stream,
+ * but avoid indirection in packets representation.
+ * The main advantage of such an approach is that RX queue refilling
+ * happens much less frequently and packets buffers are independent
+ * from upper layers point of view.
  */
 
 typedef	__checkReturn	boolean_t
@@ -1962,7 +1985,7 @@ typedef __checkReturn	boolean_t
 typedef struct efx_ev_callbacks_s {
 	efx_initialized_ev_t		eec_initialized;
 	efx_rx_ev_t			eec_rx;
-#if EFSYS_OPT_RX_PACKED_STREAM
+#if EFSYS_OPT_RX_PACKED_STREAM || EFSYS_OPT_RX_ES_SUPER_BUFFER
 	efx_rx_ps_ev_t			eec_rx_ps;
 #endif
 	efx_tx_ev_t			eec_tx;
@@ -2066,14 +2089,35 @@ efx_rx_scatter_enable(
 
 typedef enum efx_rx_hash_alg_e {
 	EFX_RX_HASHALG_LFSR = 0,
-	EFX_RX_HASHALG_TOEPLITZ
+	EFX_RX_HASHALG_TOEPLITZ,
+	EFX_RX_HASHALG_PACKED_STREAM,
+	EFX_RX_NHASHALGS
 } efx_rx_hash_alg_t;
 
+/*
+ * Legacy hash type flags.
+ *
+ * They represent standard tuples for distinct traffic classes.
+ */
 #define	EFX_RX_HASH_IPV4	(1U << 0)
 #define	EFX_RX_HASH_TCPIPV4	(1U << 1)
 #define	EFX_RX_HASH_IPV6	(1U << 2)
 #define	EFX_RX_HASH_TCPIPV6	(1U << 3)
 
+#define	EFX_RX_HASH_LEGACY_MASK		\
+	(EFX_RX_HASH_IPV4	|	\
+	EFX_RX_HASH_TCPIPV4	|	\
+	EFX_RX_HASH_IPV6	|	\
+	EFX_RX_HASH_TCPIPV6)
+
+/*
+ * The type of the argument used by efx_rx_scale_mode_set() to
+ * provide a means for the client drivers to configure hashing.
+ *
+ * A properly constructed value can either be:
+ *  - a combination of legacy flags
+ *  - a combination of EFX_RX_HASH() flags
+ */
 typedef unsigned int efx_rx_hash_type_t;
 
 typedef enum efx_rx_hash_support_e {
@@ -2091,6 +2135,92 @@ typedef enum efx_rx_scale_context_type_e {
 	EFX_RX_SCALE_EXCLUSIVE,		/* Writable key/indirection table */
 	EFX_RX_SCALE_SHARED		/* Read-only key/indirection table */
 } efx_rx_scale_context_type_t;
+
+/*
+ * Traffic classes eligible for hash computation.
+ *
+ * Select packet headers used in computing the receive hash.
+ * This uses the same encoding as the RSS_MODES field of
+ * MC_CMD_RSS_CONTEXT_SET_FLAGS.
+ */
+#define	EFX_RX_CLASS_IPV4_TCP_LBN	8
+#define	EFX_RX_CLASS_IPV4_TCP_WIDTH	4
+#define	EFX_RX_CLASS_IPV4_UDP_LBN	12
+#define	EFX_RX_CLASS_IPV4_UDP_WIDTH	4
+#define	EFX_RX_CLASS_IPV4_LBN		16
+#define	EFX_RX_CLASS_IPV4_WIDTH		4
+#define	EFX_RX_CLASS_IPV6_TCP_LBN	20
+#define	EFX_RX_CLASS_IPV6_TCP_WIDTH	4
+#define	EFX_RX_CLASS_IPV6_UDP_LBN	24
+#define	EFX_RX_CLASS_IPV6_UDP_WIDTH	4
+#define	EFX_RX_CLASS_IPV6_LBN		28
+#define	EFX_RX_CLASS_IPV6_WIDTH		4
+
+#define	EFX_RX_NCLASSES			6
+
+/*
+ * Ancillary flags used to construct generic hash tuples.
+ * This uses the same encoding as RSS_MODE_HASH_SELECTOR.
+ */
+#define	EFX_RX_CLASS_HASH_SRC_ADDR	(1U << 0)
+#define	EFX_RX_CLASS_HASH_DST_ADDR	(1U << 1)
+#define	EFX_RX_CLASS_HASH_SRC_PORT	(1U << 2)
+#define	EFX_RX_CLASS_HASH_DST_PORT	(1U << 3)
+
+/*
+ * Generic hash tuples.
+ *
+ * They express combinations of packet fields
+ * which can contribute to the hash value for
+ * a particular traffic class.
+ */
+#define	EFX_RX_CLASS_HASH_DISABLE	0
+
+#define	EFX_RX_CLASS_HASH_1TUPLE_SRC	EFX_RX_CLASS_HASH_SRC_ADDR
+#define	EFX_RX_CLASS_HASH_1TUPLE_DST	EFX_RX_CLASS_HASH_DST_ADDR
+
+#define	EFX_RX_CLASS_HASH_2TUPLE		\
+	(EFX_RX_CLASS_HASH_SRC_ADDR	|	\
+	EFX_RX_CLASS_HASH_DST_ADDR)
+
+#define	EFX_RX_CLASS_HASH_2TUPLE_SRC		\
+	(EFX_RX_CLASS_HASH_SRC_ADDR	|	\
+	EFX_RX_CLASS_HASH_SRC_PORT)
+
+#define	EFX_RX_CLASS_HASH_2TUPLE_DST		\
+	(EFX_RX_CLASS_HASH_DST_ADDR	|	\
+	EFX_RX_CLASS_HASH_DST_PORT)
+
+#define	EFX_RX_CLASS_HASH_4TUPLE		\
+	(EFX_RX_CLASS_HASH_SRC_ADDR	|	\
+	EFX_RX_CLASS_HASH_DST_ADDR	|	\
+	EFX_RX_CLASS_HASH_SRC_PORT	|	\
+	EFX_RX_CLASS_HASH_DST_PORT)
+
+#define EFX_RX_CLASS_HASH_NTUPLES	7
+
+/*
+ * Hash flag constructor.
+ *
+ * Resulting flags encode hash tuples for specific traffic classes.
+ * The client drivers are encouraged to use these flags to form
+ * a hash type value.
+ */
+#define	EFX_RX_HASH(_class, _tuple)				\
+	EFX_INSERT_FIELD_NATIVE32(0, 31,			\
+	EFX_RX_CLASS_##_class, EFX_RX_CLASS_HASH_##_tuple)
+
+/*
+ * The maximum number of EFX_RX_HASH() flags.
+ */
+#define	EFX_RX_HASH_NFLAGS	(EFX_RX_NCLASSES * EFX_RX_CLASS_HASH_NTUPLES)
+
+extern	__checkReturn				efx_rc_t
+efx_rx_scale_hash_flags_get(
+	__in					efx_nic_t *enp,
+	__in					efx_rx_hash_alg_t hash_alg,
+	__inout_ecount(EFX_RX_HASH_NFLAGS)	unsigned int *flags,
+	__out					unsigned int *nflagsp);
 
 extern	__checkReturn	efx_rc_t
 efx_rx_hash_default_support_get(
@@ -2162,6 +2292,7 @@ efx_pseudo_hdr_pkt_length_get(
 typedef enum efx_rxq_type_e {
 	EFX_RXQ_TYPE_DEFAULT,
 	EFX_RXQ_TYPE_PACKED_STREAM,
+	EFX_RXQ_TYPE_ES_SUPER_BUFFER,
 	EFX_RXQ_NTYPES
 } efx_rxq_type_t;
 
@@ -2210,6 +2341,28 @@ efx_rx_qcreate_packed_stream(
 	__in		uint32_t ps_buf_size,
 	__in		efsys_mem_t *esmp,
 	__in		size_t ndescs,
+	__in		efx_evq_t *eep,
+	__deref_out	efx_rxq_t **erpp);
+
+#endif
+
+#if EFSYS_OPT_RX_ES_SUPER_BUFFER
+
+/* Maximum head-of-line block timeout in nanoseconds */
+#define	EFX_RXQ_ES_SUPER_BUFFER_HOL_BLOCK_MAX	(400U * 1000 * 1000)
+
+extern	__checkReturn	efx_rc_t
+efx_rx_qcreate_es_super_buffer(
+	__in		efx_nic_t *enp,
+	__in		unsigned int index,
+	__in		unsigned int label,
+	__in		uint32_t n_bufs_per_desc,
+	__in		uint32_t max_dma_len,
+	__in		uint32_t buf_stride,
+	__in		uint32_t hol_block_timeout,
+	__in		efsys_mem_t *esmp,
+	__in		size_t ndescs,
+	__in		unsigned int flags,
 	__in		efx_evq_t *eep,
 	__deref_out	efx_rxq_t **erpp);
 
@@ -2470,6 +2623,10 @@ efx_tx_qdestroy(
 #define	EFX_FILTER_FLAG_RX		0x08
 /* Filter is for TX */
 #define	EFX_FILTER_FLAG_TX		0x10
+/* Set match flag on the received packet */
+#define	EFX_FILTER_FLAG_ACTION_FLAG	0x20
+/* Set match mark on the received packet */
+#define	EFX_FILTER_FLAG_ACTION_MARK	0x40
 
 typedef uint8_t efx_filter_flags_t;
 
@@ -2555,6 +2712,7 @@ typedef struct efx_filter_spec_s {
 	efx_oword_t			efs_loc_host;
 	uint8_t				efs_vni_or_vsid[EFX_VNI_OR_VSID_LEN];
 	uint8_t				efs_ifrm_loc_mac[EFX_MAC_ADDR_LEN];
+	uint32_t			efs_mark;
 } efx_filter_spec_t;
 
 

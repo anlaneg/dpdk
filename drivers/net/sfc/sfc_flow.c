@@ -7,6 +7,7 @@
  * for Solarflare) and Solarflare Communications, Inc.
  */
 
+#include <rte_byteorder.h>
 #include <rte_tailq.h>
 #include <rte_common.h>
 #include <rte_ethdev_driver.h>
@@ -22,6 +23,7 @@
 #include "sfc_filter.h"
 #include "sfc_flow.h"
 #include "sfc_log.h"
+#include "sfc_dp_rx.h"
 
 /*
  * At now flow API is implemented in such a manner that each
@@ -119,7 +121,6 @@ sfc_flow_parse_init(const struct rte_flow_item *item,
 	const uint8_t *spec;
 	const uint8_t *mask;
 	const uint8_t *last;
-	uint8_t match;
 	uint8_t supp;
 	unsigned int i;
 
@@ -180,12 +181,11 @@ sfc_flow_parse_init(const struct rte_flow_item *item,
 		return -rte_errno;
 	}
 
-	/* Check that mask and spec not asks for more match than supp_mask */
+	/* Check that mask does not ask for more match than supp_mask */
 	for (i = 0; i < size; i++) {
-		match = spec[i] | mask[i];
 		supp = ((const uint8_t *)supp_mask)[i];
 
-		if ((match | supp) != supp) {
+		if (~supp & mask[i]) {
 			rte_flow_error_set(error, ENOTSUP,
 					   RTE_FLOW_ERROR_TYPE_ITEM, item,
 					   "Item's field is not supported");
@@ -351,6 +351,7 @@ sfc_flow_parse_vlan(const struct rte_flow_item *item,
 	const struct rte_flow_item_vlan *mask = NULL;
 	const struct rte_flow_item_vlan supp_mask = {
 		.tci = rte_cpu_to_be_16(ETH_VLAN_ID_MAX),
+		.inner_type = RTE_BE16(0xffff),
 	};
 
 	rc = sfc_flow_parse_init(item,
@@ -390,6 +391,22 @@ sfc_flow_parse_vlan(const struct rte_flow_item *item,
 		rte_flow_error_set(error, EINVAL,
 				   RTE_FLOW_ERROR_TYPE_ITEM, item,
 				   "VLAN ID in TCI match is required");
+		return -rte_errno;
+	}
+
+	if (efx_spec->efs_match_flags & EFX_FILTER_MATCH_ETHER_TYPE) {
+		rte_flow_error_set(error, EINVAL,
+				   RTE_FLOW_ERROR_TYPE_ITEM, item,
+				   "VLAN TPID matching is not supported");
+		return -rte_errno;
+	}
+	if (mask->inner_type == supp_mask.inner_type) {
+		efx_spec->efs_match_flags |= EFX_FILTER_MATCH_ETHER_TYPE;
+		efx_spec->efs_ether_type = rte_bswap16(spec->inner_type);
+	} else if (mask->inner_type) {
+		rte_flow_error_set(error, EINVAL,
+				   RTE_FLOW_ERROR_TYPE_ITEM, item,
+				   "Bad mask for VLAN inner_type");
 		return -rte_errno;
 	}
 
@@ -1098,6 +1115,12 @@ sfc_flow_parse_attr(const struct rte_flow_attr *attr,
 				   "Egress is not supported");
 		return -rte_errno;
 	}
+	if (attr->transfer != 0) {
+		rte_flow_error_set(error, ENOTSUP,
+				   RTE_FLOW_ERROR_TYPE_ATTR_TRANSFER, attr,
+				   "Transfer is not supported");
+		return -rte_errno;
+	}
 	if (attr->ingress == 0) {
 		rte_flow_error_set(error, ENOTSUP,
 				   RTE_FLOW_ERROR_TYPE_ATTR_INGRESS, attr,
@@ -1224,23 +1247,22 @@ sfc_flow_parse_queue(struct sfc_adapter *sa,
 	return 0;
 }
 
-#if EFSYS_OPT_RX_SCALE
 static int
 sfc_flow_parse_rss(struct sfc_adapter *sa,
-		   const struct rte_flow_action_rss *rss,
+		   const struct rte_flow_action_rss *action_rss,
 		   struct rte_flow *flow)
 {
+	struct sfc_rss *rss = &sa->rss;
 	unsigned int rxq_sw_index;
 	struct sfc_rxq *rxq;
 	unsigned int rxq_hw_index_min;
 	unsigned int rxq_hw_index_max;
-	const struct rte_eth_rss_conf *rss_conf = rss->rss_conf;
-	uint64_t rss_hf;
-	uint8_t *rss_key = NULL;
+	efx_rx_hash_type_t efx_hash_types;
+	const uint8_t *rss_key;
 	struct sfc_flow_rss *sfc_rss_conf = &flow->rss_conf;
 	unsigned int i;
 
-	if (rss->num == 0)
+	if (action_rss->queue_num == 0)
 		return -EINVAL;
 
 	rxq_sw_index = sa->rxq_count - 1;
@@ -1248,8 +1270,8 @@ sfc_flow_parse_rss(struct sfc_adapter *sa,
 	rxq_hw_index_min = rxq->hw_index;
 	rxq_hw_index_max = 0;
 
-	for (i = 0; i < rss->num; ++i) {
-		rxq_sw_index = rss->queue[i];
+	for (i = 0; i < action_rss->queue_num; ++i) {
+		rxq_sw_index = action_rss->queue[i];
 
 		if (rxq_sw_index >= sa->rxq_count)
 			return -EINVAL;
@@ -1263,28 +1285,62 @@ sfc_flow_parse_rss(struct sfc_adapter *sa,
 			rxq_hw_index_max = rxq->hw_index;
 	}
 
-	rss_hf = (rss_conf != NULL) ? rss_conf->rss_hf : SFC_RSS_OFFLOADS;
-	if ((rss_hf & ~SFC_RSS_OFFLOADS) != 0)
+	switch (action_rss->func) {
+	case RTE_ETH_HASH_FUNCTION_DEFAULT:
+	case RTE_ETH_HASH_FUNCTION_TOEPLITZ:
+		break;
+	default:
+		return -EINVAL;
+	}
+
+	if (action_rss->level)
 		return -EINVAL;
 
-	if (rss_conf != NULL) {
-		if (rss_conf->rss_key_len != sizeof(sa->rss_key))
+	/*
+	 * Dummy RSS action with only one queue and no specific settings
+	 * for hash types and key does not require dedicated RSS context
+	 * and may be simplified to single queue action.
+	 */
+	if (action_rss->queue_num == 1 && action_rss->types == 0 &&
+	    action_rss->key_len == 0) {
+		flow->spec.template.efs_dmaq_id = rxq_hw_index_min;
+		return 0;
+	}
+
+	if (action_rss->types) {
+		int rc;
+
+		rc = sfc_rx_hf_rte_to_efx(sa, action_rss->types,
+					  &efx_hash_types);
+		if (rc != 0)
+			return -rc;
+	} else {
+		unsigned int i;
+
+		efx_hash_types = 0;
+		for (i = 0; i < rss->hf_map_nb_entries; ++i)
+			efx_hash_types |= rss->hf_map[i].efx;
+	}
+
+	if (action_rss->key_len) {
+		if (action_rss->key_len != sizeof(rss->key))
 			return -EINVAL;
 
-		rss_key = rss_conf->rss_key;
+		rss_key = action_rss->key;
 	} else {
-		rss_key = sa->rss_key;
+		rss_key = rss->key;
 	}
 
 	flow->rss = B_TRUE;
 
 	sfc_rss_conf->rxq_hw_index_min = rxq_hw_index_min;
 	sfc_rss_conf->rxq_hw_index_max = rxq_hw_index_max;
-	sfc_rss_conf->rss_hash_types = sfc_rte_to_efx_hash_type(rss_hf);
-	rte_memcpy(sfc_rss_conf->rss_key, rss_key, sizeof(sa->rss_key));
+	sfc_rss_conf->rss_hash_types = efx_hash_types;
+	rte_memcpy(sfc_rss_conf->rss_key, rss_key, sizeof(rss->key));
 
 	for (i = 0; i < RTE_DIM(sfc_rss_conf->rss_tbl); ++i) {
-		unsigned int rxq_sw_index = rss->queue[i % rss->num];
+		unsigned int nb_queues = action_rss->queue_num;
+		unsigned int rxq_sw_index = action_rss->queue[i % nb_queues];
 		struct sfc_rxq *rxq = sa->rxq_info[rxq_sw_index].rxq;
 
 		sfc_rss_conf->rss_tbl[i] = rxq->hw_index - rxq_hw_index_min;
@@ -1292,7 +1348,6 @@ sfc_flow_parse_rss(struct sfc_adapter *sa,
 
 	return 0;
 }
-#endif /* EFSYS_OPT_RX_SCALE */
 
 static int
 sfc_flow_spec_flush(struct sfc_adapter *sa, struct sfc_flow_spec *spec,
@@ -1342,15 +1397,15 @@ static int
 sfc_flow_filter_insert(struct sfc_adapter *sa,
 		       struct rte_flow *flow)
 {
-#if EFSYS_OPT_RX_SCALE
-	struct sfc_flow_rss *rss = &flow->rss_conf;
+	struct sfc_rss *rss = &sa->rss;
+	struct sfc_flow_rss *flow_rss = &flow->rss_conf;
 	uint32_t efs_rss_context = EFX_RSS_CONTEXT_DEFAULT;
 	unsigned int i;
 	int rc = 0;
 
 	if (flow->rss) {
-		unsigned int rss_spread = MIN(rss->rxq_hw_index_max -
-					      rss->rxq_hw_index_min + 1,
+		unsigned int rss_spread = MIN(flow_rss->rxq_hw_index_max -
+					      flow_rss->rxq_hw_index_min + 1,
 					      EFX_MAXRSS);
 
 		rc = efx_rx_scale_context_alloc(sa->nic,
@@ -1361,14 +1416,14 @@ sfc_flow_filter_insert(struct sfc_adapter *sa,
 			goto fail_scale_context_alloc;
 
 		rc = efx_rx_scale_mode_set(sa->nic, efs_rss_context,
-					   EFX_RX_HASHALG_TOEPLITZ,
-					   rss->rss_hash_types, B_TRUE);
+					   rss->hash_alg,
+					   flow_rss->rss_hash_types, B_TRUE);
 		if (rc != 0)
 			goto fail_scale_mode_set;
 
 		rc = efx_rx_scale_key_set(sa->nic, efs_rss_context,
-					  rss->rss_key,
-					  sizeof(sa->rss_key));
+					  flow_rss->rss_key,
+					  sizeof(rss->key));
 		if (rc != 0)
 			goto fail_scale_key_set;
 
@@ -1382,7 +1437,7 @@ sfc_flow_filter_insert(struct sfc_adapter *sa,
 			efx_filter_spec_t *spec = &flow->spec.filters[i];
 
 			spec->efs_rss_context = efs_rss_context;
-			spec->efs_dmaq_id = rss->rxq_hw_index_min;
+			spec->efs_dmaq_id = flow_rss->rxq_hw_index_min;
 			spec->efs_flags |= EFX_FILTER_FLAG_RX_RSS;
 		}
 	}
@@ -1401,7 +1456,8 @@ sfc_flow_filter_insert(struct sfc_adapter *sa,
 		 * the table entries, and the operation will succeed
 		 */
 		rc = efx_rx_scale_tbl_set(sa->nic, efs_rss_context,
-					  rss->rss_tbl, RTE_DIM(rss->rss_tbl));
+					  flow_rss->rss_tbl,
+					  RTE_DIM(flow_rss->rss_tbl));
 		if (rc != 0)
 			goto fail_scale_tbl_set;
 	}
@@ -1419,9 +1475,6 @@ fail_scale_mode_set:
 
 fail_scale_context_alloc:
 	return rc;
-#else /* !EFSYS_OPT_RX_SCALE */
-	return sfc_flow_spec_insert(sa, &flow->spec);
-#endif /* EFSYS_OPT_RX_SCALE */
 }
 
 static int
@@ -1434,7 +1487,6 @@ sfc_flow_filter_remove(struct sfc_adapter *sa,
 	if (rc != 0)
 		return rc;
 
-#if EFSYS_OPT_RX_SCALE
 	if (flow->rss) {
 		/*
 		 * All specifications for a given flow rule have the same RSS
@@ -1445,9 +1497,24 @@ sfc_flow_filter_remove(struct sfc_adapter *sa,
 
 		rc = efx_rx_scale_context_free(sa->nic, spec->efs_rss_context);
 	}
-#endif /* EFSYS_OPT_RX_SCALE */
 
 	return rc;
+}
+
+static int
+sfc_flow_parse_mark(struct sfc_adapter *sa,
+		    const struct rte_flow_action_mark *mark,
+		    struct rte_flow *flow)
+{
+	const efx_nic_cfg_t *encp = efx_nic_cfg_get(sa->nic);
+
+	if (mark == NULL || mark->id > encp->enc_filter_action_mark_max)
+		return EINVAL;
+
+	flow->spec.template.efs_flags |= EFX_FILTER_FLAG_ACTION_MARK;
+	flow->spec.template.efs_mark = mark->id;
+
+	return 0;
 }
 
 static int
@@ -1457,7 +1524,13 @@ sfc_flow_parse_actions(struct sfc_adapter *sa,
 		       struct rte_flow_error *error)
 {
 	int rc;
-	boolean_t is_specified = B_FALSE;
+	const unsigned int dp_rx_features = sa->dp_rx->features;
+	uint32_t actions_set = 0;
+	const uint32_t fate_actions_mask = (1UL << RTE_FLOW_ACTION_TYPE_QUEUE) |
+					   (1UL << RTE_FLOW_ACTION_TYPE_RSS) |
+					   (1UL << RTE_FLOW_ACTION_TYPE_DROP);
+	const uint32_t mark_actions_mask = (1UL << RTE_FLOW_ACTION_TYPE_MARK) |
+					   (1UL << RTE_FLOW_ACTION_TYPE_FLAG);
 
 	if (actions == NULL) {
 		rte_flow_error_set(error, EINVAL,
@@ -1466,12 +1539,22 @@ sfc_flow_parse_actions(struct sfc_adapter *sa,
 		return -rte_errno;
 	}
 
+#define SFC_BUILD_SET_OVERFLOW(_action, _set) \
+	RTE_BUILD_BUG_ON(_action >= sizeof(_set) * CHAR_BIT)
+
 	for (; actions->type != RTE_FLOW_ACTION_TYPE_END; actions++) {
 		switch (actions->type) {
 		case RTE_FLOW_ACTION_TYPE_VOID:
+			SFC_BUILD_SET_OVERFLOW(RTE_FLOW_ACTION_TYPE_VOID,
+					       actions_set);
 			break;
 
 		case RTE_FLOW_ACTION_TYPE_QUEUE:
+			SFC_BUILD_SET_OVERFLOW(RTE_FLOW_ACTION_TYPE_QUEUE,
+					       actions_set);
+			if ((actions_set & fate_actions_mask) != 0)
+				goto fail_fate_actions;
+
 			rc = sfc_flow_parse_queue(sa, actions->conf, flow);
 			if (rc != 0) {
 				rte_flow_error_set(error, EINVAL,
@@ -1479,12 +1562,14 @@ sfc_flow_parse_actions(struct sfc_adapter *sa,
 					"Bad QUEUE action");
 				return -rte_errno;
 			}
-
-			is_specified = B_TRUE;
 			break;
 
-#if EFSYS_OPT_RX_SCALE
 		case RTE_FLOW_ACTION_TYPE_RSS:
+			SFC_BUILD_SET_OVERFLOW(RTE_FLOW_ACTION_TYPE_RSS,
+					       actions_set);
+			if ((actions_set & fate_actions_mask) != 0)
+				goto fail_fate_actions;
+
 			rc = sfc_flow_parse_rss(sa, actions->conf, flow);
 			if (rc != 0) {
 				rte_flow_error_set(error, rc,
@@ -1492,16 +1577,55 @@ sfc_flow_parse_actions(struct sfc_adapter *sa,
 					"Bad RSS action");
 				return -rte_errno;
 			}
-
-			is_specified = B_TRUE;
 			break;
-#endif /* EFSYS_OPT_RX_SCALE */
 
 		case RTE_FLOW_ACTION_TYPE_DROP:
+			SFC_BUILD_SET_OVERFLOW(RTE_FLOW_ACTION_TYPE_DROP,
+					       actions_set);
+			if ((actions_set & fate_actions_mask) != 0)
+				goto fail_fate_actions;
+
 			flow->spec.template.efs_dmaq_id =
 				EFX_FILTER_SPEC_RX_DMAQ_ID_DROP;
+			break;
 
-			is_specified = B_TRUE;
+		case RTE_FLOW_ACTION_TYPE_FLAG:
+			SFC_BUILD_SET_OVERFLOW(RTE_FLOW_ACTION_TYPE_FLAG,
+					       actions_set);
+			if ((actions_set & mark_actions_mask) != 0)
+				goto fail_actions_overlap;
+
+			if ((dp_rx_features & SFC_DP_RX_FEAT_FLOW_FLAG) == 0) {
+				rte_flow_error_set(error, ENOTSUP,
+					RTE_FLOW_ERROR_TYPE_ACTION, NULL,
+					"FLAG action is not supported on the current Rx datapath");
+				return -rte_errno;
+			}
+
+			flow->spec.template.efs_flags |=
+				EFX_FILTER_FLAG_ACTION_FLAG;
+			break;
+
+		case RTE_FLOW_ACTION_TYPE_MARK:
+			SFC_BUILD_SET_OVERFLOW(RTE_FLOW_ACTION_TYPE_MARK,
+					       actions_set);
+			if ((actions_set & mark_actions_mask) != 0)
+				goto fail_actions_overlap;
+
+			if ((dp_rx_features & SFC_DP_RX_FEAT_FLOW_MARK) == 0) {
+				rte_flow_error_set(error, ENOTSUP,
+					RTE_FLOW_ERROR_TYPE_ACTION, NULL,
+					"MARK action is not supported on the current Rx datapath");
+				return -rte_errno;
+			}
+
+			rc = sfc_flow_parse_mark(sa, actions->conf, flow);
+			if (rc != 0) {
+				rte_flow_error_set(error, rc,
+					RTE_FLOW_ERROR_TYPE_ACTION, actions,
+					"Bad MARK action");
+				return -rte_errno;
+			}
 			break;
 
 		default:
@@ -1510,16 +1634,29 @@ sfc_flow_parse_actions(struct sfc_adapter *sa,
 					   "Action is not supported");
 			return -rte_errno;
 		}
-	}
 
-	if (!is_specified) {
-		rte_flow_error_set(error, EINVAL,
-				   RTE_FLOW_ERROR_TYPE_ACTION_NUM, actions,
-				   "Action is unspecified");
-		return -rte_errno;
+		actions_set |= (1UL << actions->type);
+	}
+#undef SFC_BUILD_SET_OVERFLOW
+
+	/* When fate is unknown, drop traffic. */
+	if ((actions_set & fate_actions_mask) == 0) {
+		flow->spec.template.efs_dmaq_id =
+			EFX_FILTER_SPEC_RX_DMAQ_ID_DROP;
 	}
 
 	return 0;
+
+fail_fate_actions:
+	rte_flow_error_set(error, ENOTSUP, RTE_FLOW_ERROR_TYPE_ACTION, actions,
+			   "Cannot combine several fate-deciding actions, "
+			   "choose between QUEUE, RSS or DROP");
+	return -rte_errno;
+
+fail_actions_overlap:
+	rte_flow_error_set(error, ENOTSUP, RTE_FLOW_ERROR_TYPE_ACTION, actions,
+			   "Overlapping actions are not supported");
+	return -rte_errno;
 }
 
 /**

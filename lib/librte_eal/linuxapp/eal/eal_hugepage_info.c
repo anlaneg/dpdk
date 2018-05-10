@@ -175,8 +175,8 @@ get_default_hp_size(void)
 }
 
 //解析指定的大页目录
-static const char *
-get_hugepage_dir(uint64_t hugepage_sz)
+static int
+get_hugepage_dir(uint64_t hugepage_sz, char *hugedir, int len)
 {
 	enum proc_mount_fieldnames {
 		DEVICE = 0,
@@ -194,7 +194,7 @@ get_hugepage_dir(uint64_t hugepage_sz)
 	const char split_tok = ' ';
 	char *splitstr[_FIELDNAME_MAX];
 	char buf[BUFSIZ];
-	char *retval = NULL;
+	int retval = -1;
 
 	//打开kernel挂载文件
 	FILE *fd = fopen(proc_mounts, "r");
@@ -227,7 +227,8 @@ get_hugepage_dir(uint64_t hugepage_sz)
 			//如果没有指定页大小，则与默认页大小比对
 			if (pagesz_str == NULL){
 				if (hugepage_sz == default_size){
-					retval = strdup(splitstr[MOUNTPT]);
+					strlcpy(hugedir, splitstr[MOUNTPT], len);
+					retval = 0;
 					break;
 				}
 			}
@@ -236,7 +237,8 @@ get_hugepage_dir(uint64_t hugepage_sz)
 			else {
 				uint64_t pagesz = rte_str_to_size(&pagesz_str[pagesize_opt_len]);
 				if (pagesz == hugepage_sz) {
-					retval = strdup(splitstr[MOUNTPT]);
+					strlcpy(hugedir, splitstr[MOUNTPT], len);
+					retval = 0;
 					break;
 				}
 			}
@@ -246,18 +248,6 @@ get_hugepage_dir(uint64_t hugepage_sz)
 	fclose(fd);
 	//返回此大页对应的挂载点
 	return retval;
-}
-
-/*
- * uses fstat to report the size of a file on disk
- */
-static off_t
-get_file_size(int fd)
-{
-	struct stat st;
-	if (fstat(fd, &st) < 0)
-		return 0;
-	return st.st_size;
 }
 
 /*
@@ -291,8 +281,6 @@ clear_hugedir(const char * hugedir)
 	}
 
 	while(dirent != NULL){
-		struct flock lck = {0};
-
 		/* skip files that don't match the hugepage pattern */
 		if (fnmatch(filter, dirent->d_name, 0) > 0) {
 			dirent = readdir(dir);
@@ -310,19 +298,11 @@ clear_hugedir(const char * hugedir)
 
 		/* non-blocking lock */
 		//尝试锁住此fd
-		lck.l_type = F_RDLCK;
-		lck.l_whence = SEEK_SET;
-		lck.l_start = 0;
-		lck.l_len = get_file_size(fd);
+		lck_result = flock(fd, LOCK_EX | LOCK_NB);
 
-		lck_result = fcntl(fd, F_SETLK, &lck);
-
-		/* if lock succeeds, unlock and remove the file */
-		if (lck_result != -1) {
-			lck.l_type = F_UNLCK;
-			fcntl(fd, F_SETLK, &lck);
+		/* if lock succeeds, remove the file */
+		if (lck_result != -1)
 			unlinkat(dir_fd, dirent->d_name, 0);
-		}
 		//如果没有锁成功，则不处理
 		close (fd);
 		dirent = readdir(dir);
@@ -377,7 +357,6 @@ drwxr-xr-x 2 root root 0 1月  16 15:15 hugepages-2048kB
 
 	for (dirent = readdir(dir); dirent != NULL; dirent = readdir(dir)) {
 		struct hugepage_info *hpi;
-		const char *hugedir;
 
 		//如果不以$dirent_start_text开头，则忽略
 		if (strncmp(dirent->d_name, dirent_start_text,
@@ -392,11 +371,11 @@ drwxr-xr-x 2 root root 0 1月  16 15:15 hugepages-2048kB
 		hpi = &internal_config.hugepage_info[num_sizes];
 		hpi->hugepage_sz =
 			rte_str_to_size(&dirent->d_name[dirent_start_len]);//页大小
-		hugedir = get_hugepage_dir(hpi->hugepage_sz);//获取页大小为$hugepage_sz的挂载点
+
 
 		/* first, check if we have a mountpoint */
-		//检查此页大小是否有挂载点
-		if (hugedir == NULL) {
+		if (get_hugepage_dir(hpi->hugepage_sz,
+			hpi->hugedir, sizeof(hpi->hugedir)) < 0) {//获取页大小为$hugepage_sz的挂载点
 			uint32_t num_pages;
 
 			//告警，有reserved，但没有挂载
@@ -409,7 +388,6 @@ drwxr-xr-x 2 root root 0 1月  16 15:15 hugepages-2048kB
 					num_pages, hpi->hugepage_sz);
 			continue;
 		}
-		snprintf(hpi->hugedir, sizeof(hpi->hugedir), "%s", hugedir);
 
 		//锁住此大页目录，排除其它进程
 		/* try to obtain a writelock */

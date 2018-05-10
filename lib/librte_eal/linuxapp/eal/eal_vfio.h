@@ -82,15 +82,7 @@ struct vfio_iommu_spapr_tce_info {
 #endif
 
 #define VFIO_MAX_GROUPS RTE_MAX_VFIO_GROUPS
-
-/*
- * Function prototypes for VFIO multiprocess sync functions
- */
-int vfio_mp_sync_send_request(int socket, int req);
-int vfio_mp_sync_receive_request(int socket);
-int vfio_mp_sync_send_fd(int socket, int fd);
-int vfio_mp_sync_receive_fd(int socket);
-int vfio_mp_sync_connect_to_primary(void);
+#define VFIO_MAX_CONTAINERS RTE_MAX_VFIO_CONTAINERS
 
 /*
  * we don't need to store device fd's anywhere since they can be obtained from
@@ -100,14 +92,6 @@ struct vfio_group {
 	int group_num;
 	int fd;
 	int devices;
-};
-
-struct vfio_config {
-	int vfio_enabled;
-	int vfio_container_fd;
-	int vfio_active_groups;
-	const struct vfio_iommu_type *vfio_iommu_type;
-	struct vfio_group vfio_groups[VFIO_MAX_GROUPS];
 };
 
 /* DMA mapping function prototype.
@@ -141,12 +125,20 @@ vfio_has_supported_extensions(int vfio_container_fd);
 
 int vfio_mp_sync_setup(void);
 
+#define EAL_VFIO_MP "eal_vfio_mp_sync"
+
 #define SOCKET_REQ_CONTAINER 0x100
 #define SOCKET_REQ_GROUP 0x200
 #define SOCKET_CLR_GROUP 0x300
 #define SOCKET_OK 0x0
 #define SOCKET_NO_FD 0x1
 #define SOCKET_ERR 0xFF
+
+struct vfio_mp_param {
+	int req;
+	int result;
+	int group_num;
+};
 
 #endif /* VFIO_PRESENT */
 

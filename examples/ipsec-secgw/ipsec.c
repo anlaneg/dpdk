@@ -36,6 +36,7 @@ set_ipsec_conf(struct ipsec_sa *sa, struct rte_security_ipsec_xform *ipsec)
 		}
 		/* TODO support for Transport and IPV6 tunnel */
 	}
+	ipsec->esn_soft_limit = IPSEC_OFFLOAD_ESN_SOFTLIMIT;
 }
 
 static inline int
@@ -186,14 +187,8 @@ create_session(struct ipsec_ctx *ipsec_ctx, struct ipsec_sa *sa)
 					.rss_key_len = 40,
 				};
 				struct rte_eth_dev *eth_dev;
-				union {
-					struct rte_flow_action_rss rss;
-					struct {
-					const struct rte_eth_rss_conf *rss_conf;
-					uint16_t num;
-					uint16_t queue[RTE_MAX_QUEUES_PER_PORT];
-					} local;
-				} action_rss;
+				uint16_t queue[RTE_MAX_QUEUES_PER_PORT];
+				struct rte_flow_action_rss action_rss;
 				unsigned int i;
 				unsigned int j;
 
@@ -207,9 +202,14 @@ create_session(struct ipsec_ctx *ipsec_ctx, struct ipsec_sa *sa)
 				for (i = 0, j = 0;
 				     i < eth_dev->data->nb_rx_queues; ++i)
 					if (eth_dev->data->rx_queues[i])
-						action_rss.local.queue[j++] = i;
-				action_rss.local.num = j;
-				action_rss.local.rss_conf = &rss_conf;
+						queue[j++] = i;
+				action_rss = (struct rte_flow_action_rss){
+					.types = rss_conf.rss_hf,
+					.key_len = rss_conf.rss_key_len,
+					.queue_num = j,
+					.key = rss_key,
+					.queue = queue,
+				};
 				ret = rte_flow_validate(sa->portid, &sa->attr,
 							sa->pattern, sa->action,
 							&err);
@@ -270,11 +270,14 @@ flow_create_failure:
 			 * the packet is received, this userdata will be
 			 * retrieved using the metadata from the packet.
 			 *
-			 * This is required only for inbound SAs.
+			 * The PMD is expected to set similar metadata for other
+			 * operations, like rte_eth_event, which are tied to
+			 * security session. In such cases, the userdata could
+			 * be obtained to uniquely identify the security
+			 * parameters denoted.
 			 */
 
-			if (sa->direction == RTE_SECURITY_IPSEC_SA_DIR_INGRESS)
-				sess_conf.userdata = (void *) sa;
+			sess_conf.userdata = (void *) sa;
 
 			sa->sec_session = rte_security_session_create(ctx,
 					&sess_conf, ipsec_ctx->session_pool);

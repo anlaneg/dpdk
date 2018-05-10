@@ -446,7 +446,7 @@ mlx5_dev_infos_get(struct rte_eth_dev *dev, struct rte_eth_dev_info *info)
 		max = 65535;
 	info->max_rx_queues = max;
 	info->max_tx_queues = max;
-	info->max_mac_addrs = RTE_DIM(priv->mac);
+	info->max_mac_addrs = MLX5_MAX_UC_MAC_ADDRESSES;
 	info->rx_queue_offload_capa = mlx5_get_rx_queue_offloads(dev);
 	info->rx_offload_capa = (mlx5_get_rx_port_offloads() |
 				 info->rx_queue_offload_capa);
@@ -539,7 +539,7 @@ mlx5_link_update_unlocked_gset(struct rte_eth_dev *dev,
 	}
 	link_speed = ethtool_cmd_speed(&edata);
 	if (link_speed == -1)
-		dev_link.link_speed = 0;
+		dev_link.link_speed = ETH_SPEED_NUM_NONE;
 	else
 		dev_link.link_speed = link_speed;
 	priv->link_speed_capa = 0;
@@ -1090,11 +1090,14 @@ mlx5_select_tx_function(struct rte_eth_dev *dev)
 	int tso = !!(tx_offloads & (DEV_TX_OFFLOAD_TCP_TSO |
 				    DEV_TX_OFFLOAD_VXLAN_TNL_TSO |
 				    DEV_TX_OFFLOAD_GRE_TNL_TSO));
+	int swp = !!(tx_offloads & (DEV_TX_OFFLOAD_IP_TNL_TSO |
+				    DEV_TX_OFFLOAD_UDP_TNL_TSO |
+				    DEV_TX_OFFLOAD_OUTER_IPV4_CKSUM));
 	int vlan_insert = !!(tx_offloads & DEV_TX_OFFLOAD_VLAN_INSERT);
 
 	assert(priv != NULL);
 	/* Select appropriate TX function. */
-	if (vlan_insert || tso)
+	if (vlan_insert || tso || swp)
 		return tx_pkt_burst;
 	if (config->mps == MLX5_MPW_ENHANCED) {
 		if (mlx5_check_vec_tx_support(dev) > 0) {

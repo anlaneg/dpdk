@@ -40,11 +40,12 @@ M: Shahaf Shuler <shahafs@mellanox.com>
 T: git://dpdk.org/next/dpdk-next-net-mlx
 
 Next-virtio Tree
-Maxime Coquelin <maxime.coquelin@redhat.com>
+M: Maxime Coquelin <maxime.coquelin@redhat.com>
 T: git://dpdk.org/next/dpdk-next-virtio
 
 Next-crypto Tree
 M: Pablo de Lara <pablo.de.lara.guarch@intel.com>
+M: Akhil Goyal <akhil.goyal@nxp.com>
 T: git://dpdk.org/next/dpdk-next-crypto
 
 Next-eventdev Tree
@@ -145,7 +146,6 @@ F: test/test/test_common.c
 F: test/test/test_cpuflags.c
 F: test/test/test_cycles.c
 F: test/test/test_debug.c
-F: test/test/test_devargs.c
 F: test/test/test_eal*
 F: test/test/test_errno.c
 F: test/test/test_interrupts.c
@@ -162,11 +162,15 @@ F: test/test/test_version.c
 
 Memory Allocation
 M: Anatoly Burakov <anatoly.burakov@intel.com>
+F: lib/librte_eal/common/include/rte_fbarray.h
 F: lib/librte_eal/common/include/rte_mem*
 F: lib/librte_eal/common/include/rte_malloc.h
 F: lib/librte_eal/common/*malloc*
+F: lib/librte_eal/common/eal_common_fbarray.c
 F: lib/librte_eal/common/eal_common_mem*
 F: lib/librte_eal/common/eal_hugepages.h
+F: lib/librte_eal/linuxapp/eal/eal_mem*
+F: lib/librte_eal/bsdapp/eal/eal_mem*
 F: doc/guides/prog_guide/env_abstraction_layer.rst
 F: test/test/test_func_reentrancy.c
 F: test/test/test_malloc.c
@@ -188,7 +192,7 @@ F: test/test/test_mp_secondary.c
 F: examples/multi_process/
 F: doc/guides/sample_app_ug/multi_process.rst
 
-Service Cores - EXPERIMENTAL
+Service Cores
 M: Harry van Haaren <harry.van.haaren@intel.com>
 F: lib/librte_eal/common/include/rte_service.h
 F: lib/librte_eal/common/include/rte_service_component.h
@@ -293,25 +297,26 @@ F: test/test/test_mbuf.c
 Ethernet API
 M: Thomas Monjalon <thomas@monjalon.net>
 T: git://dpdk.org/next/dpdk-next-net
-F: lib/librte_ether/
+F: lib/librte_ethdev/
 F: devtools/test-null.sh
 
 Flow API
 M: Adrien Mazarguil <adrien.mazarguil@6wind.com>
 T: git://dpdk.org/next/dpdk-next-net
-F: lib/librte_ether/rte_flow*
+F: lib/librte_ethdev/rte_flow*
 
 Traffic Management API - EXPERIMENTAL
 M: Cristian Dumitrescu <cristian.dumitrescu@intel.com>
 T: git://dpdk.org/next/dpdk-next-tm
-F: lib/librte_ether/rte_tm*
+F: lib/librte_ethdev/rte_tm*
 
 Traffic Metering and Policing API - EXPERIMENTAL
 M: Cristian Dumitrescu <cristian.dumitrescu@intel.com>
-F: lib/librte_ether/rte_mtr*
+F: lib/librte_ethdev/rte_mtr*
 
 Baseband API - EXPERIMENTAL
 M: Amr Mokhtar <amr.mokhtar@intel.com>
+T: git://dpdk.org/next/dpdk-next-crypto
 F: lib/librte_bbdev/
 F: doc/guides/prog_guide/bbdev.rst
 F: drivers/baseband/
@@ -332,6 +337,7 @@ F: examples/l2fwd-crypto/
 Security API - EXPERIMENTAL
 M: Akhil Goyal <akhil.goyal@nxp.com>
 M: Declan Doherty <declan.doherty@intel.com>
+T: git://dpdk.org/next/dpdk-next-crypto
 F: lib/librte_security/
 F: doc/guides/prog_guide/rte_security.rst
 
@@ -349,6 +355,13 @@ F: lib/librte_eventdev/*eth_rx_adapter*
 F: test/test/test_event_eth_rx_adapter.c
 F: doc/guides/prog_guide/event_ethernet_rx_adapter.rst
 
+Eventdev Timer Adapter API - EXPERIMENTAL
+M: Erik Gabriel Carrillo <erik.g.carrillo@intel.com>
+T: git://dpdk.org/next/dpdk-next-eventdev
+F: lib/librte_eventdev/*timer_adapter*
+F: test/test/test_event_timer_adapter.c
+F: doc/guides/prog_guide/event_timer_adapter.rst
+
 Raw device API - EXPERIMENTAL
 M: Shreyansh Jain <shreyansh.jain@nxp.com>
 M: Hemant Agrawal <hemant.agrawal@nxp.com>
@@ -356,6 +369,15 @@ F: lib/librte_rawdev/
 F: drivers/raw/skeleton_rawdev/
 F: test/test/test_rawdev.c
 F: doc/guides/prog_guide/rawdev.rst
+
+
+Memory Pool Drivers
+-------------------
+
+Bucket memory pool
+M: Artem V. Andreev <artem.andreev@oktetlabs.ru>
+M: Andrew Rybchenko <arybchenko@solarflare.com>
+F: drivers/mempool/bucket/
 
 
 Bus Drivers
@@ -371,7 +393,6 @@ PCI bus driver
 F: drivers/bus/pci/
 
 VDEV bus driver
-M: Jianfeng Tan <jianfeng.tan@intel.com>
 F: drivers/bus/vdev/
 
 
@@ -380,12 +401,6 @@ Networking Drivers
 M: Ferruh Yigit <ferruh.yigit@intel.com>
 T: git://dpdk.org/next/dpdk-next-net
 F: doc/guides/nics/features/default.ini
-
-AMD AXGBE PMD
-M: Ravi Kumar <ravi1.kumar@amd.com>
-F: drivers/net/axgbe/
-F: doc/guides/nics/axgbe.rst
-F: doc/guides/nics/features/axgbe.ini
 
 Link bonding
 M: Declan Doherty <declan.doherty@intel.com>
@@ -417,6 +432,12 @@ M: Evgeny Schemeilin <evgenys@amazon.com>
 F: drivers/net/ena/
 F: doc/guides/nics/ena.rst
 F: doc/guides/nics/features/ena.ini
+
+AMD axgbe
+M: Ravi Kumar <ravi1.kumar@amd.com>
+F: drivers/net/axgbe/
+F: doc/guides/nics/axgbe.rst
+F: doc/guides/nics/features/axgbe.ini
 
 Atomic Rules ARK
 M: Shepard Siegel <shepard.siegel@atomicrules.com>
@@ -510,6 +531,22 @@ T: git://dpdk.org/next/dpdk-next-net-intel
 F: drivers/net/avf/
 F: doc/guides/nics/features/avf*.ini
 
+Intel ifc
+M: Xiao Wang <xiao.w.wang@intel.com>
+T: git://dpdk.org/next/dpdk-next-net-intel
+F: drivers/net/ifc/
+F: doc/guides/nics/ifcvf.rst
+F: doc/guides/nics/features/ifcvf.ini
+
+Marvell mvpp2
+M: Tomasz Duszynski <tdu@semihalf.com>
+M: Dmitri Epshtein <dima@marvell.com>
+M: Natalie Samsonov <nsamsono@marvell.com>
+M: Jianbo Liu <jianbo.liu@arm.com>
+F: drivers/net/mvpp2/
+F: doc/guides/nics/mvpp2.rst
+F: doc/guides/nics/features/mvpp2.ini
+
 Mellanox mlx4
 M: Adrien Mazarguil <adrien.mazarguil@6wind.com>
 T: git://dpdk.org/next/dpdk-next-net-mlx
@@ -525,16 +562,6 @@ T: git://dpdk.org/next/dpdk-next-net-mlx
 F: drivers/net/mlx5/
 F: doc/guides/nics/mlx5.rst
 F: doc/guides/nics/features/mlx5.ini
-
-Marvell mvpp2
-M: Jacek Siuda <jck@semihalf.com>
-M: Tomasz Duszynski <tdu@semihalf.com>
-M: Dmitri Epshtein <dima@marvell.com>
-M: Natalie Samsonov <nsamsono@marvell.com>
-M: Jianbo Liu <jianbo.liu@arm.com>
-F: drivers/net/mvpp2/
-F: doc/guides/nics/mvpp2.rst
-F: doc/guides/nics/features/mvpp2.ini
 
 Microsoft vdev_netvsc - EXPERIMENTAL
 M: Matan Azrad <matan@mellanox.com>
@@ -599,7 +626,6 @@ F: doc/guides/nics/features/vmxnet3.ini
 
 Vhost-user
 M: Maxime Coquelin <maxime.coquelin@redhat.com>
-M: Jianfeng Tan <jianfeng.tan@intel.com>
 T: git://dpdk.org/next/dpdk-next-virtio
 F: lib/librte_vhost/
 F: doc/guides/prog_guide/vhost_lib.rst
@@ -612,7 +638,6 @@ F: examples/vhost_crypto/
 Vhost PMD
 M: Tetsuya Mukawa <mtetsuyah@gmail.com>
 M: Maxime Coquelin <maxime.coquelin@redhat.com>
-M: Jianfeng Tan <jianfeng.tan@intel.com>
 T: git://dpdk.org/next/dpdk-next-virtio
 F: drivers/net/vhost/
 F: doc/guides/nics/features/vhost.ini
@@ -680,6 +705,12 @@ M: Pablo de Lara <pablo.de.lara.guarch@intel.com>
 T: git://dpdk.org/next/dpdk-next-crypto
 F: doc/guides/cryptodevs/features/default.ini
 
+AMD CCP Crypto
+M: Ravi Kumar <ravi1.kumar@amd.com>
+F: drivers/crypto/ccp/
+F: doc/guides/cryptodevs/ccp.rst
+F: doc/guides/cryptodevs/features/ccp.ini
+
 ARMv8 Crypto
 M: Jerin Jacob <jerin.jacob@caviumnetworks.com>
 F: drivers/crypto/armv8/
@@ -718,7 +749,6 @@ F: doc/guides/cryptodevs/kasumi.rst
 F: doc/guides/cryptodevs/features/kasumi.ini
 
 Marvell Mrvl
-M: Jacek Siuda <jck@semihalf.com>
 M: Tomasz Duszynski <tdu@semihalf.com>
 M: Dmitri Epshtein <dima@marvell.com>
 M: Natalie Samsonov <nsamsono@marvell.com>
@@ -759,6 +789,12 @@ F: drivers/crypto/snow3g/
 F: doc/guides/cryptodevs/snow3g.rst
 F: doc/guides/cryptodevs/features/snow3g.ini
 
+Virtio
+M: Jay Zhou <jianjay.zhou@huawei.com>
+F: drivers/crypto/virtio/
+F: doc/guides/cryptodevs/virtio.rst
+F: doc/guides/cryptodevs/features/virtio.ini
+
 ZUC
 M: Pablo de Lara <pablo.de.lara.guarch@intel.com>
 F: drivers/crypto/zuc/
@@ -777,17 +813,21 @@ M: Santosh Shukla <santosh.shukla@caviumnetworks.com>
 F: drivers/event/octeontx/
 F: doc/guides/eventdevs/octeontx.rst
 
-NXP DPAA2 eventdev
-M: Hemant Agrawal <hemant.agrawal@nxp.com>
-M: Nipun Gupta <nipun.gupta@nxp.com>
-F: drivers/event/dpaa2/
-F: doc/guides/eventdevs/dpaa2.rst
+Cavium OCTEONTX timvf
+M: Pavan Nikhilesh <pbhagavatula@caviumnetworks.com>
+F: drivers/event/octeontx/timvf_*
 
 NXP DPAA eventdev
 M: Hemant Agrawal <hemant.agrawal@nxp.com>
 M: Sunil Kumar Kori <sunil.kori@nxp.com>
 F: drivers/event/dpaa/
 F: doc/guides/eventdevs/dpaa.rst
+
+NXP DPAA2 eventdev
+M: Hemant Agrawal <hemant.agrawal@nxp.com>
+M: Nipun Gupta <nipun.gupta@nxp.com>
+F: drivers/event/dpaa2/
+F: doc/guides/eventdevs/dpaa2.rst
 
 Software Eventdev PMD
 M: Harry van Haaren <harry.van.haaren@intel.com>
@@ -801,6 +841,20 @@ M: Liang Ma <liang.j.ma@intel.com>
 M: Peter Mccarthy <peter.mccarthy@intel.com>
 F: drivers/event/opdl/
 F: doc/guides/eventdevs/opdl.rst
+
+
+Rawdev Drivers
+--------------
+
+NXP DPAA2 QDMA
+M: Nipun Gupta <nipun.gupta@nxp.com>
+F: drivers/raw/dpaa2_qdma/
+F: doc/guides/rawdevs/dpaa2_qdma.rst
+
+DPAA2 CMDIF
+M: Nipun Gupta <nipun.gupta@nxp.com>
+F: drivers/raw/dpaa2_cmdif/
+F: doc/guides/rawdevs/dpaa2_cmdif.rst
 
 
 Packet processing
@@ -876,6 +930,7 @@ F: doc/guides/prog_guide/pdump_lib.rst
 F: app/pdump/
 F: doc/guides/tools/pdump.rst
 
+
 Packet Framework
 ----------------
 M: Cristian Dumitrescu <cristian.dumitrescu@intel.com>
@@ -941,6 +996,7 @@ F: doc/guides/sample_app_ug/qos_scheduler.rst
 F: test/test/test_meter.c
 F: examples/qos_meter/
 F: doc/guides/sample_app_ug/qos_metering.rst
+
 
 Other libraries
 ---------------

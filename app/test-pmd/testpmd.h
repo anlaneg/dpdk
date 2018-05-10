@@ -79,6 +79,19 @@ struct pkt_burst_stats {
 };
 #endif
 
+/** Information for a given RSS type. */
+struct rss_type_info {
+	const char *str; /**< Type name. */
+	uint64_t rss_type; /**< Type value. */
+};
+
+/**
+ * RSS type information table.
+ *
+ * An entry with a NULL type name terminates the list.
+ */
+extern const struct rss_type_info rss_type_table[];
+
 /**
  * The data structure associated with a forwarding stream between a receive
  * port/queue and a transmit port/queue.
@@ -181,8 +194,10 @@ struct rte_port {
 	uint8_t                 need_reconfig_queues; /**< need reconfiguring queues or not */
 	uint8_t                 rss_flag;   /**< enable rss or not */
 	uint8_t                 dcb_flag;   /**< enable dcb */
-	struct rte_eth_rxconf   rx_conf;    /**< rx configuration */
-	struct rte_eth_txconf   tx_conf;    /**< tx configuration */
+	uint16_t                nb_rx_desc[MAX_QUEUE_ID+1]; /**< per queue rx desc number */
+	uint16_t                nb_tx_desc[MAX_QUEUE_ID+1]; /**< per queue tx desc number */
+	struct rte_eth_rxconf   rx_conf[MAX_QUEUE_ID+1]; /**< per queue rx configuration */
+	struct rte_eth_txconf   tx_conf[MAX_QUEUE_ID+1]; /**< per queue tx configuration */
 	struct ether_addr       *mc_addr_pool; /**< pool of multicast addrs */
 	uint32_t                mc_addr_nb; /**< nb. of addr. in mc_addr_pool */
 	uint8_t                 slave_flag; /**< bonding slave port */
@@ -435,6 +450,8 @@ extern uint32_t retry_enabled;
 extern struct fwd_lcore  **fwd_lcores;
 extern struct fwd_stream **fwd_streams;
 
+extern uint16_t vxlan_gpe_udp_port; /**< UDP port of tunnel VXLAN-GPE. */
+
 extern portid_t nb_peer_eth_addrs; /**< Number of peer ethernet addresses. */
 extern struct ether_addr peer_eth_addrs[RTE_MAX_ETHPORTS];
 
@@ -603,7 +620,7 @@ int port_flow_create(portid_t port_id,
 int port_flow_destroy(portid_t port_id, uint32_t n, const uint32_t *rule);
 int port_flow_flush(portid_t port_id);
 int port_flow_query(portid_t port_id, uint32_t rule,
-		    enum rte_flow_action_type action);
+		    const struct rte_flow_action *action);
 void port_flow_list(portid_t port_id, uint32_t n, const uint32_t *group);
 int port_flow_isolate(portid_t port_id, int set);
 

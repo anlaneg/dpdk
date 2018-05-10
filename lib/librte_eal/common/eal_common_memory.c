@@ -113,11 +113,11 @@ eal_get_virtual_area(void *requested_addr, size_t *size,
 		RTE_LOG(WARNING, EAL, "   This may cause issues with mapping memory into secondary processes\n");
 	}
 
-	if (unmap)
-		munmap(mapped_addr, map_sz);
-
 	RTE_LOG(DEBUG, EAL, "Virtual area found at %p (size = 0x%zx)\n",
 		aligned_addr, *size);
+
+	if (unmap)
+		munmap(mapped_addr, map_sz);
 
 	baseaddr_offset += *size;
 
@@ -139,6 +139,17 @@ get_mem_amount(uint64_t page_sz, uint64_t max_mem)
 	area_sz = RTE_MAX(area_sz, page_sz);
 
 	return RTE_ALIGN(area_sz, page_sz);
+}
+
+static int
+free_memseg_list(struct rte_memseg_list *msl)
+{
+	if (rte_fbarray_destroy(&msl->memseg_arr)) {
+		RTE_LOG(ERR, EAL, "Cannot destroy memseg list\n");
+		return -1;
+	}
+	memset(msl, 0, sizeof(*msl));
+	return 0;
 }
 
 static int
@@ -249,7 +260,7 @@ memseg_primary_init_32(void)
 	else
 		total_requested_mem = internal_config.memory;
 
-	max_mem = (uint64_t) RTE_MAX_MEM_MB_PER_TYPE << 20;
+	max_mem = (uint64_t)RTE_MAX_MEM_MB << 20;
 	if (total_requested_mem > max_mem) {
 		RTE_LOG(ERR, EAL, "Invalid parameters: 32-bit process can at most use %uM of memory\n",
 				(unsigned int)(max_mem >> 20));
@@ -318,6 +329,10 @@ memseg_primary_init_32(void)
 			hpi = &internal_config.hugepage_info[hpi_idx];
 			hugepage_sz = hpi->hugepage_sz;
 
+			/* check if pages are actually available */
+			if (hpi->num_pages[socket_id] == 0)
+				continue;
+
 			max_segs = RTE_MAX_MEMSEG_PER_TYPE;
 			max_pagesz_mem = max_socket_mem - cur_socket_mem;
 
@@ -339,23 +354,40 @@ memseg_primary_init_32(void)
 					return -1;
 				}
 
-				msl = &mcfg->memsegs[msl_idx++];
+				msl = &mcfg->memsegs[msl_idx];
 
 				if (alloc_memseg_list(msl, hugepage_sz,
 						max_pagesz_mem, socket_id,
-						type_msl_idx))
+						type_msl_idx)) {
+					/* failing to allocate a memseg list is
+					 * a serious error.
+					 */
+					RTE_LOG(ERR, EAL, "Cannot allocate memseg list\n");
 					return -1;
+				}
+
+				if (alloc_va_space(msl)) {
+					/* if we couldn't allocate VA space, we
+					 * can try with smaller page sizes.
+					 */
+					RTE_LOG(ERR, EAL, "Cannot allocate VA space for memseg list, retrying with different page size\n");
+					/* deallocate memseg list */
+					if (free_memseg_list(msl))
+						return -1;
+					break;
+				}
 
 				total_segs += msl->memseg_arr.len;
 				cur_pagesz_mem = total_segs * hugepage_sz;
 				type_msl_idx++;
-
-				if (alloc_va_space(msl)) {
-					RTE_LOG(ERR, EAL, "Cannot allocate VA space for memseg list\n");
-					return -1;
-				}
+				msl_idx++;
 			}
 			cur_socket_mem += cur_pagesz_mem;
+		}
+		if (cur_socket_mem == 0) {
+			RTE_LOG(ERR, EAL, "Cannot allocate VA space on socket %u\n",
+				socket_id);
+			return -1;
 		}
 	}
 
@@ -629,7 +661,8 @@ dump_memseg(const struct rte_memseg_list *msl, const struct rte_memseg *ms,
  * is in eal_common_memalloc.c, like all other memalloc internals.
  */
 int __rte_experimental
-rte_mem_event_callback_register(const char *name, rte_mem_event_callback_t clb)
+rte_mem_event_callback_register(const char *name, rte_mem_event_callback_t clb,
+		void *arg)
 {
 	/* FreeBSD boots with legacy mem enabled by default */
 	if (internal_config.legacy_mem) {
@@ -637,11 +670,11 @@ rte_mem_event_callback_register(const char *name, rte_mem_event_callback_t clb)
 		rte_errno = ENOTSUP;
 		return -1;
 	}
-	return eal_memalloc_mem_event_callback_register(name, clb);
+	return eal_memalloc_mem_event_callback_register(name, clb, arg);
 }
 
 int __rte_experimental
-rte_mem_event_callback_unregister(const char *name)
+rte_mem_event_callback_unregister(const char *name, void *arg)
 {
 	/* FreeBSD boots with legacy mem enabled by default */
 	if (internal_config.legacy_mem) {
@@ -649,7 +682,7 @@ rte_mem_event_callback_unregister(const char *name)
 		rte_errno = ENOTSUP;
 		return -1;
 	}
-	return eal_memalloc_mem_event_callback_unregister(name);
+	return eal_memalloc_mem_event_callback_unregister(name, arg);
 }
 
 int __rte_experimental
@@ -862,6 +895,9 @@ rte_eal_memory_init(void)
 			memseg_secondary_init();
 
 	if (retval < 0)
+		goto fail;
+
+	if (eal_memalloc_init() < 0)
 		goto fail;
 
 	retval = rte_eal_process_type() == RTE_PROC_PRIMARY ?

@@ -27,6 +27,7 @@
 #include "eal_internal_cfg.h"
 #include "eal_options.h"
 #include "eal_filesystem.h"
+#include "eal_private.h"
 
 #define BITS_PER_HEX 4
 #define LCORE_OPT_LST 1
@@ -157,7 +158,7 @@ eal_option_device_parse(void)
 
 	TAILQ_FOREACH_SAFE(devopt, &devopt_list, next, tmp) {
 		if (ret == 0) {
-			ret = rte_eal_devargs_add(devopt->type, devopt->arg);
+			ret = rte_devargs_add(devopt->type, devopt->arg);
 			if (ret)
 				RTE_LOG(ERR, EAL, "Unable to parse device '%s'\n",
 					devopt->arg);
@@ -918,7 +919,7 @@ static int
 eal_parse_syslog(const char *facility, struct internal_config *conf)
 {
 	int i;
-	static struct {
+	static const struct {
 		const char *name;
 		int value;
 	} map[] = {
@@ -954,65 +955,91 @@ eal_parse_syslog(const char *facility, struct internal_config *conf)
 }
 
 static int
+eal_parse_log_priority(const char *level)
+{
+	static const char * const levels[] = {
+		[RTE_LOG_EMERG]   = "emergency",
+		[RTE_LOG_ALERT]   = "alert",
+		[RTE_LOG_CRIT]    = "critical",
+		[RTE_LOG_ERR]     = "error",
+		[RTE_LOG_WARNING] = "warning",
+		[RTE_LOG_NOTICE]  = "notice",
+		[RTE_LOG_INFO]    = "info",
+		[RTE_LOG_DEBUG]   = "debug",
+	};
+	size_t len = strlen(level);
+	unsigned long tmp;
+	char *end;
+	unsigned int i;
+
+	if (len == 0)
+		return -1;
+
+	/* look for named values, skip 0 which is not a valid level */
+	for (i = 1; i < RTE_DIM(levels); i++) {
+		if (strncmp(levels[i], level, len) == 0)
+			return i;
+	}
+
+	/* not a string, maybe it is numeric */
+	errno = 0;
+	tmp = strtoul(level, &end, 0);
+
+	/* check for errors */
+	if (errno != 0 || end == NULL || *end != '\0' ||
+	    tmp >= UINT32_MAX)
+		return -1;
+
+	return tmp;
+}
+
+static int
 eal_parse_log_level(const char *arg)
 {
-	char *end, *str, *type, *level;
-	unsigned long tmp;
+	const char *pattern = NULL;
+	const char *regex = NULL;
+	char *str, *level;
+	int priority;
 
 	str = strdup(arg);
 	if (str == NULL)
 		return -1;
 
-	if (strchr(str, ',') == NULL) {
-		type = NULL;
-		level = str;
+	if ((level = strchr(str, ','))) {
+		regex = str;
+		*level++ = '\0';
+	} else if ((level = strchr(str, ':'))) {
+		pattern = str;
+		*level++ = '\0';
+>>>>>>> upstream/master
 	} else {
-		type = strsep(&str, ",");
-		level = strsep(&str, ",");
+		level = str;
 	}
 
-	errno = 0;
-	tmp = strtoul(level, &end, 0);
-
-	/* check for errors */
-	if ((errno != 0) || (level[0] == '\0') ||
-		    end == NULL || (*end != '\0'))
-		goto fail;//level非数字
-
-	/* log_level is a uint32_t */
-	if (tmp >= UINT32_MAX)
-		goto fail;//level数字过大
-
-	if (type == NULL) {//不指定类型，仅指定level
-		rte_log_set_global_level(tmp);
-	} else if (rte_log_set_level_regexp(type, tmp) < 0) {
-		//通过正则表达式设置log level
-		printf("cannot set log level %s,%lu\n",
-			type, tmp);
+	priority = eal_parse_log_priority(level);
+	if (priority < 0) {
+		fprintf(stderr, "invalid log priority: %s\n", level);
 		goto fail;
-	} else {
-		struct rte_eal_opt_loglevel *opt_ll;
+	}
 
-		/*
-		 * Save the type (regexp string) and the loglevel
-		 * in the global storage so that it could be used
-		 * to configure dynamic logtypes which are absent
-		 * at the moment of EAL option processing but may
-		 * be registered during runtime.
-		 */
-		opt_ll = malloc(sizeof(*opt_ll));
-		if (opt_ll == NULL)
-			goto fail;
-
-		opt_ll->re_type = strdup(type);
-		if (opt_ll->re_type == NULL) {
-			free(opt_ll);
+	if (regex) {
+		if (rte_log_set_level_regexp(regex, priority) < 0) {
+			fprintf(stderr, "cannot set log level %s,%d\n",
+				pattern, priority);
 			goto fail;
 		}
-
-		opt_ll->level = tmp;
-
-		TAILQ_INSERT_HEAD(&opt_loglevel_list, opt_ll, next);
+		if (rte_log_save_regexp(regex, priority) < 0)
+			goto fail;
+	} else if (pattern) {
+		if (rte_log_set_level_pattern(pattern, priority) < 0) {
+			fprintf(stderr, "cannot set log level %s:%d\n",
+				pattern, priority);
+			goto fail;
+		}
+		if (rte_log_save_pattern(pattern, priority) < 0)
+			goto fail;
+	} else {
+		rte_log_set_global_level(priority);
 	}
 
 	free(str);
@@ -1401,7 +1428,7 @@ eal_common_usage(void)
 	       "  --"OPT_PROC_TYPE"         Type of this process (primary|secondary|auto)\n"
 	       "  --"OPT_SYSLOG"            Set syslog facility\n"
 	       "  --"OPT_LOG_LEVEL"=<int>   Set global log level\n"
-	       "  --"OPT_LOG_LEVEL"=<type-regexp>,<int>\n"
+	       "  --"OPT_LOG_LEVEL"=<type-match>:<int>\n"
 	       "                      Set specific log level\n"
 	       "  -v                  Display version information on startup\n"
 	       "  -h, --help          This help\n"

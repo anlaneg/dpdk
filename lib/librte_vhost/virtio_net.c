@@ -16,6 +16,7 @@
 #include <rte_sctp.h>
 #include <rte_arp.h>
 #include <rte_spinlock.h>
+#include <rte_malloc.h>
 
 #include "iotlb.h"
 #include "vhost.h"
@@ -29,6 +30,46 @@ is_valid_virt_queue_idx(uint32_t idx, int is_tx, uint32_t nr_vring)
 {
 	//首先队列的idx必须是小于nr_vring的，其次，如果is_tx是发队列，则idx &1 必须为1(即必须为奇数）
 	return (is_tx ^ (idx & 1)) == 0 && idx < nr_vring;
+}
+
+static __rte_always_inline struct vring_desc *
+alloc_copy_ind_table(struct virtio_net *dev, struct vhost_virtqueue *vq,
+					 struct vring_desc *desc)
+{
+	struct vring_desc *idesc;
+	uint64_t src, dst;
+	uint64_t len, remain = desc->len;
+	uint64_t desc_addr = desc->addr;
+
+	idesc = rte_malloc(__func__, desc->len, 0);
+	if (unlikely(!idesc))
+		return 0;
+
+	dst = (uint64_t)(uintptr_t)idesc;
+
+	while (remain) {
+		len = remain;
+		src = vhost_iova_to_vva(dev, vq, desc_addr, &len,
+				VHOST_ACCESS_RO);
+		if (unlikely(!src || !len)) {
+			rte_free(idesc);
+			return 0;
+		}
+
+		rte_memcpy((void *)(uintptr_t)dst, (void *)(uintptr_t)src, len);
+
+		remain -= len;
+		dst += len;
+		desc_addr += len;
+	}
+
+	return idesc;
+}
+
+static __rte_always_inline void
+free_ind_table(struct vring_desc *idesc)
+{
+	rte_free(idesc);
 }
 
 static __rte_always_inline void
@@ -187,8 +228,9 @@ copy_mbuf_to_desc(struct virtio_net *dev, struct vhost_virtqueue *vq,
 	uint32_t desc_avail, desc_offset;
 	uint32_t mbuf_avail, mbuf_offset;
 	uint32_t cpy_len;
+	uint64_t desc_chunck_len;
 	struct vring_desc *desc;
-	uint64_t desc_addr;
+	uint64_t desc_addr, desc_gaddr;
 	/* A counter to avoid desc dead loop chain */
 	uint16_t nr_desc = 1;
 	struct batch_copy_elem *batch_copy = vq->batch_copy_elems;
@@ -196,8 +238,10 @@ copy_mbuf_to_desc(struct virtio_net *dev, struct vhost_virtqueue *vq,
 	int error = 0;
 
 	desc = &descs[desc_idx];//取描述符
-	desc_addr = vhost_iova_to_vva(dev, vq, desc->addr,
-					desc->len, VHOST_ACCESS_RW);//将guest的物理地址（desc->addr）转为host机的虚拟地址
+	desc_chunck_len = desc->len;
+	desc_gaddr = desc->addr;
+	desc_addr = vhost_iova_to_vva(dev, vq, desc_gaddr,
+					&desc_chunck_len, VHOST_ACCESS_RW);//将guest的物理地址（desc->addr）转为host机的虚拟地址
 	/*
 	 * Checking of 'desc_addr' placed outside of 'unlikely' macro to avoid
 	 * performance issue with some versions of gcc (4.8.4 and 5.3.0) which
@@ -210,13 +254,59 @@ copy_mbuf_to_desc(struct virtio_net *dev, struct vhost_virtqueue *vq,
 
 	rte_prefetch0((void *)(uintptr_t)desc_addr);
 
-	//填充描述符
-	virtio_enqueue_offload(m, (struct virtio_net_hdr *)(uintptr_t)desc_addr);
-	vhost_log_write(dev, desc->addr, dev->vhost_hlen);
-	PRINT_PACKET(dev, (uintptr_t)desc_addr, dev->vhost_hlen, 0);
+	if (likely(desc_chunck_len >= dev->vhost_hlen)) {
+		virtio_enqueue_offload(m,
+				(struct virtio_net_hdr *)(uintptr_t)desc_addr);
+		PRINT_PACKET(dev, (uintptr_t)desc_addr, dev->vhost_hlen, 0);
+		vhost_log_write(dev, desc_gaddr, dev->vhost_hlen);
+	} else {
+		struct virtio_net_hdr vnet_hdr;
+		uint64_t remain = dev->vhost_hlen;
+		uint64_t len;
+		uint64_t src = (uint64_t)(uintptr_t)&vnet_hdr, dst;
+		uint64_t guest_addr = desc_gaddr;
 
-	desc_offset = dev->vhost_hlen;
-	desc_avail  = desc->len - dev->vhost_hlen;//当前描述符可存放多少字节数据
+		virtio_enqueue_offload(m, &vnet_hdr);
+
+		while (remain) {
+			len = remain;
+			dst = vhost_iova_to_vva(dev, vq, guest_addr,
+					&len, VHOST_ACCESS_RW);
+			if (unlikely(!dst || !len)) {
+				error = -1;
+				goto out;
+			}
+
+			rte_memcpy((void *)(uintptr_t)dst,
+					(void *)(uintptr_t)src, len);
+
+			PRINT_PACKET(dev, (uintptr_t)dst, (uint32_t)len, 0);
+			vhost_log_write(dev, guest_addr, len);
+			remain -= len;
+			guest_addr += len;
+			dst += len;
+		}
+	}
+
+	desc_avail  = desc->len - dev->vhost_hlen;
+	if (unlikely(desc_chunck_len < dev->vhost_hlen)) {
+		desc_chunck_len = desc_avail;
+		desc_gaddr = desc->addr + dev->vhost_hlen;
+		desc_addr = vhost_iova_to_vva(dev,
+				vq, desc_gaddr,
+				&desc_chunck_len,
+				VHOST_ACCESS_RW);
+		if (unlikely(!desc_addr)) {
+			error = -1;
+			goto out;
+		}
+
+		desc_offset = 0;
+	} else {
+		desc_offset = dev->vhost_hlen;
+		desc_chunck_len -= dev->vhost_hlen;
+	}
+>>>>>>> upstream/master
 
 	mbuf_avail  = rte_pktmbuf_data_len(m);//当前mbuf中的数据长度
 	mbuf_offset = 0;
@@ -246,8 +336,10 @@ copy_mbuf_to_desc(struct virtio_net *dev, struct vhost_virtqueue *vq,
 			}
 
 			desc = &descs[desc->next];
-			desc_addr = vhost_iova_to_vva(dev, vq, desc->addr,
-							desc->len,
+			desc_chunck_len = desc->len;
+			desc_gaddr = desc->addr;
+			desc_addr = vhost_iova_to_vva(dev, vq, desc_gaddr,
+							&desc_chunck_len,
 							VHOST_ACCESS_RW);
 			if (unlikely(!desc_addr)) {
 				error = -1;
@@ -256,17 +348,28 @@ copy_mbuf_to_desc(struct virtio_net *dev, struct vhost_virtqueue *vq,
 
 			desc_offset = 0;
 			desc_avail  = desc->len;
+		} else if (unlikely(desc_chunck_len == 0)) {
+			desc_chunck_len = desc_avail;
+			desc_gaddr += desc_offset;
+			desc_addr = vhost_iova_to_vva(dev,
+					vq, desc_gaddr,
+					&desc_chunck_len, VHOST_ACCESS_RW);
+			if (unlikely(!desc_addr)) {
+				error = -1;
+				goto out;
+			}
+			desc_offset = 0;
 		}
 
 		//可写入的大小
-		cpy_len = RTE_MIN(desc_avail, mbuf_avail);
+		cpy_len = RTE_MIN(desc_chunck_len, mbuf_avail);
 		if (likely(cpy_len > MAX_BATCH_LEN || copy_nb >= vq->size)) {
 			//将mbuf中的数据搬迁到描述符中
 			rte_memcpy((void *)((uintptr_t)(desc_addr +
 							desc_offset)),
 				rte_pktmbuf_mtod_offset(m, void *, mbuf_offset),
 				cpy_len);
-			vhost_log_write(dev, desc->addr + desc_offset, cpy_len);
+			vhost_log_write(dev, desc_gaddr + desc_offset, cpy_len);
 			PRINT_PACKET(dev, (uintptr_t)(desc_addr + desc_offset),
 				     cpy_len, 0);
 		} else {
@@ -275,7 +378,7 @@ copy_mbuf_to_desc(struct virtio_net *dev, struct vhost_virtqueue *vq,
 				(void *)((uintptr_t)(desc_addr + desc_offset));
 			batch_copy[copy_nb].src =
 				rte_pktmbuf_mtod_offset(m, void *, mbuf_offset);
-			batch_copy[copy_nb].log_addr = desc->addr + desc_offset;
+			batch_copy[copy_nb].log_addr = desc_gaddr + desc_offset;
 			batch_copy[copy_nb].len = cpy_len;
 			copy_nb++;
 		}
@@ -284,6 +387,7 @@ copy_mbuf_to_desc(struct virtio_net *dev, struct vhost_virtqueue *vq,
 		mbuf_offset += cpy_len;
 		desc_avail  -= cpy_len;
 		desc_offset += cpy_len;
+		desc_chunck_len -= cpy_len;
 	}
 
 out:
@@ -373,18 +477,32 @@ virtio_dev_rx(struct virtio_net *dev, uint16_t queue_id,
 	//预取描述符
 	rte_prefetch0(&vq->desc[desc_indexes[0]]);
 	for (i = 0; i < count; i++) {
+		struct vring_desc *idesc = NULL;
 		uint16_t desc_idx = desc_indexes[i];
 		int err;
 
 		if (vq->desc[desc_idx].flags & VRING_DESC_F_INDIRECT) {
+			uint64_t dlen = vq->desc[desc_idx].len;
 			descs = (struct vring_desc *)(uintptr_t)
 				vhost_iova_to_vva(dev,
 						vq, vq->desc[desc_idx].addr,
-						vq->desc[desc_idx].len,
-						VHOST_ACCESS_RO);
+						&dlen, VHOST_ACCESS_RO);
 			if (unlikely(!descs)) {
 				count = i;
 				break;
+			}
+
+			if (unlikely(dlen < vq->desc[desc_idx].len)) {
+				/*
+				 * The indirect desc table is not contiguous
+				 * in process VA space, we have to copy it.
+				 */
+				idesc = alloc_copy_ind_table(dev, vq,
+							&vq->desc[desc_idx]);
+				if (unlikely(!idesc))
+					break;
+
+				descs = idesc;
 			}
 
 			desc_idx = 0;
@@ -398,11 +516,15 @@ virtio_dev_rx(struct virtio_net *dev, uint16_t queue_id,
 		err = copy_mbuf_to_desc(dev, vq, descs, pkts[i], desc_idx, sz);
 		if (unlikely(err)) {
 			count = i;
+			free_ind_table(idesc);
 			break;
 		}
 
 		if (i + 1 < count)
 			rte_prefetch0(&vq->desc[desc_indexes[i+1]]);
+
+		if (unlikely(!!idesc))
+			free_ind_table(idesc);
 	}
 
 	//刚才将小片的数据搬迁都存在batch_copy_elems中了，这里将其统一搬迁
@@ -438,24 +560,41 @@ fill_vec_buf(struct virtio_net *dev, struct vhost_virtqueue *vq,
 	uint16_t idx = vq->avail->ring[avail_idx & (vq->size - 1)];
 	uint32_t vec_id = *vec_idx;
 	uint32_t len    = 0;
+	uint64_t dlen;
 	struct vring_desc *descs = vq->desc;
+	struct vring_desc *idesc = NULL;
 
 	*desc_chain_head = idx;
 
 	if (vq->desc[idx].flags & VRING_DESC_F_INDIRECT) {
+		dlen = vq->desc[idx].len;
 		descs = (struct vring_desc *)(uintptr_t)
 			vhost_iova_to_vva(dev, vq, vq->desc[idx].addr,
-						vq->desc[idx].len,
+						&dlen,
 						VHOST_ACCESS_RO);
 		if (unlikely(!descs))
 			return -1;
+
+		if (unlikely(dlen < vq->desc[idx].len)) {
+			/*
+			 * The indirect desc table is not contiguous
+			 * in process VA space, we have to copy it.
+			 */
+			idesc = alloc_copy_ind_table(dev, vq, &vq->desc[idx]);
+			if (unlikely(!idesc))
+				return -1;
+
+			descs = idesc;
+		}
 
 		idx = 0;
 	}
 
 	while (1) {
-		if (unlikely(vec_id >= BUF_VECTOR_MAX || idx >= vq->size))
+		if (unlikely(vec_id >= BUF_VECTOR_MAX || idx >= vq->size)) {
+			free_ind_table(idesc);
 			return -1;
+		}
 
 		len += descs[idx].len;
 		buf_vec[vec_id].buf_addr = descs[idx].addr;
@@ -471,6 +610,9 @@ fill_vec_buf(struct virtio_net *dev, struct vhost_virtqueue *vq,
 
 	*desc_chain_len = len;
 	*vec_idx = vec_id;
+
+	if (unlikely(!!idesc))
+		free_ind_table(idesc);
 
 	return 0;
 }
@@ -526,13 +668,15 @@ copy_mbuf_to_desc_mergeable(struct virtio_net *dev, struct vhost_virtqueue *vq,
 			    uint16_t num_buffers)
 {
 	uint32_t vec_idx = 0;
-	uint64_t desc_addr;
+	uint64_t desc_addr, desc_gaddr;
 	uint32_t mbuf_offset, mbuf_avail;
 	uint32_t desc_offset, desc_avail;
 	uint32_t cpy_len;
+	uint64_t desc_chunck_len;
 	uint64_t hdr_addr, hdr_phys_addr;
 	struct rte_mbuf *hdr_mbuf;
 	struct batch_copy_elem *batch_copy = vq->batch_copy_elems;
+	struct virtio_net_hdr_mrg_rxbuf tmp_hdr, *hdr = NULL;
 	uint16_t copy_nb = vq->batch_copy_nb_elems;
 	int error = 0;
 
@@ -541,9 +685,12 @@ copy_mbuf_to_desc_mergeable(struct virtio_net *dev, struct vhost_virtqueue *vq,
 		goto out;
 	}
 
-	desc_addr = vhost_iova_to_vva(dev, vq, buf_vec[vec_idx].buf_addr,
-						buf_vec[vec_idx].buf_len,
-						VHOST_ACCESS_RW);
+	desc_chunck_len = buf_vec[vec_idx].buf_len;
+	desc_gaddr = buf_vec[vec_idx].buf_addr;
+	desc_addr = vhost_iova_to_vva(dev, vq,
+					desc_gaddr,
+					&desc_chunck_len,
+					VHOST_ACCESS_RW);
 	if (buf_vec[vec_idx].buf_len < dev->vhost_hlen || !desc_addr) {
 		error = -1;
 		goto out;
@@ -551,14 +698,35 @@ copy_mbuf_to_desc_mergeable(struct virtio_net *dev, struct vhost_virtqueue *vq,
 
 	hdr_mbuf = m;
 	hdr_addr = desc_addr;
-	hdr_phys_addr = buf_vec[vec_idx].buf_addr;
+	if (unlikely(desc_chunck_len < dev->vhost_hlen))
+		hdr = &tmp_hdr;
+	else
+		hdr = (struct virtio_net_hdr_mrg_rxbuf *)(uintptr_t)hdr_addr;
+	hdr_phys_addr = desc_gaddr;
 	rte_prefetch0((void *)(uintptr_t)hdr_addr);
 
 	VHOST_LOG_DEBUG(VHOST_DATA, "(%d) RX: num merge buffers %d\n",
 		dev->vid, num_buffers);
 
 	desc_avail  = buf_vec[vec_idx].buf_len - dev->vhost_hlen;
-	desc_offset = dev->vhost_hlen;
+	if (unlikely(desc_chunck_len < dev->vhost_hlen)) {
+		desc_chunck_len = desc_avail;
+		desc_gaddr += dev->vhost_hlen;
+		desc_addr = vhost_iova_to_vva(dev, vq,
+				desc_gaddr,
+				&desc_chunck_len,
+				VHOST_ACCESS_RW);
+		if (unlikely(!desc_addr)) {
+			error = -1;
+			goto out;
+		}
+
+		desc_offset = 0;
+	} else {
+		desc_offset = dev->vhost_hlen;
+		desc_chunck_len -= dev->vhost_hlen;
+	}
+
 
 	mbuf_avail  = rte_pktmbuf_data_len(m);
 	mbuf_offset = 0;
@@ -566,10 +734,12 @@ copy_mbuf_to_desc_mergeable(struct virtio_net *dev, struct vhost_virtqueue *vq,
 		/* done with current desc buf, get the next one */
 		if (desc_avail == 0) {
 			vec_idx++;
+			desc_chunck_len = buf_vec[vec_idx].buf_len;
+			desc_gaddr = buf_vec[vec_idx].buf_addr;
 			desc_addr =
 				vhost_iova_to_vva(dev, vq,
-					buf_vec[vec_idx].buf_addr,
-					buf_vec[vec_idx].buf_len,
+					desc_gaddr,
+					&desc_chunck_len,
 					VHOST_ACCESS_RW);
 			if (unlikely(!desc_addr)) {
 				error = -1;
@@ -580,6 +750,17 @@ copy_mbuf_to_desc_mergeable(struct virtio_net *dev, struct vhost_virtqueue *vq,
 			rte_prefetch0((void *)(uintptr_t)desc_addr);
 			desc_offset = 0;
 			desc_avail  = buf_vec[vec_idx].buf_len;
+		} else if (unlikely(desc_chunck_len == 0)) {
+			desc_chunck_len = desc_avail;
+			desc_gaddr += desc_offset;
+			desc_addr = vhost_iova_to_vva(dev, vq,
+					desc_gaddr,
+					&desc_chunck_len, VHOST_ACCESS_RW);
+			if (unlikely(!desc_addr)) {
+				error = -1;
+				goto out;
+			}
+			desc_offset = 0;
 		}
 
 		/* done with current mbuf, get the next one */
@@ -591,30 +772,55 @@ copy_mbuf_to_desc_mergeable(struct virtio_net *dev, struct vhost_virtqueue *vq,
 		}
 
 		if (hdr_addr) {
-			struct virtio_net_hdr_mrg_rxbuf *hdr;
-
-			hdr = (struct virtio_net_hdr_mrg_rxbuf *)(uintptr_t)
-				hdr_addr;
 			virtio_enqueue_offload(hdr_mbuf, &hdr->hdr);
 			ASSIGN_UNLESS_EQUAL(hdr->num_buffers, num_buffers);
 
-			vhost_log_write(dev, hdr_phys_addr, dev->vhost_hlen);
-			PRINT_PACKET(dev, (uintptr_t)hdr_addr,
-				     dev->vhost_hlen, 0);
+			if (unlikely(hdr == &tmp_hdr)) {
+				uint64_t len;
+				uint64_t remain = dev->vhost_hlen;
+				uint64_t src = (uint64_t)(uintptr_t)hdr, dst;
+				uint64_t guest_addr = hdr_phys_addr;
+
+				while (remain) {
+					len = remain;
+					dst = vhost_iova_to_vva(dev, vq,
+							guest_addr, &len,
+							VHOST_ACCESS_RW);
+					if (unlikely(!dst || !len)) {
+						error = -1;
+						goto out;
+					}
+
+					rte_memcpy((void *)(uintptr_t)dst,
+							(void *)(uintptr_t)src,
+							len);
+
+					PRINT_PACKET(dev, (uintptr_t)dst,
+							(uint32_t)len, 0);
+					vhost_log_write(dev, guest_addr, len);
+
+					remain -= len;
+					guest_addr += len;
+					dst += len;
+				}
+			} else {
+				PRINT_PACKET(dev, (uintptr_t)hdr_addr,
+						dev->vhost_hlen, 0);
+				vhost_log_write(dev, hdr_phys_addr,
+						dev->vhost_hlen);
+			}
 
 			hdr_addr = 0;
 		}
 
-		cpy_len = RTE_MIN(desc_avail, mbuf_avail);
+		cpy_len = RTE_MIN(desc_chunck_len, mbuf_avail);
 
 		if (likely(cpy_len > MAX_BATCH_LEN || copy_nb >= vq->size)) {
 			rte_memcpy((void *)((uintptr_t)(desc_addr +
 							desc_offset)),
 				rte_pktmbuf_mtod_offset(m, void *, mbuf_offset),
 				cpy_len);
-			vhost_log_write(dev,
-				buf_vec[vec_idx].buf_addr + desc_offset,
-				cpy_len);
+			vhost_log_write(dev, desc_gaddr + desc_offset, cpy_len);
 			PRINT_PACKET(dev, (uintptr_t)(desc_addr + desc_offset),
 				cpy_len, 0);
 		} else {
@@ -622,8 +828,7 @@ copy_mbuf_to_desc_mergeable(struct virtio_net *dev, struct vhost_virtqueue *vq,
 				(void *)((uintptr_t)(desc_addr + desc_offset));
 			batch_copy[copy_nb].src =
 				rte_pktmbuf_mtod_offset(m, void *, mbuf_offset);
-			batch_copy[copy_nb].log_addr =
-				buf_vec[vec_idx].buf_addr + desc_offset;
+			batch_copy[copy_nb].log_addr = desc_gaddr + desc_offset;
 			batch_copy[copy_nb].len = cpy_len;
 			copy_nb++;
 		}
@@ -632,6 +837,7 @@ copy_mbuf_to_desc_mergeable(struct virtio_net *dev, struct vhost_virtqueue *vq,
 		mbuf_offset += cpy_len;
 		desc_avail  -= cpy_len;
 		desc_offset += cpy_len;
+		desc_chunck_len -= cpy_len;
 	}
 
 out:
@@ -883,11 +1089,13 @@ copy_desc_to_mbuf(struct virtio_net *dev, struct vhost_virtqueue *vq,
 		  struct rte_mempool *mbuf_pool)
 {
 	struct vring_desc *desc;
-	uint64_t desc_addr;
+	uint64_t desc_addr, desc_gaddr;
 	uint32_t desc_avail, desc_offset;
 	uint32_t mbuf_avail, mbuf_offset;
 	uint32_t cpy_len;
+	uint64_t desc_chunck_len;
 	struct rte_mbuf *cur = m, *prev = m;
+	struct virtio_net_hdr tmp_hdr;
 	struct virtio_net_hdr *hdr = NULL;
 	/* A counter to avoid desc dead loop chain */
 	uint32_t nr_desc = 1;
@@ -904,10 +1112,12 @@ copy_desc_to_mbuf(struct virtio_net *dev, struct vhost_virtqueue *vq,
 		goto out;
 	}
 
+	desc_chunck_len = desc->len;
+	desc_gaddr = desc->addr;
 	//将对端的地址转换为自已的地址
 	desc_addr = vhost_iova_to_vva(dev,
-					vq, desc->addr,
-					desc->len,
+					vq, desc_gaddr,
+					&desc_chunck_len,
 					VHOST_ACCESS_RO);
 	if (unlikely(!desc_addr)) {
 		error = -1;
@@ -916,8 +1126,40 @@ copy_desc_to_mbuf(struct virtio_net *dev, struct vhost_virtqueue *vq,
 
 	//如果有offload，则预取virtio_net_hdr
 	if (virtio_net_with_host_offload(dev)) {
-		hdr = (struct virtio_net_hdr *)((uintptr_t)desc_addr);
-		rte_prefetch0(hdr);
+		if (unlikely(desc_chunck_len < sizeof(struct virtio_net_hdr))) {
+			uint64_t len = desc_chunck_len;
+			uint64_t remain = sizeof(struct virtio_net_hdr);
+			uint64_t src = desc_addr;
+			uint64_t dst = (uint64_t)(uintptr_t)&tmp_hdr;
+			uint64_t guest_addr = desc_gaddr;
+
+			/*
+			 * No luck, the virtio-net header doesn't fit
+			 * in a contiguous virtual area.
+			 */
+			while (remain) {
+				len = remain;
+				src = vhost_iova_to_vva(dev, vq,
+						guest_addr, &len,
+						VHOST_ACCESS_RO);
+				if (unlikely(!src || !len)) {
+					error = -1;
+					goto out;
+				}
+
+				rte_memcpy((void *)(uintptr_t)dst,
+						   (void *)(uintptr_t)src, len);
+
+				guest_addr += len;
+				remain -= len;
+				dst += len;
+			}
+
+			hdr = &tmp_hdr;
+		} else {
+			hdr = (struct virtio_net_hdr *)((uintptr_t)desc_addr);
+			rte_prefetch0(hdr);
+		}
 	}
 
 	/*
@@ -935,10 +1177,12 @@ copy_desc_to_mbuf(struct virtio_net *dev, struct vhost_virtqueue *vq,
 			goto out;
 		}
 
+		desc_chunck_len = desc->len;
+		desc_gaddr = desc->addr;
 		//由于切换了desc，重新转换desc地址
 		desc_addr = vhost_iova_to_vva(dev,
-							vq, desc->addr,
-							desc->len,
+							vq, desc_gaddr,
+							&desc_chunck_len,
 							VHOST_ACCESS_RO);
 		if (unlikely(!desc_addr)) {
 			error = -1;
@@ -950,12 +1194,30 @@ copy_desc_to_mbuf(struct virtio_net *dev, struct vhost_virtqueue *vq,
 		nr_desc    += 1;
 	} else {
 		desc_avail  = desc->len - dev->vhost_hlen;
-		desc_offset = dev->vhost_hlen;
+
+		if (unlikely(desc_chunck_len < dev->vhost_hlen)) {
+			desc_chunck_len = desc_avail;
+			desc_gaddr += dev->vhost_hlen;
+			desc_addr = vhost_iova_to_vva(dev,
+					vq, desc_gaddr,
+					&desc_chunck_len,
+					VHOST_ACCESS_RO);
+			if (unlikely(!desc_addr)) {
+				error = -1;
+				goto out;
+			}
+
+			desc_offset = 0;
+		} else {
+			desc_offset = dev->vhost_hlen;
+			desc_chunck_len -= dev->vhost_hlen;
+		}
 	}
 
 	rte_prefetch0((void *)(uintptr_t)(desc_addr + desc_offset));
 
-	PRINT_PACKET(dev, (uintptr_t)(desc_addr + desc_offset), desc_avail, 0);
+	PRINT_PACKET(dev, (uintptr_t)(desc_addr + desc_offset),
+			(uint32_t)desc_chunck_len, 0);
 
 	mbuf_offset = 0;
 	mbuf_avail  = m->buf_len - RTE_PKTMBUF_HEADROOM;
@@ -964,7 +1226,7 @@ copy_desc_to_mbuf(struct virtio_net *dev, struct vhost_virtqueue *vq,
 
 		//mbuf有一个自已的长度，对方送过来的报文有一个自已的长度
 		//如果要把对方的报文放入mbuf，那个copy的长度只能是两者中最小的一个。
-		cpy_len = RTE_MIN(desc_avail, mbuf_avail);
+		cpy_len = RTE_MIN(desc_chunck_len, mbuf_avail);
 
 		/*
 		 * A desc buf might across two host physical pages that are
@@ -973,7 +1235,7 @@ copy_desc_to_mbuf(struct virtio_net *dev, struct vhost_virtqueue *vq,
 		 */
 		//如果开启了zero copy,直接让mbuf指向这段内存就可以了
 		if (unlikely(dev->dequeue_zero_copy && (hpa = gpa_to_hpa(dev,
-					desc->addr + desc_offset, cpy_len)))) {
+					desc_gaddr + desc_offset, cpy_len)))) {
 			cur->data_len = cpy_len;
 			cur->data_off = 0;
 			//报文指向这一段内存
@@ -989,7 +1251,8 @@ copy_desc_to_mbuf(struct virtio_net *dev, struct vhost_virtqueue *vq,
 		} else {
 			if (likely(cpy_len > MAX_BATCH_LEN ||
 				   copy_nb >= vq->size ||
-				   (hdr && cur == m))) {
+				   (hdr && cur == m) ||
+				   desc->len != desc_chunck_len)) {
 				rte_memcpy(rte_pktmbuf_mtod_offset(cur, void *,
 								   mbuf_offset),
 					   (void *)((uintptr_t)(desc_addr +
@@ -1010,6 +1273,7 @@ copy_desc_to_mbuf(struct virtio_net *dev, struct vhost_virtqueue *vq,
 		mbuf_avail  -= cpy_len;
 		mbuf_offset += cpy_len;
 		desc_avail  -= cpy_len;//desc中还有多少字节没有放入到mbuf
+		desc_chunck_len -= cpy_len;
 		desc_offset += cpy_len;
 
 		/* This desc reaches to its end, get the next one */
@@ -1034,9 +1298,11 @@ copy_desc_to_mbuf(struct virtio_net *dev, struct vhost_virtqueue *vq,
 				goto out;
 			}
 
+			desc_chunck_len = desc->len;
+			desc_gaddr = desc->addr;
 			desc_addr = vhost_iova_to_vva(dev,
-							vq, desc->addr,
-							desc->len,
+							vq, desc_gaddr,
+							&desc_chunck_len,
 							VHOST_ACCESS_RO);
 			if (unlikely(!desc_addr)) {
 				error = -1;
@@ -1048,7 +1314,23 @@ copy_desc_to_mbuf(struct virtio_net *dev, struct vhost_virtqueue *vq,
 			desc_offset = 0;
 			desc_avail  = desc->len;
 
-			PRINT_PACKET(dev, (uintptr_t)desc_addr, desc->len, 0);
+			PRINT_PACKET(dev, (uintptr_t)desc_addr,
+					(uint32_t)desc_chunck_len, 0);
+		} else if (unlikely(desc_chunck_len == 0)) {
+			desc_chunck_len = desc_avail;
+			desc_gaddr += desc_offset;
+			desc_addr = vhost_iova_to_vva(dev, vq,
+					desc_gaddr,
+					&desc_chunck_len,
+					VHOST_ACCESS_RO);
+			if (unlikely(!desc_addr)) {
+				error = -1;
+				goto out;
+			}
+			desc_offset = 0;
+
+			PRINT_PACKET(dev, (uintptr_t)desc_addr,
+					(uint32_t)desc_chunck_len, 0);
 		}
 
 		/*
@@ -1320,8 +1602,9 @@ rte_vhost_dequeue_burst(int vid, uint16_t queue_id,
 	//预取描述符索引（一个cache line,即可以预取4个desc)
 	rte_prefetch0(&vq->desc[desc_indexes[0]]);
 	for (i = 0; i < count; i++) {
-		struct vring_desc *desc;
+		struct vring_desc *desc, *idesc = NULL;
 		uint16_t sz, idx;
+		uint64_t dlen;
 		int err;
 
 		if (likely(i + 1 < count))
@@ -1330,14 +1613,28 @@ rte_vhost_dequeue_burst(int vid, uint16_t queue_id,
 
 		//如果此分支进入，则接下来是一个list段
 		if (vq->desc[desc_indexes[i]].flags & VRING_DESC_F_INDIRECT) {
+			dlen = vq->desc[desc_indexes[i]].len;
 			//取出vhost虚拟地址指向的描述信息
 			desc = (struct vring_desc *)(uintptr_t)
 				vhost_iova_to_vva(dev, vq,
 						vq->desc[desc_indexes[i]].addr,
-						sizeof(*desc),
+						&dlen,
 						VHOST_ACCESS_RO);
 			if (unlikely(!desc))
 				break;
+
+			if (unlikely(dlen < vq->desc[desc_indexes[i]].len)) {
+				/*
+				 * The indirect desc table is not contiguous
+				 * in process VA space, we have to copy it.
+				 */
+				idesc = alloc_copy_ind_table(dev, vq,
+						&vq->desc[desc_indexes[i]]);
+				if (unlikely(!idesc))
+					break;
+
+				desc = idesc;
+			}
 
 			rte_prefetch0(desc);
 			sz = vq->desc[desc_indexes[i]].len / sizeof(*desc);//段的长度
@@ -1353,6 +1650,7 @@ rte_vhost_dequeue_burst(int vid, uint16_t queue_id,
 		if (unlikely(pkts[i] == NULL)) {
 			RTE_LOG(ERR, VHOST_DATA,
 				"Failed to allocate memory for mbuf.\n");
+			free_ind_table(idesc);
 			break;
 		}
 
@@ -1361,6 +1659,7 @@ rte_vhost_dequeue_burst(int vid, uint16_t queue_id,
 					mbuf_pool);
 		if (unlikely(err)) {
 			rte_pktmbuf_free(pkts[i]);
+			free_ind_table(idesc);
 			break;
 		}
 
@@ -1370,6 +1669,7 @@ rte_vhost_dequeue_burst(int vid, uint16_t queue_id,
 			zmbuf = get_zmbuf(vq);
 			if (!zmbuf) {
 				rte_pktmbuf_free(pkts[i]);
+				free_ind_table(idesc);
 				break;
 			}
 			zmbuf->mbuf = pkts[i];
@@ -1386,6 +1686,9 @@ rte_vhost_dequeue_burst(int vid, uint16_t queue_id,
 			vq->nr_zmbuf += 1;
 			TAILQ_INSERT_TAIL(&vq->zmbuf_list, zmbuf, next);
 		}
+
+		if (unlikely(!!idesc))
+			free_ind_table(idesc);
 	}
 	vq->last_avail_idx += i;//记录本次收到那个位置了
 

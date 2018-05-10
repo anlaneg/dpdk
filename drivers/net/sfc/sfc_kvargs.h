@@ -33,11 +33,13 @@ extern "C" {
 #define SFC_KVARG_DATAPATH_EFX		"efx"
 #define SFC_KVARG_DATAPATH_EF10		"ef10"
 #define SFC_KVARG_DATAPATH_EF10_SIMPLE	"ef10_simple"
+#define SFC_KVARG_DATAPATH_EF10_ESSB	"ef10_essb"
 
 #define SFC_KVARG_RX_DATAPATH		"rx_datapath"
 #define SFC_KVARG_VALUES_RX_DATAPATH \
 	"[" SFC_KVARG_DATAPATH_EFX "|" \
-	    SFC_KVARG_DATAPATH_EF10 "]"
+	    SFC_KVARG_DATAPATH_EF10 "|" \
+	    SFC_KVARG_DATAPATH_EF10_ESSB "]"
 
 #define SFC_KVARG_TX_DATAPATH		"tx_datapath"
 #define SFC_KVARG_VALUES_TX_DATAPATH \
@@ -51,11 +53,15 @@ extern "C" {
 #define SFC_KVARG_FW_VARIANT_FULL_FEATURED	"full-feature"
 #define SFC_KVARG_FW_VARIANT_LOW_LATENCY	"ultra-low-latency"
 #define SFC_KVARG_FW_VARIANT_PACKED_STREAM	"capture-packed-stream"
+#define SFC_KVARG_FW_VARIANT_DPDK		"dpdk"
 #define SFC_KVARG_VALUES_FW_VARIANT \
 	"[" SFC_KVARG_FW_VARIANT_DONT_CARE "|" \
 	    SFC_KVARG_FW_VARIANT_FULL_FEATURED "|" \
 	    SFC_KVARG_FW_VARIANT_LOW_LATENCY "|" \
-	    SFC_KVARG_FW_VARIANT_PACKED_STREAM "]"
+	    SFC_KVARG_FW_VARIANT_PACKED_STREAM "|" \
+	    SFC_KVARG_FW_VARIANT_DPDK "]"
+
+#define SFC_KVARG_RXD_WAIT_TIMEOUT_NS	"rxd_wait_timeout_ns"
 
 struct sfc_adapter;
 

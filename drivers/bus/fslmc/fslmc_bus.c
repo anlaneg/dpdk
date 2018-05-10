@@ -164,6 +164,8 @@ scan_one_fslmc_device(char *dev_name)
 		dev->dev_type = DPAA2_CI;
 	else if (!strncmp("dpmcp", t_ptr, 5))
 		dev->dev_type = DPAA2_MPORTAL;
+	else if (!strncmp("dpdmai", t_ptr, 6))
+		dev->dev_type = DPAA2_QDMA;
 	else
 		dev->dev_type = DPAA2_UNKNOWN;
 
@@ -255,7 +257,7 @@ scan_fail_cleanup:
 	/* Remove all devices in the list */
 	cleanup_fslmc_device_list();
 scan_fail:
-	DPAA2_BUS_INFO("FSLMC Bus Not Available. Skipping");
+	DPAA2_BUS_DEBUG("FSLMC Bus Not Available. Skipping");
 	/* Irrespective of failure, scan only return success */
 	return 0;
 }

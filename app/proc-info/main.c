@@ -628,7 +628,7 @@ main(int argc, char **argv)
 		return 0;
 	}
 
-	nb_ports = rte_eth_dev_count();
+	nb_ports = rte_eth_dev_count_avail();
 	if (nb_ports == 0)
 		rte_exit(EXIT_FAILURE, "No Ethernet ports - bye\n");
 
@@ -636,7 +636,7 @@ main(int argc, char **argv)
 	if (enabled_port_mask == 0)
 		enabled_port_mask = 0xffff;
 
-	for (i = 0; i < nb_ports; i++) {
+	RTE_ETH_FOREACH_DEV(i) {
 		if (enabled_port_mask & (1 << i)) {
 			if (enable_stats)
 				nic_stats_display(i);

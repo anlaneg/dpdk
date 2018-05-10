@@ -142,7 +142,8 @@ struct dpaa2_dpci_dev {
 	uint16_t token;
 	rte_atomic16_t in_use;
 	uint32_t dpci_id; /*HW ID for DPCI object */
-	struct dpaa2_queue queue[DPAA2_DPCI_MAX_QUEUES];
+	struct dpaa2_queue rx_queue[DPAA2_DPCI_MAX_QUEUES];
+	struct dpaa2_queue tx_queue[DPAA2_DPCI_MAX_QUEUES];
 };
 
 /*! Global MCP list */
@@ -188,7 +189,7 @@ enum qbman_fd_format {
 	((fd)->simple.frc = (0x80000000 | (len)))
 #define DPAA2_GET_FD_FRC_PARSE_SUM(fd)	\
 			((uint16_t)(((fd)->simple.frc & 0xffff0000) >> 16))
-#define DPAA2_SET_FD_FRC(fd, frc)	((fd)->simple.frc = frc)
+#define DPAA2_SET_FD_FRC(fd, _frc)	((fd)->simple.frc = _frc)
 #define DPAA2_RESET_FD_CTRL(fd)	 ((fd)->simple.ctrl = 0)
 
 #define	DPAA2_SET_FD_ASAL(fd, asal)	((fd)->simple.ctrl |= (asal << 16))
@@ -211,10 +212,12 @@ enum qbman_fd_format {
 } while (0)
 #define DPAA2_SET_FLE_OFFSET(fle, offset) \
 	((fle)->fin_bpid_offset |= (uint32_t)(offset) << 16)
+#define DPAA2_SET_FLE_LEN(fle, len)    ((fle)->length = len)
 #define DPAA2_SET_FLE_BPID(fle, bpid) ((fle)->fin_bpid_offset |= (size_t)bpid)
 #define DPAA2_GET_FLE_BPID(fle) ((fle)->fin_bpid_offset & 0x000000ff)
 #define DPAA2_SET_FLE_FIN(fle)	((fle)->fin_bpid_offset |= 1 << 31)
 #define DPAA2_SET_FLE_IVP(fle)   (((fle)->fin_bpid_offset |= 0x00004000))
+#define DPAA2_SET_FLE_BMT(fle)   (((fle)->fin_bpid_offset |= 0x00008000))
 #define DPAA2_SET_FD_COMPOUND_FMT(fd)	\
 	((fd)->simple.bpid_offset |= (uint32_t)1 << 28)
 #define DPAA2_GET_FD_ADDR(fd)	\
@@ -224,6 +227,10 @@ enum qbman_fd_format {
 #define DPAA2_GET_FD_BPID(fd)	(((fd)->simple.bpid_offset & 0x00003FFF))
 #define DPAA2_GET_FD_IVP(fd)   (((fd)->simple.bpid_offset & 0x00004000) >> 14)
 #define DPAA2_GET_FD_OFFSET(fd)	(((fd)->simple.bpid_offset & 0x0FFF0000) >> 16)
+#define DPAA2_GET_FD_FRC(fd)   ((fd)->simple.frc)
+#define DPAA2_GET_FD_FLC(fd) \
+	(((uint64_t)((fd)->simple.flc_hi) << 32) + (fd)->simple.flc_lo)
+#define DPAA2_GET_FD_ERR(fd)   ((fd)->simple.bpid_offset & 0x000000FF)
 #define DPAA2_GET_FLE_OFFSET(fle) (((fle)->fin_bpid_offset & 0x0FFF0000) >> 16)
 #define DPAA2_SET_FLE_SG_EXT(fle) ((fle)->fin_bpid_offset |= (uint64_t)1 << 29)
 #define DPAA2_IS_SET_FLE_SG_EXT(fle)	\
@@ -254,15 +261,38 @@ enum qbman_fd_format {
  */
 #define DPAA2_EQ_RESP_ALWAYS		1
 
+/* Various structures representing contiguous memory maps */
+struct dpaa2_memseg {
+	TAILQ_ENTRY(dpaa2_memseg) next;
+	char *vaddr;
+	rte_iova_t iova;
+	size_t len;
+};
+
+TAILQ_HEAD(dpaa2_memseg_list, dpaa2_memseg);
+extern struct dpaa2_memseg_list rte_dpaa2_memsegs;
+
 #ifdef RTE_LIBRTE_DPAA2_USE_PHYS_IOVA
 extern uint8_t dpaa2_virt_mode;
 static void *dpaa2_mem_ptov(phys_addr_t paddr) __attribute__((unused));
 /* todo - this is costly, need to write a fast coversion routine */
 static void *dpaa2_mem_ptov(phys_addr_t paddr)
 {
+	struct dpaa2_memseg *ms;
+
 	if (dpaa2_virt_mode)
 		return (void *)(size_t)paddr;
 
+	/* Check if the address is already part of the memseg list internally
+	 * maintained by the dpaa2 driver.
+	 */
+	TAILQ_FOREACH(ms, &rte_dpaa2_memsegs, next) {
+		if (paddr >= ms->iova && paddr <
+			ms->iova + ms->len)
+			return RTE_PTR_ADD(ms->vaddr, (uintptr_t)(paddr - ms->iova));
+	}
+
+	/* If not, Fallback to full memseg list searching */
 	return rte_mem_iova2virt(paddr);
 }
 
@@ -288,7 +318,6 @@ static phys_addr_t dpaa2_mem_vtop(uint64_t vaddr)
  */
 
 #define DPAA2_MBUF_VADDR_TO_IOVA(mbuf) ((mbuf)->buf_iova)
-#define DPAA2_OP_VADDR_TO_IOVA(op) (op->phys_addr)
 
 /**
  * macro to convert Virtual address to IOVA
@@ -309,7 +338,6 @@ static phys_addr_t dpaa2_mem_vtop(uint64_t vaddr)
 #else	/* RTE_LIBRTE_DPAA2_USE_PHYS_IOVA */
 
 #define DPAA2_MBUF_VADDR_TO_IOVA(mbuf) ((mbuf)->buf_addr)
-#define DPAA2_OP_VADDR_TO_IOVA(op) (op)
 #define DPAA2_VADDR_TO_IOVA(_vaddr) (_vaddr)
 #define DPAA2_IOVA_TO_VADDR(_iova) (_iova)
 #define DPAA2_MODIFY_IOVA_TO_VADDR(_mem, _type)

@@ -662,10 +662,7 @@ check_socket(const struct rte_memseg_list *msl, void *arg)
 {
 	int *socket_id = arg;
 
-	if (msl->socket_id == *socket_id && msl->memseg_arr.count != 0)
-		return 1;
-
-	return 0;
+	return *socket_id == msl->socket_id;
 }
 
 static void
@@ -713,24 +710,8 @@ rte_eal_iopl_init(void)
 #ifdef VFIO_PRESENT
 static int rte_eal_vfio_setup(void)
 {
-	int vfio_enabled = 0;
-
 	if (rte_vfio_enable("vfio"))
 		return -1;
-	vfio_enabled = rte_vfio_is_enabled("vfio");
-
-	if (vfio_enabled) {
-
-		/* if we are primary process, create a thread to communicate with
-		 * secondary processes. the thread will use a socket to wait for
-		 * requests from secondary process to send open file descriptors,
-		 * because VFIO does not allow multiple open descriptors on a group or
-		 * VFIO container.
-		 */
-		if (internal_config.process_type == RTE_PROC_PRIMARY &&
-				vfio_mp_sync_setup() < 0)
-			return -1;
-	}
 
 	return 0;
 }
@@ -808,6 +789,19 @@ rte_eal_init(int argc, char **argv)
 		return -1;
 	}
 
+	rte_config_init();
+
+	/* Put mp channel init before bus scan so that we can init the vdev
+	 * bus through mp channel in the secondary process before the bus scan.
+	 */
+	if (rte_mp_channel_init() < 0) {
+		rte_eal_init_alert("failed to init mp channel\n");
+		if (rte_eal_process_type() == RTE_PROC_PRIMARY) {
+			rte_errno = EFAULT;
+			return -1;
+		}
+	}
+
 	if (rte_bus_scan()) {
 		rte_eal_init_alert("Cannot scan the buses for devices\n");
 		rte_errno = ENODEV;
@@ -859,22 +853,12 @@ rte_eal_init(int argc, char **argv)
 
 	rte_srand(rte_rdtsc());//rand种子
 
-	rte_config_init();
-
 	//初始化syslog
 	if (rte_eal_log_init(logid, internal_config.syslog_facility) < 0) {
 		rte_eal_init_alert("Cannot init logging.");
 		rte_errno = ENOMEM;
 		rte_atomic32_clear(&run_once);
 		return -1;
-	}
-
-	if (rte_mp_channel_init() < 0) {
-		rte_eal_init_alert("failed to init mp channel\n");
-		if (rte_eal_process_type() == RTE_PROC_PRIMARY) {
-			rte_errno = EFAULT;
-			return -1;
-		}
 	}
 
 #ifdef VFIO_PRESENT
@@ -933,7 +917,7 @@ rte_eal_init(int argc, char **argv)
 	//设置master线程
 	eal_thread_init_master(rte_config.master_lcore);
 
-	ret = eal_thread_dump_affinity(cpuset, RTE_CPU_AFFINITY_STR_LEN);
+	ret = eal_thread_dump_affinity(cpuset, sizeof(cpuset));
 
 	RTE_LOG(DEBUG, EAL, "Master lcore %u is ready (tid=%x;cpuset=[%s%s])\n",
 		rte_config.master_lcore, (int)thread_id, cpuset,
@@ -969,7 +953,7 @@ rte_eal_init(int argc, char **argv)
 
 		/* Set thread_name for aid in debugging. */
 		//设置slave线程名称
-		snprintf(thread_name, RTE_MAX_THREAD_NAME_LEN,
+		snprintf(thread_name, sizeof(thread_name),
 			"lcore-slave-%d", i);
 		ret = rte_thread_setname(lcore_config[i].thread_id,
 						thread_name);
@@ -1000,6 +984,12 @@ rte_eal_init(int argc, char **argv)
 		rte_errno = ENOTSUP;
 		return -1;
 	}
+
+#ifdef VFIO_PRESENT
+	/* Register mp action after probe() so that we got enough info */
+	if (rte_vfio_is_enabled("vfio") && vfio_mp_sync_setup() < 0)
+		return -1;
+#endif
 
 	/* initialize default service/lcore mappings and start running. Ignore
 	 * -ENOTSUP, as it indicates no service coremask passed to EAL.

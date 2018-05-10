@@ -185,6 +185,7 @@ rte_gro_reassemble_burst(struct rte_mbuf **pkts,
 				unprocess_pkts[unprocess_num++] = pkts[i];
 		} else if (IS_IPV4_TCP_PKT(pkts[i]->packet_type) &&
 				do_tcp4_gro) {
+			//tcp重组
 			ret = gro_tcp4_reassemble(pkts[i], &tcp_tbl, 0);
 			if (ret > 0)
 				/* merge successfully */

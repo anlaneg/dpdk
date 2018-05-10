@@ -304,14 +304,18 @@ struct virtio_net {
 #define VHOST_LOG_PAGE	4096
 
 /*
- * Mark all pages belonging to the same dirty log bitmap byte
- * as dirty. The goal is to avoid concurrency between different
- * threads doing atomic read-modify-writes on the same byte.
+ * Atomically set a bit in memory.
  */
+static __rte_always_inline void
+vhost_set_bit(unsigned int nr, volatile uint8_t *addr)
+{
+	__sync_fetch_and_or_8(addr, (1U << nr));
+}
+
 static __rte_always_inline void
 vhost_log_page(uint8_t *log_base, uint64_t page)
 {
-	log_base[page / 8] = 0xff;
+	vhost_set_bit(page % 8, &log_base[page / 8]);
 }
 
 static __rte_always_inline void
@@ -438,18 +442,18 @@ struct vhost_device_ops const *vhost_driver_callback_get(const char *path);
 void vhost_backend_cleanup(struct virtio_net *dev);
 
 uint64_t __vhost_iova_to_vva(struct virtio_net *dev, struct vhost_virtqueue *vq,
-			uint64_t iova, uint64_t size, uint8_t perm);
+			uint64_t iova, uint64_t *len, uint8_t perm);
 int vring_translate(struct virtio_net *dev, struct vhost_virtqueue *vq);
 void vring_invalidate(struct virtio_net *dev, struct vhost_virtqueue *vq);
 
 static __rte_always_inline uint64_t
 vhost_iova_to_vva(struct virtio_net *dev, struct vhost_virtqueue *vq,
-			uint64_t iova, uint64_t size, uint8_t perm)
+			uint64_t iova, uint64_t *len, uint8_t perm)
 {
 	if (!(dev->features & (1ULL << VIRTIO_F_IOMMU_PLATFORM)))
-		return rte_vhost_gpa_to_vva(dev->mem, iova);
+		return rte_vhost_va_from_guest_pa(dev->mem, iova, len);
 
-	return __vhost_iova_to_vva(dev, vq, iova, size, perm);
+	return __vhost_iova_to_vva(dev, vq, iova, len, perm);
 }
 
 #define vhost_used_event(vr) \

@@ -27,6 +27,13 @@
 
 #include <dpaa_mempool.h>
 
+/* List of all the memseg information locally maintained in dpaa driver. This
+ * is to optimize the PA_to_VA searches until a better mechanism (algo) is
+ * available.
+ */
+struct dpaa_memseg_list rte_dpaa_memsegs
+	= TAILQ_HEAD_INITIALIZER(rte_dpaa_memsegs);
+
 struct dpaa_bp_info rte_dpaa_bpid_info[DPAA_MAX_BPOOLS];
 
 static int
@@ -264,10 +271,9 @@ dpaa_mbuf_get_count(const struct rte_mempool *mp)
 }
 
 static int
-dpaa_register_memory_area(const struct rte_mempool *mp,
-			  char *vaddr __rte_unused,
-			  rte_iova_t paddr __rte_unused,
-			  size_t len)
+dpaa_populate(struct rte_mempool *mp, unsigned int max_objs,
+	      void *vaddr, rte_iova_t paddr, size_t len,
+	      rte_mempool_populate_obj_cb_t *obj_cb, void *obj_cb_arg)
 {
 	struct dpaa_bp_info *bp_info;
 	unsigned int total_elt_sz;
@@ -288,8 +294,34 @@ dpaa_register_memory_area(const struct rte_mempool *mp,
 	/* Detect pool area has sufficient space for elements in this memzone */
 	if (len >= total_elt_sz * mp->size)
 		bp_info->flags |= DPAA_MPOOL_SINGLE_SEGMENT;
+	struct dpaa_memseg *ms;
 
-	return 0;
+	/* For each memory chunk pinned to the Mempool, a linked list of the
+	 * contained memsegs is created for searching when PA to VA
+	 * conversion is required.
+	 */
+	ms = rte_zmalloc(NULL, sizeof(struct dpaa_memseg), 0);
+	if (!ms) {
+		DPAA_MEMPOOL_ERR("Unable to allocate internal memory.");
+		DPAA_MEMPOOL_WARN("Fast Physical to Virtual Addr translation would not be available.");
+		/* If the element is not added, it would only lead to failure
+		 * in searching for the element and the logic would Fallback
+		 * to traditional DPDK memseg traversal code. So, this is not
+		 * a blocking error - but, error would be printed on screen.
+		 */
+		return 0;
+	}
+
+	ms->vaddr = vaddr;
+	ms->iova = paddr;
+	ms->len = len;
+	/* Head insertions are generally faster than tail insertions as the
+	 * buffers pinned are picked from rear end.
+	 */
+	TAILQ_INSERT_HEAD(&rte_dpaa_memsegs, ms, next);
+
+	return rte_mempool_op_populate_default(mp, max_objs, vaddr, paddr, len,
+					       obj_cb, obj_cb_arg);
 }
 
 struct rte_mempool_ops dpaa_mpool_ops = {
@@ -299,7 +331,7 @@ struct rte_mempool_ops dpaa_mpool_ops = {
 	.enqueue = dpaa_mbuf_free_bulk,
 	.dequeue = dpaa_mbuf_alloc_bulk,
 	.get_count = dpaa_mbuf_get_count,
-	.register_memory_area = dpaa_register_memory_area,
+	.populate = dpaa_populate,
 };
 
 MEMPOOL_REGISTER_OPS(dpaa_mpool_ops);

@@ -262,6 +262,7 @@ gro_tcp4_reassemble(struct rte_mbuf *pkt,
 	 * packet into the flow.
 	 */
 	if (find == 0) {
+		//没有找到，缓存新的item
 		item_idx = insert_new_item(tbl, pkt, start_time,
 				INVALID_ARRAY_INDEX, sent_seq, ip_id,
 				is_atomic);
