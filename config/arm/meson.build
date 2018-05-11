@@ -8,7 +8,7 @@ march_opt = '-march=@0@'.format(machine)
 arm_force_native_march = false
 
 machine_args_generic = [
-	['default', ['-march=armv8-a']],
+	['default', ['-march=armv8-a+crc+crypto']],
 	['native', ['-march=native']],
 	['0xd03', ['-mcpu=cortex-a53']],
 	['0xd04', ['-mcpu=cortex-a35']],
@@ -82,15 +82,6 @@ impl_0x56 = ['Marvell', flags_generic, machine_args_generic]
 impl_0x69 = ['Intel', flags_generic, machine_args_generic]
 impl_dpaa = ['NXP DPAA', flags_dpaa, machine_args_generic]
 impl_dpaa2 = ['NXP DPAA2', flags_dpaa2, machine_args_generic]
-
-
-if cc.get_define('__clang__') != ''
-	dpdk_conf.set_quoted('RTE_TOOLCHAIN', 'clang')
-	dpdk_conf.set('RTE_TOOLCHAIN_CLANG', 1)
-else
-	dpdk_conf.set_quoted('RTE_TOOLCHAIN', 'gcc')
-	dpdk_conf.set('RTE_TOOLCHAIN_GCC', 1)
-endif
 
 dpdk_conf.set('RTE_FORCE_INTRINSICS', 1)
 

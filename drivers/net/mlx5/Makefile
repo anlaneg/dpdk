@@ -8,7 +8,7 @@ include $(RTE_SDK)/mk/rte.vars.mk
 LIB = librte_pmd_mlx5.a
 LIB_GLUE = $(LIB_GLUE_BASE).$(LIB_GLUE_VERSION)
 LIB_GLUE_BASE = librte_pmd_mlx5_glue.so
-LIB_GLUE_VERSION = 18.02.0
+LIB_GLUE_VERSION = 18.05.0
 
 # Sources.
 SRCS-$(CONFIG_RTE_LIBRTE_MLX5_PMD) += mlx5.c
@@ -110,6 +110,11 @@ mlx5_autoconf.h.new: $(RTE_SDK)/buildtools/auto-config-h.sh
 		HAVE_IBV_WQ_FLAG_RX_END_PADDING \
 		infiniband/verbs.h \
 		enum IBV_WQ_FLAG_RX_END_PADDING \
+		$(AUTOCONF_OUTPUT)
+	$Q sh -- '$<' '$@' \
+		HAVE_IBV_MLX5_MOD_SWP \
+		infiniband/mlx5dv.h \
+		enum MLX5DV_CONTEXT_MASK_SWP \
 		$(AUTOCONF_OUTPUT)
 	$Q sh -- '$<' '$@' \
 		HAVE_IBV_MLX5_MOD_MPW \

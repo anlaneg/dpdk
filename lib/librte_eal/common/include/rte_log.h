@@ -86,32 +86,6 @@ extern struct rte_logs rte_logs;
 #define RTE_LOG_DEBUG    8U  /**< Debug-level messages.             */
 
 /**
- * @warning
- * @b EXPERIMENTAL: this API may change without prior notice
- *
- * Entry definition for the storage to keep EAL log level options
- * which are found to have log type regular expressions specified.
- */
-struct rte_eal_opt_loglevel {
-	/** Next list entry */
-	TAILQ_ENTRY(rte_eal_opt_loglevel) next;
-	/** Regular expression string obtained from the option */
-	char *re_type;
-	/** Log level value obtained from the option */
-	uint32_t level;
-};
-
-TAILQ_HEAD(rte_eal_opt_loglevel_list, rte_eal_opt_loglevel);
-
-/**
- * @warning
- * @b EXPERIMENTAL: this API may change without prior notice
- *
- * Global list of EAL log level options featuring log type expressions
- */
-extern struct rte_eal_opt_loglevel_list opt_loglevel_list;
-
-/**
  * Change the stream that will be used by the logging system.
  *
  * This can be done at any time. The f argument represents the stream
@@ -156,16 +130,28 @@ uint32_t rte_log_get_global_level(void);
 int rte_log_get_level(uint32_t logtype);
 
 /**
- * Set the log level for a given type.
+ * Set the log level for a given type based on shell pattern.
  *
  * @param pattern
- *   The regexp identifying the log type.
+ *   The match pattern identifying the log type.
  * @param level
  *   The level to be set.
  * @return
  *   0 on success, a negative value if level is invalid.
  */
-int rte_log_set_level_regexp(const char *pattern, uint32_t level);
+int rte_log_set_level_pattern(const char *pattern, uint32_t level);
+
+/**
+ * Set the log level for a given type based on regular expression.
+ *
+ * @param regex
+ *   The regular expression identifying the log type.
+ * @param level
+ *   The level to be set.
+ * @return
+ *   0 on success, a negative value if level is invalid.
+ */
+int rte_log_set_level_regexp(const char *regex, uint32_t level);
 
 /**
  * Set the log level for a given type.

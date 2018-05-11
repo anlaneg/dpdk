@@ -503,7 +503,6 @@ static int
 vhost_user_reconnect_init(void)
 {
 	int ret;
-	char thread_name[RTE_MAX_THREAD_NAME_LEN];
 
 	ret = pthread_mutex_init(&reconn_list.mutex, NULL);
 	if (ret < 0) {
@@ -513,21 +512,13 @@ vhost_user_reconnect_init(void)
 	TAILQ_INIT(&reconn_list.head);
 
 	//初始化重连线程
-	ret = pthread_create(&reconn_tid, NULL,
+	ret = rte_ctrl_thread_create(&reconn_tid, "vhost_reconn", NULL,
 			     vhost_user_client_reconnect, NULL);
 	if (ret != 0) {
 		RTE_LOG(ERR, VHOST_CONFIG, "failed to create reconnect thread");
 		if (pthread_mutex_destroy(&reconn_list.mutex)) {
 			RTE_LOG(ERR, VHOST_CONFIG,
 				"failed to destroy reconnect mutex");
-		}
-	} else {
-		snprintf(thread_name, RTE_MAX_THREAD_NAME_LEN,
-			 "vhost-reconn");
-
-		if (rte_thread_setname(reconn_tid, thread_name)) {
-			RTE_LOG(DEBUG, VHOST_CONFIG,
-				"failed to set reconnect thread name");
 		}
 	}
 
@@ -1069,7 +1060,6 @@ rte_vhost_driver_start(const char *path)
 {
 	struct vhost_user_socket *vsocket;
 	static pthread_t fdset_tid;//全局的fd维护线程
-	char thread_name[RTE_MAX_THREAD_NAME_LEN];
 
 	pthread_mutex_lock(&vhost_user.mutex);
 	vsocket = find_vhost_user_socket(path);
@@ -1091,22 +1081,15 @@ rte_vhost_driver_start(const char *path)
 		}
 
 		//启动线程，处理vhost_user的读写事件
-		int ret = pthread_create(&fdset_tid, NULL, fdset_event_dispatch,
-				     &vhost_user.fdset);
+		int ret = rte_ctrl_thread_create(&fdset_tid,
+			"vhost-events", NULL, fdset_event_dispatch,
+			&vhost_user.fdset);
 		if (ret != 0) {
 			RTE_LOG(ERR, VHOST_CONFIG,
 				"failed to create fdset handling thread");
 
 			fdset_pipe_uninit(&vhost_user.fdset);
 			return -1;
-		} else {
-			snprintf(thread_name, RTE_MAX_THREAD_NAME_LEN,
-				 "vhost-events");
-
-			if (rte_thread_setname(fdset_tid, thread_name)) {
-				RTE_LOG(DEBUG, VHOST_CONFIG,
-					"failed to set vhost-event thread name");
-			}
 		}
 	}
 

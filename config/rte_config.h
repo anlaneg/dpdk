@@ -32,6 +32,7 @@
 #define RTE_LOG_DP_LEVEL RTE_LOG_INFO
 #define RTE_BACKTRACE 1
 #define RTE_EAL_VFIO 1
+#define RTE_MAX_VFIO_CONTAINERS 64
 
 /* bsd module defines */
 #define RTE_CONTIGMEM_MAX_NUM_BUFS 64
@@ -59,6 +60,10 @@
 /* eventdev defines */
 #define RTE_EVENT_MAX_DEVS 16
 #define RTE_EVENT_MAX_QUEUES_PER_DEV 64
+#define RTE_EVENT_TIMER_ADAPTER_NUM_MAX 32
+
+/* rawdev defines */
+#define RTE_RAWDEV_MAX_DEVS 10
 
 /* ip_fragmentation defines */
 #define RTE_LIBRTE_IP_FRAG_MAX_FRAG 4
@@ -82,6 +87,10 @@
  */
 /* QuickAssist device */
 #define RTE_QAT_PMD_MAX_NB_SESSIONS 2048
+
+/* virtio crypto defines */
+#define RTE_VIRTIO_CRYPTO_PMD_MAX_NB_SESSIONS 1024
+#define RTE_MAX_VIRTIO_CRYPTO 32
 
 /* DPAA2_SEC */
 #define RTE_DPAA2_SEC_PMD_MAX_NB_SESSIONS 2048

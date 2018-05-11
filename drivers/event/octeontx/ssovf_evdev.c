@@ -18,8 +18,10 @@
 #include <rte_bus_vdev.h>
 
 #include "ssovf_evdev.h"
+#include "timvf_evdev.h"
 
 int otx_logtype_ssovf;
+static uint8_t timvf_enable_stats;
 
 RTE_INIT(otx_ssovf_init_log);
 static void
@@ -529,7 +531,7 @@ ssovf_start(struct rte_eventdev *dev)
 
 	for (i = 0; i < edev->nb_event_queues; i++) {
 		/* Consume all the events through HWS0 */
-		ssows_flush_events(dev->data->ports[0], i);
+		ssows_flush_events(dev->data->ports[0], i, NULL, NULL);
 
 		base = ssovf_bar(OCTEONTX_SSO_GROUP, i, 0);
 		base += SSO_VHGRP_QCTL;
@@ -538,6 +540,16 @@ ssovf_start(struct rte_eventdev *dev)
 
 	ssovf_fastpath_fns_set(dev);
 	return 0;
+}
+
+static void
+ssows_handle_event(void *arg, struct rte_event event)
+{
+	struct rte_eventdev *dev = arg;
+
+	if (dev->dev_ops->dev_stop_flush != NULL)
+		dev->dev_ops->dev_stop_flush(dev->data->dev_id, event,
+					dev->data->dev_stop_flush_arg);
 }
 
 static void
@@ -557,7 +569,8 @@ ssovf_stop(struct rte_eventdev *dev)
 
 	for (i = 0; i < edev->nb_event_queues; i++) {
 		/* Consume all the events through HWS0 */
-		ssows_flush_events(dev->data->ports[0], i);
+		ssows_flush_events(dev->data->ports[0], i,
+				ssows_handle_event, dev);
 
 		base = ssovf_bar(OCTEONTX_SSO_GROUP, i, 0);
 		base += SSO_VHGRP_QCTL;
@@ -590,8 +603,16 @@ ssovf_selftest(const char *key __rte_unused, const char *value,
 	return 0;
 }
 
+static int
+ssovf_timvf_caps_get(const struct rte_eventdev *dev, uint64_t flags,
+		uint32_t *caps, const struct rte_event_timer_adapter_ops **ops)
+{
+	return timvf_timer_adapter_caps_get(dev, flags, caps, ops,
+			timvf_enable_stats);
+}
+
 /* Initialize and register event driver with DPDK Application */
-static const struct rte_eventdev_ops ssovf_ops = {
+static struct rte_eventdev_ops ssovf_ops = {
 	.dev_infos_get    = ssovf_info_get,
 	.dev_configure    = ssovf_configure,
 	.queue_def_conf   = ssovf_queue_def_conf,
@@ -609,6 +630,8 @@ static const struct rte_eventdev_ops ssovf_ops = {
 	.eth_rx_adapter_queue_del = ssovf_eth_rx_adapter_queue_del,
 	.eth_rx_adapter_start = ssovf_eth_rx_adapter_start,
 	.eth_rx_adapter_stop = ssovf_eth_rx_adapter_stop,
+
+	.timer_adapter_caps_get = ssovf_timvf_caps_get,
 
 	.dev_selftest = test_eventdev_octeontx,
 
@@ -633,6 +656,7 @@ ssovf_vdev_probe(struct rte_vdev_device *vdev)
 
 	static const char *const args[] = {
 		SSOVF_SELFTEST_ARG,
+		TIMVF_ENABLE_STATS_ARG,
 		NULL
 	};
 
@@ -657,6 +681,15 @@ ssovf_vdev_probe(struct rte_vdev_device *vdev)
 					ssovf_selftest, &selftest);
 			if (ret != 0) {
 				ssovf_log_err("%s: Error in selftest", name);
+				rte_kvargs_free(kvlist);
+				return ret;
+			}
+
+			ret = rte_kvargs_process(kvlist,
+					TIMVF_ENABLE_STATS_ARG,
+					ssovf_selftest, &timvf_enable_stats);
+			if (ret != 0) {
+				ssovf_log_err("%s: Error in timvf stats", name);
 				rte_kvargs_free(kvlist);
 				return ret;
 			}

@@ -201,15 +201,44 @@ extern "C" {
 
 /**
  * Bits 45:48 used for the tunnel type.
- * When doing Tx offload like TSO or checksum, the HW needs to configure the
- * tunnel type into the HW descriptors.
+ * The tunnel type must be specified for TSO or checksum on the inner part
+ * of tunnel packets.
+ * These flags can be used with PKT_TX_TCP_SEG for TSO, or PKT_TX_xxx_CKSUM.
+ * The mbuf fields for inner and outer header lengths are required:
+ * outer_l2_len, outer_l3_len, l2_len, l3_len, l4_len and tso_segsz for TSO.
  */
 #define PKT_TX_TUNNEL_VXLAN   (0x1ULL << 45)
 #define PKT_TX_TUNNEL_GRE     (0x2ULL << 45)
 #define PKT_TX_TUNNEL_IPIP    (0x3ULL << 45)
 #define PKT_TX_TUNNEL_GENEVE  (0x4ULL << 45)
-/**< TX packet with MPLS-in-UDP RFC 7510 header. */
+/** TX packet with MPLS-in-UDP RFC 7510 header. */
 #define PKT_TX_TUNNEL_MPLSINUDP (0x5ULL << 45)
+#define PKT_TX_TUNNEL_VXLAN_GPE (0x6ULL << 45)
+/**
+ * Generic IP encapsulated tunnel type, used for TSO and checksum offload.
+ * It can be used for tunnels which are not standards or listed above.
+ * It is preferred to use specific tunnel flags like PKT_TX_TUNNEL_GRE
+ * or PKT_TX_TUNNEL_IPIP if possible.
+ * The ethdev must be configured with DEV_TX_OFFLOAD_IP_TNL_TSO.
+ * Outer and inner checksums are done according to the existing flags like
+ * PKT_TX_xxx_CKSUM.
+ * Specific tunnel headers that contain payload length, sequence id
+ * or checksum are not expected to be updated.
+ */
+#define PKT_TX_TUNNEL_IP (0xDULL << 45)
+/**
+ * Generic UDP encapsulated tunnel type, used for TSO and checksum offload.
+ * UDP tunnel type implies outer IP layer.
+ * It can be used for tunnels which are not standards or listed above.
+ * It is preferred to use specific tunnel flags like PKT_TX_TUNNEL_VXLAN
+ * if possible.
+ * The ethdev must be configured with DEV_TX_OFFLOAD_UDP_TNL_TSO.
+ * Outer and inner checksums are done according to the existing flags like
+ * PKT_TX_xxx_CKSUM.
+ * Specific tunnel headers that contain payload length, sequence id
+ * or checksum are not expected to be updated.
+ */
+#define PKT_TX_TUNNEL_UDP (0xEULL << 45)
 /* add new TX TUNNEL type here */
 #define PKT_TX_TUNNEL_MASK    (0xFULL << 45)
 
@@ -226,12 +255,8 @@ extern "C" {
  *  - set the PKT_TX_TCP_SEG flag in mbuf->ol_flags (this flag implies
  *    PKT_TX_TCP_CKSUM)
  *  - set the flag PKT_TX_IPV4 or PKT_TX_IPV6
- *  - if it's IPv4, set the PKT_TX_IP_CKSUM flag and write the IP checksum
- *    to 0 in the packet
+ *  - if it's IPv4, set the PKT_TX_IP_CKSUM flag
  *  - fill the mbuf offload information: l2_len, l3_len, l4_len, tso_segsz
- *  - calculate the pseudo header checksum without taking ip_len in account,
- *    and set it in the TCP header. Refer to rte_ipv4_phdr_cksum() and
- *    rte_ipv6_phdr_cksum() that can be used as helpers.
  */
 #define PKT_TX_TCP_SEG       (1ULL << 50)　//tso功能标记
 
@@ -244,9 +269,6 @@ extern "C" {
  *  - fill l2_len and l3_len in mbuf
  *  - set the flags PKT_TX_TCP_CKSUM, PKT_TX_SCTP_CKSUM or PKT_TX_UDP_CKSUM
  *  - set the flag PKT_TX_IPV4 or PKT_TX_IPV6
- *  - calculate the pseudo header checksum and set it in the L4 header (only
- *    for TCP or UDP). See rte_ipv4_phdr_cksum() and rte_ipv6_phdr_cksum().
- *    For SCTP, set the crc field to 0.
  */
 #define PKT_TX_L4_NO_CKSUM   (0ULL << 52) /**< Disable L4 cksum of TX pkt. */
 #define PKT_TX_TCP_CKSUM     (1ULL << 52) /**< TCP cksum of TX pkt. computed by NIC. */
@@ -259,7 +281,6 @@ extern "C" {
  * Offload the IP checksum in the hardware. The flag PKT_TX_IPV4 should
  * also be set by the application, although a PMD will only check
  * PKT_TX_IP_CKSUM.
- *  - set the IP checksum field in the packet to 0
  *  - fill the mbuf offload information: l2_len, l3_len
  */
 #define PKT_TX_IP_CKSUM      (1ULL << 54) //ip层checksum
@@ -289,10 +310,8 @@ extern "C" {
 
 /**
  * Offload the IP checksum of an external header in the hardware. The
- * flag PKT_TX_OUTER_IPV4 should also be set by the application, alto ugh
- * a PMD will only check PKT_TX_IP_CKSUM.  The IP checksum field in the
- * packet must be set to 0.
- *  - set the outer IP checksum field in the packet to 0
+ * flag PKT_TX_OUTER_IPV4 should also be set by the application, although
+ * a PMD will only check PKT_TX_OUTER_IP_CKSUM.
  *  - fill the mbuf offload information: outer_l2_len, outer_l3_len
  */
 #define PKT_TX_OUTER_IP_CKSUM   (1ULL << 58)
@@ -327,7 +346,10 @@ extern "C" {
 		PKT_TX_MACSEC |		 \
 		PKT_TX_SEC_OFFLOAD)
 
-#define __RESERVED           (1ULL << 61) /**< reserved for future mbuf use */
+/**
+ * Mbuf having an external buffer attached. shinfo in mbuf must be filled.
+ */
+#define EXT_ATTACHED_MBUF    (1ULL << 61)
 
 #define IND_ATTACHED_MBUF    (1ULL << 62) /**< Indirect attached mbuf */
 
@@ -581,7 +603,26 @@ struct rte_mbuf {
 	/** Sequence number. See also rte_reorder_insert(). */
 	uint32_t seqn;
 
+	/** Shared data for external buffer attached to mbuf. See
+	 * rte_pktmbuf_attach_extbuf().
+	 */
+	struct rte_mbuf_ext_shared_info *shinfo;
+
 } __rte_cache_aligned;
+
+/**
+ * Function typedef of callback to free externally attached buffer.
+ */
+typedef void (*rte_mbuf_extbuf_free_callback_t)(void *addr, void *opaque);
+
+/**
+ * Shared data at the end of an external buffer.
+ */
+struct rte_mbuf_ext_shared_info {
+	rte_mbuf_extbuf_free_callback_t free_cb; /**< Free callback function */
+	void *fcb_opaque;                        /**< Free callback argument */
+	rte_atomic16_t refcnt_atomic;        /**< Atomically accessed refcnt */
+};
 
 /**< Maximum number of nb_segs allowed. */
 #define RTE_MBUF_MAX_NB_SEGS	UINT16_MAX
@@ -703,14 +744,34 @@ rte_mbuf_to_baddr(struct rte_mbuf *md)
 }
 
 /**
+ * Returns TRUE if given mbuf is cloned by mbuf indirection, or FALSE
+ * otherwise.
+ *
+ * If a mbuf has its data in another mbuf and references it by mbuf
+ * indirection, this mbuf can be defined as a cloned mbuf.
+ */
+#define RTE_MBUF_CLONED(mb)     ((mb)->ol_flags & IND_ATTACHED_MBUF)
+
+/**
  * Returns TRUE if given mbuf is indirect, or FALSE otherwise.
  */
-#define RTE_MBUF_INDIRECT(mb)   ((mb)->ol_flags & IND_ATTACHED_MBUF)
+#define RTE_MBUF_INDIRECT(mb)   RTE_MBUF_CLONED(mb)
+
+/**
+ * Returns TRUE if given mbuf has an external buffer, or FALSE otherwise.
+ *
+ * External buffer is a user-provided anonymous buffer.
+ */
+#define RTE_MBUF_HAS_EXTBUF(mb) ((mb)->ol_flags & EXT_ATTACHED_MBUF)
 
 /**
  * Returns TRUE if given mbuf is direct, or FALSE otherwise.
+ *
+ * If a mbuf embeds its own data after the rte_mbuf structure, this mbuf
+ * can be defined as a direct mbuf.
  */
-#define RTE_MBUF_DIRECT(mb)     (!RTE_MBUF_INDIRECT(mb))
+#define RTE_MBUF_DIRECT(mb) \
+	(!((mb)->ol_flags & (IND_ATTACHED_MBUF | EXT_ATTACHED_MBUF)))
 
 /**
  * Private data in case of pktmbuf pool.
@@ -836,6 +897,58 @@ rte_mbuf_refcnt_set(struct rte_mbuf *m, uint16_t new_value)
 }
 
 #endif /* RTE_MBUF_REFCNT_ATOMIC */
+
+/**
+ * Reads the refcnt of an external buffer.
+ *
+ * @param shinfo
+ *   Shared data of the external buffer.
+ * @return
+ *   Reference count number.
+ */
+static inline uint16_t
+rte_mbuf_ext_refcnt_read(const struct rte_mbuf_ext_shared_info *shinfo)
+{
+	return (uint16_t)(rte_atomic16_read(&shinfo->refcnt_atomic));
+}
+
+/**
+ * Set refcnt of an external buffer.
+ *
+ * @param shinfo
+ *   Shared data of the external buffer.
+ * @param new_value
+ *   Value set
+ */
+static inline void
+rte_mbuf_ext_refcnt_set(struct rte_mbuf_ext_shared_info *shinfo,
+	uint16_t new_value)
+{
+	rte_atomic16_set(&shinfo->refcnt_atomic, new_value);
+}
+
+/**
+ * Add given value to refcnt of an external buffer and return its new
+ * value.
+ *
+ * @param shinfo
+ *   Shared data of the external buffer.
+ * @param value
+ *   Value to add/subtract
+ * @return
+ *   Updated value
+ */
+static inline uint16_t
+rte_mbuf_ext_refcnt_update(struct rte_mbuf_ext_shared_info *shinfo,
+	int16_t value)
+{
+	if (likely(rte_mbuf_ext_refcnt_read(shinfo) == 1)) {
+		rte_mbuf_ext_refcnt_set(shinfo, 1 + value);
+		return 1 + value;
+	}
+
+	return (uint16_t)rte_atomic16_add_return(&shinfo->refcnt_atomic, value);
+}
 
 /** Mbuf prefetch */
 #define RTE_MBUF_PREFETCH_TO_FREE(m) do {       \
@@ -1211,11 +1324,159 @@ static inline int rte_pktmbuf_alloc_bulk(struct rte_mempool *pool,
 }
 
 /**
+ * Initialize shared data at the end of an external buffer before attaching
+ * to a mbuf by ``rte_pktmbuf_attach_extbuf()``. This is not a mandatory
+ * initialization but a helper function to simply spare a few bytes at the
+ * end of the buffer for shared data. If shared data is allocated
+ * separately, this should not be called but application has to properly
+ * initialize the shared data according to its need.
+ *
+ * Free callback and its argument is saved and the refcnt is set to 1.
+ *
+ * @warning
+ * The value of buf_len will be reduced to RTE_PTR_DIFF(shinfo, buf_addr)
+ * after this initialization. This shall be used for
+ * ``rte_pktmbuf_attach_extbuf()``
+ *
+ * @param buf_addr
+ *   The pointer to the external buffer.
+ * @param [in,out] buf_len
+ *   The pointer to length of the external buffer. Input value must be
+ *   larger than the size of ``struct rte_mbuf_ext_shared_info`` and
+ *   padding for alignment. If not enough, this function will return NULL.
+ *   Adjusted buffer length will be returned through this pointer.
+ * @param free_cb
+ *   Free callback function to call when the external buffer needs to be
+ *   freed.
+ * @param fcb_opaque
+ *   Argument for the free callback function.
+ *
+ * @return
+ *   A pointer to the initialized shared data on success, return NULL
+ *   otherwise.
+ */
+static inline struct rte_mbuf_ext_shared_info *
+rte_pktmbuf_ext_shinfo_init_helper(void *buf_addr, uint16_t *buf_len,
+	rte_mbuf_extbuf_free_callback_t free_cb, void *fcb_opaque)
+{
+	struct rte_mbuf_ext_shared_info *shinfo;
+	void *buf_end = RTE_PTR_ADD(buf_addr, *buf_len);
+
+	shinfo = RTE_PTR_ALIGN_FLOOR(RTE_PTR_SUB(buf_end,
+				sizeof(*shinfo)), sizeof(uintptr_t));
+	if ((void *)shinfo <= buf_addr)
+		return NULL;
+
+	shinfo->free_cb = free_cb;
+	shinfo->fcb_opaque = fcb_opaque;
+	rte_mbuf_ext_refcnt_set(shinfo, 1);
+
+	*buf_len = RTE_PTR_DIFF(shinfo, buf_addr);
+	return shinfo;
+}
+
+/**
+ * Attach an external buffer to a mbuf.
+ *
+ * User-managed anonymous buffer can be attached to an mbuf. When attaching
+ * it, corresponding free callback function and its argument should be
+ * provided via shinfo. This callback function will be called once all the
+ * mbufs are detached from the buffer (refcnt becomes zero).
+ *
+ * The headroom for the attaching mbuf will be set to zero and this can be
+ * properly adjusted after attachment. For example, ``rte_pktmbuf_adj()``
+ * or ``rte_pktmbuf_reset_headroom()`` might be used.
+ *
+ * More mbufs can be attached to the same external buffer by
+ * ``rte_pktmbuf_attach()`` once the external buffer has been attached by
+ * this API.
+ *
+ * Detachment can be done by either ``rte_pktmbuf_detach_extbuf()`` or
+ * ``rte_pktmbuf_detach()``.
+ *
+ * Memory for shared data must be provided and user must initialize all of
+ * the content properly, escpecially free callback and refcnt. The pointer
+ * of shared data will be stored in m->shinfo.
+ * ``rte_pktmbuf_ext_shinfo_init_helper`` can help to simply spare a few
+ * bytes at the end of buffer for the shared data, store free callback and
+ * its argument and set the refcnt to 1. The following is an example:
+ *
+ *   struct rte_mbuf_ext_shared_info *shinfo =
+ *          rte_pktmbuf_ext_shinfo_init_helper(buf_addr, &buf_len,
+ *                                             free_cb, fcb_arg);
+ *   rte_pktmbuf_attach_extbuf(m, buf_addr, buf_iova, buf_len, shinfo);
+ *   rte_pktmbuf_reset_headroom(m);
+ *   rte_pktmbuf_adj(m, data_len);
+ *
+ * Attaching an external buffer is quite similar to mbuf indirection in
+ * replacing buffer addresses and length of a mbuf, but a few differences:
+ * - When an indirect mbuf is attached, refcnt of the direct mbuf would be
+ *   2 as long as the direct mbuf itself isn't freed after the attachment.
+ *   In such cases, the buffer area of a direct mbuf must be read-only. But
+ *   external buffer has its own refcnt and it starts from 1. Unless
+ *   multiple mbufs are attached to a mbuf having an external buffer, the
+ *   external buffer is writable.
+ * - There's no need to allocate buffer from a mempool. Any buffer can be
+ *   attached with appropriate free callback and its IO address.
+ * - Smaller metadata is required to maintain shared data such as refcnt.
+ *
+ * @warning
+ * @b EXPERIMENTAL: This API may change without prior notice.
+ * Once external buffer is enabled by allowing experimental API,
+ * ``RTE_MBUF_DIRECT()`` and ``RTE_MBUF_INDIRECT()`` are no longer
+ * exclusive. A mbuf can be considered direct if it is neither indirect nor
+ * having external buffer.
+ *
+ * @param m
+ *   The pointer to the mbuf.
+ * @param buf_addr
+ *   The pointer to the external buffer.
+ * @param buf_iova
+ *   IO address of the external buffer.
+ * @param buf_len
+ *   The size of the external buffer.
+ * @param shinfo
+ *   User-provided memory for shared data of the external buffer.
+ */
+static inline void __rte_experimental
+rte_pktmbuf_attach_extbuf(struct rte_mbuf *m, void *buf_addr,
+	rte_iova_t buf_iova, uint16_t buf_len,
+	struct rte_mbuf_ext_shared_info *shinfo)
+{
+	/* mbuf should not be read-only */
+	RTE_ASSERT(RTE_MBUF_DIRECT(m) && rte_mbuf_refcnt_read(m) == 1);
+	RTE_ASSERT(shinfo->free_cb != NULL);
+
+	m->buf_addr = buf_addr;
+	m->buf_iova = buf_iova;
+	m->buf_len = buf_len;
+
+	m->data_len = 0;
+	m->data_off = 0;
+
+	m->ol_flags |= EXT_ATTACHED_MBUF;
+	m->shinfo = shinfo;
+}
+
+/**
+ * Detach the external buffer attached to a mbuf, same as
+ * ``rte_pktmbuf_detach()``
+ *
+ * @param m
+ *   The mbuf having external buffer.
+ */
+#define rte_pktmbuf_detach_extbuf(m) rte_pktmbuf_detach(m)
+
+/**
  * Attach packet mbuf to another packet mbuf.
  *
- * After attachment we refer the mbuf we attached as 'indirect',
- * while mbuf we attached to as 'direct'.
- * The direct mbuf's reference counter is incremented.
+ * If the mbuf we are attaching to isn't a direct buffer and is attached to
+ * an external buffer, the mbuf being attached will be attached to the
+ * external buffer instead of mbuf indirection.
+ *
+ * Otherwise, the mbuf will be indirectly attached. After attachment we
+ * refer the mbuf we attached as 'indirect', while mbuf we attached to as
+ * 'direct'.  The direct mbuf's reference counter is incremented.
  *
  * Right now, not supported:
  *  - attachment for already indirect mbuf (e.g. - mi has to be direct).
@@ -1229,19 +1490,20 @@ static inline int rte_pktmbuf_alloc_bulk(struct rte_mempool *pool,
  */
 static inline void rte_pktmbuf_attach(struct rte_mbuf *mi, struct rte_mbuf *m)
 {
-	struct rte_mbuf *md;
-
 	RTE_ASSERT(RTE_MBUF_DIRECT(mi) &&
 	    rte_mbuf_refcnt_read(mi) == 1);
 
-	/* if m is not direct, get the mbuf that embeds the data */
-	if (RTE_MBUF_DIRECT(m))
-		md = m;
-	else
-		md = rte_mbuf_from_indirect(m);
+	if (RTE_MBUF_HAS_EXTBUF(m)) {
+		rte_mbuf_ext_refcnt_update(m->shinfo, 1);
+		mi->ol_flags = m->ol_flags;
+		mi->shinfo = m->shinfo;
+	} else {
+		/* if m is not direct, get the mbuf that embeds the data */
+		rte_mbuf_refcnt_update(rte_mbuf_from_indirect(m), 1);
+		mi->priv_size = m->priv_size;
+		mi->ol_flags = m->ol_flags | IND_ATTACHED_MBUF;
+	}
 
-	rte_mbuf_refcnt_update(md, 1);
-	mi->priv_size = m->priv_size;
 	mi->buf_iova = m->buf_iova;
 	mi->buf_addr = m->buf_addr;
 	mi->buf_len = m->buf_len;
@@ -1257,7 +1519,6 @@ static inline void rte_pktmbuf_attach(struct rte_mbuf *mi, struct rte_mbuf *m)
 	mi->next = NULL;
 	mi->pkt_len = mi->data_len;
 	mi->nb_segs = 1;
-	mi->ol_flags = m->ol_flags | IND_ATTACHED_MBUF;
 	mi->packet_type = m->packet_type;
 	mi->timestamp = m->timestamp;
 
@@ -1266,12 +1527,52 @@ static inline void rte_pktmbuf_attach(struct rte_mbuf *mi, struct rte_mbuf *m)
 }
 
 /**
- * Detach an indirect packet mbuf.
+ * @internal used by rte_pktmbuf_detach().
  *
+ * Decrement the reference counter of the external buffer. When the
+ * reference counter becomes 0, the buffer is freed by pre-registered
+ * callback.
+ */
+static inline void
+__rte_pktmbuf_free_extbuf(struct rte_mbuf *m)
+{
+	RTE_ASSERT(RTE_MBUF_HAS_EXTBUF(m));
+	RTE_ASSERT(m->shinfo != NULL);
+
+	if (rte_mbuf_ext_refcnt_update(m->shinfo, -1) == 0)
+		m->shinfo->free_cb(m->buf_addr, m->shinfo->fcb_opaque);
+}
+
+/**
+ * @internal used by rte_pktmbuf_detach().
+ *
+ * Decrement the direct mbuf's reference counter. When the reference
+ * counter becomes 0, the direct mbuf is freed.
+ */
+static inline void
+__rte_pktmbuf_free_direct(struct rte_mbuf *m)
+{
+	struct rte_mbuf *md;
+
+	RTE_ASSERT(RTE_MBUF_INDIRECT(m));
+
+	md = rte_mbuf_from_indirect(m);
+
+	if (rte_mbuf_refcnt_update(md, -1) == 0) {
+		md->next = NULL;
+		md->nb_segs = 1;
+		rte_mbuf_refcnt_set(md, 1);
+		rte_mbuf_raw_free(md);
+	}
+}
+
+/**
+ * Detach a packet mbuf from external buffer or direct buffer.
+ *
+ *  - decrement refcnt and free the external/direct buffer if refcnt
+ *    becomes zero.
  *  - restore original mbuf address and length values.
  *  - reset pktmbuf data and data_len to their default values.
- *  - decrement the direct mbuf's reference counter. When the
- *  reference counter becomes 0, the direct mbuf is freed.
  *
  * All other fields of the given packet mbuf will be left intact.
  *
@@ -1280,9 +1581,13 @@ static inline void rte_pktmbuf_attach(struct rte_mbuf *mi, struct rte_mbuf *m)
  */
 static inline void rte_pktmbuf_detach(struct rte_mbuf *m)
 {
-	struct rte_mbuf *md = rte_mbuf_from_indirect(m);
 	struct rte_mempool *mp = m->pool;
 	uint32_t mbuf_size, buf_len, priv_size;
+
+	if (RTE_MBUF_HAS_EXTBUF(m))
+		__rte_pktmbuf_free_extbuf(m);
+	else
+		__rte_pktmbuf_free_direct(m);
 
 	priv_size = rte_pktmbuf_priv_size(mp);
 	mbuf_size = sizeof(struct rte_mbuf) + priv_size;
@@ -1295,13 +1600,6 @@ static inline void rte_pktmbuf_detach(struct rte_mbuf *m)
 	rte_pktmbuf_reset_headroom(m);
 	m->data_len = 0;
 	m->ol_flags = 0;
-
-	if (rte_mbuf_refcnt_update(md, -1) == 0) {
-		md->next = NULL;
-		md->nb_segs = 1;
-		rte_mbuf_refcnt_set(md, 1);
-		rte_mbuf_raw_free(md);
-	}
 }
 
 /**
@@ -1325,7 +1623,7 @@ rte_pktmbuf_prefree_seg(struct rte_mbuf *m)
 
 	if (likely(rte_mbuf_refcnt_read(m) == 1)) {
 
-		if (RTE_MBUF_INDIRECT(m))
+		if (!RTE_MBUF_DIRECT(m))
 			rte_pktmbuf_detach(m);
 
 		if (m->next != NULL) {
@@ -1337,7 +1635,7 @@ rte_pktmbuf_prefree_seg(struct rte_mbuf *m)
 
 	} else if (__rte_mbuf_refcnt_update(m, -1) == 0) {
 
-		if (RTE_MBUF_INDIRECT(m))
+		if (!RTE_MBUF_DIRECT(m))
 			rte_pktmbuf_detach(m);
 
 		if (m->next != NULL) {

@@ -269,7 +269,6 @@ map_all_hugepages(struct hugepage_file *hugepg_tbl, struct hugepage_info *hpi,
 	int fd;
 	unsigned i;
 	void *virtaddr;
-	struct flock lck = {0};
 #ifdef RTE_EAL_NUMA_AWARE_HUGEPAGES
 	int node_id = -1;
 	int essential_prev = 0;
@@ -388,13 +387,8 @@ map_all_hugepages(struct hugepage_file *hugepg_tbl, struct hugepage_info *hpi,
 		}
 		*(int *)virtaddr = 0;
 
-
 		/* set shared lock on the file. */
-		lck.l_type = F_RDLCK;
-		lck.l_whence = SEEK_SET;
-		lck.l_start = 0;
-		lck.l_len = hugepage_sz;
-		if (fcntl(fd, F_SETLK, &lck) == -1) {
+		if (flock(fd, LOCK_SH) < 0) {
 			RTE_LOG(DEBUG, EAL, "%s(): Locking file failed:%s \n",
 				__func__, strerror(errno));
 			close(fd);
@@ -718,7 +712,6 @@ remap_segment(struct hugepage_file *hugepages, int seg_start, int seg_end)
 #endif
 		struct hugepage_file *hfile = &hugepages[cur_page];
 		struct rte_memseg *ms = rte_fbarray_get(arr, ms_idx);
-		struct flock lck;
 		void *addr;
 		int fd;
 
@@ -729,11 +722,7 @@ remap_segment(struct hugepage_file *hugepages, int seg_start, int seg_end)
 			return -1;
 		}
 		/* set shared lock on the file. */
-		lck.l_type = F_RDLCK;
-		lck.l_whence = SEEK_SET;
-		lck.l_start = 0;
-		lck.l_len = page_sz;
-		if (fcntl(fd, F_SETLK, &lck) == -1) {
+		if (flock(fd, LOCK_SH) < 0) {
 			RTE_LOG(DEBUG, EAL, "Could not lock '%s': %s\n",
 					hfile->filepath, strerror(errno));
 			close(fd);
@@ -1170,8 +1159,8 @@ calc_num_pages_per_socket(uint64_t * memory,
 	for (socket = 0; socket < RTE_MAX_NUMA_NODES && total_mem != 0; socket++) {
 		/* skips if the memory on specific socket wasn't requested */
 		for (i = 0; i < num_hp_info && memory[socket] != 0; i++){
-			snprintf(hp_used[i].hugedir, sizeof(hp_used[i].hugedir),
-					"%s", hp_info[i].hugedir);
+			strlcpy(hp_used[i].hugedir, hp_info[i].hugedir,
+				sizeof(hp_used[i].hugedir));
 			hp_used[i].num_pages[socket] = RTE_MIN(
 					memory[socket] / hp_info[i].hugepage_sz,
 					hp_info[i].num_pages[socket]);
@@ -1618,6 +1607,18 @@ fail:
 	return -1;
 }
 
+static int __rte_unused
+hugepage_count_walk(const struct rte_memseg_list *msl, void *arg)
+{
+	struct hugepage_info *hpi = arg;
+
+	if (msl->page_sz != hpi->hugepage_sz)
+		return 0;
+
+	hpi->num_pages[msl->socket_id] += msl->memseg_arr.len;
+	return 0;
+}
+
 static int
 eal_hugepage_init(void)
 {
@@ -1632,10 +1633,29 @@ eal_hugepage_init(void)
 	for (hp_sz_idx = 0;
 			hp_sz_idx < (int) internal_config.num_hugepage_sizes;
 			hp_sz_idx++) {
+#ifndef RTE_ARCH_64
+		struct hugepage_info dummy;
+		unsigned int i;
+#endif
 		/* also initialize used_hp hugepage sizes in used_hp */
 		struct hugepage_info *hpi;
 		hpi = &internal_config.hugepage_info[hp_sz_idx];
 		used_hp[hp_sz_idx].hugepage_sz = hpi->hugepage_sz;
+
+#ifndef RTE_ARCH_64
+		/* for 32-bit, limit number of pages on socket to whatever we've
+		 * preallocated, as we cannot allocate more.
+		 */
+		memset(&dummy, 0, sizeof(dummy));
+		dummy.hugepage_sz = hpi->hugepage_sz;
+		if (rte_memseg_list_walk(hugepage_count_walk, &dummy) < 0)
+			return -1;
+
+		for (i = 0; i < RTE_DIM(dummy.num_pages); i++) {
+			hpi->num_pages[i] = RTE_MIN(hpi->num_pages[i],
+					dummy.num_pages[i]);
+		}
+#endif
 	}
 
 	/* make a copy of socket_mem, needed for balanced allocation. */
@@ -1748,7 +1768,6 @@ eal_legacy_hugepage_attach(void)
 		struct hugepage_file *hf = &hp[i];
 		size_t map_sz = hf->size;
 		void *map_addr = hf->final_va;
-		struct flock lck;
 
 		/* if size is zero, no more pages left */
 		if (map_sz == 0)
@@ -1766,15 +1785,12 @@ eal_legacy_hugepage_attach(void)
 		if (map_addr == MAP_FAILED) {
 			RTE_LOG(ERR, EAL, "Could not map %s: %s\n",
 				hf->filepath, strerror(errno));
+			close(fd);
 			goto error;
 		}
 
 		/* set shared lock on the file. */
-		lck.l_type = F_RDLCK;
-		lck.l_whence = SEEK_SET;
-		lck.l_start = 0;
-		lck.l_len = map_sz;
-		if (fcntl(fd, F_SETLK, &lck) == -1) {
+		if (flock(fd, LOCK_SH) < 0) {
 			RTE_LOG(DEBUG, EAL, "%s(): Locking file failed: %s\n",
 				__func__, strerror(errno));
 			close(fd);

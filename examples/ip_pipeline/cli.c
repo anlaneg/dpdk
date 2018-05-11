@@ -138,6 +138,8 @@ cmd_link(char **tokens,
 	struct link *link;
 	char *name;
 
+	memset(&p, 0, sizeof(p));
+
 	if ((n_tokens < 13) || (n_tokens > 14 + LINK_RXQ_RSS_MAX)) {
 		snprintf(out, out_size, MSG_ARG_MISMATCH, tokens[0]);
 		return;
@@ -651,6 +653,7 @@ cmd_kni(char **tokens,
 	char *name;
 	struct kni *kni;
 
+	memset(&p, 0, sizeof(p));
 	if ((n_tokens != 6) && (n_tokens != 8)) {
 		snprintf(out, out_size, MSG_ARG_MISMATCH, tokens[0]);
 		return;
@@ -1890,12 +1893,6 @@ cmd_pipeline_table(char **tokens,
 
 		t0 += 6;
 	} else if (strcmp(tokens[t0], "stub") == 0) {
-		if (n_tokens < t0 + 1) {
-			snprintf(out, out_size, MSG_ARG_MISMATCH,
-				"pipeline table stub");
-			return;
-		}
-
 		p.match_type = TABLE_STUB;
 
 		t0 += 1;
@@ -4158,6 +4155,7 @@ load_dscp_table(struct rte_table_action_dscp_table *dscp_table,
 
 		if (parse_tokenize_string(line, tokens, &n_tokens)) {
 			*line_number = l;
+			fclose(f);
 			return -EINVAL;
 		}
 
@@ -4172,6 +4170,7 @@ load_dscp_table(struct rte_table_action_dscp_table *dscp_table,
 			(tc_queue_id >= RTE_TABLE_ACTION_TC_QUEUE_MAX) ||
 			(strlen(tokens[2]) != 1)) {
 			*line_number = l;
+			fclose(f);
 			return -EINVAL;
 		}
 
@@ -4193,6 +4192,7 @@ load_dscp_table(struct rte_table_action_dscp_table *dscp_table,
 
 		default:
 			*line_number = l;
+			fclose(f);
 			return -EINVAL;
 		}
 

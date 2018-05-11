@@ -41,6 +41,15 @@ New Features
      Also, make sure to start the actual text at the margin.
      =========================================================
 
+* **Added bucket mempool driver.**
+
+  Added bucket mempool driver which provides a way to allocate contiguous
+  block of objects.
+  Number of objects in the block depends on how many objects fit in
+  RTE_DRIVER_MEMPOOL_BUCKET_SIZE_KB memory chunk which is build time option.
+  The number may be obtained using rte_mempool_ops_get_info() API.
+  Contiguous blocks may be allocated using rte_mempool_get_contig_blocks() API.
+
 * **Added PMD-recommended Tx and Rx parameters**
 
   Applications can now query drivers for device-tuned values of
@@ -62,6 +71,8 @@ New Features
   * Added support for Solarflare XtremeScale X2xxx family adapters.
   * Added support for NVGRE, VXLAN and GENEVE filters in flow API.
   * Added support for DROP action in flow API.
+  * Added support for equal stride super-buffer Rx mode (X2xxx only).
+  * Added support for MARK and FLAG actions in flow API (X2xxx only).
 
 * **Added Ethernet poll mode driver for AMD XGBE devices.**
 
@@ -72,6 +83,10 @@ New Features
 * **Updated szedata2 PMD.**
 
   Added support for new NFB-200G2QL card.
+  New API was introduced in the libsze2 library which the szedata2 PMD depends
+  on thus the new version of the library was needed.
+  New versions of the packages are available and the minimum required version
+  is 4.4.1.
 
 * **Added support for Broadcom NetXtreme-S (BCM58800) family of controllers (aka Stingray)**
 
@@ -82,6 +97,15 @@ New Features
 
   The ARM CPU subsystem features eight ARMv8 Cortex-A72 CPUs at 3.0 GHz, arranged in a multi-cluster
   configuration.
+
+* **Added IFCVF vDPA driver.**
+
+  Added IFCVF vDPA driver to support Intel FPGA 100G VF device. IFCVF works
+  as a HW vhost data path accelerator, it supports live migration and is
+  compatible with virtio 0.95 and 1.0. This driver registers ifcvf vDPA driver
+  to vhost lib, when virtio connected, with the help of the registered vDPA
+  driver the assigned VF gets configured to Rx/Tx directly to VM's virtio
+  vrings.
 
 * **Added support for virtio-user server mode.**
   In a container environment if the vhost-user backend restarts, there's no way
@@ -96,6 +120,51 @@ New Features
   including session creation/deletion handling and translating virtio-crypto
   request into DPDK crypto operations. A sample application is also introduced.
 
+* **Added virtio crypto PMD.**
+
+  Added a new poll mode driver for virtio crypto devices, which provides
+  AES-CBC ciphering and AES-CBC with HMAC-SHA1 algorithm-chaining. See the
+  :doc:`../cryptodevs/virtio` crypto driver guide for more details on
+  this new driver.
+
+* **Added AMD CCP Crypto PMD.**
+
+  Added the new ``ccp`` crypto driver for AMD CCP devices. See the
+  :doc:`../cryptodevs/ccp` crypto driver guide for more details on
+  this new driver.
+
+* **Updated AESNI MB PMD.**
+
+  The AESNI MB PMD has been updated with additional support for:
+
+  * AES-CMAC (128-bit key).
+
+* **Added the Event Timer Adapter Library.**
+
+  The Event Timer Adapter Library extends the event-based model by introducing
+  APIs that allow applications to arm/cancel event timers that generate
+  timer expiry events. This new type of event is scheduled by an event device
+  along with existing types of events.
+
+* **Added DPAA2 QDMA Driver (in rawdev).**
+
+  The DPAA2 QDMA is an implementation of the rawdev API, that provide means
+  to initiate a DMA transaction from CPU. The initiated DMA is performed
+  without CPU being involved in the actual DMA transaction.
+
+  See the :doc:`../rawdevs/dpaa2_qdma` guide for more details.
+
+* **Added DPAA2 Command Interface Driver (in rawdev).**
+
+  The DPAA2 CMDIF is an implementation of the rawdev API, that provides
+  communication between the GPP and NXP's QorIQ based AIOP Block (Firmware).
+  Advanced IO Processor i.e. AIOP is clusters of programmable RISC engines
+  optimised for flexible networking and I/O operations. The communication
+  between GPP and AIOP is achieved via using DPCI devices exposed by MC for
+  GPP <--> AIOP interaction.
+
+  See the :doc:`../rawdevs/dpaa2_cmdif` guide for more details.
+
 * **Added device event monitor framework.**
 
   Added a general device event monitor framework at EAL, for device dynamic management.
@@ -107,6 +176,12 @@ New Features
     are for the user's callbacks register and unregister.
 
   Linux uevent is supported as backend of this device event notification framework.
+
+* **Added support for procinfo and pdump on eth vdev.**
+
+  For ethernet virtual devices (like tap, pcap, etc), with this feature, we can get
+  stats/xstats on shared memory from secondary process, and also pdump packets on
+  those virtual devices.
 
 
 API Changes
@@ -121,6 +196,34 @@ API Changes
    This section is a comment. Do not overwrite or remove it.
    Also, make sure to start the actual text at the margin.
    =========================================================
+
+* service cores: no longer marked as experimental.
+
+  The service cores functions are no longer marked as experimental, and have
+  become part of the normal DPDK API and ABI. Any future ABI changes will be
+  announced at least one release before the ABI change is made. There are no
+  ABI breaking changes planned.
+
+* eal: ``rte_lcore_has_role()`` return value changed.
+
+  This function now returns true or false, respectively,
+  rather than 0 or <0 for success or failure.
+  It makes use of the function more intuitive.
+
+* mempool: capability flags and related functions have been removed.
+
+  Flags ``MEMPOOL_F_CAPA_PHYS_CONTIG`` and
+  ``MEMPOOL_F_CAPA_BLK_ALIGNED_OBJECTS`` were used by octeontx mempool
+  driver to customize generic mempool library behaviour.
+  Now the new driver callbacks ``calc_mem_size`` and ``populate`` may be
+  used to achieve it without specific knowledge in the generic code.
+
+* mempool: xmem functions have been deprecated:
+
+  - ``rte_mempool_xmem_create``
+  - ``rte_mempool_xmem_size``
+  - ``rte_mempool_xmem_usage``
+  - ``rte_mempool_populate_iova_tab``
 
 * mbuf: The control mbuf API has been removed in v18.05. The impacted
   functions and macros are:
@@ -145,6 +248,13 @@ API Changes
   parameters from meter object data structure results in reducing its
   memory footprint which helps in better cache utilization when large number
   of meter objects are used.
+
+* ethdev: The function ``rte_eth_dev_count``, often mis-used to iterate
+  over ports, is deprecated and replaced by ``rte_eth_dev_count_avail``.
+  There is also a new function ``rte_eth_dev_count_total`` to get the
+  total number of allocated ports, available or not.
+  The hotplug-proof applications should use ``RTE_ETH_FOREACH_DEV`` or
+  ``RTE_ETH_FOREACH_DEV_OWNED_BY`` as port iterators.
 
 * ethdev, in struct ``struct rte_eth_dev_info``, field ``rte_pci_device *pci_dev``
   replaced with field ``struct rte_device *device``.
@@ -173,6 +283,45 @@ API Changes
    fall-back value. Previously, setting ``nb_tx_desc`` to zero would have
    resulted in an error.
 
+* ethdev: several changes were made to the flow API.
+
+  * Unused DUP action was removed.
+  * Actions semantics in flow rules: list order now matters ("first
+    to last" instead of "all simultaneously"), repeated actions are now
+    all performed, and they do not individually have (non-)terminating
+    properties anymore.
+  * Flow rules are now always terminating unless a PASSTHRU action is
+    present.
+  * C99-style flexible arrays were replaced with standard pointers in RSS
+    action and in RAW pattern item structures due to compatibility issues.
+  * The RSS action was modified to not rely on external
+    ``struct rte_eth_rss_conf`` anymore to instead expose its own and more
+    appropriately named configuration fields directly
+    (``rss_conf->rss_key`` => ``key``,
+    ``rss_conf->rss_key_len`` => ``key_len``,
+    ``rss_conf->rss_hf`` => ``types``,
+    ``num`` => ``queue_num``), and the addition of missing RSS parameters
+    (``func`` for RSS hash function to apply and ``level`` for the
+    encapsulation level).
+  * The VLAN pattern item (``struct rte_flow_item_vlan``) was modified to
+    include inner EtherType instead of outer TPID. Its default mask was also
+    modified to cover the VID part (lower 12 bits) of TCI only.
+  * A new transfer attribute was added to ``struct rte_flow_attr`` in order
+    to clarify the behavior of some pattern items.
+  * PF and VF pattern items are now only accepted by PMDs that implement
+    them (bnxt and i40e) when the transfer attribute is also present for
+    consistency.
+  * Pattern item PORT was renamed PHY_PORT to avoid confusion with DPDK port
+    IDs.
+  * An action counterpart to the PHY_PORT pattern item was added in order to
+    redirect matching traffic to a specific physical port.
+  * PORT_ID pattern item and actions were added to match and target DPDK
+    port IDs at a higher level than PHY_PORT.
+
+* ethdev: change flow APIs regarding count action:
+  * ``rte_flow_create()`` API count action now requires the ``struct rte_flow_action_count``.
+  * ``rte_flow_query()`` API parameter changed from action type to action structure.
+
 
 ABI Changes
 -----------
@@ -187,6 +336,24 @@ ABI Changes
    Also, make sure to start the actual text at the margin.
    =========================================================
 
+* ring: the alignment constraints on the ring structure has been relaxed
+  to one cache line instead of two, and an empty cache line padding is
+  added between the producer and consumer structures. The size of the
+  structure and the offset of the fields remains the same on platforms
+  with 64B cache line, but change on other platforms.
+
+* mempool: ops have changed.
+
+  A new callback ``calc_mem_size`` has been added to ``rte_mempool_ops``
+  to allow to customize required memory size calculation.
+  A new callback ``populate`` has been added to ``rte_mempool_ops``
+  to allow to customize objects population.
+  Callback ``get_capabilities`` has been removed from ``rte_mempool_ops``
+  since its features are covered by ``calc_mem_size`` and ``populate``
+  callbacks.
+  Callback ``register_memory_area`` has been removed from ``rte_mempool_ops``
+  since the new callback ``populate`` may be used instead of it.
+
 * **Additional fields in rte_eth_dev_info.**
 
   The ``rte_eth_dev_info`` structure has had two extra entries appended to the
@@ -194,6 +361,20 @@ ABI Changes
   in turn are ``rte_eth_dev_portconf`` structures containing three fields of
   type ``uint16_t``: ``burst_size``, ``ring_size``, and ``nb_queues``. These
   are parameter values recommended for use by the PMD.
+
+* ethdev: ABI for all flow API functions was updated.
+
+  This includes functions ``rte_flow_copy``, ``rte_flow_create``,
+  ``rte_flow_destroy``, ``rte_flow_error_set``, ``rte_flow_flush``,
+  ``rte_flow_isolate``, ``rte_flow_query`` and ``rte_flow_validate``, due to
+  changes in error type definitions (``enum rte_flow_error_type``), removal
+  of the unused DUP action (``enum rte_flow_action_type``), modified
+  behavior for flow rule actions (see API changes), removal of C99 flexible
+  array from RAW pattern item (``struct rte_flow_item_raw``), complete
+  rework of the RSS action definition (``struct rte_flow_action_rss``),
+  sanity fix in the VLAN pattern item (``struct rte_flow_item_vlan``) and
+  new transfer attribute (``struct rte_flow_attr``).
+
 
 Removed Items
 -------------
@@ -221,6 +402,13 @@ Known Issues
    This section is a comment. Do not overwrite or remove it.
    Also, make sure to start the actual text at the margin.
    =========================================================
+
+* **pdump is not compatible with old applications.**
+
+  As we changed to use generic multi-process communication for pdump negotiation
+  instead of previous dedicated unix socket way, pdump applications, including
+  dpdk-pdump example and any other applications using librte_pdump, cannot work
+  with older version DPDK primary applications.
 
 
 Shared Library Versions
@@ -267,7 +455,7 @@ The libraries prepended with a plus sign were incremented in this version.
      librte_latencystats.so.1
      librte_lpm.so.2
    + librte_mbuf.so.4
-     librte_mempool.so.3
+   + librte_mempool.so.4
    + librte_meter.so.2
      librte_metrics.so.1
      librte_net.so.1
@@ -278,6 +466,8 @@ The libraries prepended with a plus sign were incremented in this version.
      librte_pmd_bond.so.2
      librte_pmd_i40e.so.2
      librte_pmd_ixgbe.so.2
+   + librte_pmd_dpaa2_cmdif.so.1
+   + librte_pmd_dpaa2_qdma.so.1
      librte_pmd_ring.so.2
      librte_pmd_softnic.so.1
      librte_pmd_vhost.so.2
@@ -285,7 +475,7 @@ The libraries prepended with a plus sign were incremented in this version.
      librte_power.so.1
      librte_rawdev.so.1
      librte_reorder.so.1
-     librte_ring.so.1
+   + librte_ring.so.2
      librte_sched.so.1
      librte_security.so.1
      librte_table.so.3

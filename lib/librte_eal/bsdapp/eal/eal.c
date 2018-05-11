@@ -40,6 +40,7 @@
 #include <rte_dev.h>
 #include <rte_devargs.h>
 #include <rte_version.h>
+#include <rte_vfio.h>
 #include <rte_atomic.h>
 #include <malloc_heap.h>
 
@@ -555,6 +556,19 @@ rte_eal_init(int argc, char **argv)
 		return -1;
 	}
 
+	rte_config_init();
+
+	/* Put mp channel init before bus scan so that we can init the vdev
+	 * bus through mp channel in the secondary process before the bus scan.
+	 */
+	if (rte_mp_channel_init() < 0) {
+		rte_eal_init_alert("failed to init mp channel\n");
+		if (rte_eal_process_type() == RTE_PROC_PRIMARY) {
+			rte_errno = EFAULT;
+			return -1;
+		}
+	}
+
 	//使注册的所有bus进行扫描
 	if (rte_bus_scan()) {
 		rte_eal_init_alert("Cannot scan the buses for devices\n");
@@ -598,16 +612,6 @@ rte_eal_init(int argc, char **argv)
 	}
 
 	rte_srand(rte_rdtsc());
-
-	rte_config_init();
-
-	if (rte_mp_channel_init() < 0) {
-		rte_eal_init_alert("failed to init mp channel\n");
-		if (rte_eal_process_type() == RTE_PROC_PRIMARY) {
-			rte_errno = EFAULT;
-			return -1;
-		}
-	}
 
 	/* in secondary processes, memory init may allocate additional fbarrays
 	 * not present in primary processes, so to avoid any potential issues,
@@ -658,7 +662,7 @@ rte_eal_init(int argc, char **argv)
 
 	eal_thread_init_master(rte_config.master_lcore);
 
-	ret = eal_thread_dump_affinity(cpuset, RTE_CPU_AFFINITY_STR_LEN);
+	ret = eal_thread_dump_affinity(cpuset, sizeof(cpuset));
 
 	RTE_LOG(DEBUG, EAL, "Master lcore %u is ready (tid=%p;cpuset=[%s%s])\n",
 		rte_config.master_lcore, thread_id, cpuset,
@@ -684,7 +688,7 @@ rte_eal_init(int argc, char **argv)
 			rte_panic("Cannot create thread\n");
 
 		/* Set thread_name for aid in debugging. */
-		snprintf(thread_name, RTE_MAX_THREAD_NAME_LEN,
+		snprintf(thread_name, sizeof(thread_name),
 				"lcore-slave-%d", i);
 		rte_thread_setname(lcore_config[i].thread_id, thread_name);
 	}
@@ -761,20 +765,6 @@ rte_eal_vfio_intr_mode(void)
 	return RTE_INTR_MODE_NONE;
 }
 
-/* dummy forward declaration. */
-struct vfio_device_info;
-
-/* dummy prototypes. */
-int rte_vfio_setup_device(const char *sysfs_base, const char *dev_addr,
-		int *vfio_dev_fd, struct vfio_device_info *device_info);
-int rte_vfio_release_device(const char *sysfs_base, const char *dev_addr, int fd);
-int rte_vfio_enable(const char *modname);
-int rte_vfio_is_enabled(const char *modname);
-int rte_vfio_noiommu_is_enabled(void);
-int rte_vfio_clear_group(int vfio_group_fd);
-int rte_vfio_dma_map(uint64_t vaddr, uint64_t iova, uint64_t len);
-int rte_vfio_dma_unmap(uint64_t vaddr, uint64_t iova, uint64_t len);
-
 int rte_vfio_setup_device(__rte_unused const char *sysfs_base,
 		      __rte_unused const char *dev_addr,
 		      __rte_unused int *vfio_dev_fd,
@@ -840,6 +830,50 @@ rte_vfio_get_container_fd(void)
 
 int  __rte_experimental
 rte_vfio_get_group_fd(__rte_unused int iommu_group_num)
+{
+	return -1;
+}
+
+int __rte_experimental
+rte_vfio_container_create(void)
+{
+	return -1;
+}
+
+int __rte_experimental
+rte_vfio_container_destroy(__rte_unused int container_fd)
+{
+	return -1;
+}
+
+int __rte_experimental
+rte_vfio_container_group_bind(__rte_unused int container_fd,
+		__rte_unused int iommu_group_num)
+{
+	return -1;
+}
+
+int __rte_experimental
+rte_vfio_container_group_unbind(__rte_unused int container_fd,
+		__rte_unused int iommu_group_num)
+{
+	return -1;
+}
+
+int __rte_experimental
+rte_vfio_container_dma_map(__rte_unused int container_fd,
+			__rte_unused uint64_t vaddr,
+			__rte_unused uint64_t iova,
+			__rte_unused uint64_t len)
+{
+	return -1;
+}
+
+int __rte_experimental
+rte_vfio_container_dma_unmap(__rte_unused int container_fd,
+			__rte_unused uint64_t vaddr,
+			__rte_unused uint64_t iova,
+			__rte_unused uint64_t len)
 {
 	return -1;
 }

@@ -27,6 +27,7 @@
 #include <rte_io.h>
 
 #define HWRM_CMD_TIMEOUT		10000
+#define HWRM_VERSION_1_9_1		0x10901
 
 struct bnxt_plcmodes_cfg {
 	uint32_t	flags;
@@ -220,6 +221,9 @@ int bnxt_hwrm_cfa_l2_set_rx_mask(struct bnxt *bp,
 	struct hwrm_cfa_l2_set_rx_mask_output *resp = bp->hwrm_cmd_resp_addr;
 	uint32_t mask = 0;
 
+	if (vnic->fw_vnic_id == INVALID_HW_RING_ID)
+		return rc;
+
 	HWRM_PREP(req, CFA_L2_SET_RX_MASK);
 	req.vnic_id = rte_cpu_to_le_16(vnic->fw_vnic_id);
 
@@ -316,7 +320,7 @@ int bnxt_hwrm_clear_l2_filter(struct bnxt *bp,
 	HWRM_CHECK_RESULT();
 	HWRM_UNLOCK();
 
-	filter->fw_l2_filter_id = -1;
+	filter->fw_l2_filter_id = UINT64_MAX;
 
 	return 0;
 }
@@ -665,6 +669,7 @@ int bnxt_hwrm_ver_get(struct bnxt *bp)
 	fw_version = resp->hwrm_intf_maj << 16;
 	fw_version |= resp->hwrm_intf_min << 8;
 	fw_version |= resp->hwrm_intf_upd;
+	bp->hwrm_spec_code = fw_version;
 
 	if (resp->hwrm_intf_maj != HWRM_VERSION_MAJOR) {
 		PMD_DRV_LOG(ERR, "Unsupported firmware API version\n");
@@ -891,9 +896,15 @@ int bnxt_hwrm_queue_qportcfg(struct bnxt *bp)
 	int rc = 0;
 	struct hwrm_queue_qportcfg_input req = {.req_type = 0 };
 	struct hwrm_queue_qportcfg_output *resp = bp->hwrm_cmd_resp_addr;
+	int i;
 
 	HWRM_PREP(req, QUEUE_QPORTCFG);
 
+	req.flags = HWRM_QUEUE_QPORTCFG_INPUT_FLAGS_PATH_TX;
+	/* HWRM Version >= 1.9.1 */
+	if (bp->hwrm_spec_code >= HWRM_VERSION_1_9_1)
+		req.drv_qmap_cap =
+			HWRM_QUEUE_QPORTCFG_INPUT_DRV_QMAP_CAP_ENABLED;
 	rc = bnxt_hwrm_send_message(bp, &req, sizeof(req));
 
 	HWRM_CHECK_RESULT();
@@ -912,6 +923,20 @@ int bnxt_hwrm_queue_qportcfg(struct bnxt *bp)
 	GET_QUEUE_INFO(7);
 
 	HWRM_UNLOCK();
+
+	if (bp->hwrm_spec_code < HWRM_VERSION_1_9_1) {
+		bp->tx_cosq_id = bp->cos_queue[0].id;
+	} else {
+		/* iterate and find the COSq profile to use for Tx */
+		for (i = 0; i < BNXT_COS_QUEUE_COUNT; i++) {
+			if (bp->cos_queue[i].profile ==
+				HWRM_QUEUE_SERVICE_PROFILE_LOSSY) {
+				bp->tx_cosq_id = bp->cos_queue[i].id;
+				break;
+			}
+		}
+	}
+	PMD_DRV_LOG(DEBUG, "Tx Cos Queue to use: %d\n", bp->tx_cosq_id);
 
 	return rc;
 }
@@ -936,7 +961,7 @@ int bnxt_hwrm_ring_alloc(struct bnxt *bp,
 
 	switch (ring_type) {
 	case HWRM_RING_ALLOC_INPUT_RING_TYPE_TX:
-		req.queue_id = bp->cos_queue[0].id;
+		req.queue_id = rte_cpu_to_le_16(bp->tx_cosq_id);
 		/* FALLTHROUGH */
 	case HWRM_RING_ALLOC_INPUT_RING_TYPE_RX:
 		req.ring_type = ring_type;
@@ -1165,7 +1190,8 @@ int bnxt_hwrm_vnic_alloc(struct bnxt *bp, struct bnxt_vnic_info *vnic)
 	HWRM_PREP(req, VNIC_ALLOC);
 
 	if (vnic->func_default)
-		req.flags = HWRM_VNIC_ALLOC_INPUT_FLAGS_DEFAULT;
+		req.flags =
+			rte_cpu_to_le_32(HWRM_VNIC_ALLOC_INPUT_FLAGS_DEFAULT);
 	rc = bnxt_hwrm_send_message(bp, &req, sizeof(req));
 
 	HWRM_CHECK_RESULT();
@@ -3560,8 +3586,8 @@ int bnxt_hwrm_clear_em_filter(struct bnxt *bp, struct bnxt_filter_info *filter)
 	HWRM_CHECK_RESULT();
 	HWRM_UNLOCK();
 
-	filter->fw_em_filter_id = -1;
-	filter->fw_l2_filter_id = -1;
+	filter->fw_em_filter_id = UINT64_MAX;
+	filter->fw_l2_filter_id = UINT64_MAX;
 
 	return 0;
 }
@@ -3672,7 +3698,8 @@ int bnxt_hwrm_clear_ntuple_filter(struct bnxt *bp,
 	HWRM_CHECK_RESULT();
 	HWRM_UNLOCK();
 
-	filter->fw_ntuple_filter_id = -1;
+	filter->fw_ntuple_filter_id = UINT64_MAX;
+	filter->fw_l2_filter_id = UINT64_MAX;
 
 	return 0;
 }

@@ -30,6 +30,9 @@
 #include "dpaa2_sec_priv.h"
 #include "dpaa2_sec_logs.h"
 
+/* Required types */
+typedef uint64_t	dma_addr_t;
+
 /* RTA header files */
 #include <hw/desc/ipsec.h>
 #include <hw/desc/algo.h>
@@ -119,7 +122,7 @@ build_authenc_gcm_sg_fd(dpaa2_sec_session *sess,
 		return -1;
 	}
 	memset(fle, 0, FLE_SG_MEM_SIZE);
-	DPAA2_SET_FLE_ADDR(fle, DPAA2_OP_VADDR_TO_IOVA(op));
+	DPAA2_SET_FLE_ADDR(fle, (size_t)op);
 	DPAA2_FLE_SAVE_CTXT(fle, (size_t)priv);
 
 	op_fle = fle + 1;
@@ -270,7 +273,7 @@ build_authenc_gcm_fd(dpaa2_sec_session *sess,
 		return -1;
 	}
 	memset(fle, 0, FLE_POOL_BUF_SIZE);
-	DPAA2_SET_FLE_ADDR(fle, DPAA2_OP_VADDR_TO_IOVA(op));
+	DPAA2_SET_FLE_ADDR(fle, (size_t)op);
 	DPAA2_FLE_SAVE_CTXT(fle, (ptrdiff_t)priv);
 	fle = fle + 1;
 	sge = fle + 2;
@@ -415,7 +418,7 @@ build_authenc_sg_fd(dpaa2_sec_session *sess,
 		return -1;
 	}
 	memset(fle, 0, FLE_SG_MEM_SIZE);
-	DPAA2_SET_FLE_ADDR(fle, DPAA2_OP_VADDR_TO_IOVA(op));
+	DPAA2_SET_FLE_ADDR(fle, (size_t)op);
 	DPAA2_FLE_SAVE_CTXT(fle, (ptrdiff_t)priv);
 
 	op_fle = fle + 1;
@@ -564,7 +567,7 @@ build_authenc_fd(dpaa2_sec_session *sess,
 		return -1;
 	}
 	memset(fle, 0, FLE_POOL_BUF_SIZE);
-	DPAA2_SET_FLE_ADDR(fle, DPAA2_OP_VADDR_TO_IOVA(op));
+	DPAA2_SET_FLE_ADDR(fle, (size_t)op);
 	DPAA2_FLE_SAVE_CTXT(fle, (ptrdiff_t)priv);
 	fle = fle + 1;
 	sge = fle + 2;
@@ -694,7 +697,7 @@ static inline int build_auth_sg_fd(
 	}
 	memset(fle, 0, FLE_SG_MEM_SIZE);
 	/* first FLE entry used to store mbuf and session ctxt */
-	DPAA2_SET_FLE_ADDR(fle, DPAA2_OP_VADDR_TO_IOVA(op));
+	DPAA2_SET_FLE_ADDR(fle, (size_t)op);
 	DPAA2_FLE_SAVE_CTXT(fle, (ptrdiff_t)priv);
 	op_fle = fle + 1;
 	ip_fle = fle + 2;
@@ -775,7 +778,7 @@ build_auth_fd(dpaa2_sec_session *sess, struct rte_crypto_op *op,
 	 * to get the MBUF Addr from the previous FLE.
 	 * We can have a better approach to use the inline Mbuf
 	 */
-	DPAA2_SET_FLE_ADDR(fle, DPAA2_OP_VADDR_TO_IOVA(op));
+	DPAA2_SET_FLE_ADDR(fle, (size_t)op);
 	DPAA2_FLE_SAVE_CTXT(fle, (ptrdiff_t)priv);
 	fle = fle + 1;
 
@@ -867,7 +870,7 @@ build_cipher_sg_fd(dpaa2_sec_session *sess, struct rte_crypto_op *op,
 	}
 	memset(fle, 0, FLE_SG_MEM_SIZE);
 	/* first FLE entry used to store mbuf and session ctxt */
-	DPAA2_SET_FLE_ADDR(fle, DPAA2_OP_VADDR_TO_IOVA(op));
+	DPAA2_SET_FLE_ADDR(fle, (size_t)op);
 	DPAA2_FLE_SAVE_CTXT(fle, (ptrdiff_t)priv);
 
 	op_fle = fle + 1;
@@ -991,7 +994,7 @@ build_cipher_fd(dpaa2_sec_session *sess, struct rte_crypto_op *op,
 	 * to get the MBUF Addr from the previous FLE.
 	 * We can have a better approach to use the inline Mbuf
 	 */
-	DPAA2_SET_FLE_ADDR(fle, DPAA2_OP_VADDR_TO_IOVA(op));
+	DPAA2_SET_FLE_ADDR(fle, (size_t)op);
 	DPAA2_FLE_SAVE_CTXT(fle, (ptrdiff_t)priv);
 	fle = fle + 1;
 	sge = fle + 2;
@@ -1627,7 +1630,7 @@ dpaa2_sec_auth_init(struct rte_cryptodev *dev,
 {
 	struct dpaa2_sec_dev_private *dev_priv = dev->data->dev_private;
 	struct alginfo authdata;
-	unsigned int bufsize, i;
+	int bufsize, i;
 	struct ctxt_priv *priv;
 	struct sec_flow_context *flc;
 
@@ -1723,6 +1726,10 @@ dpaa2_sec_auth_init(struct rte_cryptodev *dev,
 	bufsize = cnstr_shdsc_hmac(priv->flc_desc[DESC_INITFINAL].desc,
 				   1, 0, &authdata, !session->dir,
 				   session->digest_length);
+	if (bufsize < 0) {
+		DPAA2_SEC_ERR("Crypto: Invalid buffer length");
+		goto error_out;
+	}
 
 	flc->word1_sdl = (uint8_t)bufsize;
 	flc->word2_rflc_31_0 = lower_32_bits(
@@ -1753,7 +1760,7 @@ dpaa2_sec_aead_init(struct rte_cryptodev *dev,
 	struct dpaa2_sec_aead_ctxt *ctxt = &session->ext_params.aead_ctxt;
 	struct dpaa2_sec_dev_private *dev_priv = dev->data->dev_private;
 	struct alginfo aeaddata;
-	unsigned int bufsize, i;
+	int bufsize, i;
 	struct ctxt_priv *priv;
 	struct sec_flow_context *flc;
 	struct rte_crypto_aead_xform *aead_xform = &xform->aead;
@@ -1844,6 +1851,11 @@ dpaa2_sec_aead_init(struct rte_cryptodev *dev,
 				priv->flc_desc[0].desc, 1, 0,
 				&aeaddata, session->iv.length,
 				session->digest_length);
+	if (bufsize < 0) {
+		DPAA2_SEC_ERR("Crypto: Invalid buffer length");
+		goto error_out;
+	}
+
 	flc->word1_sdl = (uint8_t)bufsize;
 	flc->word2_rflc_31_0 = lower_32_bits(
 			(size_t)&(((struct dpaa2_sec_qp *)
@@ -1873,7 +1885,7 @@ dpaa2_sec_aead_chain_init(struct rte_cryptodev *dev,
 	struct dpaa2_sec_aead_ctxt *ctxt = &session->ext_params.aead_ctxt;
 	struct dpaa2_sec_dev_private *dev_priv = dev->data->dev_private;
 	struct alginfo authdata, cipherdata;
-	unsigned int bufsize, i;
+	int bufsize, i;
 	struct ctxt_priv *priv;
 	struct sec_flow_context *flc;
 	struct rte_crypto_cipher_xform *cipher_xform;
@@ -2065,6 +2077,10 @@ dpaa2_sec_aead_chain_init(struct rte_cryptodev *dev,
 					      ctxt->auth_only_len,
 					      session->digest_length,
 					      session->dir);
+		if (bufsize < 0) {
+			DPAA2_SEC_ERR("Crypto: Invalid buffer length");
+			goto error_out;
+		}
 	} else {
 		DPAA2_SEC_ERR("Hash before cipher not supported");
 		goto error_out;
@@ -2156,7 +2172,7 @@ dpaa2_sec_set_ipsec_session(struct rte_cryptodev *dev,
 	struct ipsec_encap_pdb encap_pdb;
 	struct ipsec_decap_pdb decap_pdb;
 	struct alginfo authdata, cipherdata;
-	unsigned int bufsize;
+	int bufsize;
 	struct sec_flow_context *flc;
 
 	PMD_INIT_FUNC_TRACE();
@@ -2346,6 +2362,12 @@ dpaa2_sec_set_ipsec_session(struct rte_cryptodev *dev,
 				1, 0, &decap_pdb, &cipherdata, &authdata);
 	} else
 		goto out;
+
+	if (bufsize < 0) {
+		DPAA2_SEC_ERR("Crypto: Invalid buffer length");
+		goto out;
+	}
+
 	flc->word1_sdl = (uint8_t)bufsize;
 
 	/* Enable the stashing control bit */
@@ -2916,8 +2938,8 @@ static struct rte_dpaa2_driver rte_dpaa2_sec_driver = {
 static struct cryptodev_driver dpaa2_sec_crypto_drv;
 
 RTE_PMD_REGISTER_DPAA2(CRYPTODEV_NAME_DPAA2_SEC_PMD, rte_dpaa2_sec_driver);
-RTE_PMD_REGISTER_CRYPTO_DRIVER(dpaa2_sec_crypto_drv, rte_dpaa2_sec_driver,
-		cryptodev_driver_id);
+RTE_PMD_REGISTER_CRYPTO_DRIVER(dpaa2_sec_crypto_drv,
+		rte_dpaa2_sec_driver.driver, cryptodev_driver_id);
 
 RTE_INIT(dpaa2_sec_init_log);
 static void

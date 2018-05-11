@@ -100,8 +100,6 @@
 
 #define IXGBE_QUEUE_STAT_COUNTERS (sizeof(hw_stats->qprc) / sizeof(hw_stats->qprc[0]))
 
-#define IXGBE_HKEY_MAX_INDEX 10
-
 /* Additional timesync values. */
 #define NSEC_PER_SEC             1000000000L
 #define IXGBE_INCVAL_10GB        0x66666666
@@ -117,7 +115,6 @@
 
 #define IXGBE_VT_CTL_POOLING_MODE_MASK         0x00030000
 #define IXGBE_VT_CTL_POOLING_MODE_ETAG         0x00010000
-#define DEFAULT_ETAG_ETYPE                     0x893f
 #define IXGBE_ETAG_ETYPE                       0x00005084
 #define IXGBE_ETAG_ETYPE_MASK                  0x0000ffff
 #define IXGBE_ETAG_ETYPE_VALID                 0x80000000
@@ -132,7 +129,7 @@
 #define IXGBE_EXVET_VET_EXT_SHIFT              16
 #define IXGBE_DMATXCTL_VT_MASK                 0xFFFF0000
 
-static int eth_ixgbe_dev_init(struct rte_eth_dev *eth_dev);
+static int eth_ixgbe_dev_init(struct rte_eth_dev *eth_dev, void *init_params);
 static int eth_ixgbe_dev_uninit(struct rte_eth_dev *eth_dev);
 static int ixgbe_fdir_filter_init(struct rte_eth_dev *eth_dev);
 static int ixgbe_fdir_filter_uninit(struct rte_eth_dev *eth_dev);
@@ -326,6 +323,11 @@ static int ixgbe_get_eeprom(struct rte_eth_dev *dev,
 				struct rte_dev_eeprom_info *eeprom);
 static int ixgbe_set_eeprom(struct rte_eth_dev *dev,
 				struct rte_dev_eeprom_info *eeprom);
+
+static int ixgbe_get_module_info(struct rte_eth_dev *dev,
+				 struct rte_eth_dev_module_info *modinfo);
+static int ixgbe_get_module_eeprom(struct rte_eth_dev *dev,
+				   struct rte_dev_eeprom_info *info);
 
 static int ixgbevf_get_reg_length(struct rte_eth_dev *dev);
 static int ixgbevf_get_regs(struct rte_eth_dev *dev,
@@ -564,6 +566,8 @@ static const struct eth_dev_ops ixgbe_eth_dev_ops = {
 	.get_eeprom_length    = ixgbe_get_eeprom_length,
 	.get_eeprom           = ixgbe_get_eeprom,
 	.set_eeprom           = ixgbe_set_eeprom,
+	.get_module_info      = ixgbe_get_module_info,
+	.get_module_eeprom    = ixgbe_get_module_eeprom,
 	.get_dcb_info         = ixgbe_dev_get_dcb_info,
 	.timesync_adjust_time = ixgbe_timesync_adjust_time,
 	.timesync_read_time   = ixgbe_timesync_read_time,
@@ -1043,7 +1047,7 @@ ixgbe_swfw_lock_reset(struct ixgbe_hw *hw)
  * It returns 0 on success.
  */
 static int
-eth_ixgbe_dev_init(struct rte_eth_dev *eth_dev)
+eth_ixgbe_dev_init(struct rte_eth_dev *eth_dev, void *init_params __rte_unused)
 {
 	struct rte_pci_device *pci_dev = RTE_ETH_DEV_TO_PCI(eth_dev);
 	struct rte_intr_handle *intr_handle = &pci_dev->intr_handle;
@@ -1483,7 +1487,7 @@ static int ixgbe_l2_tn_filter_init(struct rte_eth_dev *eth_dev)
 	}
 	l2_tn_info->e_tag_en = FALSE;
 	l2_tn_info->e_tag_fwd_en = FALSE;
-	l2_tn_info->e_tag_ether_type = DEFAULT_ETAG_ETYPE;
+	l2_tn_info->e_tag_ether_type = ETHER_TYPE_ETAG;
 
 	return 0;
 }
@@ -1717,16 +1721,82 @@ eth_ixgbevf_dev_uninit(struct rte_eth_dev *eth_dev)
 }
 
 //ixgbe驱动探测设备
-static int eth_ixgbe_pci_probe(struct rte_pci_driver *pci_drv __rte_unused,
-	struct rte_pci_device *pci_dev)
+static int
+eth_ixgbe_pci_probe(struct rte_pci_driver *pci_drv __rte_unused,
+		struct rte_pci_device *pci_dev)
 {
-	return rte_eth_dev_pci_generic_probe(pci_dev,
-		sizeof(struct ixgbe_adapter), eth_ixgbe_dev_init);
+	char name[RTE_ETH_NAME_MAX_LEN];
+	struct rte_eth_dev *pf_ethdev;
+	struct rte_eth_devargs eth_da;
+	int i, retval;
+
+	if (pci_dev->device.devargs) {
+		retval = rte_eth_devargs_parse(pci_dev->device.devargs->args,
+				&eth_da);
+		if (retval)
+			return retval;
+	} else
+		memset(&eth_da, 0, sizeof(eth_da));
+
+	retval = rte_eth_dev_create(&pci_dev->device, pci_dev->device.name,
+		sizeof(struct ixgbe_adapter),
+		eth_dev_pci_specific_init, pci_dev,
+		eth_ixgbe_dev_init, NULL);
+
+	if (retval || eth_da.nb_representor_ports < 1)
+		return retval;
+
+	pf_ethdev = rte_eth_dev_allocated(pci_dev->device.name);
+	if (pf_ethdev == NULL)
+		return -ENODEV;
+
+	/* probe VF representor ports */
+	for (i = 0; i < eth_da.nb_representor_ports; i++) {
+		struct ixgbe_vf_info *vfinfo;
+		struct ixgbe_vf_representor representor;
+
+		vfinfo = *IXGBE_DEV_PRIVATE_TO_P_VFDATA(
+			pf_ethdev->data->dev_private);
+		if (vfinfo == NULL) {
+			PMD_DRV_LOG(ERR,
+				"no virtual functions supported by PF");
+			break;
+		}
+
+		representor.vf_id = eth_da.representor_ports[i];
+		representor.switch_domain_id = vfinfo->switch_domain_id;
+		representor.pf_ethdev = pf_ethdev;
+
+		/* representor port net_bdf_port */
+		snprintf(name, sizeof(name), "net_%s_representor_%d",
+			pci_dev->device.name,
+			eth_da.representor_ports[i]);
+
+		retval = rte_eth_dev_create(&pci_dev->device, name,
+			sizeof(struct ixgbe_vf_representor), NULL, NULL,
+			ixgbe_vf_representor_init, &representor);
+
+		if (retval)
+			PMD_DRV_LOG(ERR, "failed to create ixgbe vf "
+				"representor %s.", name);
+	}
+
+	return 0;
+>>>>>>> upstream/master
 }
 
 static int eth_ixgbe_pci_remove(struct rte_pci_device *pci_dev)
 {
-	return rte_eth_dev_pci_generic_remove(pci_dev, eth_ixgbe_dev_uninit);
+	struct rte_eth_dev *ethdev;
+
+	ethdev = rte_eth_dev_allocated(pci_dev->device.name);
+	if (!ethdev)
+		return -ENODEV;
+
+	if (ethdev->data->dev_flags & RTE_ETH_DEV_REPRESENTOR)
+		return rte_eth_dev_destroy(ethdev, ixgbe_vf_representor_uninit);
+	else
+		return rte_eth_dev_destroy(ethdev, eth_ixgbe_dev_uninit);
 }
 
 //ixgbe驱动
@@ -2870,7 +2940,7 @@ ixgbe_dev_reset(struct rte_eth_dev *dev)
 	if (ret)
 		return ret;
 
-	ret = eth_ixgbe_dev_init(dev);
+	ret = eth_ixgbe_dev_init(dev, NULL);
 
 	return ret;
 }
@@ -3885,7 +3955,7 @@ out:
 }
 
 /* return 0 means link status changed, -1 means not changed */
-static int
+int
 ixgbe_dev_link_update_share(struct rte_eth_dev *dev,
 			    int wait_to_complete, int vf)
 {
@@ -3902,7 +3972,7 @@ ixgbe_dev_link_update_share(struct rte_eth_dev *dev,
 
 	memset(&link, 0, sizeof(link));
 	link.link_status = ETH_LINK_DOWN;
-	link.link_speed = 0;
+	link.link_speed = ETH_SPEED_NUM_NONE;
 	link.link_duplex = ETH_LINK_HALF_DUPLEX;
 	link.link_autoneg = ETH_LINK_AUTONEG;
 
@@ -5186,15 +5256,13 @@ ixgbevf_vlan_strip_queue_set(struct rte_eth_dev *dev, uint16_t queue, int on)
 static int
 ixgbevf_vlan_offload_set(struct rte_eth_dev *dev, int mask)
 {
-	struct ixgbe_hw *hw =
-		IXGBE_DEV_PRIVATE_TO_HW(dev->data->dev_private);
 	struct ixgbe_rx_queue *rxq;
 	uint16_t i;
 	int on = 0;
 
 	/* VF function only support hw strip feature, others are not support */
 	if (mask & ETH_VLAN_STRIP_MASK) {
-		for (i = 0; i < hw->mac.max_rx_queues; i++) {
+		for (i = 0; i < dev->data->nb_rx_queues; i++) {
 			rxq = dev->data->rx_queues[i];
 			on = !!(rxq->offloads &	DEV_RX_OFFLOAD_VLAN_STRIP);
 			ixgbevf_vlan_strip_queue_set(dev, i, on);
@@ -7128,6 +7196,78 @@ ixgbe_set_eeprom(struct rte_eth_dev *dev,
 	return eeprom->ops.write_buffer(hw,  first, length, data);
 }
 
+static int
+ixgbe_get_module_info(struct rte_eth_dev *dev,
+		      struct rte_eth_dev_module_info *modinfo)
+{
+	struct ixgbe_hw *hw = IXGBE_DEV_PRIVATE_TO_HW(dev->data->dev_private);
+	uint32_t status;
+	uint8_t sff8472_rev, addr_mode;
+	bool page_swap = false;
+
+	/* Check whether we support SFF-8472 or not */
+	status = hw->phy.ops.read_i2c_eeprom(hw,
+					     IXGBE_SFF_SFF_8472_COMP,
+					     &sff8472_rev);
+	if (status != 0)
+		return -EIO;
+
+	/* addressing mode is not supported */
+	status = hw->phy.ops.read_i2c_eeprom(hw,
+					     IXGBE_SFF_SFF_8472_SWAP,
+					     &addr_mode);
+	if (status != 0)
+		return -EIO;
+
+	if (addr_mode & IXGBE_SFF_ADDRESSING_MODE) {
+		PMD_DRV_LOG(ERR,
+			    "Address change required to access page 0xA2, "
+			    "but not supported. Please report the module "
+			    "type to the driver maintainers.");
+		page_swap = true;
+	}
+
+	if (sff8472_rev == IXGBE_SFF_SFF_8472_UNSUP || page_swap) {
+		/* We have a SFP, but it does not support SFF-8472 */
+		modinfo->type = RTE_ETH_MODULE_SFF_8079;
+		modinfo->eeprom_len = RTE_ETH_MODULE_SFF_8079_LEN;
+	} else {
+		/* We have a SFP which supports a revision of SFF-8472. */
+		modinfo->type = RTE_ETH_MODULE_SFF_8472;
+		modinfo->eeprom_len = RTE_ETH_MODULE_SFF_8472_LEN;
+	}
+
+	return 0;
+}
+
+static int
+ixgbe_get_module_eeprom(struct rte_eth_dev *dev,
+			struct rte_dev_eeprom_info *info)
+{
+	struct ixgbe_hw *hw = IXGBE_DEV_PRIVATE_TO_HW(dev->data->dev_private);
+	uint32_t status = IXGBE_ERR_PHY_ADDR_INVALID;
+	uint8_t databyte = 0xFF;
+	uint8_t *data = info->data;
+	uint32_t i = 0;
+
+	if (info->length == 0)
+		return -EINVAL;
+
+	for (i = info->offset; i < info->offset + info->length; i++) {
+		if (i < RTE_ETH_MODULE_SFF_8079_LEN)
+			status = hw->phy.ops.read_i2c_eeprom(hw, i, &databyte);
+		else
+			status = hw->phy.ops.read_i2c_sff8472(hw, i, &databyte);
+
+		if (status != 0)
+			return -EIO;
+
+		data[i - info->offset] = databyte;
+	}
+
+	return 0;
+}
+
 uint16_t
 ixgbe_reta_size_get(enum ixgbe_mac_type mac_type) {
 	switch (mac_type) {
@@ -8296,7 +8436,7 @@ ixgbe_rss_filter_restore(struct rte_eth_dev *dev)
 	struct ixgbe_filter_info *filter_info =
 		IXGBE_DEV_PRIVATE_TO_FILTER_INFO(dev->data->dev_private);
 
-	if (filter_info->rss_info.num)
+	if (filter_info->rss_info.conf.queue_num)
 		ixgbe_config_rss_filter(dev,
 			&filter_info->rss_info, TRUE);
 }

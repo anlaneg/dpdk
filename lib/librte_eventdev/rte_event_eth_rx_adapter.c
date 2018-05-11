@@ -213,7 +213,7 @@ eth_poll_wrr_calc(struct rte_event_eth_rx_adapter *rx_adapter)
 		/* Generate array of all queues to poll, the size of this
 		 * array is poll_q
 		 */
-		for (d = 0; d < rte_eth_dev_count(); d++) {
+		RTE_ETH_FOREACH_DEV(d) {
 			uint16_t nb_rx_queues;
 			struct eth_device_info *dev_info =
 					&rx_adapter->eth_devices[d];
@@ -434,10 +434,21 @@ fill_event_buffer(struct rte_event_eth_rx_adapter *rx_adapter,
 	uint32_t rss_mask;
 	uint32_t rss;
 	int do_rss;
+	uint64_t ts;
 
 	/* 0xffff ffff if PKT_RX_RSS_HASH is set, otherwise 0 */
 	rss_mask = ~(((m->ol_flags & PKT_RX_RSS_HASH) != 0) - 1);
 	do_rss = !rss_mask && !eth_rx_queue_info->flow_id_mask;
+
+	if ((m->ol_flags & PKT_RX_TIMESTAMP) == 0) {
+		ts = rte_get_tsc_cycles();
+		for (i = 0; i < num; i++) {
+			m = mbufs[i];
+
+			m->timestamp = ts;
+			m->ol_flags |= PKT_RX_TIMESTAMP;
+		}
+	}
 
 	for (i = 0; i < num; i++) {
 		m = mbufs[i];
@@ -449,7 +460,6 @@ fill_event_buffer(struct rte_event_eth_rx_adapter *rx_adapter,
 		    eth_rx_queue_info->flow_id &
 				eth_rx_queue_info->flow_id_mask;
 		flow_id |= rss & ~eth_rx_queue_info->flow_id_mask;
-
 		ev->flow_id = flow_id;
 		ev->op = RTE_EVENT_OP_NEW;
 		ev->sched_type = sched_type;
@@ -813,7 +823,7 @@ rx_adapter_ctrl(uint8_t id, int start)
 
 	dev = &rte_eventdevs[rx_adapter->eventdev_id];
 
-	for (i = 0; i < rte_eth_dev_count(); i++) {
+	RTE_ETH_FOREACH_DEV(i) {
 		dev_info = &rx_adapter->eth_devices[i];
 		/* if start  check for num dev queues */
 		if (start && !dev_info->nb_dev_queues)
@@ -890,7 +900,8 @@ rte_event_eth_rx_adapter_create_ext(uint8_t id, uint8_t dev_id,
 	rx_adapter->conf_arg = conf_arg;
 	strcpy(rx_adapter->mem_name, mem_name);
 	rx_adapter->eth_devices = rte_zmalloc_socket(rx_adapter->mem_name,
-					rte_eth_dev_count() *
+					/* FIXME: incompatible with hotplug */
+					rte_eth_dev_count_total() *
 					sizeof(struct eth_device_info), 0,
 					socket_id);
 	rte_convert_rss_key((const uint32_t *)default_rss_key,
@@ -903,7 +914,7 @@ rte_event_eth_rx_adapter_create_ext(uint8_t id, uint8_t dev_id,
 		return -ENOMEM;
 	}
 	rte_spinlock_init(&rx_adapter->rx_lock);
-	for (i = 0; i < rte_eth_dev_count(); i++)
+	RTE_ETH_FOREACH_DEV(i)
 		rx_adapter->eth_devices[i].dev = &rte_eth_devices[i];
 
 	event_eth_rx_adapter[id] = rx_adapter;
@@ -1174,7 +1185,7 @@ rte_event_eth_rx_adapter_stats_get(uint8_t id,
 
 	dev = &rte_eventdevs[rx_adapter->eventdev_id];
 	memset(stats, 0, sizeof(*stats));
-	for (i = 0; i < rte_eth_dev_count(); i++) {
+	RTE_ETH_FOREACH_DEV(i) {
 		dev_info = &rx_adapter->eth_devices[i];
 		if (dev_info->internal_event_port == 0 ||
 			dev->dev_ops->eth_rx_adapter_stats_get == NULL)
@@ -1211,7 +1222,7 @@ rte_event_eth_rx_adapter_stats_reset(uint8_t id)
 		return -EINVAL;
 
 	dev = &rte_eventdevs[rx_adapter->eventdev_id];
-	for (i = 0; i < rte_eth_dev_count(); i++) {
+	RTE_ETH_FOREACH_DEV(i) {
 		dev_info = &rx_adapter->eth_devices[i];
 		if (dev_info->internal_event_port == 0 ||
 			dev->dev_ops->eth_rx_adapter_stats_reset == NULL)

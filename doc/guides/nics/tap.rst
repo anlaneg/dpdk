@@ -108,7 +108,7 @@ The kernel support can be checked with this command::
 Supported items:
 
 - eth: src and dst (with variable masks), and eth_type (0xffff mask).
-- vlan: vid, pcp, tpid, but not eid. (requires kernel 4.9)
+- vlan: vid, pcp, but not eid. (requires kernel 4.9)
 - ipv4/6: src and dst (with variable masks), and ip_proto (0xffff mask).
 - udp/tcp: src and dst port (0xffff) mask.
 
@@ -166,7 +166,7 @@ Run pktgen from the pktgen directory in a terminal with a commandline like the
 following::
 
     sudo ./app/app/x86_64-native-linuxapp-gcc/app/pktgen -l 1-5 -n 4        \
-     --proc-type auto --log-level 8 --socket-mem 512,512 --file-prefix pg   \
+     --proc-type auto --log-level debug --socket-mem 512,512 --file-prefix pg   \
      --vdev=net_tap0 --vdev=net_tap1 -b 05:00.0 -b 05:00.1                  \
      -b 04:00.0 -b 04:00.1 -b 04:00.2 -b 04:00.3                            \
      -b 81:00.0 -b 81:00.1 -b 81:00.2 -b 81:00.3                            \

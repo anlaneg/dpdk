@@ -21,6 +21,7 @@
 #include "sfc_rx.h"
 #include "sfc_tx.h"
 #include "sfc_kvargs.h"
+#include "sfc_tweak.h"
 
 
 int
@@ -623,7 +624,6 @@ sfc_mem_bar_fini(struct sfc_adapter *sa)
 	memset(ebp, 0, sizeof(*ebp));
 }
 
-#if EFSYS_OPT_RX_SCALE
 /*
  * A fixed RSS key which has a property of being symmetric
  * (symmetrical flows are distributed to the same CPU)
@@ -637,12 +637,11 @@ static const uint8_t default_rss_key[EFX_RSS_KEY_SIZE] = {
 	0x6d, 0x5a, 0x6d, 0x5a, 0x6d, 0x5a, 0x6d, 0x5a,
 	0x6d, 0x5a, 0x6d, 0x5a, 0x6d, 0x5a, 0x6d, 0x5a,
 };
-#endif
 
-#if EFSYS_OPT_RX_SCALE
 static int
-sfc_set_rss_defaults(struct sfc_adapter *sa)
+sfc_rss_attach(struct sfc_adapter *sa)
 {
+	struct sfc_rss *rss = &sa->rss;
 	int rc;
 
 	rc = efx_intr_init(sa->nic, sa->intr.type, NULL);
@@ -657,26 +656,31 @@ sfc_set_rss_defaults(struct sfc_adapter *sa)
 	if (rc != 0)
 		goto fail_rx_init;
 
-	rc = efx_rx_scale_default_support_get(sa->nic, &sa->rss_support);
+	rc = efx_rx_scale_default_support_get(sa->nic, &rss->context_type);
 	if (rc != 0)
 		goto fail_scale_support_get;
 
-	rc = efx_rx_hash_default_support_get(sa->nic, &sa->hash_support);
+	rc = efx_rx_hash_default_support_get(sa->nic, &rss->hash_support);
 	if (rc != 0)
 		goto fail_hash_support_get;
+
+	rc = sfc_rx_hash_init(sa);
+	if (rc != 0)
+		goto fail_rx_hash_init;
 
 	efx_rx_fini(sa->nic);
 	efx_ev_fini(sa->nic);
 	efx_intr_fini(sa->nic);
 
-	sa->rss_hash_types = sfc_rte_to_efx_hash_type(SFC_RSS_OFFLOADS);
-
-	rte_memcpy(sa->rss_key, default_rss_key, sizeof(sa->rss_key));
+	rte_memcpy(rss->key, default_rss_key, sizeof(rss->key));
 
 	return 0;
 
+fail_rx_hash_init:
 fail_hash_support_get:
 fail_scale_support_get:
+	efx_rx_fini(sa->nic);
+
 fail_rx_init:
 	efx_ev_fini(sa->nic);
 
@@ -686,13 +690,12 @@ fail_ev_init:
 fail_intr_init:
 	return rc;
 }
-#else
-static int
-sfc_set_rss_defaults(__rte_unused struct sfc_adapter *sa)
+
+static void
+sfc_rss_detach(struct sfc_adapter *sa)
 {
-	return 0;
+	sfc_rx_hash_fini(sa);
 }
-#endif
 
 int
 sfc_attach(struct sfc_adapter *sa)
@@ -751,9 +754,9 @@ sfc_attach(struct sfc_adapter *sa)
 	if (rc != 0)
 		goto fail_port_attach;
 
-	rc = sfc_set_rss_defaults(sa);
+	rc = sfc_rss_attach(sa);
 	if (rc != 0)
-		goto fail_set_rss_defaults;
+		goto fail_rss_attach;
 
 	rc = sfc_filter_attach(sa);
 	if (rc != 0)
@@ -770,7 +773,9 @@ sfc_attach(struct sfc_adapter *sa)
 	return 0;
 
 fail_filter_attach:
-fail_set_rss_defaults:
+	sfc_rss_detach(sa);
+
+fail_rss_attach:
 	sfc_port_detach(sa);
 
 fail_port_attach:
@@ -802,6 +807,7 @@ sfc_detach(struct sfc_adapter *sa)
 	sfc_flow_fini(sa);
 
 	sfc_filter_detach(sa);
+	sfc_rss_detach(sa);
 	sfc_port_detach(sa);
 	sfc_ev_detach(sa);
 	sfc_intr_detach(sa);
@@ -824,6 +830,8 @@ sfc_kvarg_fv_variant_handler(__rte_unused const char *key,
 		*value = EFX_FW_VARIANT_LOW_LATENCY;
 	else if (strcasecmp(value_str, SFC_KVARG_FW_VARIANT_PACKED_STREAM) == 0)
 		*value = EFX_FW_VARIANT_PACKED_STREAM;
+	else if (strcasecmp(value_str, SFC_KVARG_FW_VARIANT_DPDK) == 0)
+		*value = EFX_FW_VARIANT_DPDK;
 	else
 		return -EINVAL;
 
@@ -859,6 +867,10 @@ sfc_get_fw_variant(struct sfc_adapter *sa, efx_fw_variant_t *efv)
 		*efv = EFX_FW_VARIANT_PACKED_STREAM;
 		break;
 
+	case EFX_RXDP_DPDK_FW_ID:
+		*efv = EFX_FW_VARIANT_DPDK;
+		break;
+
 	default:
 		/*
 		 * Other firmware variants are not considered, since they are
@@ -881,9 +893,37 @@ sfc_fw_variant2str(efx_fw_variant_t efv)
 		return SFC_KVARG_FW_VARIANT_LOW_LATENCY;
 	case EFX_RXDP_PACKED_STREAM_FW_ID:
 		return SFC_KVARG_FW_VARIANT_PACKED_STREAM;
+	case EFX_RXDP_DPDK_FW_ID:
+		return SFC_KVARG_FW_VARIANT_DPDK;
 	default:
 		return "unknown";
 	}
+}
+
+static int
+sfc_kvarg_rxd_wait_timeout_ns(struct sfc_adapter *sa)
+{
+	int rc;
+	long value;
+
+	value = SFC_RXD_WAIT_TIMEOUT_NS_DEF;
+
+	rc = sfc_kvargs_process(sa, SFC_KVARG_RXD_WAIT_TIMEOUT_NS,
+				sfc_kvarg_long_handler, &value);
+	if (rc != 0)
+		return rc;
+
+	if (value < 0 ||
+	    (unsigned long)value > EFX_RXQ_ES_SUPER_BUFFER_HOL_BLOCK_MAX) {
+		sfc_err(sa, "wrong '" SFC_KVARG_RXD_WAIT_TIMEOUT_NS "' "
+			    "was set (%ld);", value);
+		sfc_err(sa, "it must not be less than 0 or greater than %u",
+			    EFX_RXQ_ES_SUPER_BUFFER_HOL_BLOCK_MAX);
+		return EINVAL;
+	}
+
+	sa->rxd_wait_timeout_ns = value;
+	return 0;
 }
 
 static int
@@ -902,6 +942,10 @@ sfc_nic_probe(struct sfc_adapter *sa)
 		sfc_err(sa, "invalid %s parameter value", SFC_KVARG_FW_VARIANT);
 		return rc;
 	}
+
+	rc = sfc_kvarg_rxd_wait_timeout_ns(sa);
+	if (rc != 0)
+		return rc;
 
 	rc = efx_nic_probe(enp, preferred_efv);
 	if (rc == EACCES) {

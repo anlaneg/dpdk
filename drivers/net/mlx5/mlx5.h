@@ -88,7 +88,10 @@ struct mlx5_dev_config {
 	unsigned int tx_vec_en:1; /* Tx vector is enabled. */
 	unsigned int rx_vec_en:1; /* Rx vector is enabled. */
 	unsigned int mpw_hdr_dseg:1; /* Enable DSEGs in the title WQEBB. */
+	unsigned int l3_vxlan_en:1; /* Enable L3 VXLAN flow creation. */
 	unsigned int vf_nl_en:1; /* Enable Netlink requests in VF mode. */
+	unsigned int swp:1; /* Tx generic tunnel checksum and TSO offload. */
+	unsigned int max_verbs_prio; /* Number of Verb flow priorities. */
 	unsigned int tso_max_payload_sz; /* Maximum TCP payload for TSO. */
 	unsigned int ind_table_max_size; /* Maximum indirection table size. */
 	int txq_inline; /* Maximum packet size for inlining. */
@@ -104,6 +107,9 @@ enum mlx5_verbs_alloc_type {
 	MLX5_VERBS_ALLOC_TYPE_TX_QUEUE,
 	MLX5_VERBS_ALLOC_TYPE_RX_QUEUE,
 };
+
+/* 8 Verbs priorities. */
+#define MLX5_VERBS_FLOW_PRIO_8 8
 
 /**
  * Verbs allocator needs a context to know in the callback which kind of
@@ -203,6 +209,8 @@ void mlx5_mac_addr_remove(struct rte_eth_dev *dev, uint32_t index);
 int mlx5_mac_addr_add(struct rte_eth_dev *dev, struct ether_addr *mac,
 		      uint32_t index, uint32_t vmdq);
 int mlx5_mac_addr_set(struct rte_eth_dev *dev, struct ether_addr *mac_addr);
+int mlx5_set_mc_addr_list(struct rte_eth_dev *dev,
+			  struct ether_addr *mc_addr_set, uint32_t nb_mc_addr);
 
 /* mlx5_rss.c */
 
@@ -253,6 +261,7 @@ int mlx5_traffic_restart(struct rte_eth_dev *dev);
 
 /* mlx5_flow.c */
 
+unsigned int mlx5_get_max_verbs_prio(struct rte_eth_dev *dev);
 int mlx5_flow_validate(struct rte_eth_dev *dev,
 		       const struct rte_flow_attr *attr,
 		       const struct rte_flow_item items[],
@@ -268,7 +277,7 @@ int mlx5_flow_destroy(struct rte_eth_dev *dev, struct rte_flow *flow,
 void mlx5_flow_list_flush(struct rte_eth_dev *dev, struct mlx5_flows *list);
 int mlx5_flow_flush(struct rte_eth_dev *dev, struct rte_flow_error *error);
 int mlx5_flow_query(struct rte_eth_dev *dev, struct rte_flow *flow,
-		    enum rte_flow_action_type action, void *data,
+		    const struct rte_flow_action *action, void *data,
 		    struct rte_flow_error *error);
 int mlx5_flow_isolate(struct rte_eth_dev *dev, int enable,
 		      struct rte_flow_error *error);

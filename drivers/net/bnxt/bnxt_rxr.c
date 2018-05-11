@@ -41,11 +41,12 @@ static inline int bnxt_alloc_rx_data(struct bnxt_rx_queue *rxq,
 
 	mbuf = __bnxt_alloc_rx_data(rxq->mb_pool);
 	if (!mbuf) {
-		rte_atomic64_inc(&rxq->bp->rx_mbuf_alloc_fail);
+		rte_atomic64_inc(&rxq->rx_mbuf_alloc_fail);
 		return -ENOMEM;
 	}
 
 	rx_buf->mbuf = mbuf;
+	mbuf->data_off = RTE_PKTMBUF_HEADROOM;
 
 	rxbd->addr = rte_cpu_to_le_64(rte_mbuf_data_iova_default(mbuf));
 
@@ -62,7 +63,7 @@ static inline int bnxt_alloc_ag_data(struct bnxt_rx_queue *rxq,
 
 	mbuf = __bnxt_alloc_rx_data(rxq->mb_pool);
 	if (!mbuf) {
-		rte_atomic64_inc(&rxq->bp->rx_mbuf_alloc_fail);
+		rte_atomic64_inc(&rxq->rx_mbuf_alloc_fail);
 		return -ENOMEM;
 	}
 
@@ -73,6 +74,7 @@ static inline int bnxt_alloc_ag_data(struct bnxt_rx_queue *rxq,
 
 
 	rx_buf->mbuf = mbuf;
+	mbuf->data_off = RTE_PKTMBUF_HEADROOM;
 
 	rxbd->addr = rte_cpu_to_le_64(rte_mbuf_data_iova_default(mbuf));
 
@@ -299,7 +301,7 @@ static inline struct rte_mbuf *bnxt_tpa_end(
 	struct rte_mbuf *new_data = __bnxt_alloc_rx_data(rxq->mb_pool);
 	RTE_ASSERT(new_data != NULL);
 	if (!new_data) {
-		rte_atomic64_inc(&rxq->bp->rx_mbuf_alloc_fail);
+		rte_atomic64_inc(&rxq->rx_mbuf_alloc_fail);
 		return NULL;
 	}
 	tpa_info->mbuf = new_data;
@@ -727,7 +729,7 @@ int bnxt_init_one_rx_ring(struct bnxt_rx_queue *rxq)
 	if (rxq->rx_buf_use_size <= size)
 		size = rxq->rx_buf_use_size;
 
-	type = RX_PROD_PKT_BD_TYPE_RX_PROD_PKT;
+	type = RX_PROD_PKT_BD_TYPE_RX_PROD_PKT | RX_PROD_PKT_BD_FLAGS_EOP_PAD;
 
 	rxr = rxq->rx_ring;
 	ring = rxr->rx_ring_struct;
@@ -767,7 +769,7 @@ int bnxt_init_one_rx_ring(struct bnxt_rx_queue *rxq)
 			rxr->tpa_info[i].mbuf =
 				__bnxt_alloc_rx_data(rxq->mb_pool);
 			if (!rxr->tpa_info[i].mbuf) {
-				rte_atomic64_inc(&rxq->bp->rx_mbuf_alloc_fail);
+				rte_atomic64_inc(&rxq->rx_mbuf_alloc_fail);
 				return -ENOMEM;
 			}
 		}

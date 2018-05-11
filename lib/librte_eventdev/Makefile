@@ -14,12 +14,13 @@ LIBABIVER := 3
 CFLAGS += -DALLOW_EXPERIMENTAL_API
 CFLAGS += -O3
 CFLAGS += $(WERROR_FLAGS)
-LDLIBS += -lrte_eal -lrte_ring -lrte_ethdev -lrte_hash
+LDLIBS += -lrte_eal -lrte_ring -lrte_ethdev -lrte_hash -lrte_mempool -lrte_timer
 
 # library source files
 SRCS-y += rte_eventdev.c
 SRCS-y += rte_event_ring.c
 SRCS-y += rte_event_eth_rx_adapter.c
+SRCS-y += rte_event_timer_adapter.c
 
 # export include files
 SYMLINK-y-include += rte_eventdev.h
@@ -28,6 +29,8 @@ SYMLINK-y-include += rte_eventdev_pmd_pci.h
 SYMLINK-y-include += rte_eventdev_pmd_vdev.h
 SYMLINK-y-include += rte_event_ring.h
 SYMLINK-y-include += rte_event_eth_rx_adapter.h
+SYMLINK-y-include += rte_event_timer_adapter.h
+SYMLINK-y-include += rte_event_timer_adapter_pmd.h
 
 # versioning export map
 EXPORT_MAP := rte_eventdev_version.map

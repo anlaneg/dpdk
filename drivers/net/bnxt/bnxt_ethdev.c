@@ -34,7 +34,8 @@ int bnxt_logtype_driver;
 
 #define PCI_VENDOR_ID_BROADCOM 0x14E4
 
-#define BROADCOM_DEV_ID_STRATUS_NIC_VF 0x1609
+#define BROADCOM_DEV_ID_STRATUS_NIC_VF1 0x1606
+#define BROADCOM_DEV_ID_STRATUS_NIC_VF2 0x1609
 #define BROADCOM_DEV_ID_STRATUS_NIC 0x1614
 #define BROADCOM_DEV_ID_57414_VF 0x16c1
 #define BROADCOM_DEV_ID_57301 0x16c8
@@ -75,7 +76,9 @@ int bnxt_logtype_driver;
 
 static const struct rte_pci_id bnxt_pci_id_map[] = {
 	{ RTE_PCI_DEVICE(PCI_VENDOR_ID_BROADCOM,
-			 BROADCOM_DEV_ID_STRATUS_NIC_VF) },
+			 BROADCOM_DEV_ID_STRATUS_NIC_VF1) },
+	{ RTE_PCI_DEVICE(PCI_VENDOR_ID_BROADCOM,
+			 BROADCOM_DEV_ID_STRATUS_NIC_VF2) },
 	{ RTE_PCI_DEVICE(PCI_VENDOR_ID_BROADCOM, BROADCOM_DEV_ID_STRATUS_NIC) },
 	{ RTE_PCI_DEVICE(PCI_VENDOR_ID_BROADCOM, BROADCOM_DEV_ID_57414_VF) },
 	{ RTE_PCI_DEVICE(PCI_VENDOR_ID_BROADCOM, BROADCOM_DEV_ID_57301) },
@@ -392,10 +395,6 @@ static int bnxt_init_nic(struct bnxt *bp)
 	bnxt_init_vnics(bp);
 	bnxt_init_filters(bp);
 
-	rc = bnxt_init_chip(bp);
-	if (rc)
-		return rc;
-
 	return 0;
 }
 
@@ -591,7 +590,7 @@ static int bnxt_dev_start_op(struct rte_eth_dev *eth_dev)
 	}
 	bp->dev_stopped = 0;
 
-	rc = bnxt_init_nic(bp);
+	rc = bnxt_init_chip(bp);
 	if (rc)
 		goto error;
 
@@ -3063,7 +3062,8 @@ static bool bnxt_vf_pciid(uint16_t id)
 	    id == BROADCOM_DEV_ID_5731X_VF ||
 	    id == BROADCOM_DEV_ID_5741X_VF ||
 	    id == BROADCOM_DEV_ID_57414_VF ||
-	    id == BROADCOM_DEV_ID_STRATUS_NIC_VF)
+	    id == BROADCOM_DEV_ID_STRATUS_NIC_VF1 ||
+	    id == BROADCOM_DEV_ID_STRATUS_NIC_VF2)
 		return true;
 	return false;
 }
@@ -3091,11 +3091,23 @@ static int bnxt_init_board(struct rte_eth_dev *eth_dev)
 		rc = -ENOMEM;
 		goto init_err_release;
 	}
+
+	if (!pci_dev->mem_resource[2].addr) {
+		PMD_DRV_LOG(ERR,
+			    "Cannot find PCI device BAR 2 address, aborting\n");
+		rc = -ENODEV;
+		goto init_err_release;
+	} else {
+		bp->doorbell_base = (void *)pci_dev->mem_resource[2].addr;
+	}
+
 	return 0;
 
 init_err_release:
 	if (bp->bar0)
 		bp->bar0 = NULL;
+	if (bp->doorbell_base)
+		bp->doorbell_base = NULL;
 
 init_err_disable:
 
@@ -3129,7 +3141,6 @@ bnxt_dev_init(struct rte_eth_dev *eth_dev)
 
 	bp = eth_dev->data->dev_private;
 
-	rte_atomic64_init(&bp->rx_mbuf_alloc_fail);
 	bp->dev_stopped = 1;
 
 	if (rte_eal_process_type() != RTE_PROC_PRIMARY)
@@ -3383,6 +3394,7 @@ skip_init:
 		goto error_free_int;
 
 	bnxt_enable_int(bp);
+	bnxt_init_nic(bp);
 
 	return 0;
 
@@ -3472,7 +3484,7 @@ bnxt_init_log(void)
 {
 	bnxt_logtype_driver = rte_log_register("pmd.bnxt.driver");
 	if (bnxt_logtype_driver >= 0)
-		rte_log_set_level(bnxt_logtype_driver, RTE_LOG_NOTICE);
+		rte_log_set_level(bnxt_logtype_driver, RTE_LOG_INFO);
 }
 
 RTE_PMD_REGISTER_PCI(net_bnxt, bnxt_rte_pmd);
