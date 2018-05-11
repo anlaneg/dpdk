@@ -11,6 +11,7 @@
 /*
  * Reassemble fragments into one packet.
  */
+//将收集全的分片进行重组
 struct rte_mbuf *
 ipv4_frag_reassemble(struct ip_frag_pkt *fp)
 {
@@ -113,12 +114,12 @@ rte_ipv4_frag_reassemble_packet(struct rte_ip_frag_tbl *tbl,
 	psd = (unaligned_uint64_t *)&ip_hdr->src_addr;
 	/* use first 8 bytes only */
 	key.src_dst[0] = psd[0];//填充src-dst ip地址
-	key.id = ip_hdr->packet_id;//id
+	key.id = ip_hdr->packet_id;//ip层id号
 	key.key_len = IPV4_KEYLEN;
 
-	ip_ofs *= IPV4_HDR_OFFSET_UNITS;
+	ip_ofs *= IPV4_HDR_OFFSET_UNITS;//展开为真实的offset
 	ip_len = (uint16_t)(rte_be_to_cpu_16(ip_hdr->total_length) -
-		mb->l3_len);
+		mb->l3_len);//获得分片负载的长度（mb->l3_len指出ip头长度）
 
 	IP_FRAG_LOG(DEBUG, "%s:%d:\n"
 		"mbuf: %p, tms: %" PRIu64
@@ -131,6 +132,7 @@ rte_ipv4_frag_reassemble_packet(struct rte_ip_frag_tbl *tbl,
 		tbl->use_entries);
 
 	/* try to find/add entry into the fragment's table. */
+	//找本包对应的分片列表
 	if ((fp = ip_frag_find(tbl, dr, &key, tms)) == NULL) {
 		IP_FRAG_MBUF2DR(dr, mb);
 		return NULL;

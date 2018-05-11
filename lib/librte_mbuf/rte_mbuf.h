@@ -550,8 +550,8 @@ struct rte_mbuf {
 			/**< L2 (MAC) Header Length for non-tunneling pkt.
 			 * Outer_L4_len + ... + Inner_L2_len for tunneling pkt.
 			 */
-			uint64_t l3_len:9; /**< L3 (IP) Header Length. */ //3层头部长度
-			uint64_t l4_len:8; /**< L4 (TCP/UDP) Header Length. */ //4层头部长度
+			uint64_t l3_len:9; /**< L3 (IP) Header Length. */ //3层头部的长度
+			uint64_t l4_len:8; /**< L4 (TCP/UDP) Header Length. */ //4层头部的长度
 
 			//在不支持TSO的网卡上，TCP层向IP层发送数据会考虑mss，使得TCP向下发送的数据可以包含在一个IP分组中而不会造成分片，
 			//mss是在TCP初始建立连接时由网卡MTU确定并和对端协商的，所以在一个MTU＝1500的网卡上，TCP向下发送的数据不会大于

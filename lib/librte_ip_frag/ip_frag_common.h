@@ -49,6 +49,7 @@ struct rte_mbuf *ipv6_frag_reassemble(struct ip_frag_pkt *fp);
  */
 
 /* check if key is empty */
+//检查key是否为空
 static inline int
 ip_frag_key_is_empty(const struct ip_frag_key * key)
 {
@@ -73,9 +74,9 @@ static inline int
 ip_frag_key_cmp(const struct ip_frag_key * k1, const struct ip_frag_key * k2)
 {
 	uint32_t i, val;
-	val = k1->id ^ k2->id;
+	val = k1->id ^ k2->id;//id相等
 	for (i = 0; i < k1->key_len; i++)
-		val |= k1->src_dst[i] ^ k2->src_dst[i];
+		val |= k1->src_dst[i] ^ k2->src_dst[i];//且源目的地址相等时，认为匹配
 	return val;
 }
 
