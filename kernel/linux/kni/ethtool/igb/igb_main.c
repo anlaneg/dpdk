@@ -2311,6 +2311,7 @@ static const struct net_device_ops igb_netdev_ops = {
 	.ndo_do_ioctl		= igb_ioctl,
 	.ndo_tx_timeout		= igb_tx_timeout,
 	.ndo_validate_addr	= eth_validate_addr,
+	//为设备添加vlan id　过滤时将使用此函数
 	.ndo_vlan_rx_add_vid	= igb_vlan_rx_add_vid,
 	.ndo_vlan_rx_kill_vid	= igb_vlan_rx_kill_vid,
 #ifdef IFLA_VF_MAX
