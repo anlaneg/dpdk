@@ -131,8 +131,10 @@ rte_devargs_insert(struct rte_devargs *da)
 {
 	int ret;
 
+	//先移除，再加入
 	ret = rte_devargs_remove(da->bus->name, da->name);
 	if (ret < 0)
+		//走不到
 		return ret;
 	TAILQ_INSERT_TAIL(&devargs_list, da, next);
 	return 0;

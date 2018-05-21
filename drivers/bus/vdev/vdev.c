@@ -122,6 +122,7 @@ vdev_parse(const char *name, void *addr)
 	struct rte_vdev_driver **out = addr;
 	struct rte_vdev_driver *driver = NULL;
 
+	//如果名称相同或者别名的前缀相同，则驱动会命中
 	TAILQ_FOREACH(driver, &vdev_driver_list, next) {
 		if (strncmp(driver->driver.name, name,
 			    strlen(driver->driver.name)) == 0)
@@ -181,6 +182,7 @@ find_vdev(const char *name)
 	return NULL;
 }
 
+//申请devargs,填充bus,args,name
 static struct rte_devargs *
 alloc_devargs(const char *name, const char *args)
 {
@@ -207,6 +209,7 @@ alloc_devargs(const char *name, const char *args)
 	return devargs;
 }
 
+//创建并加入dev
 static int
 insert_vdev(const char *name, const char *args, struct rte_vdev_device **p_dev)
 {
@@ -232,10 +235,11 @@ insert_vdev(const char *name, const char *args, struct rte_vdev_device **p_dev)
 	dev->device.name = devargs->name;
 
 	if (find_vdev(name)) {
-		ret = -EEXIST;
+		ret = -EEXIST;//重复添加，报错
 		goto fail;
 	}
 
+	//加入
 	TAILQ_INSERT_TAIL(&vdev_device_list, dev, next);
 	rte_devargs_insert(devargs);
 
@@ -258,8 +262,9 @@ rte_vdev_init(const char *name, const char *args)
 	int ret;
 
 	rte_spinlock_lock(&vdev_device_list_lock);
-	ret = insert_vdev(name, args, &dev);
+	ret = insert_vdev(name, args, &dev);//创建dev
 	if (ret == 0) {
+		//查驱动
 		ret = vdev_probe_all_drivers(dev);
 		if (ret) {
 			if (ret > 0)

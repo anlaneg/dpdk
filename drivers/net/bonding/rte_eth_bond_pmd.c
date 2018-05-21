@@ -676,7 +676,7 @@ bond_ethdev_tx_burst_round_robin(void *queue, struct rte_mbuf **bufs,
 
 	uint16_t num_tx_total = 0, num_tx_slave;
 
-	static int slave_idx = 0;
+	static int slave_idx = 0;//用此变量实现轮循发送
 	int i, cslave_idx = 0, tx_fail_total = 0;
 
 	bd_tx_q = (struct bond_tx_queue *)queue;
@@ -694,6 +694,7 @@ bond_ethdev_tx_burst_round_robin(void *queue, struct rte_mbuf **bufs,
 	/* Populate slaves mbuf with which packets are to be sent on it  */
 	for (i = 0; i < nb_pkts; i++) {
 		cslave_idx = (slave_idx + i) % num_of_slaves;
+		//在cslave_idx位置存入mbuf,计算cslave_idx中有多少个nb_pkts需要发送
 		slave_bufs[cslave_idx][(slave_nb_pkts[cslave_idx])++] = bufs[i];
 	}
 
@@ -702,6 +703,7 @@ bond_ethdev_tx_burst_round_robin(void *queue, struct rte_mbuf **bufs,
 	slave_idx = ++cslave_idx;
 
 	/* Send packet burst on each slave device */
+	//遍历第个slaves，实现发送
 	for (i = 0; i < num_of_slaves; i++) {
 		if (slave_nb_pkts[i] > 0) {
 			num_tx_slave = rte_eth_tx_burst(slaves[i], bd_tx_q->queue_id,
@@ -775,6 +777,7 @@ ipv6_hash(struct ipv6_hdr *ipv6_hdr)
 }
 
 
+//按srcmac,dstmac进行hash
 void
 burst_xmit_l2_hash(struct rte_mbuf **buf, uint16_t nb_pkts,
 		uint8_t slave_count, uint16_t *slaves)
@@ -792,6 +795,7 @@ burst_xmit_l2_hash(struct rte_mbuf **buf, uint16_t nb_pkts,
 	}
 }
 
+//按srcmac,dstmac,srcip,dstip进行hash
 void
 burst_xmit_l23_hash(struct rte_mbuf **buf, uint16_t nb_pkts,
 		uint8_t slave_count, uint16_t *slaves)
@@ -830,6 +834,7 @@ burst_xmit_l23_hash(struct rte_mbuf **buf, uint16_t nb_pkts,
 	}
 }
 
+//按srcip,dstip,srcport,dstport进行hash
 void
 burst_xmit_l34_hash(struct rte_mbuf **buf, uint16_t nb_pkts,
 		uint8_t slave_count, uint16_t *slaves)
@@ -1203,6 +1208,7 @@ bond_ethdev_tx_burst_alb(void *queue, struct rte_mbuf **bufs, uint16_t nb_pkts)
 	return num_tx_total;
 }
 
+//按hash结果进行分发
 static uint16_t
 bond_ethdev_tx_burst_balance(void *queue, struct rte_mbuf **bufs,
 		uint16_t nb_bufs)
@@ -1241,6 +1247,7 @@ bond_ethdev_tx_burst_balance(void *queue, struct rte_mbuf **bufs,
 	 * Populate slaves mbuf with the packets which are to be sent on it
 	 * selecting output slave using hash based on xmit policy
 	 */
+	//按hash计算出接口
 	internals->burst_xmit_hash(bufs, nb_bufs, slave_count,
 			bufs_slave_port_idxs);
 
@@ -1440,6 +1447,7 @@ bond_ethdev_tx_burst_8023ad(void *queue, struct rte_mbuf **bufs,
 	return total_tx_count;
 }
 
+//广播方式发送
 static uint16_t
 bond_ethdev_tx_burst_broadcast(void *queue, struct rte_mbuf **bufs,
 		uint16_t nb_pkts)
@@ -1644,6 +1652,7 @@ mac_address_slaves_update(struct rte_eth_dev *bonded_eth_dev)
 	return 0;
 }
 
+//设置bond的模式
 int
 bond_ethdev_mode_set(struct rte_eth_dev *eth_dev, int mode)
 {
@@ -1652,18 +1661,24 @@ bond_ethdev_mode_set(struct rte_eth_dev *eth_dev, int mode)
 	internals = eth_dev->data->dev_private;
 
 	switch (mode) {
+	//轮循发送
 	case BONDING_MODE_ROUND_ROBIN:
 		eth_dev->tx_pkt_burst = bond_ethdev_tx_burst_round_robin;
 		eth_dev->rx_pkt_burst = bond_ethdev_rx_burst;
 		break;
+		//主备发送
 	case BONDING_MODE_ACTIVE_BACKUP:
 		eth_dev->tx_pkt_burst = bond_ethdev_tx_burst_active_backup;
 		eth_dev->rx_pkt_burst = bond_ethdev_rx_burst_active_backup;
 		break;
+		//按hash结果分发，目前支持l2(srcmac,dstmac)
+		//l2,l3(srcmac,dstmac,srcip,dstip)
+		//l3,l4(srcip,dstip,srcport,dstport) 进行分发
 	case BONDING_MODE_BALANCE:
 		eth_dev->tx_pkt_burst = bond_ethdev_tx_burst_balance;
 		eth_dev->rx_pkt_burst = bond_ethdev_rx_burst;
 		break;
+		//按广播方式发送
 	case BONDING_MODE_BROADCAST:
 		eth_dev->tx_pkt_burst = bond_ethdev_tx_burst_broadcast;
 		eth_dev->rx_pkt_burst = bond_ethdev_rx_burst;
@@ -2942,6 +2957,7 @@ bond_alloc(struct rte_vdev_device *dev, uint8_t mode)
 	eth_dev->data->nb_rx_queues = (uint16_t)1;
 	eth_dev->data->nb_tx_queues = (uint16_t)1;
 
+	//mac地址全为０
 	eth_dev->data->mac_addrs = rte_zmalloc_socket(name, ETHER_ADDR_LEN, 0,
 			socket_id);
 	if (eth_dev->data->mac_addrs == NULL) {
@@ -3026,6 +3042,7 @@ err:
 	return -1;
 }
 
+//探测dev设备是否可用
 static int
 bond_probe(struct rte_vdev_device *dev)
 {
@@ -3043,6 +3060,7 @@ bond_probe(struct rte_vdev_device *dev)
 	name = rte_vdev_device_name(dev);
 	RTE_BOND_LOG(INFO, "Initializing pmd_bond for %s", name);
 
+	//主备进程模式处理
 	if (rte_eal_process_type() == RTE_PROC_SECONDARY &&
 	    strlen(rte_vdev_device_args(dev)) == 0) {
 		eth_dev = rte_eth_dev_attach_secondary(name);
@@ -3055,6 +3073,7 @@ bond_probe(struct rte_vdev_device *dev)
 		return 0;
 	}
 
+	//将参数解析为list
 	kvlist = rte_kvargs_parse(rte_vdev_device_args(dev),
 		pmd_bond_init_valid_arguments);
 	if (kvlist == NULL)
@@ -3062,6 +3081,7 @@ bond_probe(struct rte_vdev_device *dev)
 
 	/* Parse link bonding mode */
 	if (rte_kvargs_count(kvlist, PMD_BOND_MODE_KVARG) == 1) {
+		//解析bond模式参数，是否合法，将解析值保存在bonding_mode中
 		if (rte_kvargs_process(kvlist, PMD_BOND_MODE_KVARG,
 				&bond_ethdev_parse_slave_mode_kvarg,
 				&bonding_mode) != 0) {
@@ -3078,6 +3098,7 @@ bond_probe(struct rte_vdev_device *dev)
 	/* Parse socket id to create bonding device on */
 	arg_count = rte_kvargs_count(kvlist, PMD_BOND_SOCKET_ID_KVARG);
 	if (arg_count == 1) {
+		//解析socket_id参数，socket_id的值必须大于０
 		if (rte_kvargs_process(kvlist, PMD_BOND_SOCKET_ID_KVARG,
 				&bond_ethdev_parse_socket_id_kvarg, &socket_id)
 				!= 0) {

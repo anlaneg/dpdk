@@ -138,6 +138,7 @@ deactivate_slave(struct rte_eth_dev *eth_dev, uint16_t port_id)
 	}
 }
 
+//bond接口创建
 int
 rte_eth_bond_create(const char *name, uint8_t mode, uint8_t socket_id)
 {
@@ -151,6 +152,7 @@ rte_eth_bond_create(const char *name, uint8_t mode, uint8_t socket_id)
 		return -EINVAL;
 	}
 
+	//构造设备参数
 	ret = snprintf(devargs, sizeof(devargs),
 		"driver=net_bonding,mode=%d,socket_id=%d", mode, socket_id);
 	if (ret < 0 || ret >= (int)sizeof(devargs))
@@ -160,6 +162,7 @@ rte_eth_bond_create(const char *name, uint8_t mode, uint8_t socket_id)
 	if (ret)
 		return -ENOMEM;
 
+	//生成一个port_id
 	ret = rte_eth_dev_get_port_by_name(name, &port_id);
 	RTE_ASSERT(!ret);
 
@@ -730,6 +733,7 @@ rte_eth_bond_mac_address_reset(uint16_t bonded_port_id)
 	return 0;
 }
 
+//设置hash策略函数
 int
 rte_eth_bond_xmit_policy_set(uint16_t bonded_port_id, uint8_t policy)
 {

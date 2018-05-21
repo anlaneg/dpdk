@@ -56,7 +56,7 @@ struct rte_devargs {
 	/** Name of the device. */
 	char name[RTE_DEV_NAME_MAX_LEN];
 	/** Arguments string as given by user or "" for no argument. */
-	char *args;
+	char *args;//设备参数
 };
 
 /**

@@ -144,6 +144,7 @@ bond_ethdev_parse_slave_port_kvarg(const char *key,
 	return 0;
 }
 
+//解析bond模式参数，是否合法
 int
 bond_ethdev_parse_slave_mode_kvarg(const char *key __rte_unused,
 		const char *value, void *extra_args)
