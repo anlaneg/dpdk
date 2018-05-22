@@ -120,6 +120,7 @@ parse_port_id(const char *port_str)
 	return port_id;
 }
 
+//由配置串获取到slaves的端口号
 int
 bond_ethdev_parse_slave_port_kvarg(const char *key,
 		const char *value, void *extra_args)
@@ -132,12 +133,14 @@ bond_ethdev_parse_slave_port_kvarg(const char *key,
 	slave_ports = extra_args;
 
 	if (strcmp(key, PMD_BOND_SLAVE_PORT_KVARG) == 0) {
+		//取出对应的port_id
 		int port_id = parse_port_id(value);
 		if (port_id < 0) {
 			RTE_BOND_LOG(ERR, "Invalid slave port value (%s) specified",
 				     value);
 			return -1;
 		} else
+			//填充port_id
 			slave_ports->slaves[slave_ports->slave_count++] =
 					port_id;
 	}

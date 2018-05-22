@@ -790,6 +790,7 @@ rx_machine_update(struct bond_dev_private *internals, uint8_t slave_id,
 		RTE_ASSERT(lacp->lacpdu.subtype == SLOW_SUBTYPE_LACP);
 
 		/* This is LACP frame so pass it to rx_machine */
+		//处理lacp报文
 		rx_machine(internals, slave_id, &lacp->lacpdu);
 		rte_pktmbuf_free(lacp_pkt);
 	} else
@@ -1203,6 +1204,7 @@ bond_mode_8023ad_handle_slow_pkt(struct bond_dev_private *internals,
 			struct slow_protocol_frame *)->slow_protocol.subtype;
 
 	if (subtype == SLOW_SUBTYPE_MARKER) {
+		//见上面注释
 		m_hdr = rte_pktmbuf_mtod(pkt, struct marker_header *);
 
 		if (likely(m_hdr->marker.tlv_type_marker != MARKER_TLV_TYPE_INFO)) {
@@ -1247,6 +1249,7 @@ bond_mode_8023ad_handle_slow_pkt(struct bond_dev_private *internals,
 			}
 		}
 	} else if (likely(subtype == SLOW_SUBTYPE_LACP)) {
+		//处理lacp报文（两种模式，一种直接入队，一种直接处理）
 		if (internals->mode4.dedicated_queues.enabled == 0) {
 			int retval = rte_ring_enqueue(port->rx_ring, pkt);
 			if (retval != 0) {
@@ -1255,6 +1258,7 @@ bond_mode_8023ad_handle_slow_pkt(struct bond_dev_private *internals,
 				goto free_out;
 			}
 		} else
+			//直接处理
 			rx_machine_update(internals, slave_id, pkt);
 	} else {
 		wrn = WRN_UNKNOWN_SLOW_TYPE;

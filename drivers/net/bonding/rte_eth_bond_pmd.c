@@ -99,8 +99,10 @@ bond_ethdev_rx_burst_active_backup(void *queue, struct rte_mbuf **bufs,
 static inline uint8_t
 is_lacp_packets(uint16_t ethertype, uint8_t subtype, struct rte_mbuf *mbuf)
 {
+	//lacp的以太网协议号是0x8809
 	const uint16_t ether_type_slow_be = rte_be_to_cpu_16(ETHER_TYPE_SLOW);
 
+	//报文不能有vlan头，（不明白为什么subtype 可以等于SLOW_SUBTYPE_MARKER）
 	return !((mbuf->ol_flags & PKT_RX_VLAN) ? mbuf->vlan_tci : 0) &&
 		(ethertype == ether_type_slow_be &&
 		(subtype == SLOW_SUBTYPE_MARKER || subtype == SLOW_SUBTYPE_LACP));
@@ -430,7 +432,7 @@ bond_ethdev_rx_burst_8023ad(void *queue, struct rte_mbuf **bufs,
 		collecting = ACTOR_STATE(&mode_8023ad_ports[slaves[idx]],
 					 COLLECTING);
 
-		/* Read packets from this slave */
+		/* Read packets from this slave */ //收包
 		num_rx_total += rte_eth_rx_burst(slaves[idx], bd_rx_q->queue_id,
 				&bufs[num_rx_total], nb_pkts - num_rx_total);
 
@@ -441,6 +443,7 @@ bond_ethdev_rx_burst_8023ad(void *queue, struct rte_mbuf **bufs,
 		while (j < num_rx_total) {
 
 			/* If packet is not pure L2 and is known, skip it */
+			//按RTE_PTYPE_L2_ETHER说明，～RTE_PTYPE_L2_ETHER即为非ipv4,ipv6的报文
 			if ((bufs[j]->packet_type & ~RTE_PTYPE_L2_ETHER) != 0) {
 				j++;
 				continue;
@@ -460,6 +463,7 @@ bond_ethdev_rx_burst_8023ad(void *queue, struct rte_mbuf **bufs,
 					!is_multicast_ether_addr(&hdr->d_addr) &&
 					!is_same_ether_addr(&bond_mac, &hdr->d_addr)))) {
 
+				//仅处理lacp报文，其它的丢弃掉
 				if (hdr->ether_type == ether_type_slow_be) {
 					bond_mode_8023ad_handle_slow_pkt(
 					    internals, slaves[idx], bufs[j]);
@@ -3326,6 +3330,7 @@ bond_ethdev_configure(struct rte_eth_dev *dev)
 
 		memset(&slave_ports, 0, sizeof(slave_ports));
 
+		//解析有哪些slave端口
 		if (rte_kvargs_process(kvlist, PMD_BOND_SLAVE_PORT_KVARG,
 				       &bond_ethdev_parse_slave_port_kvarg, &slave_ports) != 0) {
 			RTE_BOND_LOG(ERR,
@@ -3334,6 +3339,7 @@ bond_ethdev_configure(struct rte_eth_dev *dev)
 			return -1;
 		}
 
+		//将slave端口加入到bond端口中
 		for (i = 0; i < slave_ports.slave_count; i++) {
 			if (rte_eth_bond_slave_add(port_id, slave_ports.slaves[i]) != 0) {
 				RTE_BOND_LOG(ERR,

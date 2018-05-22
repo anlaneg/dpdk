@@ -102,6 +102,7 @@ struct lacpdu {
 } __attribute__((__packed__));
 
 /** LACPDU frame: Contains ethernet header and LACPDU. */
+//lacp报文头
 struct lacpdu_header {
 	struct ether_hdr eth_hdr;
 	struct lacpdu lacpdu;

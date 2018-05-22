@@ -15,6 +15,7 @@
 #include "rte_eth_bond_private.h"
 #include "rte_eth_bond_8023ad_private.h"
 
+//检查是否为bond口
 int
 check_for_bonded_ethdev(const struct rte_eth_dev *eth_dev)
 {
@@ -376,7 +377,7 @@ __eth_bond_slave_add_lock_free(uint16_t bonded_port_id, uint16_t slave_port_id)
 		return -1;
 	}
 
-	internals->slave_count++;
+	internals->slave_count++;//存入成功，count+1
 
 	if (bonded_eth_dev->data->dev_started) {
 		if (slave_configure(bonded_eth_dev, slave_eth_dev) != 0) {
@@ -431,6 +432,7 @@ rte_eth_bond_slave_add(uint16_t bonded_port_id, uint16_t slave_port_id)
 	int retval;
 
 	/* Verify that port id's are valid bonded and slave ports */
+	//先确认是否为bond口
 	if (valid_bonded_port_id(bonded_port_id) != 0)
 		return -1;
 
