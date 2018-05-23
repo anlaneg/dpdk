@@ -62,7 +62,7 @@ struct kni_dev {
 	void *rx_q;
 
 	/* queue for the allocated mbufs those can be used to save sk buffs */
-	void *alloc_q;
+	void *alloc_q;//kernel模块自此队列获取空闲的mbuf
 
 	/* free queue for the mbufs to be freed */
 	void *free_q;

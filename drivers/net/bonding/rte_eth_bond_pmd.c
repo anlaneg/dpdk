@@ -67,6 +67,7 @@ bond_ethdev_rx_burst(void *queue, struct rte_mbuf **bufs, uint16_t nb_pkts)
 	internals = bd_rx_q->dev_private;
 
 
+	//自slave端口收取报文
 	for (i = 0; i < internals->active_slave_count && nb_pkts; i++) {
 		/* Offset of pointer to *bufs increases as packets are received
 		 * from other slaves */
@@ -643,6 +644,7 @@ bond_ethdev_rx_burst_alb(void *queue, struct rte_mbuf **bufs, uint16_t nb_pkts)
 	uint16_t nb_recv_pkts;
 	int i;
 
+	//自各slave收取报文
 	nb_recv_pkts = bond_ethdev_rx_burst(queue, bufs, nb_pkts);
 
 	for (i = 0; i < nb_recv_pkts; i++) {
@@ -654,6 +656,7 @@ bond_ethdev_rx_burst_alb(void *queue, struct rte_mbuf **bufs, uint16_t nb_pkts)
 #if defined(RTE_LIBRTE_BOND_DEBUG_ALB) || defined(RTE_LIBRTE_BOND_DEBUG_ALB_L1)
 			mode6_debug("RX ARP:", eth_h, bufs[i]->port, &burstnumberRX);
 #endif
+			//对arp报文进行学习client_info,修改arp响应报文
 			bond_mode_alb_arp_recv(eth_h, offset, internals);
 		}
 #if defined(RTE_LIBRTE_BOND_DEBUG_ALB) || defined(RTE_LIBRTE_BOND_DEBUG_ALB_L1)
@@ -1041,6 +1044,8 @@ bond_ethdev_tx_burst_tlb(void *queue, struct rte_mbuf **bufs, uint16_t nb_pkts)
 
 			ether_hdr = rte_pktmbuf_mtod(bufs[j], struct ether_hdr *);
 			if (is_same_ether_addr(&ether_hdr->s_addr, &primary_slave_addr))
+				//由slaves数组的mac来代理primary_addr
+				//将源mac修改为slaves[i]接口对应的mac,使物理交换机只能学习到与之相连口的mac
 				ether_addr_copy(&active_slave_addr, &ether_hdr->s_addr);
 #if defined(RTE_LIBRTE_BOND_DEBUG_ALB) || defined(RTE_LIBRTE_BOND_DEBUG_ALB_L1)
 					mode6_debug("TX IPv4:", ether_hdr, slaves[i], &burstnumberTX);
@@ -1110,9 +1115,11 @@ bond_ethdev_tx_burst_alb(void *queue, struct rte_mbuf **bufs, uint16_t nb_pkts)
 		offset = get_vlan_offset(eth_h, &ether_type);
 
 		if (ether_type == rte_cpu_to_be_16(ETHER_TYPE_ARP)) {
+			//对arp报文在发送时进行特殊处理
 			slave_idx = bond_mode_alb_arp_xmit(eth_h, offset, internals);
 
 			/* Change src mac in eth header */
+			//修改以太头的mac地址为slave接口mac,使物理交换机在遇到arp时能学到slave接口对应的mac
 			rte_eth_macaddr_get(slave_idx, &eth_h->s_addr);
 
 			/* Add packet to slave tx buffer */
@@ -1156,6 +1163,7 @@ bond_ethdev_tx_burst_alb(void *queue, struct rte_mbuf **bufs, uint16_t nb_pkts)
 	}
 
 	/* Send ARP packets on proper slaves */
+	//arp报文发送
 	for (i = 0; i < RTE_MAX_ETHPORTS; i++) {
 		if (slave_bufs_pkts[i] > 0) {
 			num_send = rte_eth_tx_burst(i, bd_tx_q->queue_id,
@@ -1688,6 +1696,7 @@ bond_ethdev_mode_set(struct rte_eth_dev *eth_dev, int mode)
 		eth_dev->rx_pkt_burst = bond_ethdev_rx_burst;
 		break;
 	case BONDING_MODE_8023AD:
+		//采用lacp进行动态配置
 		if (bond_mode_8023ad_enable(eth_dev) != 0)
 			return -1;
 

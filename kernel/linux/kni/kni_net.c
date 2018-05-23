@@ -214,6 +214,8 @@ kni_net_tx(struct sk_buff *skb, struct net_device *dev)
 	}
 
 	/* dequeue a mbuf from alloc_q */
+	//有skb需要发送，先从kni->alloc_q中申请一个mbuf,填充mbuf并传递给用户态
+	//然后释放skb
 	ret = kni_fifo_get(kni->alloc_q, &pkt_pa, 1);
 	if (likely(ret == 1)) {
 		//无空闲buf
@@ -234,9 +236,10 @@ kni_net_tx(struct sk_buff *skb, struct net_device *dev)
 		pkt_kva->data_len = len;
 
 		/* enqueue mbuf into tx_q */
-		//将其存放在tx_q队列
+		//将报文存入tx_q队列，完成向用户态的发送
 		ret = kni_fifo_put(kni->tx_q, &pkt_va, 1);
 		if (unlikely(ret != 1)) {
+			//入队失败，报错
 			/* Failing should not happen */
 			pr_err("Fail to enqueue mbuf into tx_q\n");
 			goto drop;
@@ -290,6 +293,7 @@ kni_net_rx_normal(struct kni_dev *kni)
 	num_rx = min_t(uint32_t, num_fq, MBUF_BURST_SZ);
 
 	/* Burst dequeue from rx_q */
+	//自kni的收队列中取出报文，并申请skb,将kni的mbuf填充到skb中
 	num_rx = kni_fifo_get(kni->rx_q, kni->pa, num_rx);
 	if (num_rx == 0)
 		return;

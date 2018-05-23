@@ -69,7 +69,7 @@ struct rte_kni_memzone_slot {
 	uint8_t in_use : 1;                    /**< slot in use */
 
 	/* Memzones */
-	const struct rte_memzone *m_ctx;       /**< KNI ctx */
+	const struct rte_memzone *m_ctx;       /**< KNI ctx */　//其申请的地址对应（struct rte_kni *）
 	const struct rte_memzone *m_tx_q;      /**< TX queue */
 	const struct rte_memzone *m_rx_q;      /**< RX queue */
 	const struct rte_memzone *m_alloc_q;   /**< Allocated mbufs queue */
@@ -89,6 +89,7 @@ struct rte_kni_memzone_pool {
 	uint8_t initialized : 1;            /**< Global KNI pool init flag */
 
 	uint32_t max_ifaces;                /**< Max. num of KNI ifaces */
+	//记录各kni接口的队列配置情况
 	struct rte_kni_memzone_slot *slots;        /**< Pool slots */
 	rte_spinlock_t mutex;               /**< alloc/release mutex */
 
@@ -401,6 +402,7 @@ rte_kni_alloc(struct rte_mempool *pktmbuf_pool,
 	ctx->slot_id = slot->id;
 	ctx->mbuf_size = conf->mbuf_size;
 
+	//调用ioctl触发kernel创建kni接口
 	ret = ioctl(kni_fd, RTE_KNI_IOCTL_CREATE, &dev_info);
 	KNI_MEM_CHECK(ret < 0);
 
@@ -714,6 +716,7 @@ kni_allocate_mbufs(struct rte_kni *kni)
 	}
 }
 
+//通过名称查kni结构体
 struct rte_kni *
 rte_kni_get(const char *name)
 {

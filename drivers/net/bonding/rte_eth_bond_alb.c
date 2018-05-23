@@ -85,9 +85,10 @@ void bond_mode_alb_arp_recv(struct ether_hdr *eth_h, uint16_t offset,
 
 	/* ARP Requests are forwarded to the application with no changes */
 	if (arp->arp_op != rte_cpu_to_be_16(ARP_OP_REPLY))
-		return;
+		return;//仅处理arp响应报文
 
 	/* From now on, we analyze only ARP Reply packets */
+	//对源ip进行hash（arp的server方ip)
 	hash_index = simple_hash((uint8_t *) &arp->arp_data.arp_sip,
 			sizeof(arp->arp_data.arp_sip));
 	client_info = &hash_table[hash_index];
@@ -105,14 +106,16 @@ void bond_mode_alb_arp_recv(struct ether_hdr *eth_h, uint16_t offset,
 			client_info->vlan_count != offset / sizeof(struct vlan_hdr) ||
 			memcmp(client_info->vlan, eth_h + 1, offset) != 0
 	) {
+		//接受时通过arp　reply学习client_info表项，学习client_ip,client_mac(client定义为arp relay的发起者）
+		//(app定义为arp replay的接受者）
 		client_info->in_use = 1;
 		client_info->app_ip = arp->arp_data.arp_tip;
 		client_info->cli_ip = arp->arp_data.arp_sip;
 		ether_addr_copy(&arp->arp_data.arp_sha, &client_info->cli_mac);
 		client_info->slave_idx = calculate_slave(internals);
 		rte_eth_macaddr_get(client_info->slave_idx, &client_info->app_mac);
-		ether_addr_copy(&client_info->app_mac, &arp->arp_data.arp_tha);
-		memcpy(client_info->vlan, eth_h + 1, offset);
+		ether_addr_copy(&client_info->app_mac, &arp->arp_data.arp_tha);//更改arp响应报文中的arp_tha(目的是什么？）
+		memcpy(client_info->vlan, eth_h + 1, offset);//记录vlan(支持双层vlan)
 		client_info->vlan_count = offset / sizeof(struct vlan_hdr);
 	}
 	internals->mode6.ntt = 1;
@@ -140,11 +143,13 @@ bond_mode_alb_arp_xmit(struct ether_hdr *eth_h, uint16_t offset,
 	 */
 	rte_eth_macaddr_get(internals->port_id, &bonding_mac);
 	if (!is_same_ether_addr(&bonding_mac, &arp->arp_data.arp_sha)) {
+		//如果arp中的源地址不是bonding口的地址，则更新为主port地址，指出自current_primary_port发出
 		rte_eth_macaddr_get(internals->current_primary_port,
 				&arp->arp_data.arp_sha);
 		return internals->current_primary_port;
 	}
 
+	//利用arp的target地址进行hash确定使用那个client_info
 	hash_index = simple_hash((uint8_t *)&arp->arp_data.arp_tip,
 			sizeof(uint32_t));
 	client_info = &hash_table[hash_index];
@@ -152,9 +157,11 @@ bond_mode_alb_arp_xmit(struct ether_hdr *eth_h, uint16_t offset,
 	rte_spinlock_lock(&internals->mode6.lock);
 	if (arp->arp_op == rte_cpu_to_be_16(ARP_OP_REPLY)) {
 		if (client_info->in_use) {
+			//如果已有相应的记录，则与记录进行比对，如果与之相同
 			if (client_info->app_ip == arp->arp_data.arp_sip &&
 				client_info->cli_ip == arp->arp_data.arp_tip) {
 				/* Entry is already assigned to this client */
+				//更新cli_mac
 				if (!is_broadcast_ether_addr(&arp->arp_data.arp_tha)) {
 					ether_addr_copy(&arp->arp_data.arp_tha,
 							&client_info->cli_mac);
@@ -175,9 +182,9 @@ bond_mode_alb_arp_xmit(struct ether_hdr *eth_h, uint16_t offset,
 		client_info->app_ip = arp->arp_data.arp_sip;
 		ether_addr_copy(&arp->arp_data.arp_tha, &client_info->cli_mac);
 		client_info->cli_ip = arp->arp_data.arp_tip;
-		client_info->slave_idx = calculate_slave(internals);
+		client_info->slave_idx = calculate_slave(internals);//获得一个slave接口
 		rte_eth_macaddr_get(client_info->slave_idx, &client_info->app_mac);
-		ether_addr_copy(&client_info->app_mac, &arp->arp_data.arp_sha);
+		ether_addr_copy(&client_info->app_mac, &arp->arp_data.arp_sha);//更新发送方的源mac
 		memcpy(client_info->vlan, eth_h + 1, offset);
 		client_info->vlan_count = offset / sizeof(struct vlan_hdr);
 		rte_spinlock_unlock(&internals->mode6.lock);

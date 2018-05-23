@@ -15,16 +15,16 @@ struct client_data {
 	/** ARP data of single client */
 	struct ether_addr app_mac;
 	/**< MAC address of application running DPDK */
-	uint32_t app_ip;
+	uint32_t app_ip;//arp中发送方ip地址
 	/**< IP address of application running DPDK */
-	struct ether_addr cli_mac;
+	struct ether_addr cli_mac;//arp响应中的target mac(即arp请求时的srcmac)
 	/**< Client MAC address */
-	uint32_t cli_ip;
+	uint32_t cli_ip;//arp响应中的target ip
 	/**< Client IP address */
 
-	uint16_t slave_idx;
+	uint16_t slave_idx;//对应的slave端口
 	/**< Index of slave on which we connect with that client */
-	uint8_t in_use;
+	uint8_t in_use;//是否被使用
 	/**< Flag indicating if entry in client table is currently used */
 	uint8_t ntt;
 	/**< Flag indicating if we need to send update to this client on next tx */

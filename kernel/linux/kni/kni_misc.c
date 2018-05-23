@@ -312,6 +312,7 @@ kni_ioctl_create(struct net *net, uint32_t ioctl_num,
 		return -EINVAL;
 
 	/* Copy kni info from user space */
+	//用户态配置下来的参数即为dev_info结构体
 	ret = copy_from_user(&dev_info, (void *)ioctl_param, sizeof(dev_info));
 	if (ret) {
 		pr_err("copy_from_user in kni_ioctl_create");
@@ -342,6 +343,7 @@ kni_ioctl_create(struct net *net, uint32_t ioctl_num,
 	}
 	up_read(&knet->kni_list_lock);
 
+	//创建kni对应的netdev设备
 	net_dev = alloc_netdev(sizeof(struct kni_dev), dev_info.name,
 #ifdef NET_NAME_USER
 							NET_NAME_USER,
@@ -362,7 +364,7 @@ kni_ioctl_create(struct net *net, uint32_t ioctl_num,
 	strncpy(kni->name, dev_info.name, RTE_KNI_NAMESIZE);
 
 	/* Translate user space info into kernel space info */
-	kni->tx_q = phys_to_virt(dev_info.tx_phys);
+	kni->tx_q = phys_to_virt(dev_info.tx_phys);//设置发送队列
 	kni->rx_q = phys_to_virt(dev_info.rx_phys);
 	kni->alloc_q = phys_to_virt(dev_info.alloc_phys);
 	kni->free_q = phys_to_virt(dev_info.free_phys);
@@ -562,10 +564,11 @@ static const struct file_operations kni_fops = {
 	.owner = THIS_MODULE,
 	.open = kni_open,
 	.release = kni_release,
-	.unlocked_ioctl = (void *)kni_ioctl,
+	.unlocked_ioctl = (void *)kni_ioctl,//提供kni设备的创建初始化
 	.compat_ioctl = (void *)kni_compat_ioctl,
 };
 
+//kni设备的ops
 static struct miscdevice kni_misc = {
 	.minor = MISC_DYNAMIC_MINOR,
 	.name = KNI_DEVICE,
