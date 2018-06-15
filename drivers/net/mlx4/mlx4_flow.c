@@ -635,29 +635,35 @@ mlx4_flow_prepare(struct priv *priv,
 	int overlap;
 
 	if (attr->group)
+		//当前不支持组
 		return rte_flow_error_set
 			(error, ENOTSUP, RTE_FLOW_ERROR_TYPE_ATTR_GROUP,
 			 NULL, "groups are not supported");
 	if (attr->priority > MLX4_FLOW_PRIORITY_LAST)
+		//不支持优先级超过MLX4_FLOW_PRIORITY_LAST
 		return rte_flow_error_set
 			(error, ENOTSUP, RTE_FLOW_ERROR_TYPE_ATTR_PRIORITY,
 			 NULL, "maximum priority level is "
 			 MLX4_STR_EXPAND(MLX4_FLOW_PRIORITY_LAST));
 	if (attr->egress)
+		//不支持对egress设置filter
 		return rte_flow_error_set
 			(error, ENOTSUP, RTE_FLOW_ERROR_TYPE_ATTR_EGRESS,
 			 NULL, "egress is not supported");
 	if (attr->transfer)
+		//不支持transfter规则
 		return rte_flow_error_set
 			(error, ENOTSUP, RTE_FLOW_ERROR_TYPE_ATTR_TRANSFER,
 			 NULL, "transfer is not supported");
 	if (!attr->ingress)
+		//仅支持配置ingress，但ingress未被设置，报错
 		return rte_flow_error_set
 			(error, ENOTSUP, RTE_FLOW_ERROR_TYPE_ATTR_INGRESS,
 			 NULL, "only ingress is supported");
 fill:
 	overlap = 0;
 	proc = mlx4_flow_proc_item_list;
+	//匹配模式数组
 	/* Go over pattern. */
 	for (item = pattern; item->type; ++item) {
 		const struct mlx4_flow_proc_item *next = NULL;
@@ -665,7 +671,7 @@ fill:
 		int err;
 
 		if (item->type == RTE_FLOW_ITEM_TYPE_VOID)
-			continue;
+			continue;//跳过空实现
 		if (item->type == MLX4_FLOW_ITEM_TYPE_INTERNAL) {
 			flow->internal = 1;
 			continue;
@@ -676,6 +682,8 @@ fill:
 				" matching on Ethernet headers";
 			goto exit_item_not_supported;
 		}
+
+		//检查此模式项对应的
 		for (i = 0; proc->next_item && proc->next_item[i]; ++i) {
 			if (proc->next_item[i] == item->type) {
 				next = &mlx4_flow_proc_item_list[item->type];
@@ -1535,7 +1543,7 @@ mlx4_flow_clean(struct priv *priv)
 
 static const struct rte_flow_ops mlx4_flow_ops = {
 	.validate = mlx4_flow_validate,
-	.create = mlx4_flow_create,
+	.create = mlx4_flow_create,//走mlx4的flow创建流程
 	.destroy = mlx4_flow_destroy,
 	.flush = mlx4_flow_flush,
 	.isolate = mlx4_flow_isolate,
@@ -1566,6 +1574,7 @@ mlx4_filter_ctrl(struct rte_eth_dev *dev,
 	case RTE_ETH_FILTER_GENERIC:
 		if (filter_op != RTE_ETH_FILTER_GET)
 			break;
+		//返回flow的操作函数集
 		*(const void **)arg = &mlx4_flow_ops;
 		return 0;
 	default:

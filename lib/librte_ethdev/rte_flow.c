@@ -138,6 +138,7 @@ rte_flow_ops_get(uint16_t port_id, struct rte_flow_error *error)
 	const struct rte_flow_ops *ops;
 	int code;
 
+	//接口不存在时，报错
 	if (unlikely(!rte_eth_dev_is_valid_port(port_id)))
 		code = ENODEV;
 	else if (unlikely(!dev->dev_ops->filter_ctrl ||
@@ -146,9 +147,11 @@ rte_flow_ops_get(uint16_t port_id, struct rte_flow_error *error)
 						    RTE_ETH_FILTER_GET,
 						    &ops) ||
 			  !ops))
+		//如果无filter_ctrl回调，或者filter_ctrl回调无法获得ops，则报错
 		code = ENOSYS;
 	else
 		return ops;
+	//返回错误
 	rte_flow_error_set(error, code, RTE_FLOW_ERROR_TYPE_UNSPECIFIED,
 			   NULL, rte_strerror(code));
 	return NULL;
@@ -177,12 +180,13 @@ rte_flow_validate(uint16_t port_id,
 }
 
 /* Create a flow rule on a given port. */
+//创建一条流规则
 struct rte_flow *
-rte_flow_create(uint16_t port_id,
-		const struct rte_flow_attr *attr,
-		const struct rte_flow_item pattern[],//匹配项
-		const struct rte_flow_action actions[],
-		struct rte_flow_error *error)
+rte_flow_create(uint16_t port_id,//作用于哪个接口
+		const struct rte_flow_attr *attr,//定义流规则属性
+		const struct rte_flow_item pattern[],//流规则匹配项
+		const struct rte_flow_action actions[],//流匹配后执行哪种action
+		struct rte_flow_error *error)//下发出错处理
 {
 	struct rte_eth_dev *dev = &rte_eth_devices[port_id];
 	struct rte_flow *flow;
@@ -190,12 +194,14 @@ rte_flow_create(uint16_t port_id,
 
 	if (unlikely(!ops))
 		return NULL;
+	//执行规则创建
 	if (likely(!!ops->create)) {
 		flow = ops->create(dev, attr, pattern, actions, error);
 		if (flow == NULL)
 			flow_err(port_id, -rte_errno, error);
 		return flow;
 	}
+	//如果失败，返回失败详情
 	rte_flow_error_set(error, ENOSYS, RTE_FLOW_ERROR_TYPE_UNSPECIFIED,
 			   NULL, rte_strerror(ENOSYS));
 	return NULL;

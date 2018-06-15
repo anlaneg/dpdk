@@ -69,9 +69,11 @@ extern "C" {
  * Specifying both directions at once for a given rule is not recommended
  * but may be valid in a few cases (e.g. shared counter).
  */
+//流规则属性
 struct rte_flow_attr {
 	uint32_t group; /**< Priority group. */
 	uint32_t priority; /**< Rule priority level within group. */
+	//可以同时两个方向生效
 	uint32_t ingress:1; /**< Rule applies to ingress traffic. */
 	uint32_t egress:1; /**< Rule applies to egress traffic. */
 	/**
@@ -112,6 +114,7 @@ struct rte_flow_attr {
  * See the description of individual types for more information. Those
  * marked with [META] fall into the second category.
  */
+//匹配模式
 enum rte_flow_item_type {
 	/**
 	 * [META]
@@ -149,7 +152,7 @@ enum rte_flow_item_type {
 	 *
 	 * See struct rte_flow_item_any.
 	 */
-	RTE_FLOW_ITEM_TYPE_ANY,
+	RTE_FLOW_ITEM_TYPE_ANY,//全匹配（相当于通配符*)
 
 	/**
 	 * [META]
@@ -159,7 +162,7 @@ enum rte_flow_item_type {
 	 *
 	 * No associated specification structure.
 	 */
-	RTE_FLOW_ITEM_TYPE_PF,//区配输出至pf
+	RTE_FLOW_ITEM_TYPE_PF,//区配输入输出至pf
 
 	/**
 	 * [META]
@@ -169,7 +172,7 @@ enum rte_flow_item_type {
 	 *
 	 * See struct rte_flow_item_vf.
 	 */
-	RTE_FLOW_ITEM_TYPE_VF,//匹配输出至vf
+	RTE_FLOW_ITEM_TYPE_VF,//匹配输入输出至vf
 
 	/**
 	 * [META]
@@ -203,7 +206,7 @@ enum rte_flow_item_type {
 	 *
 	 * See struct rte_flow_item_eth.
 	 */
-	RTE_FLOW_ITEM_TYPE_ETH,
+	RTE_FLOW_ITEM_TYPE_ETH,//匹配以太头
 
 	/**
 	 * Matches an 802.1Q/ad VLAN tag.
@@ -576,6 +579,7 @@ static const struct rte_flow_item_raw rte_flow_item_raw_mask = {
  * inner EtherType/TPID provided by the subsequent pattern item. This is the
  * same order as on the wire.
  */
+//以太头匹配参数
 struct rte_flow_item_eth {
 	struct ether_addr dst; /**< Destination MAC. */
 	struct ether_addr src; /**< Source MAC. */
@@ -2011,6 +2015,7 @@ rte_flow_validate(uint16_t port_id,
  *   to the positive version of one of the error codes defined for
  *   rte_flow_validate().
  */
+//创建规则
 struct rte_flow *
 rte_flow_create(uint16_t port_id,
 		const struct rte_flow_attr *attr,

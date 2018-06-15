@@ -60,6 +60,7 @@ extern "C" {
  * callbacks otherwise only differ by their first argument (with port ID
  * already resolved to a pointer to struct rte_eth_dev).
  */
+//flow操作操作回调，由各卡商驱动层提供
 struct rte_flow_ops {
 	/** See rte_flow_validate(). */
 	int (*validate)

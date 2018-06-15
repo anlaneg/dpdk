@@ -292,6 +292,7 @@ kni_fail:
 }
 
 
+//创建必要的参数，通过ioctl完成kni接口创建
 struct rte_kni *
 rte_kni_alloc(struct rte_mempool *pktmbuf_pool,
 	      const struct rte_kni_conf *conf,
