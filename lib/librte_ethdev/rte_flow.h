@@ -1217,8 +1217,10 @@ struct rte_flow_item_mark {
  */
 struct rte_flow_item {
 	enum rte_flow_item_type type; /**< Item type. */
+	//指向设置的值
 	const void *spec; /**< Pointer to item specification structure. */
 	const void *last; /**< Defines an inclusive range (spec to last). */
+	//指向掩码
 	const void *mask; /**< Bit-mask applied to spec and last. */
 };
 

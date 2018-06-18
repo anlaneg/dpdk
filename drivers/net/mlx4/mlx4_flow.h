@@ -39,7 +39,9 @@ struct rte_flow {
 	uint32_t select:1; /**< Used by operations on the linked list. */
 	uint32_t internal:1; /**< Internal flow rule outside isolated mode. */
 	uint32_t mac:1; /**< Rule associated with a configured MAC address. */
+	//匹配所有流
 	uint32_t promisc:1; /**< This rule matches everything. */
+	//匹配所有组播流
 	uint32_t allmulti:1; /**< This rule matches all multicast traffic. */
 	uint32_t drop:1; /**< This rule drops packets. */
 	struct mlx4_rss *rss; /**< Rx target. */

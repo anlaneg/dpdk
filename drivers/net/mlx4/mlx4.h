@@ -111,6 +111,7 @@ struct priv {
 	struct rte_intr_handle intr_handle; /**< Port interrupt handle. */
 	struct mlx4_drop *drop; /**< Shared resources for drop flow rules. */
 	LIST_HEAD(, mlx4_rss) rss; /**< Shared targets for Rx flow rules. */
+	//流规则处理
 	LIST_HEAD(, rte_flow) flows; /**< Configured flow rule handles. */
 	LIST_HEAD(, mlx4_mr) mr; /**< Registered memory regions. */
 	rte_spinlock_t mr_lock; /**< Lock for @p mr access. */

@@ -51,11 +51,11 @@
 /** Processor structure associated with a flow item. */
 struct mlx4_flow_proc_item {
 	/** Bit-mask for fields supported by this PMD. */
-	const void *mask_support;
+	const void *mask_support;//用户提供的mask值
 	/** Bit-mask to use when @p item->mask is not provided. */
-	const void *mask_default;
+	const void *mask_default;//默认的mask值
 	/** Size in bytes for @p mask_support and @p mask_default. */
-	const unsigned int mask_sz;
+	const unsigned int mask_sz;//mask的大小
 	/** Merge a pattern item into a flow rule handle. */
 	int (*merge)(struct rte_flow *flow,
 		     const struct rte_flow_item *item,
@@ -64,7 +64,7 @@ struct mlx4_flow_proc_item {
 	/** Size in bytes of the destination structure. */
 	const unsigned int dst_sz;
 	/** List of possible subsequent items. */
-	const enum rte_flow_item_type *const next_item;
+	const enum rte_flow_item_type *const next_item;//指出本项后续可以存在的flow项
 };
 
 /** Shared resources for drop flow rules. */
@@ -176,21 +176,26 @@ mlx4_flow_merge_eth(struct rte_flow *flow,
 	unsigned int i;
 
 	if (!mask) {
+		//未配置mask时，按配置全0，即“全匹配”处理
 		flow->promisc = 1;
 	} else {
 		uint32_t sum_dst = 0;
 		uint32_t sum_src = 0;
 
+		//当前支持“单播匹配","组播匹配","广播匹配”，“全匹配”
 		for (i = 0; i != sizeof(mask->dst.addr_bytes); ++i) {
 			sum_dst += mask->dst.addr_bytes[i];
 			sum_src += mask->src.addr_bytes[i];
 		}
 		if (sum_src) {
+			//sum_src必须为0
 			msg = "mlx4 does not support source MAC matching";
 			goto error;
 		} else if (!sum_dst) {
+			//目的mac为0
 			flow->promisc = 1;
 		} else if (sum_dst == 1 && mask->dst.addr_bytes[0] == 1) {
+			//组播mask
 			if (!(spec->dst.addr_bytes[0] & 1)) {
 				msg = "mlx4 does not support the explicit"
 					" exclusion of all multicast traffic";
@@ -198,6 +203,7 @@ mlx4_flow_merge_eth(struct rte_flow *flow,
 			}
 			flow->allmulti = 1;
 		} else if (sum_dst != (UINT8_C(0xff) * ETHER_ADDR_LEN)) {
+			//不支持匹配部分的mac地址（即掩码形式）
 			msg = "mlx4 does not support matching partial"
 				" Ethernet fields";
 			goto error;
@@ -535,7 +541,7 @@ static const struct mlx4_flow_proc_item mlx4_flow_proc_item_list[] = {
 	[RTE_FLOW_ITEM_TYPE_END] = {
 		.next_item = NEXT_ITEM(RTE_FLOW_ITEM_TYPE_ETH),
 	},
-	[RTE_FLOW_ITEM_TYPE_ETH] = {
+	[RTE_FLOW_ITEM_TYPE_ETH] = {//以太头
 		.next_item = NEXT_ITEM(RTE_FLOW_ITEM_TYPE_VLAN,
 				       RTE_FLOW_ITEM_TYPE_IPV4),
 		.mask_support = &(const struct rte_flow_item_eth){
@@ -547,7 +553,7 @@ static const struct mlx4_flow_proc_item mlx4_flow_proc_item_list[] = {
 		.merge = mlx4_flow_merge_eth,
 		.dst_sz = sizeof(struct ibv_flow_spec_eth),
 	},
-	[RTE_FLOW_ITEM_TYPE_VLAN] = {
+	[RTE_FLOW_ITEM_TYPE_VLAN] = {//vlan
 		.next_item = NEXT_ITEM(RTE_FLOW_ITEM_TYPE_IPV4),
 		.mask_support = &(const struct rte_flow_item_vlan){
 			/* Only TCI VID matching is supported. */
@@ -558,7 +564,7 @@ static const struct mlx4_flow_proc_item mlx4_flow_proc_item_list[] = {
 		.merge = mlx4_flow_merge_vlan,
 		.dst_sz = 0,
 	},
-	[RTE_FLOW_ITEM_TYPE_IPV4] = {
+	[RTE_FLOW_ITEM_TYPE_IPV4] = {//ipv4
 		.next_item = NEXT_ITEM(RTE_FLOW_ITEM_TYPE_UDP,
 				       RTE_FLOW_ITEM_TYPE_TCP),
 		.mask_support = &(const struct rte_flow_item_ipv4){
@@ -572,7 +578,7 @@ static const struct mlx4_flow_proc_item mlx4_flow_proc_item_list[] = {
 		.merge = mlx4_flow_merge_ipv4,
 		.dst_sz = sizeof(struct ibv_flow_spec_ipv4),
 	},
-	[RTE_FLOW_ITEM_TYPE_UDP] = {
+	[RTE_FLOW_ITEM_TYPE_UDP] = {//udp匹配
 		.mask_support = &(const struct rte_flow_item_udp){
 			.hdr = {
 				.src_port = RTE_BE16(0xffff),
@@ -584,7 +590,7 @@ static const struct mlx4_flow_proc_item mlx4_flow_proc_item_list[] = {
 		.merge = mlx4_flow_merge_udp,
 		.dst_sz = sizeof(struct ibv_flow_spec_tcp_udp),
 	},
-	[RTE_FLOW_ITEM_TYPE_TCP] = {
+	[RTE_FLOW_ITEM_TYPE_TCP] = {//tcp匹配
 		.mask_support = &(const struct rte_flow_item_tcp){
 			.hdr = {
 				.src_port = RTE_BE16(0xffff),
@@ -620,9 +626,9 @@ static const struct mlx4_flow_proc_item mlx4_flow_proc_item_list[] = {
  */
 static int
 mlx4_flow_prepare(struct priv *priv,
-		  const struct rte_flow_attr *attr,
-		  const struct rte_flow_item pattern[],
-		  const struct rte_flow_action actions[],
+		  const struct rte_flow_attr *attr,//flow属性
+		  const struct rte_flow_item pattern[],//flow匹配项
+		  const struct rte_flow_action actions[],//flow 动作项
 		  struct rte_flow_error *error,
 		  struct rte_flow **addr)
 {
@@ -663,7 +669,7 @@ mlx4_flow_prepare(struct priv *priv,
 fill:
 	overlap = 0;
 	proc = mlx4_flow_proc_item_list;
-	//匹配模式数组
+	//遍历匹配模式数组
 	/* Go over pattern. */
 	for (item = pattern; item->type; ++item) {
 		const struct mlx4_flow_proc_item *next = NULL;
@@ -683,14 +689,15 @@ fill:
 			goto exit_item_not_supported;
 		}
 
-		//检查此模式项对应的
+		//检查匹配项对应的type
 		for (i = 0; proc->next_item && proc->next_item[i]; ++i) {
 			if (proc->next_item[i] == item->type) {
 				next = &mlx4_flow_proc_item_list[item->type];
 				break;
 			}
 		}
-		if (!next)
+		if (!next)//没有找到对应的type,报错：当前不知支持
+			//这里实际上也说明mlx4支持的几种匹配type
 			goto exit_item_not_supported;
 		proc = next;
 		/*
@@ -710,10 +717,11 @@ fill:
 		flow->ibv_attr_size += proc->dst_sz;
 	}
 	/* Go over actions list. */
+	//遍历所有action列表
 	for (action = actions; action->type; ++action) {
 		/* This one may appear anywhere multiple times. */
 		if (action->type == RTE_FLOW_ACTION_TYPE_VOID)
-			continue;
+			continue;//忽略掉空的action
 		/* Fate-deciding actions may appear exactly once. */
 		if (overlap) {
 			msg = "cannot combine several fate-deciding actions,"
@@ -732,14 +740,15 @@ fill:
 		case RTE_FLOW_ACTION_TYPE_DROP:
 			flow->drop = 1;
 			break;
-		case RTE_FLOW_ACTION_TYPE_QUEUE:
+		case RTE_FLOW_ACTION_TYPE_QUEUE://入队action
 			if (flow->rss)
-				break;
+				break;//flow中指定有rss,则跳出
+			//检查队列配置
 			queue = action->conf;
 			if (queue->index >= priv->dev->data->nb_rx_queues) {
 				msg = "queue target index beyond number of"
 					" configured Rx queues";
-				goto exit_action_not_supported;
+				goto exit_action_not_supported;//配置的队列比报文实现的收队列还大，报错
 			}
 			flow->rss = mlx4_rss_get
 				(priv, 0, mlx4_rss_hash_key_default, 1,
@@ -1001,6 +1010,8 @@ mlx4_flow_toggle(struct priv *priv,
 	if (!enable) {
 		if (!flow->ibv_flow)
 			return 0;
+		//claim_zero用于断言参数为0
+		//销毁flow->ibv_flow
 		claim_zero(mlx4_glue->destroy_flow(flow->ibv_flow));
 		flow->ibv_flow = NULL;
 		if (flow->drop)
