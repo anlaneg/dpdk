@@ -59,9 +59,6 @@
  */
 #define IXGBE_FC_LO    0x40
 
-/* Default minimum inter-interrupt interval for EITR configuration */
-#define IXGBE_MIN_INTER_INTERRUPT_INTERVAL_DEFAULT    0x79E
-
 /* Timer value included in XOFF frames. */
 #define IXGBE_FC_PAUSE 0x680
 
@@ -192,6 +189,9 @@ static void ixgbe_vlan_hw_strip_bitmap_set(struct rte_eth_dev *dev,
 		uint16_t queue, bool on);
 static void ixgbe_vlan_strip_queue_set(struct rte_eth_dev *dev, uint16_t queue,
 		int on);
+static void ixgbe_config_vlan_strip_on_all_queues(struct rte_eth_dev *dev,
+						  int mask);
+static int ixgbe_vlan_offload_config(struct rte_eth_dev *dev, int mask);
 static int ixgbe_vlan_offload_set(struct rte_eth_dev *dev, int mask);
 static void ixgbe_vlan_hw_strip_enable(struct rte_eth_dev *dev, uint16_t queue);
 static void ixgbe_vlan_hw_strip_disable(struct rte_eth_dev *dev, uint16_t queue);
@@ -240,8 +240,8 @@ static int ixgbevf_dev_link_update(struct rte_eth_dev *dev,
 static void ixgbevf_dev_stop(struct rte_eth_dev *dev);
 static void ixgbevf_dev_close(struct rte_eth_dev *dev);
 static int  ixgbevf_dev_reset(struct rte_eth_dev *dev);
-static void ixgbevf_intr_disable(struct ixgbe_hw *hw);
-static void ixgbevf_intr_enable(struct ixgbe_hw *hw);
+static void ixgbevf_intr_disable(struct rte_eth_dev *dev);
+static void ixgbevf_intr_enable(struct rte_eth_dev *dev);
 static int ixgbevf_dev_stats_get(struct rte_eth_dev *dev,
 		struct rte_eth_stats *stats);
 static void ixgbevf_dev_stats_reset(struct rte_eth_dev *dev);
@@ -249,6 +249,7 @@ static int ixgbevf_vlan_filter_set(struct rte_eth_dev *dev,
 		uint16_t vlan_id, int on);
 static void ixgbevf_vlan_strip_queue_set(struct rte_eth_dev *dev,
 		uint16_t queue, int on);
+static int ixgbevf_vlan_offload_config(struct rte_eth_dev *dev, int mask);
 static int ixgbevf_vlan_offload_set(struct rte_eth_dev *dev, int mask);
 static void ixgbevf_set_vfta_all(struct rte_eth_dev *dev, bool on);
 static int ixgbevf_dev_rx_queue_intr_enable(struct rte_eth_dev *dev,
@@ -1606,7 +1607,7 @@ eth_ixgbevf_dev_init(struct rte_eth_dev *eth_dev)
 	ixgbevf_dev_stats_reset(eth_dev);
 
 	/* Disable the interrupts for VF */
-	ixgbevf_intr_disable(hw);
+	ixgbevf_intr_disable(eth_dev);
 
 	hw->mac.num_rar_entries = 128; /* The MAX of the underlying PF */
 	diag = hw->mac.ops.reset_hw(hw);
@@ -1675,7 +1676,7 @@ eth_ixgbevf_dev_init(struct rte_eth_dev *eth_dev)
 	rte_intr_callback_register(intr_handle,
 				   ixgbevf_dev_interrupt_handler, eth_dev);
 	rte_intr_enable(intr_handle);
-	ixgbevf_intr_enable(hw);
+	ixgbevf_intr_enable(eth_dev);
 
 	PMD_INIT_LOG(DEBUG, "port %d vendorID=0x%x deviceID=0x%x mac.type=%s",
 		     eth_dev->data->port_id, pci_dev->id.vendor_id,
@@ -1708,7 +1709,7 @@ eth_ixgbevf_dev_uninit(struct rte_eth_dev *eth_dev)
 	eth_dev->tx_pkt_burst = NULL;
 
 	/* Disable the interrupts for VF */
-	ixgbevf_intr_disable(hw);
+	ixgbevf_intr_disable(eth_dev);
 
 	rte_free(eth_dev->data->mac_addrs);
 	eth_dev->data->mac_addrs = NULL;
@@ -1980,10 +1981,13 @@ ixgbe_vlan_hw_strip_bitmap_set(struct rte_eth_dev *dev, uint16_t queue, bool on)
 
 	rxq = dev->data->rx_queues[queue];
 
-	if (on)
+	if (on) {
 		rxq->vlan_flags = PKT_RX_VLAN | PKT_RX_VLAN_STRIPPED;
-	else
+		rxq->offloads |= DEV_RX_OFFLOAD_VLAN_STRIP;
+	} else {
 		rxq->vlan_flags = PKT_RX_VLAN;
+		rxq->offloads &= ~DEV_RX_OFFLOAD_VLAN_STRIP;
+	}
 }
 
 static void
@@ -2135,8 +2139,30 @@ ixgbe_vlan_hw_strip_config(struct rte_eth_dev *dev)
 	}
 }
 
+static void
+ixgbe_config_vlan_strip_on_all_queues(struct rte_eth_dev *dev, int mask)
+{
+	uint16_t i;
+	struct rte_eth_rxmode *rxmode;
+	struct ixgbe_rx_queue *rxq;
+
+	if (mask & ETH_VLAN_STRIP_MASK) {
+		rxmode = &dev->data->dev_conf.rxmode;
+		if (rxmode->offloads & DEV_RX_OFFLOAD_VLAN_STRIP)
+			for (i = 0; i < dev->data->nb_rx_queues; i++) {
+				rxq = dev->data->rx_queues[i];
+				rxq->offloads |= DEV_RX_OFFLOAD_VLAN_STRIP;
+			}
+		else
+			for (i = 0; i < dev->data->nb_rx_queues; i++) {
+				rxq = dev->data->rx_queues[i];
+				rxq->offloads &= ~DEV_RX_OFFLOAD_VLAN_STRIP;
+			}
+	}
+}
+
 static int
-ixgbe_vlan_offload_set(struct rte_eth_dev *dev, int mask)
+ixgbe_vlan_offload_config(struct rte_eth_dev *dev, int mask)
 {
 	struct rte_eth_rxmode *rxmode;
 	rxmode = &dev->data->dev_conf.rxmode;
@@ -2158,6 +2184,16 @@ ixgbe_vlan_offload_set(struct rte_eth_dev *dev, int mask)
 		else
 			ixgbe_vlan_hw_extend_disable(dev);
 	}
+
+	return 0;
+}
+
+static int
+ixgbe_vlan_offload_set(struct rte_eth_dev *dev, int mask)
+{
+	ixgbe_config_vlan_strip_on_all_queues(dev, mask);
+
+	ixgbe_vlan_offload_config(dev, mask);
 
 	return 0;
 }
@@ -2310,11 +2346,6 @@ ixgbe_check_mq_mode(struct rte_eth_dev *dev)
 		if (dev_conf->rxmode.mq_mode == ETH_MQ_RX_DCB) {
 			const struct rte_eth_dcb_rx_conf *conf;
 
-			if (nb_rx_q != IXGBE_DCB_NB_QUEUES) {
-				PMD_INIT_LOG(ERR, "DCB selected, nb_rx_q != %d.",
-						 IXGBE_DCB_NB_QUEUES);
-				return -EINVAL;
-			}
 			conf = &dev_conf->rx_adv_conf.dcb_rx_conf;
 			if (!(conf->nb_tcs == ETH_4_TCS ||
 			       conf->nb_tcs == ETH_8_TCS)) {
@@ -2328,11 +2359,6 @@ ixgbe_check_mq_mode(struct rte_eth_dev *dev)
 		if (dev_conf->txmode.mq_mode == ETH_MQ_TX_DCB) {
 			const struct rte_eth_dcb_tx_conf *conf;
 
-			if (nb_tx_q != IXGBE_DCB_NB_QUEUES) {
-				PMD_INIT_LOG(ERR, "DCB, nb_tx_q != %d.",
-						 IXGBE_DCB_NB_QUEUES);
-				return -EINVAL;
-			}
 			conf = &dev_conf->tx_adv_conf.dcb_tx_conf;
 			if (!(conf->nb_tcs == ETH_4_TCS ||
 			       conf->nb_tcs == ETH_8_TCS)) {
@@ -2368,9 +2394,6 @@ ixgbe_dev_configure(struct rte_eth_dev *dev)
 		IXGBE_DEV_PRIVATE_TO_INTR(dev->data->dev_private);
 	struct ixgbe_adapter *adapter =
 		(struct ixgbe_adapter *)dev->data->dev_private;
-	struct rte_eth_dev_info dev_info;
-	uint64_t rx_offloads;
-	uint64_t tx_offloads;
 	int ret;
 
 	PMD_INIT_FUNC_TRACE();
@@ -2380,22 +2403,6 @@ ixgbe_dev_configure(struct rte_eth_dev *dev)
 		PMD_DRV_LOG(ERR, "ixgbe_check_mq_mode fails with %d.",
 			    ret);
 		return ret;
-	}
-
-	ixgbe_dev_info_get(dev, &dev_info);
-	rx_offloads = dev->data->dev_conf.rxmode.offloads;
-	if ((rx_offloads & dev_info.rx_offload_capa) != rx_offloads) {
-		PMD_DRV_LOG(ERR, "Some Rx offloads are not supported "
-			    "requested 0x%" PRIx64 " supported 0x%" PRIx64,
-			    rx_offloads, dev_info.rx_offload_capa);
-		return -ENOTSUP;
-	}
-	tx_offloads = dev->data->dev_conf.txmode.offloads;
-	if ((tx_offloads & dev_info.tx_offload_capa) != tx_offloads) {
-		PMD_DRV_LOG(ERR, "Some Tx offloads are not supported "
-			    "requested 0x%" PRIx64 " supported 0x%" PRIx64,
-			    tx_offloads, dev_info.tx_offload_capa);
-		return -ENOTSUP;
 	}
 
 	/* set flag to update link status after init */
@@ -2602,7 +2609,7 @@ ixgbe_dev_start(struct rte_eth_dev *dev)
 
 	mask = ETH_VLAN_STRIP_MASK | ETH_VLAN_FILTER_MASK |
 		ETH_VLAN_EXTEND_MASK;
-	err = ixgbe_vlan_offload_set(dev, mask);
+	err = ixgbe_vlan_offload_config(dev, mask);
 	if (err) {
 		PMD_INIT_LOG(ERR, "Unable to set VLAN offload");
 		goto error;
@@ -3730,9 +3737,6 @@ ixgbe_dev_info_get(struct rte_eth_dev *dev, struct rte_eth_dev_info *dev_info)
 		},
 		.tx_free_thresh = IXGBE_DEFAULT_TX_FREE_THRESH,
 		.tx_rs_thresh = IXGBE_DEFAULT_TX_RSBIT_THRESH,
-		.txq_flags = ETH_TXQ_FLAGS_NOMULTSEGS |
-			     ETH_TXQ_FLAGS_NOOFFLOADS |
-			     ETH_TXQ_FLAGS_IGNORE,
 		.offloads = 0,
 	};
 
@@ -3838,9 +3842,6 @@ ixgbevf_dev_info_get(struct rte_eth_dev *dev,
 		},
 		.tx_free_thresh = IXGBE_DEFAULT_TX_FREE_THRESH,
 		.tx_rs_thresh = IXGBE_DEFAULT_TX_RSBIT_THRESH,
-		.txq_flags = ETH_TXQ_FLAGS_NOMULTSEGS |
-			     ETH_TXQ_FLAGS_NOOFFLOADS |
-			     ETH_TXQ_FLAGS_IGNORE,
 		.offloads = 0,
 	};
 
@@ -4939,19 +4940,32 @@ ixgbe_dev_mtu_set(struct rte_eth_dev *dev, uint16_t mtu)
  * Virtual Function operations
  */
 static void
-ixgbevf_intr_disable(struct ixgbe_hw *hw)
+ixgbevf_intr_disable(struct rte_eth_dev *dev)
 {
+	struct ixgbe_interrupt *intr =
+		IXGBE_DEV_PRIVATE_TO_INTR(dev->data->dev_private);
+	struct ixgbe_hw *hw =
+		IXGBE_DEV_PRIVATE_TO_HW(dev->data->dev_private);
+
 	PMD_INIT_FUNC_TRACE();
 
 	/* Clear interrupt mask to stop from interrupts being generated */
 	IXGBE_WRITE_REG(hw, IXGBE_VTEIMC, IXGBE_VF_IRQ_CLEAR_MASK);
 
 	IXGBE_WRITE_FLUSH(hw);
+
+	/* Clear mask value. */
+	intr->mask = 0;
 }
 
 static void
-ixgbevf_intr_enable(struct ixgbe_hw *hw)
+ixgbevf_intr_enable(struct rte_eth_dev *dev)
 {
+	struct ixgbe_interrupt *intr =
+		IXGBE_DEV_PRIVATE_TO_INTR(dev->data->dev_private);
+	struct ixgbe_hw *hw =
+		IXGBE_DEV_PRIVATE_TO_HW(dev->data->dev_private);
+
 	PMD_INIT_FUNC_TRACE();
 
 	/* VF enable interrupt autoclean */
@@ -4960,6 +4974,9 @@ ixgbevf_intr_enable(struct ixgbe_hw *hw)
 	IXGBE_WRITE_REG(hw, IXGBE_VTEIMS, IXGBE_VF_IRQ_ENABLE_MASK);
 
 	IXGBE_WRITE_FLUSH(hw);
+
+	/* Save IXGBE_VTEIMS value to mask. */
+	intr->mask = IXGBE_VF_IRQ_ENABLE_MASK;
 }
 
 static int
@@ -4968,28 +4985,9 @@ ixgbevf_dev_configure(struct rte_eth_dev *dev)
 	struct rte_eth_conf *conf = &dev->data->dev_conf;
 	struct ixgbe_adapter *adapter =
 			(struct ixgbe_adapter *)dev->data->dev_private;
-	struct rte_eth_dev_info dev_info;
-	uint64_t rx_offloads;
-	uint64_t tx_offloads;
 
 	PMD_INIT_LOG(DEBUG, "Configured Virtual Function port id: %d",
 		     dev->data->port_id);
-
-	ixgbevf_dev_info_get(dev, &dev_info);
-	rx_offloads = dev->data->dev_conf.rxmode.offloads;
-	if ((rx_offloads & dev_info.rx_offload_capa) != rx_offloads) {
-		PMD_DRV_LOG(ERR, "Some Rx offloads are not supported "
-			    "requested 0x%" PRIx64 " supported 0x%" PRIx64,
-			    rx_offloads, dev_info.rx_offload_capa);
-		return -ENOTSUP;
-	}
-	tx_offloads = dev->data->dev_conf.txmode.offloads;
-	if ((tx_offloads & dev_info.tx_offload_capa) != tx_offloads) {
-		PMD_DRV_LOG(ERR, "Some Tx offloads are not supported "
-			    "requested 0x%" PRIx64 " supported 0x%" PRIx64,
-			    tx_offloads, dev_info.tx_offload_capa);
-		return -ENOTSUP;
-	}
 
 	/*
 	 * VF has no ability to enable/disable HW CRC
@@ -5056,7 +5054,7 @@ ixgbevf_dev_start(struct rte_eth_dev *dev)
 	/* Set HW strip */
 	mask = ETH_VLAN_STRIP_MASK | ETH_VLAN_FILTER_MASK |
 		ETH_VLAN_EXTEND_MASK;
-	err = ixgbevf_vlan_offload_set(dev, mask);
+	err = ixgbevf_vlan_offload_config(dev, mask);
 	if (err) {
 		PMD_INIT_LOG(ERR, "Unable to set VLAN offload (%d)", err);
 		ixgbe_dev_clear_queues(dev);
@@ -5102,7 +5100,7 @@ ixgbevf_dev_start(struct rte_eth_dev *dev)
 	rte_intr_enable(intr_handle);
 
 	/* Re-enable interrupt for VF */
-	ixgbevf_intr_enable(hw);
+	ixgbevf_intr_enable(dev);
 
 	return 0;
 }
@@ -5116,7 +5114,7 @@ ixgbevf_dev_stop(struct rte_eth_dev *dev)
 
 	PMD_INIT_FUNC_TRACE();
 
-	ixgbevf_intr_disable(hw);
+	ixgbevf_intr_disable(dev);
 
 	hw->adapter_stopped = 1;
 	ixgbe_stop_adapter(hw);
@@ -5254,7 +5252,7 @@ ixgbevf_vlan_strip_queue_set(struct rte_eth_dev *dev, uint16_t queue, int on)
 }
 
 static int
-ixgbevf_vlan_offload_set(struct rte_eth_dev *dev, int mask)
+ixgbevf_vlan_offload_config(struct rte_eth_dev *dev, int mask)
 {
 	struct ixgbe_rx_queue *rxq;
 	uint16_t i;
@@ -5268,6 +5266,16 @@ ixgbevf_vlan_offload_set(struct rte_eth_dev *dev, int mask)
 			ixgbevf_vlan_strip_queue_set(dev, i, on);
 		}
 	}
+
+	return 0;
+}
+
+static int
+ixgbevf_vlan_offload_set(struct rte_eth_dev *dev, int mask)
+{
+	ixgbe_config_vlan_strip_on_all_queues(dev, mask);
+
+	ixgbevf_vlan_offload_config(dev, mask);
 
 	return 0;
 }
@@ -5608,17 +5616,17 @@ ixgbevf_dev_rx_queue_intr_enable(struct rte_eth_dev *dev, uint16_t queue_id)
 {
 	struct rte_pci_device *pci_dev = RTE_ETH_DEV_TO_PCI(dev);
 	struct rte_intr_handle *intr_handle = &pci_dev->intr_handle;
-	uint32_t mask;
+	struct ixgbe_interrupt *intr =
+		IXGBE_DEV_PRIVATE_TO_INTR(dev->data->dev_private);
 	struct ixgbe_hw *hw =
 		IXGBE_DEV_PRIVATE_TO_HW(dev->data->dev_private);
 	uint32_t vec = IXGBE_MISC_VEC_ID;
 
-	mask = IXGBE_READ_REG(hw, IXGBE_VTEIMS);
 	if (rte_intr_allow_others(intr_handle))
 		vec = IXGBE_RX_VEC_START;
-	mask |= (1 << vec);
+	intr->mask |= (1 << vec);
 	RTE_SET_USED(queue_id);
-	IXGBE_WRITE_REG(hw, IXGBE_VTEIMS, mask);
+	IXGBE_WRITE_REG(hw, IXGBE_VTEIMS, intr->mask);
 
 	rte_intr_enable(intr_handle);
 
@@ -5628,19 +5636,19 @@ ixgbevf_dev_rx_queue_intr_enable(struct rte_eth_dev *dev, uint16_t queue_id)
 static int
 ixgbevf_dev_rx_queue_intr_disable(struct rte_eth_dev *dev, uint16_t queue_id)
 {
-	uint32_t mask;
+	struct ixgbe_interrupt *intr =
+		IXGBE_DEV_PRIVATE_TO_INTR(dev->data->dev_private);
 	struct ixgbe_hw *hw =
 		IXGBE_DEV_PRIVATE_TO_HW(dev->data->dev_private);
 	struct rte_pci_device *pci_dev = RTE_ETH_DEV_TO_PCI(dev);
 	struct rte_intr_handle *intr_handle = &pci_dev->intr_handle;
 	uint32_t vec = IXGBE_MISC_VEC_ID;
 
-	mask = IXGBE_READ_REG(hw, IXGBE_VTEIMS);
 	if (rte_intr_allow_others(intr_handle))
 		vec = IXGBE_RX_VEC_START;
-	mask &= ~(1 << vec);
+	intr->mask &= ~(1 << vec);
 	RTE_SET_USED(queue_id);
-	IXGBE_WRITE_REG(hw, IXGBE_VTEIMS, mask);
+	IXGBE_WRITE_REG(hw, IXGBE_VTEIMS, intr->mask);
 
 	return 0;
 }
@@ -5806,6 +5814,13 @@ ixgbevf_configure_msix(struct rte_eth_dev *dev)
 		if (vector_idx < base + intr_handle->nb_efd - 1)
 			vector_idx++;
 	}
+
+	/* As RX queue setting above show, all queues use the vector 0.
+	 * Set only the ITR value of IXGBE_MISC_VEC_ID.
+	 */
+	IXGBE_WRITE_REG(hw, IXGBE_VTEITR(IXGBE_MISC_VEC_ID),
+			IXGBE_EITR_INTERVAL_US(IXGBE_QUEUE_ITR_INTERVAL_DEFAULT)
+			| IXGBE_EITR_CNT_WDIS);
 }
 
 /**
@@ -5827,8 +5842,12 @@ ixgbe_configure_msix(struct rte_eth_dev *dev)
 
 	/* won't configure msix register if no mapping is done
 	 * between intr vector and event fd
+	 * but if misx has been enabled already, need to configure
+	 * auto clean, auto mask and throttling.
 	 */
-	if (!rte_intr_dp_is_en(intr_handle))
+	gpie = IXGBE_READ_REG(hw, IXGBE_GPIE);
+	if (!rte_intr_dp_is_en(intr_handle) &&
+	    !(gpie & (IXGBE_GPIE_MSIX_MODE | IXGBE_GPIE_PBA_SUPPORT)))
 		return;
 
 	if (rte_intr_allow_others(intr_handle))
@@ -5852,30 +5871,34 @@ ixgbe_configure_msix(struct rte_eth_dev *dev)
 	/* Populate the IVAR table and set the ITR values to the
 	 * corresponding register.
 	 */
-	for (queue_id = 0; queue_id < dev->data->nb_rx_queues;
-	     queue_id++) {
-		/* by default, 1:1 mapping */
-		ixgbe_set_ivar_map(hw, 0, queue_id, vec);
-		intr_handle->intr_vec[queue_id] = vec;
-		if (vec < base + intr_handle->nb_efd - 1)
-			vec++;
-	}
+	if (rte_intr_dp_is_en(intr_handle)) {
+		for (queue_id = 0; queue_id < dev->data->nb_rx_queues;
+			queue_id++) {
+			/* by default, 1:1 mapping */
+			ixgbe_set_ivar_map(hw, 0, queue_id, vec);
+			intr_handle->intr_vec[queue_id] = vec;
+			if (vec < base + intr_handle->nb_efd - 1)
+				vec++;
+		}
 
-	switch (hw->mac.type) {
-	case ixgbe_mac_82598EB:
-		ixgbe_set_ivar_map(hw, -1, IXGBE_IVAR_OTHER_CAUSES_INDEX,
-				   IXGBE_MISC_VEC_ID);
-		break;
-	case ixgbe_mac_82599EB:
-	case ixgbe_mac_X540:
-	case ixgbe_mac_X550:
-		ixgbe_set_ivar_map(hw, -1, 1, IXGBE_MISC_VEC_ID);
-		break;
-	default:
-		break;
+		switch (hw->mac.type) {
+		case ixgbe_mac_82598EB:
+			ixgbe_set_ivar_map(hw, -1,
+					   IXGBE_IVAR_OTHER_CAUSES_INDEX,
+					   IXGBE_MISC_VEC_ID);
+			break;
+		case ixgbe_mac_82599EB:
+		case ixgbe_mac_X540:
+		case ixgbe_mac_X550:
+			ixgbe_set_ivar_map(hw, -1, 1, IXGBE_MISC_VEC_ID);
+			break;
+		default:
+			break;
+		}
 	}
 	IXGBE_WRITE_REG(hw, IXGBE_EITR(IXGBE_MISC_VEC_ID),
-			IXGBE_MIN_INTER_INTERRUPT_INTERVAL_DEFAULT & 0xFFF);
+			IXGBE_EITR_INTERVAL_US(IXGBE_QUEUE_ITR_INTERVAL_DEFAULT)
+			| IXGBE_EITR_CNT_WDIS);
 
 	/* set up to autoclear timer, and the vectors */
 	mask = IXGBE_EIMS_ENABLE_MASK;
@@ -8271,7 +8294,7 @@ ixgbevf_dev_interrupt_get_status(struct rte_eth_dev *dev)
 	struct ixgbe_hw *hw = IXGBE_DEV_PRIVATE_TO_HW(dev->data->dev_private);
 	struct ixgbe_interrupt *intr =
 		IXGBE_DEV_PRIVATE_TO_INTR(dev->data->dev_private);
-	ixgbevf_intr_disable(hw);
+	ixgbevf_intr_disable(dev);
 
 	/* read-on-clear nic registers here */
 	eicr = IXGBE_READ_REG(hw, IXGBE_VTEICR);
@@ -8288,7 +8311,6 @@ ixgbevf_dev_interrupt_get_status(struct rte_eth_dev *dev)
 static int
 ixgbevf_dev_interrupt_action(struct rte_eth_dev *dev)
 {
-	struct ixgbe_hw *hw = IXGBE_DEV_PRIVATE_TO_HW(dev->data->dev_private);
 	struct ixgbe_interrupt *intr =
 		IXGBE_DEV_PRIVATE_TO_INTR(dev->data->dev_private);
 
@@ -8297,7 +8319,7 @@ ixgbevf_dev_interrupt_action(struct rte_eth_dev *dev)
 		intr->flags &= ~IXGBE_FLAG_MAILBOX;
 	}
 
-	ixgbevf_intr_enable(hw);
+	ixgbevf_intr_enable(dev);
 
 	return 0;
 }

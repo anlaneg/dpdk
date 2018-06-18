@@ -43,7 +43,8 @@ if numa_dep.found() and cc.has_header('numaif.h')
 endif
 
 # check for strlcpy
-if host_machine.system() == 'linux' and cc.find_library('bsd', required: false).found()
+if host_machine.system() == 'linux' and cc.find_library('bsd',
+		required: false).found() and cc.has_header('bsd/string.h')
 	dpdk_conf.set('RTE_USE_LIBBSD', 1)
 	add_project_link_arguments('-lbsd', language: 'c')
 	dpdk_extra_ldflags += '-lbsd'
@@ -72,6 +73,7 @@ dpdk_conf.set('RTE_LIBEAL_USE_HPET', get_option('use_hpet'))
 dpdk_conf.set('RTE_EAL_ALLOW_INV_SOCKET_ID', get_option('allow_invalid_socket_id'))
 # values which have defaults which may be overridden
 dpdk_conf.set('RTE_MAX_VFIO_GROUPS', 64)
+dpdk_conf.set('RTE_DRIVER_MEMPOOL_BUCKET_SIZE_KB', 64)
 
 compile_time_cpuflags = []
 if host_machine.cpu_family().startswith('x86')

@@ -2228,7 +2228,6 @@ eth_igb_infos_get(struct rte_eth_dev *dev, struct rte_eth_dev_info *dev_info)
 			.hthresh = IGB_DEFAULT_TX_HTHRESH,
 			.wthresh = IGB_DEFAULT_TX_WTHRESH,
 		},
-		.txq_flags = 0,
 		.offloads = 0,
 	};
 
@@ -2319,7 +2318,6 @@ eth_igbvf_infos_get(struct rte_eth_dev *dev, struct rte_eth_dev_info *dev_info)
 			.hthresh = IGB_DEFAULT_TX_HTHRESH,
 			.wthresh = IGB_DEFAULT_TX_WTHRESH,
 		},
-		.txq_flags = 0,
 		.offloads = 0,
 	};
 
@@ -5684,3 +5682,11 @@ RTE_PMD_REGISTER_KMOD_DEP(net_e1000_igb, "* igb_uio | uio_pci_generic | vfio-pci
 RTE_PMD_REGISTER_PCI(net_e1000_igb_vf, rte_igbvf_pmd);
 RTE_PMD_REGISTER_PCI_TABLE(net_e1000_igb_vf, pci_id_igbvf_map);
 RTE_PMD_REGISTER_KMOD_DEP(net_e1000_igb_vf, "* igb_uio | vfio-pci");
+
+/* see e1000_logs.c */
+RTE_INIT(e1000_init_log);
+static void
+e1000_init_log(void)
+{
+	e1000_igb_init_log();
+}

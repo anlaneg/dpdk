@@ -18,9 +18,12 @@ The public API headers are grouped by topics:
   [bbdev]              (@ref rte_bbdev.h),
   [cryptodev]          (@ref rte_cryptodev.h),
   [security]           (@ref rte_security.h),
+  [compressdev]        (@ref rte_compressdev.h),
+  [compress]           (@ref rte_comp.h),
   [eventdev]           (@ref rte_eventdev.h),
   [event_eth_rx_adapter]   (@ref rte_event_eth_rx_adapter.h),
   [event_timer_adapter]    (@ref rte_event_timer_adapter.h),
+  [event_crypto_adapter]   (@ref rte_event_crypto_adapter.h),
   [rawdev]             (@ref rte_rawdev.h),
   [metrics]            (@ref rte_metrics.h),
   [bitrate]            (@ref rte_bitrate.h),
@@ -111,7 +114,8 @@ The public API headers are grouped by topics:
   [EFD]                (@ref rte_efd.h),
   [ACL]                (@ref rte_acl.h),
   [member]             (@ref rte_member.h),
-  [flow classify]      (@ref rte_flow_classify.h)
+  [flow classify]      (@ref rte_flow_classify.h),
+  [BPF]                (@ref rte_bpf.h)
 
 - **containers**:
   [mbuf]               (@ref rte_mbuf.h),

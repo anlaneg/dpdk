@@ -11,7 +11,6 @@
 #include <rte_common.h>
 #include <rte_interrupts.h>
 #include <rte_byteorder.h>
-#include <rte_log.h>
 #include <rte_debug.h>
 #include <rte_pci.h>
 #include <rte_bus_pci.h>
@@ -105,9 +104,6 @@ static int eth_em_set_mc_addr_list(struct rte_eth_dev *dev,
 #define EM_LINK_UPDATE_CHECK_INTERVAL 100 /* ms */
 
 static enum e1000_fc_mode em_fc_setting = e1000_fc_full;
-
-int e1000_logtype_init;
-int e1000_logtype_driver;
 
 /*
  * The set of PCI devices this driver supports
@@ -455,28 +451,9 @@ eth_em_configure(struct rte_eth_dev *dev)
 {
 	struct e1000_interrupt *intr =
 		E1000_DEV_PRIVATE_TO_INTR(dev->data->dev_private);
-	struct rte_eth_dev_info dev_info;
-	uint64_t rx_offloads;
-	uint64_t tx_offloads;
 
 	PMD_INIT_FUNC_TRACE();
 	intr->flags |= E1000_FLAG_NEED_LINK_UPDATE;
-
-	eth_em_infos_get(dev, &dev_info);
-	rx_offloads = dev->data->dev_conf.rxmode.offloads;
-	if ((rx_offloads & dev_info.rx_offload_capa) != rx_offloads) {
-		PMD_DRV_LOG(ERR, "Some Rx offloads are not supported "
-			    "requested 0x%" PRIx64 " supported 0x%" PRIx64,
-			    rx_offloads, dev_info.rx_offload_capa);
-		return -ENOTSUP;
-	}
-	tx_offloads = dev->data->dev_conf.txmode.offloads;
-	if ((tx_offloads & dev_info.tx_offload_capa) != tx_offloads) {
-		PMD_DRV_LOG(ERR, "Some Tx offloads are not supported "
-			    "requested 0x%" PRIx64 " supported 0x%" PRIx64,
-			    tx_offloads, dev_info.tx_offload_capa);
-		return -ENOTSUP;
-	}
 
 	PMD_INIT_FUNC_TRACE();
 
@@ -1849,14 +1826,10 @@ RTE_PMD_REGISTER_PCI(net_e1000_em, rte_em_pmd);
 RTE_PMD_REGISTER_PCI_TABLE(net_e1000_em, pci_id_em_map);
 RTE_PMD_REGISTER_KMOD_DEP(net_e1000_em, "* igb_uio | uio_pci_generic | vfio-pci");
 
-RTE_INIT(e1000_init_log);
+/* see e1000_logs.c */
+RTE_INIT(igb_init_log);
 static void
-e1000_init_log(void)
+igb_init_log(void)
 {
-	e1000_logtype_init = rte_log_register("pmd.net.e1000.init");
-	if (e1000_logtype_init >= 0)
-		rte_log_set_level(e1000_logtype_init, RTE_LOG_NOTICE);
-	e1000_logtype_driver = rte_log_register("pmd.net.e1000.driver");
-	if (e1000_logtype_driver >= 0)
-		rte_log_set_level(e1000_logtype_driver, RTE_LOG_NOTICE);
+	e1000_igb_init_log();
 }

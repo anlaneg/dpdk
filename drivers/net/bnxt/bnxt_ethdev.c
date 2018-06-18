@@ -29,7 +29,7 @@
 
 #define DRV_MODULE_NAME		"bnxt"
 static const char bnxt_version[] =
-	"Broadcom Cumulus driver " DRV_MODULE_NAME "\n";
+	"Broadcom NetXtreme driver " DRV_MODULE_NAME "\n";
 int bnxt_logtype_driver;
 
 #define PCI_VENDOR_ID_BROADCOM 0x14E4
@@ -151,6 +151,7 @@ static const struct rte_pci_id bnxt_pci_id_map[] = {
 
 static int bnxt_vlan_offload_set_op(struct rte_eth_dev *dev, int mask);
 static void bnxt_print_link_info(struct rte_eth_dev *eth_dev);
+static int bnxt_mtu_set_op(struct rte_eth_dev *eth_dev, uint16_t new_mtu);
 
 /***********************/
 
@@ -167,22 +168,11 @@ static void bnxt_free_mem(struct bnxt *bp)
 	bnxt_free_stats(bp);
 	bnxt_free_tx_rings(bp);
 	bnxt_free_rx_rings(bp);
-	bnxt_free_def_cp_ring(bp);
 }
 
 static int bnxt_alloc_mem(struct bnxt *bp)
 {
 	int rc;
-
-	/* Default completion ring */
-	rc = bnxt_init_def_ring_struct(bp, SOCKET_ID_ANY);
-	if (rc)
-		goto alloc_mem_err;
-
-	rc = bnxt_alloc_rings(bp, 0, NULL, NULL,
-			      bp->def_cp_ring, "def_cp");
-	if (rc)
-		goto alloc_mem_err;
 
 	rc = bnxt_alloc_vnic_mem(bp);
 	if (rc)
@@ -416,9 +406,7 @@ static void bnxt_dev_info_get_op(struct rte_eth_dev *eth_dev,
 	/* PF/VF specifics */
 	if (BNXT_PF(bp))
 		dev_info->max_vfs = bp->pdev->max_vfs;
-	max_rx_rings = RTE_MIN(bp->max_vnics, RTE_MIN(bp->max_l2_ctx,
-						RTE_MIN(bp->max_rsscos_ctx,
-						bp->max_stat_ctx)));
+	max_rx_rings = RTE_MIN(bp->max_vnics, bp->max_stat_ctx);
 	/* For the sake of symmetry, max_rx_queues = max_tx_queues */
 	dev_info->max_rx_queues = max_rx_rings;
 	dev_info->max_tx_queues = max_rx_rings;
@@ -500,36 +488,38 @@ found:
 static int bnxt_dev_configure_op(struct rte_eth_dev *eth_dev)
 {
 	struct bnxt *bp = (struct bnxt *)eth_dev->data->dev_private;
-	uint64_t tx_offloads = eth_dev->data->dev_conf.txmode.offloads;
 	uint64_t rx_offloads = eth_dev->data->dev_conf.rxmode.offloads;
-
-	if (tx_offloads != (tx_offloads & BNXT_DEV_TX_OFFLOAD_SUPPORT)) {
-		PMD_DRV_LOG
-			(ERR,
-			 "Tx offloads requested 0x%" PRIx64 " supported 0x%x\n",
-			 tx_offloads, BNXT_DEV_TX_OFFLOAD_SUPPORT);
-		return -ENOTSUP;
-	}
-
-	if (rx_offloads != (rx_offloads & BNXT_DEV_RX_OFFLOAD_SUPPORT)) {
-		PMD_DRV_LOG
-			(ERR,
-			 "Rx offloads requested 0x%" PRIx64 " supported 0x%x\n",
-			    rx_offloads, BNXT_DEV_RX_OFFLOAD_SUPPORT);
-		return -ENOTSUP;
-	}
 
 	bp->rx_queues = (void *)eth_dev->data->rx_queues;
 	bp->tx_queues = (void *)eth_dev->data->tx_queues;
+	bp->tx_nr_rings = eth_dev->data->nb_tx_queues;
+	bp->rx_nr_rings = eth_dev->data->nb_rx_queues;
+
+	if (BNXT_VF(bp) && (bp->flags & BNXT_FLAG_NEW_RM)) {
+		int rc;
+
+		rc = bnxt_hwrm_func_reserve_vf_resc(bp);
+		if (rc) {
+			PMD_DRV_LOG(ERR, "HWRM resource alloc fail:%x\n", rc);
+			return -ENOSPC;
+		}
+
+		/* legacy driver needs to get updated values */
+		rc = bnxt_hwrm_func_qcaps(bp);
+		if (rc) {
+			PMD_DRV_LOG(ERR, "hwrm func qcaps fail:%d\n", rc);
+			return -ENOSPC;
+		}
+	}
 
 	/* Inherit new configurations */
 	if (eth_dev->data->nb_rx_queues > bp->max_rx_rings ||
 	    eth_dev->data->nb_tx_queues > bp->max_tx_rings ||
-	    eth_dev->data->nb_rx_queues + eth_dev->data->nb_tx_queues + 1 >
+	    eth_dev->data->nb_rx_queues + eth_dev->data->nb_tx_queues >
 	    bp->max_cp_rings ||
 	    eth_dev->data->nb_rx_queues + eth_dev->data->nb_tx_queues >
 	    bp->max_stat_ctx ||
-	    (uint32_t)(eth_dev->data->nb_rx_queues + 1) > bp->max_ring_grps) {
+	    (uint32_t)(eth_dev->data->nb_rx_queues) > bp->max_ring_grps) {
 		PMD_DRV_LOG(ERR,
 			"Insufficient resources to support requested config\n");
 		PMD_DRV_LOG(ERR,
@@ -543,15 +533,16 @@ static int bnxt_dev_configure_op(struct rte_eth_dev *eth_dev)
 		return -ENOSPC;
 	}
 
-	bp->rx_nr_rings = eth_dev->data->nb_rx_queues;
-	bp->tx_nr_rings = eth_dev->data->nb_tx_queues;
 	bp->rx_cp_nr_rings = bp->rx_nr_rings;
 	bp->tx_cp_nr_rings = bp->tx_nr_rings;
 
-	if (rx_offloads & DEV_RX_OFFLOAD_JUMBO_FRAME)
+	if (rx_offloads & DEV_RX_OFFLOAD_JUMBO_FRAME) {
 		eth_dev->data->mtu =
 				eth_dev->data->dev_conf.rxmode.max_rx_pkt_len -
-				ETHER_HDR_LEN - ETHER_CRC_LEN - VLAN_TAG_SIZE;
+				ETHER_HDR_LEN - ETHER_CRC_LEN - VLAN_TAG_SIZE *
+				BNXT_NUM_VLANS;
+		bnxt_mtu_set_op(eth_dev, eth_dev->data->mtu);
+	}
 	return 0;
 }
 
@@ -644,13 +635,15 @@ static void bnxt_dev_stop_op(struct rte_eth_dev *eth_dev)
 {
 	struct bnxt *bp = (struct bnxt *)eth_dev->data->dev_private;
 
+	bp->flags &= ~BNXT_FLAG_INIT_DONE;
 	if (bp->eth_dev->data->dev_started) {
 		/* TBD: STOP HW queues DMA */
 		eth_dev->data->dev_link.link_status = 0;
 	}
 	bnxt_set_hwrm_link_config(bp, false);
 	bnxt_hwrm_port_clr_stats(bp);
-	bp->flags &= ~BNXT_FLAG_INIT_DONE;
+	bnxt_free_tx_mbufs(bp);
+	bnxt_free_rx_mbufs(bp);
 	bnxt_shutdown_nic(bp);
 	bp->dev_stopped = 1;
 }
@@ -662,8 +655,6 @@ static void bnxt_dev_close_op(struct rte_eth_dev *eth_dev)
 	if (bp->dev_stopped == 0)
 		bnxt_dev_stop_op(eth_dev);
 
-	bnxt_free_tx_mbufs(bp);
-	bnxt_free_rx_mbufs(bp);
 	bnxt_free_mem(bp);
 	if (eth_dev->data->mac_addrs != NULL) {
 		rte_free(eth_dev->data->mac_addrs);
@@ -780,6 +771,11 @@ out:
 	new.link_speed != eth_dev->data->dev_link.link_speed) {
 		memcpy(&eth_dev->data->dev_link, &new,
 			sizeof(struct rte_eth_link));
+
+		_rte_eth_dev_callback_process(eth_dev,
+					      RTE_ETH_EVENT_INTR_LSC,
+					      NULL);
+
 		bnxt_print_link_info(eth_dev);
 	}
 
@@ -1527,7 +1523,6 @@ bnxt_txq_info_get_op(struct rte_eth_dev *dev, uint16_t queue_id,
 
 	qinfo->conf.tx_free_thresh = txq->tx_free_thresh;
 	qinfo->conf.tx_rs_thresh = 0;
-	qinfo->conf.txq_flags = txq->txq_flags;
 	qinfo->conf.tx_deferred_start = txq->tx_deferred_start;
 }
 
@@ -2441,6 +2436,7 @@ bnxt_fdir_filter(struct rte_eth_dev *dev,
 	switch (filter_op) {
 	case RTE_ETH_FILTER_ADD:
 	case RTE_ETH_FILTER_DELETE:
+		/* FALLTHROUGH */
 		filter = bnxt_get_unused_filter(bp);
 		if (filter == NULL) {
 			PMD_DRV_LOG(ERR,
@@ -2906,6 +2902,7 @@ static bool bnxt_dir_type_is_ape_bin_format(uint16_t dir_type)
 	case BNX_DIR_TYPE_KONG_PATCH:
 	case BNX_DIR_TYPE_BONO_FW:
 	case BNX_DIR_TYPE_BONO_PATCH:
+		/* FALLTHROUGH */
 		return true;
 	}
 
@@ -2924,6 +2921,7 @@ static bool bnxt_dir_type_is_other_exec_format(uint16_t dir_type)
 	case BNX_DIR_TYPE_ISCSI_BOOT:
 	case BNX_DIR_TYPE_ISCSI_BOOT_IPV6:
 	case BNX_DIR_TYPE_ISCSI_BOOT_IPV4N6:
+		/* FALLTHROUGH */
 		return true;
 	}
 
@@ -3157,12 +3155,12 @@ bnxt_dev_init(struct rte_eth_dev *eth_dev)
 	}
 skip_init:
 	eth_dev->dev_ops = &bnxt_dev_ops;
-	if (rte_eal_process_type() != RTE_PROC_PRIMARY)
-		return 0;
 	eth_dev->rx_pkt_burst = &bnxt_recv_pkts;
 	eth_dev->tx_pkt_burst = &bnxt_xmit_pkts;
+	if (rte_eal_process_type() != RTE_PROC_PRIMARY)
+		return 0;
 
-	if (BNXT_PF(bp) && pci_dev->id.device_id != BROADCOM_DEV_ID_NS2) {
+	if (pci_dev->id.device_id != BROADCOM_DEV_ID_NS2) {
 		snprintf(mz_name, RTE_MEMZONE_NAMESIZE,
 			 "bnxt_%04x:%02x:%02x:%02x-%s", pci_dev->addr.domain,
 			 pci_dev->addr.bus, pci_dev->addr.devid,
@@ -3281,7 +3279,7 @@ skip_init:
 		goto error_free;
 	}
 
-	if (check_zero_bytes(bp->dflt_mac_addr, ETHER_ADDR_LEN)) {
+	if (bnxt_check_zero_bytes(bp->dflt_mac_addr, ETHER_ADDR_LEN)) {
 		PMD_DRV_LOG(ERR,
 			    "Invalid MAC addr %02X:%02X:%02X:%02X:%02X:%02X\n",
 			    bp->dflt_mac_addr[0], bp->dflt_mac_addr[1],
@@ -3389,10 +3387,6 @@ skip_init:
 	if (rc)
 		goto error_free_int;
 
-	rc = bnxt_alloc_def_cp_ring(bp);
-	if (rc)
-		goto error_free_int;
-
 	bnxt_enable_int(bp);
 	bnxt_init_nic(bp);
 
@@ -3400,7 +3394,6 @@ skip_init:
 
 error_free_int:
 	bnxt_disable_int(bp);
-	bnxt_free_def_cp_ring(bp);
 	bnxt_hwrm_func_buf_unrgtr(bp);
 	bnxt_free_int(bp);
 	bnxt_free_mem(bp);

@@ -86,11 +86,13 @@
 
 #define I40E_WRITE_GLB_REG(hw, reg, value)				\
 	do {								\
+		uint32_t ori_val;					\
+		ori_val = I40E_READ_REG((hw), (reg));			\
 		I40E_PCI_REG_WRITE(I40E_PCI_REG_ADDR((hw),		\
 						     (reg)), (value));	\
-		PMD_DRV_LOG(DEBUG, "Global register 0x%08x is modified " \
-			    "with value 0x%08x",			\
-			    (reg), (value));				\
+		PMD_DRV_LOG(DEBUG, "global register [0x%08x] "		\
+			    "original: 0x%08x, after: 0x%08x ",		\
+			    (reg), (ori_val), (value));			\
 	} while (0)
 
 /* index flex payload per layer */
@@ -886,7 +888,7 @@ struct i40e_rte_flow_rss_conf {
 	struct rte_flow_action_rss conf; /**< RSS parameters. */
 	uint16_t queue_region_conf; /**< Queue region config flag */
 	uint8_t key[(I40E_VFQF_HKEY_MAX_INDEX > I40E_PFQF_HKEY_MAX_INDEX ?
-		     I40E_VFQF_HKEY_MAX_INDEX : I40E_PFQF_HKEY_MAX_INDEX) + 1 *
+		     I40E_VFQF_HKEY_MAX_INDEX : I40E_PFQF_HKEY_MAX_INDEX + 1) *
 		    sizeof(uint32_t)]; /* Hash key. */
 	uint16_t queue[I40E_MAX_Q_PER_TC]; /**< Queues indices to use. */
 };
@@ -1081,6 +1083,8 @@ struct i40e_vf_representor {
 	/**< Virtual Function ID */
 	struct i40e_adapter *adapter;
 	/**< Private data store of assocaiated physical function */
+	struct i40e_eth_stats stats_offset;
+	/**< Zero-point of VF statistics*/
 };
 
 extern const struct rte_flow_ops i40e_flow_ops;

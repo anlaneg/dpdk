@@ -23,6 +23,7 @@
 #define BNXT_MAX_MTU		9500
 #define VLAN_TAG_SIZE		4
 #define BNXT_MAX_LED		4
+#define BNXT_NUM_VLANS		2
 
 struct bnxt_led_info {
 	uint8_t      led_id;
@@ -219,6 +220,7 @@ struct bnxt {
 #define BNXT_FLAG_UPDATE_HASH	(1 << 5)
 #define BNXT_FLAG_PTP_SUPPORTED	(1 << 6)
 #define BNXT_FLAG_MULTI_HOST    (1 << 7)
+#define BNXT_FLAG_NEW_RM	(1 << 30)
 #define BNXT_FLAG_INIT_DONE	(1 << 31)
 #define BNXT_PF(bp)		(!((bp)->flags & BNXT_FLAG_VF))
 #define BNXT_VF(bp)		((bp)->flags & BNXT_FLAG_VF)
@@ -304,8 +306,6 @@ struct bnxt {
 
 int bnxt_link_update_op(struct rte_eth_dev *eth_dev, int wait_to_complete);
 int bnxt_rcv_msg_from_vf(struct bnxt *bp, uint16_t vf_id, void *msg);
-
-#define RX_PROD_AGG_BD_TYPE_RX_PROD_AGG		0x6
 
 bool is_bnxt_supported(struct rte_eth_dev *dev);
 extern const struct rte_flow_ops bnxt_flow_ops;

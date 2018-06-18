@@ -34,6 +34,8 @@
 #include <rte_config.h>
 #include <rte_eal_memconfig.h>
 #include <rte_kvargs.h>
+#include <rte_rwlock.h>
+#include <rte_spinlock.h>
 
 #include "mlx5.h"
 #include "mlx5_utils.h"
@@ -41,9 +43,22 @@
 #include "mlx5_autoconf.h"
 #include "mlx5_defs.h"
 #include "mlx5_glue.h"
+#include "mlx5_mr.h"
 
 /* Device parameter to enable RX completion queue compression. */
 #define MLX5_RXQ_CQE_COMP_EN "rxq_cqe_comp_en"
+
+/* Device parameter to enable Multi-Packet Rx queue. */
+#define MLX5_RX_MPRQ_EN "mprq_en"
+
+/* Device parameter to configure log 2 of the number of strides for MPRQ. */
+#define MLX5_RX_MPRQ_LOG_STRIDE_NUM "mprq_log_stride_num"
+
+/* Device parameter to limit the size of memcpy'd packet for MPRQ. */
+#define MLX5_RX_MPRQ_MAX_MEMCPY_LEN "mprq_max_memcpy_len"
+
+/* Device parameter to set the minimum number of Rx queues to enable MPRQ. */
+#define MLX5_RXQS_MIN_MPRQ "rxqs_min_mprq"
 
 /* Device parameter to configure inline send. */
 #define MLX5_TXQ_INLINE "txq_inline"
@@ -84,8 +99,49 @@
 #define MLX5DV_CONTEXT_FLAGS_CQE_128B_COMP (1 << 4)
 #endif
 
+static const char *MZ_MLX5_PMD_SHARED_DATA = "mlx5_pmd_shared_data";
+
+/* Shared memory between primary and secondary processes. */
+struct mlx5_shared_data *mlx5_shared_data;
+
+/* Spinlock for mlx5_shared_data allocation. */
+static rte_spinlock_t mlx5_shared_data_lock = RTE_SPINLOCK_INITIALIZER;
+
 /** Driver-specific log messages type. */
 int mlx5_logtype;
+
+/**
+ * Prepare shared data between primary and secondary process.
+ */
+static void
+mlx5_prepare_shared_data(void)
+{
+	const struct rte_memzone *mz;
+
+	rte_spinlock_lock(&mlx5_shared_data_lock);
+	if (mlx5_shared_data == NULL) {
+		if (rte_eal_process_type() == RTE_PROC_PRIMARY) {
+			/* Allocate shared memory. */
+			mz = rte_memzone_reserve(MZ_MLX5_PMD_SHARED_DATA,
+						 sizeof(*mlx5_shared_data),
+						 SOCKET_ID_ANY, 0);
+		} else {
+			/* Lookup allocated shared memory. */
+			mz = rte_memzone_lookup(MZ_MLX5_PMD_SHARED_DATA);
+		}
+		if (mz == NULL)
+			rte_panic("Cannot allocate mlx5 shared data\n");
+		mlx5_shared_data = mz->addr;
+		/* Initialize shared data. */
+		if (rte_eal_process_type() == RTE_PROC_PRIMARY) {
+			LIST_INIT(&mlx5_shared_data->mem_event_cb_list);
+			rte_rwlock_init(&mlx5_shared_data->mem_event_rwlock);
+		}
+		rte_mem_event_callback_register("MLX5_MEM_EVENT_CB",
+						mlx5_mr_mem_event_cb, NULL);
+	}
+	rte_spinlock_unlock(&mlx5_shared_data_lock);
+}
 
 /**
  * Retrieve integer value from environment variable.
@@ -201,6 +257,8 @@ mlx5_dev_close(struct rte_eth_dev *dev)
 		priv->txqs = NULL;
 	}
 	mlx5_flow_delete_drop_queue(dev);
+	mlx5_mprq_free_mp(dev);
+	mlx5_mr_release(dev);
 	if (priv->pd != NULL) {
 		assert(priv->ctx != NULL);
 		claim_zero(mlx5_glue->dealloc_pd(priv->pd));
@@ -244,10 +302,6 @@ mlx5_dev_close(struct rte_eth_dev *dev)
 	ret = mlx5_flow_verify(dev);
 	if (ret)
 		DRV_LOG(WARNING, "port %u some flows still remain",
-			dev->data->port_id);
-	ret = mlx5_mr_verify(dev);
-	if (ret)
-		DRV_LOG(WARNING, "port %u some memory region still remain",
 			dev->data->port_id);
 	memset(priv, 0, sizeof(*priv));
 }
@@ -407,6 +461,14 @@ mlx5_args_check(const char *key, const char *val, void *opaque)
 	}
 	if (strcmp(MLX5_RXQ_CQE_COMP_EN, key) == 0) {
 		config->cqe_comp = !!tmp;
+	} else if (strcmp(MLX5_RX_MPRQ_EN, key) == 0) {
+		config->mprq.enabled = !!tmp;
+	} else if (strcmp(MLX5_RX_MPRQ_LOG_STRIDE_NUM, key) == 0) {
+		config->mprq.stride_num_n = tmp;
+	} else if (strcmp(MLX5_RX_MPRQ_MAX_MEMCPY_LEN, key) == 0) {
+		config->mprq.max_memcpy_len = tmp;
+	} else if (strcmp(MLX5_RXQS_MIN_MPRQ, key) == 0) {
+		config->mprq.min_rxqs_num = tmp;
 	} else if (strcmp(MLX5_TXQ_INLINE, key) == 0) {
 		config->txq_inline = tmp;
 	} else if (strcmp(MLX5_TXQS_MIN_INLINE, key) == 0) {
@@ -449,6 +511,10 @@ mlx5_args(struct mlx5_dev_config *config, struct rte_devargs *devargs)
 {
 	const char **params = (const char *[]){
 		MLX5_RXQ_CQE_COMP_EN,
+		MLX5_RX_MPRQ_EN,
+		MLX5_RX_MPRQ_LOG_STRIDE_NUM,
+		MLX5_RX_MPRQ_MAX_MEMCPY_LEN,
+		MLX5_RXQS_MIN_MPRQ,
 		MLX5_TXQ_INLINE,
 		MLX5_TXQS_MIN_INLINE,
 		MLX5_TXQ_MPW_EN,
@@ -624,12 +690,18 @@ mlx5_pci_probe(struct rte_pci_driver *pci_drv __rte_unused,
 	int err = 0;
 	struct ibv_context *attr_ctx = NULL;
 	struct ibv_device_attr_ex device_attr;
-	unsigned int vf;
+	unsigned int vf = 0;
 	unsigned int mps;
 	unsigned int cqe_comp;
 	unsigned int tunnel_en = 0;
+	unsigned int mpls_en = 0;
 	unsigned int swp = 0;
 	unsigned int verb_priorities = 0;
+	unsigned int mprq = 0;
+	unsigned int mprq_min_stride_size_n = 0;
+	unsigned int mprq_max_stride_size_n = 0;
+	unsigned int mprq_min_stride_num_n = 0;
+	unsigned int mprq_max_stride_num_n = 0;
 	int idx;
 	int i;
 	struct mlx5dv_context attrs_out = {0};
@@ -637,6 +709,8 @@ mlx5_pci_probe(struct rte_pci_driver *pci_drv __rte_unused,
 	struct ibv_counter_set_description cs_desc;
 #endif
 
+	/* Prepare shared data between primary and secondary process. */
+	mlx5_prepare_shared_data();
 	assert(pci_drv == &mlx5_driver);
 	/* Get mlx5_dev[] index. */
 	idx = mlx5_dev_idx(&pci_dev->addr);
@@ -690,18 +764,18 @@ mlx5_pci_probe(struct rte_pci_driver *pci_drv __rte_unused,
 		break;
 	}
 	if (attr_ctx == NULL) {
-		mlx5_glue->free_device_list(list);
 		switch (err) {
 		case 0:
 			DRV_LOG(ERR,
 				"cannot access device, is mlx5_ib loaded?");
 			err = ENODEV;
-			goto error;
+			break;
 		case EINVAL:
 			DRV_LOG(ERR,
 				"cannot use device, are drivers up to date?");
-			goto error;
+			break;
 		}
+		goto error;
 	}
 	ibv_dev = list[i];
 	DRV_LOG(DEBUG, "device opened");
@@ -714,6 +788,9 @@ mlx5_pci_probe(struct rte_pci_driver *pci_drv __rte_unused,
 	 */
 #ifdef HAVE_IBV_DEVICE_TUNNEL_SUPPORT
 	attrs_out.comp_mask |= MLX5DV_CONTEXT_MASK_TUNNEL_OFFLOADS;
+#endif
+#ifdef HAVE_IBV_DEVICE_STRIDING_RQ_SUPPORT
+	attrs_out.comp_mask |= MLX5DV_CONTEXT_MASK_STRIDING_RQ;
 #endif
 	mlx5_glue->dv_query_device(attr_ctx, &attrs_out);
 	if (attrs_out.flags & MLX5DV_CONTEXT_FLAGS_MPW_ALLOWED) {
@@ -729,9 +806,36 @@ mlx5_pci_probe(struct rte_pci_driver *pci_drv __rte_unused,
 		mps = MLX5_MPW_DISABLED;
 	}
 #ifdef HAVE_IBV_MLX5_MOD_SWP
-	if (attrs_out.comp_mask | MLX5DV_CONTEXT_MASK_SWP)
+	if (attrs_out.comp_mask & MLX5DV_CONTEXT_MASK_SWP)
 		swp = attrs_out.sw_parsing_caps.sw_parsing_offloads;
 	DRV_LOG(DEBUG, "SWP support: %u", swp);
+#endif
+#ifdef HAVE_IBV_DEVICE_STRIDING_RQ_SUPPORT
+	if (attrs_out.comp_mask & MLX5DV_CONTEXT_MASK_STRIDING_RQ) {
+		struct mlx5dv_striding_rq_caps mprq_caps =
+			attrs_out.striding_rq_caps;
+
+		DRV_LOG(DEBUG, "\tmin_single_stride_log_num_of_bytes: %d",
+			mprq_caps.min_single_stride_log_num_of_bytes);
+		DRV_LOG(DEBUG, "\tmax_single_stride_log_num_of_bytes: %d",
+			mprq_caps.max_single_stride_log_num_of_bytes);
+		DRV_LOG(DEBUG, "\tmin_single_wqe_log_num_of_strides: %d",
+			mprq_caps.min_single_wqe_log_num_of_strides);
+		DRV_LOG(DEBUG, "\tmax_single_wqe_log_num_of_strides: %d",
+			mprq_caps.max_single_wqe_log_num_of_strides);
+		DRV_LOG(DEBUG, "\tsupported_qpts: %d",
+			mprq_caps.supported_qpts);
+		DRV_LOG(DEBUG, "device supports Multi-Packet RQ");
+		mprq = 1;
+		mprq_min_stride_size_n =
+			mprq_caps.min_single_stride_log_num_of_bytes;
+		mprq_max_stride_size_n =
+			mprq_caps.max_single_stride_log_num_of_bytes;
+		mprq_min_stride_num_n =
+			mprq_caps.min_single_wqe_log_num_of_strides;
+		mprq_max_stride_num_n =
+			mprq_caps.max_single_wqe_log_num_of_strides;
+	}
 #endif
 	if (RTE_CACHE_LINE_SIZE == 128 &&
 	    !(attrs_out.flags & MLX5DV_CONTEXT_FLAGS_CQE_128B_COMP))
@@ -751,8 +855,20 @@ mlx5_pci_probe(struct rte_pci_driver *pci_drv __rte_unused,
 	DRV_LOG(WARNING,
 		"tunnel offloading disabled due to old OFED/rdma-core version");
 #endif
-	if (mlx5_glue->query_device_ex(attr_ctx, NULL, &device_attr)) {
-		err = errno;
+#ifdef HAVE_IBV_DEVICE_MPLS_SUPPORT
+	mpls_en = ((attrs_out.tunnel_offloads_caps &
+		    MLX5DV_RAW_PACKET_CAP_TUNNELED_OFFLOAD_CW_MPLS_OVER_GRE) &&
+		   (attrs_out.tunnel_offloads_caps &
+		    MLX5DV_RAW_PACKET_CAP_TUNNELED_OFFLOAD_CW_MPLS_OVER_UDP));
+	DRV_LOG(DEBUG, "MPLS over GRE/UDP tunnel offloading is %ssupported",
+		mpls_en ? "" : "not ");
+#else
+	DRV_LOG(WARNING, "MPLS over GRE/UDP tunnel offloading disabled due to"
+		" old OFED/rdma-core version or firmware configuration");
+#endif
+	err = mlx5_glue->query_device_ex(attr_ctx, NULL, &device_attr);
+	if (err) {
+		DEBUG("ibv_query_device_ex() failed");
 		goto error;
 	}
 	DRV_LOG(INFO, "%u port(s) detected",
@@ -773,6 +889,7 @@ mlx5_pci_probe(struct rte_pci_driver *pci_drv __rte_unused,
 			.cqe_comp = cqe_comp,
 			.mps = mps,
 			.tunnel_en = tunnel_en,
+			.mpls_en = mpls_en,
 			.tx_vec_en = 1,
 			.rx_vec_en = 1,
 			.mpw_hdr_dseg = 0,
@@ -781,6 +898,13 @@ mlx5_pci_probe(struct rte_pci_driver *pci_drv __rte_unused,
 			.inline_max_packet_sz = MLX5_ARG_UNSET,
 			.vf_nl_en = 1,
 			.swp = !!swp,
+			.mprq = {
+				.enabled = 0, /* Disabled by default. */
+				.stride_num_n = RTE_MAX(MLX5_MPRQ_STRIDE_NUM_N,
+							mprq_min_stride_num_n),
+				.max_memcpy_len = MLX5_MPRQ_MEMCPY_DEFAULT_LEN,
+				.min_rxqs_num = MLX5_MPRQ_MIN_RXQS,
+			},
 		};
 
 		len = snprintf(name, sizeof(name), PCI_PRI_FMT,
@@ -800,16 +924,22 @@ mlx5_pci_probe(struct rte_pci_driver *pci_drv __rte_unused,
 			eth_dev->device = &pci_dev->device;
 			eth_dev->dev_ops = &mlx5_dev_sec_ops;
 			err = mlx5_uar_init_secondary(eth_dev);
-			if (err)
+			if (err) {
+				err = rte_errno;
 				goto error;
+			}
 			/* Receive command fd from primary process */
 			err = mlx5_socket_connect(eth_dev);
-			if (err)
+			if (err < 0) {
+				err = rte_errno;
 				goto error;
+			}
 			/* Remap UAR for Tx queues. */
 			err = mlx5_tx_uar_remap(eth_dev, err);
-			if (err)
+			if (err) {
+				err = rte_errno;
 				goto error;
+			}
 			/*
 			 * Ethdev pointer is still required as input since
 			 * the primary device is not accessible from the
@@ -819,6 +949,7 @@ mlx5_pci_probe(struct rte_pci_driver *pci_drv __rte_unused,
 				mlx5_select_rx_function(eth_dev);
 			eth_dev->tx_pkt_burst =
 				mlx5_select_tx_function(eth_dev);
+			rte_eth_dev_probing_finish(eth_dev);
 			continue;
 		}
 		DRV_LOG(DEBUG, "using port %u (%08" PRIx32 ")", port, test);
@@ -873,11 +1004,12 @@ mlx5_pci_probe(struct rte_pci_driver *pci_drv __rte_unused,
 		if (err) {
 			DRV_LOG(ERR, "failed to process device arguments: %s",
 				strerror(err));
+			err = rte_errno;
 			goto port_error;
 		}
-		if (mlx5_glue->query_device_ex(ctx, NULL, &device_attr_ex)) {
+		err = mlx5_glue->query_device_ex(ctx, NULL, &device_attr_ex);
+		if (err) {
 			DRV_LOG(ERR, "ibv_query_device_ex() failed");
-			err = errno;
 			goto port_error;
 		}
 		config.hw_csum = !!(device_attr_ex.device_cap_flags_ex &
@@ -939,6 +1071,22 @@ mlx5_pci_probe(struct rte_pci_driver *pci_drv __rte_unused,
 			DRV_LOG(WARNING, "Rx CQE compression isn't supported");
 			config.cqe_comp = 0;
 		}
+		config.mprq.enabled = config.mprq.enabled && mprq;
+		if (config.mprq.enabled) {
+			if (config.mprq.stride_num_n > mprq_max_stride_num_n ||
+			    config.mprq.stride_num_n < mprq_min_stride_num_n) {
+				config.mprq.stride_num_n =
+					RTE_MAX(MLX5_MPRQ_STRIDE_NUM_N,
+						mprq_min_stride_num_n);
+				DRV_LOG(WARNING,
+					"the number of strides"
+					" for Multi-Packet RQ is out of range,"
+					" setting default value (%u)",
+					1 << config.mprq.stride_num_n);
+			}
+			config.mprq.min_stride_size_n = mprq_min_stride_size_n;
+			config.mprq.max_stride_size_n = mprq_max_stride_size_n;
+		}
 		eth_dev = rte_eth_dev_allocate(name);
 		if (eth_dev == NULL) {
 			DRV_LOG(ERR, "can not allocate rte ethdev");
@@ -946,14 +1094,16 @@ mlx5_pci_probe(struct rte_pci_driver *pci_drv __rte_unused,
 			goto port_error;
 		}
 		eth_dev->data->dev_private = priv;
-		priv->dev = eth_dev;
+		priv->dev_data = eth_dev->data;
 		eth_dev->data->mac_addrs = priv->mac;
 		eth_dev->device = &pci_dev->device;
 		rte_eth_copy_pci_info(eth_dev, pci_dev);
 		eth_dev->device->driver = &mlx5_driver.driver;
 		err = mlx5_uar_init_primary(eth_dev);
-		if (err)
+		if (err) {
+			err = rte_errno;
 			goto port_error;
+		}
 		/* Configure the first MAC address by default. */
 		if (mlx5_get_mac(eth_dev, &mac.addr_bytes)) {
 			DRV_LOG(ERR,
@@ -983,8 +1133,10 @@ mlx5_pci_probe(struct rte_pci_driver *pci_drv __rte_unused,
 #endif
 		/* Get actual MTU if possible. */
 		err = mlx5_get_mtu(eth_dev, &priv->mtu);
-		if (err)
+		if (err) {
+			err = rte_errno;
 			goto port_error;
+		}
 		DRV_LOG(DEBUG, "port %u MTU is %u", eth_dev->data->port_id,
 			priv->mtu);
 		/*
@@ -1031,6 +1183,7 @@ mlx5_pci_probe(struct rte_pci_driver *pci_drv __rte_unused,
 		if (err) {
 			DRV_LOG(ERR, "port %u drop queue allocation failed: %s",
 				eth_dev->data->port_id, strerror(rte_errno));
+			err = rte_errno;
 			goto port_error;
 		}
 		/* Supported Verbs flow priority number detection. */
@@ -1042,6 +1195,25 @@ mlx5_pci_probe(struct rte_pci_driver *pci_drv __rte_unused,
 			goto port_error;
 		}
 		priv->config.max_verbs_prio = verb_priorities;
+		/*
+		 * Once the device is added to the list of memory event
+		 * callback, its global MR cache table cannot be expanded
+		 * on the fly because of deadlock. If it overflows, lookup
+		 * should be done by searching MR list linearly, which is slow.
+		 */
+		err = mlx5_mr_btree_init(&priv->mr.cache,
+					 MLX5_MR_BTREE_CACHE_N * 2,
+					 eth_dev->device->numa_node);
+		if (err) {
+			err = rte_errno;
+			goto port_error;
+		}
+		/* Add device to memory callback list. */
+		rte_rwlock_write_lock(&mlx5_shared_data->mem_event_rwlock);
+		LIST_INSERT_HEAD(&mlx5_shared_data->mem_event_cb_list,
+				 priv, mem_event_cb);
+		rte_rwlock_write_unlock(&mlx5_shared_data->mem_event_rwlock);
+		rte_eth_dev_probing_finish(eth_dev);
 		continue;
 port_error:
 		if (priv)
@@ -1050,6 +1222,8 @@ port_error:
 			claim_zero(mlx5_glue->dealloc_pd(pd));
 		if (ctx)
 			claim_zero(mlx5_glue->close_device(ctx));
+		if (eth_dev && rte_eal_process_type() == RTE_PROC_PRIMARY)
+			rte_eth_dev_release_port(eth_dev);
 		break;
 	}
 	/*
@@ -1107,6 +1281,10 @@ static const struct rte_pci_id mlx5_pci_id_map[] = {
 	{
 		RTE_PCI_DEVICE(PCI_VENDOR_ID_MELLANOX,
 			       PCI_DEVICE_ID_MELLANOX_CONNECTX5EXVF)
+	},
+	{
+		RTE_PCI_DEVICE(PCI_VENDOR_ID_MELLANOX,
+			       PCI_DEVICE_ID_MELLANOX_CONNECTX5BF)
 	},
 	{
 		.vendor_id = 0

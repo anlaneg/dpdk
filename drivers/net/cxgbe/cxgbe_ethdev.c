@@ -204,19 +204,17 @@ int cxgbe_dev_link_update(struct rte_eth_dev *eth_dev,
 	struct port_info *pi = (struct port_info *)(eth_dev->data->dev_private);
 	struct adapter *adapter = pi->adapter;
 	struct sge *s = &adapter->sge;
-	struct rte_eth_link *old_link = &eth_dev->data->dev_link;
+	struct rte_eth_link new_link;
 	unsigned int work_done, budget = 4;
 
 	cxgbe_poll(&s->fw_evtq, NULL, budget, &work_done);
-	if (old_link->link_status == pi->link_cfg.link_ok)
-		return -1;  /* link not changed */
 
-	eth_dev->data->dev_link.link_status = pi->link_cfg.link_ok;
-	eth_dev->data->dev_link.link_duplex = ETH_LINK_FULL_DUPLEX;
-	eth_dev->data->dev_link.link_speed = pi->link_cfg.speed;
+	new_link.link_status = force_linkup(adapter) ?
+			       ETH_LINK_UP : pi->link_cfg.link_ok;
+	new_link.link_duplex = ETH_LINK_FULL_DUPLEX;
+	new_link.link_speed = pi->link_cfg.speed;
 
-	/* link has changed */
-	return 0;
+	return rte_eth_linkstatus_set(eth_dev, &new_link);
 }
 
 int cxgbe_dev_mtu_set(struct rte_eth_dev *eth_dev, uint16_t mtu)
@@ -256,7 +254,6 @@ void cxgbe_dev_close(struct rte_eth_dev *eth_dev)
 {
 	struct port_info *pi = (struct port_info *)(eth_dev->data->dev_private);
 	struct adapter *adapter = pi->adapter;
-	int i, dev_down = 0;
 
 	CXGBE_FUNC_TRACE();
 
@@ -270,22 +267,6 @@ void cxgbe_dev_close(struct rte_eth_dev *eth_dev)
 	 *  have been disabled
 	 */
 	t4_sge_eth_clear_queues(pi);
-
-	/*  See if all ports are down */
-	for_each_port(adapter, i) {
-		pi = adap2pinfo(adapter, i);
-		/*
-		 * Skip first port of the adapter since it will be closed
-		 * by DPDK
-		 */
-		if (i == 0)
-			continue;
-		dev_down += (pi->eth_dev->data->dev_started == 0) ? 1 : 0;
-	}
-
-	/* If rest of the ports are stopped, then free up resources */
-	if (dev_down == (adapter->params.nports - 1))
-		cxgbe_close(adapter);
 }
 
 /* Start the device.
@@ -366,31 +347,15 @@ int cxgbe_dev_configure(struct rte_eth_dev *eth_dev)
 {
 	struct port_info *pi = (struct port_info *)(eth_dev->data->dev_private);
 	struct adapter *adapter = pi->adapter;
-	uint64_t unsupported_offloads, configured_offloads;
+	uint64_t configured_offloads;
 	int err;
 
 	CXGBE_FUNC_TRACE();
 	configured_offloads = eth_dev->data->dev_conf.rxmode.offloads;
 	if (!(configured_offloads & DEV_RX_OFFLOAD_CRC_STRIP)) {
 		dev_info(adapter, "can't disable hw crc strip\n");
-		configured_offloads |= DEV_RX_OFFLOAD_CRC_STRIP;
-	}
-
-	unsupported_offloads = configured_offloads & ~CXGBE_RX_OFFLOADS;
-	if (unsupported_offloads) {
-		dev_err(adapter, "Rx offloads 0x%" PRIx64 " are not supported. "
-			"Supported:0x%" PRIx64 "\n",
-			unsupported_offloads, (uint64_t)CXGBE_RX_OFFLOADS);
-		return -ENOTSUP;
-	}
-
-	configured_offloads = eth_dev->data->dev_conf.txmode.offloads;
-	unsupported_offloads = configured_offloads & ~CXGBE_TX_OFFLOADS;
-	if (unsupported_offloads) {
-		dev_err(adapter, "Tx offloads 0x%" PRIx64 " are not supported. "
-			"Supported:0x%" PRIx64 "\n",
-			unsupported_offloads, (uint64_t)CXGBE_TX_OFFLOADS);
-		return -ENOTSUP;
+		eth_dev->data->dev_conf.rxmode.offloads |=
+			DEV_RX_OFFLOAD_CRC_STRIP;
 	}
 
 	if (!(adapter->flags & FW_QUEUE_BOUND)) {
@@ -440,7 +405,7 @@ int cxgbe_dev_tx_queue_stop(struct rte_eth_dev *eth_dev, uint16_t tx_queue_id)
 int cxgbe_dev_tx_queue_setup(struct rte_eth_dev *eth_dev,
 			     uint16_t queue_idx, uint16_t nb_desc,
 			     unsigned int socket_id,
-			     const struct rte_eth_txconf *tx_conf)
+			     const struct rte_eth_txconf *tx_conf __rte_unused)
 {
 	struct port_info *pi = (struct port_info *)(eth_dev->data->dev_private);
 	struct adapter *adapter = pi->adapter;
@@ -448,15 +413,6 @@ int cxgbe_dev_tx_queue_setup(struct rte_eth_dev *eth_dev,
 	struct sge_eth_txq *txq = &s->ethtxq[pi->first_qset + queue_idx];
 	int err = 0;
 	unsigned int temp_nb_desc;
-	uint64_t unsupported_offloads;
-
-	unsupported_offloads = tx_conf->offloads & ~CXGBE_TX_OFFLOADS;
-	if (unsupported_offloads) {
-		dev_err(adapter, "Tx offloads 0x%" PRIx64 " are not supported. "
-			"Supported:0x%" PRIx64 "\n",
-			unsupported_offloads, (uint64_t)CXGBE_TX_OFFLOADS);
-		return -ENOTSUP;
-	}
 
 	dev_debug(adapter, "%s: eth_dev->data->nb_tx_queues = %d; queue_idx = %d; nb_desc = %d; socket_id = %d; pi->first_qset = %u\n",
 		  __func__, eth_dev->data->nb_tx_queues, queue_idx, nb_desc,
@@ -553,7 +509,7 @@ int cxgbe_dev_rx_queue_stop(struct rte_eth_dev *eth_dev, uint16_t rx_queue_id)
 int cxgbe_dev_rx_queue_setup(struct rte_eth_dev *eth_dev,
 			     uint16_t queue_idx, uint16_t nb_desc,
 			     unsigned int socket_id,
-			     const struct rte_eth_rxconf *rx_conf,
+			     const struct rte_eth_rxconf *rx_conf __rte_unused,
 			     struct rte_mempool *mp)
 {
 	struct port_info *pi = (struct port_info *)(eth_dev->data->dev_private);
@@ -565,21 +521,6 @@ int cxgbe_dev_rx_queue_setup(struct rte_eth_dev *eth_dev,
 	unsigned int temp_nb_desc;
 	struct rte_eth_dev_info dev_info;
 	unsigned int pkt_len = eth_dev->data->dev_conf.rxmode.max_rx_pkt_len;
-	uint64_t unsupported_offloads, configured_offloads;
-
-	configured_offloads = rx_conf->offloads;
-	if (!(configured_offloads & DEV_RX_OFFLOAD_CRC_STRIP)) {
-		dev_info(adapter, "can't disable hw crc strip\n");
-		configured_offloads |= DEV_RX_OFFLOAD_CRC_STRIP;
-	}
-
-	unsupported_offloads = configured_offloads & ~CXGBE_RX_OFFLOADS;
-	if (unsupported_offloads) {
-		dev_err(adapter, "Rx offloads 0x%" PRIx64 " are not supported. "
-			"Supported:0x%" PRIx64 "\n",
-			unsupported_offloads, (uint64_t)CXGBE_RX_OFFLOADS);
-		return -ENOTSUP;
-	}
 
 	dev_debug(adapter, "%s: eth_dev->data->nb_rx_queues = %d; queue_idx = %d; nb_desc = %d; socket_id = %d; mp = %p\n",
 		  __func__, eth_dev->data->nb_rx_queues, queue_idx, nb_desc,
@@ -1147,6 +1088,7 @@ static int eth_cxgbe_dev_init(struct rte_eth_dev *eth_dev)
 					eth_dev->rx_pkt_burst;
 				rest_eth_dev->tx_pkt_burst =
 					eth_dev->tx_pkt_burst;
+				rte_eth_dev_probing_finish(rest_eth_dev);
 			}
 		}
 		return 0;
@@ -1182,6 +1124,16 @@ out_free_adapter:
 	return err;
 }
 
+static int eth_cxgbe_dev_uninit(struct rte_eth_dev *eth_dev)
+{
+	struct port_info *pi = (struct port_info *)(eth_dev->data->dev_private);
+	struct adapter *adap = pi->adapter;
+
+	/* Free up other ports and all resources */
+	cxgbe_close(adap);
+	return 0;
+}
+
 static int eth_cxgbe_pci_probe(struct rte_pci_driver *pci_drv __rte_unused,
 	struct rte_pci_device *pci_dev)
 {
@@ -1191,7 +1143,7 @@ static int eth_cxgbe_pci_probe(struct rte_pci_driver *pci_drv __rte_unused,
 
 static int eth_cxgbe_pci_remove(struct rte_pci_device *pci_dev)
 {
-	return rte_eth_dev_pci_generic_remove(pci_dev, NULL);
+	return rte_eth_dev_pci_generic_remove(pci_dev, eth_cxgbe_dev_uninit);
 }
 
 static struct rte_pci_driver rte_cxgbe_pmd = {
@@ -1204,3 +1156,6 @@ static struct rte_pci_driver rte_cxgbe_pmd = {
 RTE_PMD_REGISTER_PCI(net_cxgbe, rte_cxgbe_pmd);
 RTE_PMD_REGISTER_PCI_TABLE(net_cxgbe, cxgb4_pci_tbl);
 RTE_PMD_REGISTER_KMOD_DEP(net_cxgbe, "* igb_uio | uio_pci_generic | vfio-pci");
+RTE_PMD_REGISTER_PARAM_STRING(net_cxgbe,
+			      CXGBE_DEVARG_KEEP_OVLAN "=<0|1> "
+			      CXGBE_DEVARG_FORCE_LINK_UP "=<0|1> ");

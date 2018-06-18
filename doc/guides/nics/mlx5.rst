@@ -6,9 +6,9 @@ MLX5 poll mode driver
 =====================
 
 The MLX5 poll mode driver library (**librte_pmd_mlx5**) provides support
-for **Mellanox ConnectX-4**, **Mellanox ConnectX-4 Lx** and **Mellanox
-ConnectX-5** families of 10/25/40/50/100 Gb/s adapters as well as their
-virtual functions (VF) in SR-IOV context.
+for **Mellanox ConnectX-4**, **Mellanox ConnectX-4 Lx** , **Mellanox
+ConnectX-5** and **Mellanox Bluefield** families of 10/25/40/50/100 Gb/s
+adapters as well as their virtual functions (VF) in SR-IOV context.
 
 Information and documentation about these adapters can be found on the
 `Mellanox website <http://www.mellanox.com>`__. Help is also provided by the
@@ -69,12 +69,12 @@ Features
 - Multiple process.
 - KVM and VMware ESX SR-IOV modes are supported.
 - RSS hash result is supported.
-- Hardware TSO.
-- Hardware checksum TX offload for VXLAN and GRE.
+- Hardware TSO for generic IP or UDP tunnel, including VXLAN and GRE.
+- Hardware checksum Tx offload for generic IP or UDP tunnel, including VXLAN and GRE.
 - RX interrupts.
 - Statistics query including Basic, Extended and per queue.
 - Rx HW timestamp.
-- Tunnel types: VXLAN, L3 VXLAN, VXLAN-GPE, GRE.
+- Tunnel types: VXLAN, L3 VXLAN, VXLAN-GPE, GRE, MPLSoGRE, MPLSoUDP.
 - Tunnel HW offloads: packet type, inner/outer RSS, IP and UDP checksum verification.
 
 Limitations
@@ -105,10 +105,16 @@ Limitations
 - A multi segment packet must have less than 6 segments in case the Tx burst function
   is set to multi-packet send or Enhanced multi-packet send. Otherwise it must have
   less than 50 segments.
+
 - Count action for RTE flow is **only supported in Mellanox OFED**.
+
 - Flows with a VXLAN Network Identifier equal (or ends to be equal)
   to 0 are not supported.
+
 - VXLAN TSO and checksum offloads are not supported on VM.
+
+- L3 VXLAN and VXLAN-GPE tunnels cannot be supported together with MPLSoGRE and MPLSoUDP.
+
 - VF: flow rules created on VF devices can only match traffic targeted at the
   configured MAC addresses (see ``rte_eth_dev_mac_addr_add()``).
 
@@ -118,6 +124,13 @@ Limitations
    kernel network device will be added and cleaned up by the PMD when closing
    the device. In case of ungraceful program termination, some entries may
    remain present and should be removed manually by other means.
+
+- When Multi-Packet Rx queue is configured (``mprq_en``), a Rx packet can be
+  externally attached to a user-provided mbuf with having EXT_ATTACHED_MBUF in
+  ol_flags. As the mempool for the external buffer is managed by PMD, all the
+  Rx mbufs must be freed before the device is closed. Otherwise, the mempool of
+  the external buffers will be freed by PMD and the application which still
+  holds the external buffers may be corrupted.
 
 Statistics
 ----------
@@ -166,14 +179,6 @@ These options can be modified in the ``.config`` file.
   Toggle debugging code and stricter compilation flags. Enabling this option
   adds additional run-time checks and debugging messages at the cost of
   lower performance.
-
-- ``CONFIG_RTE_LIBRTE_MLX5_TX_MP_CACHE`` (default **8**)
-
-  Maximum number of cached memory pools (MPs) per TX queue. Each MP from
-  which buffers are to be transmitted must be associated to memory regions
-  (MRs). This is a slow operation that must be cached.
-
-  This value is always 1 for RX queues since they use a single MP.
 
 Environment variables
 ~~~~~~~~~~~~~~~~~~~~~
@@ -234,8 +239,55 @@ Run-time configuration
 
   Supported on:
 
-  - x86_64 with ConnectX-4, ConnectX-4 LX and ConnectX-5.
-  - POWER8 and ARMv8 with ConnectX-4 LX and ConnectX-5.
+  - x86_64 with ConnectX-4, ConnectX-4 LX, ConnectX-5 and Bluefield.
+  - POWER8 and ARMv8 with ConnectX-4 LX, ConnectX-5 and Bluefield.
+
+- ``mprq_en`` parameter [int]
+
+  A nonzero value enables configuring Multi-Packet Rx queues. Rx queue is
+  configured as Multi-Packet RQ if the total number of Rx queues is
+  ``rxqs_min_mprq`` or more and Rx scatter isn't configured. Disabled by
+  default.
+
+  Multi-Packet Rx Queue (MPRQ a.k.a Striding RQ) can further save PCIe bandwidth
+  by posting a single large buffer for multiple packets. Instead of posting a
+  buffers per a packet, one large buffer is posted in order to receive multiple
+  packets on the buffer. A MPRQ buffer consists of multiple fixed-size strides
+  and each stride receives one packet. MPRQ can improve throughput for
+  small-packet tarffic.
+
+  When MPRQ is enabled, max_rx_pkt_len can be larger than the size of
+  user-provided mbuf even if DEV_RX_OFFLOAD_SCATTER isn't enabled. PMD will
+  configure large stride size enough to accommodate max_rx_pkt_len as long as
+  device allows. Note that this can waste system memory compared to enabling Rx
+  scatter and multi-segment packet.
+
+- ``mprq_log_stride_num`` parameter [int]
+
+  Log 2 of the number of strides for Multi-Packet Rx queue. Configuring more
+  strides can reduce PCIe tarffic further. If configured value is not in the
+  range of device capability, the default value will be set with a warning
+  message. The default value is 4 which is 16 strides per a buffer, valid only
+  if ``mprq_en`` is set.
+
+  The size of Rx queue should be bigger than the number of strides.
+
+- ``mprq_max_memcpy_len`` parameter [int]
+
+  The maximum length of packet to memcpy in case of Multi-Packet Rx queue. Rx
+  packet is mem-copied to a user-provided mbuf if the size of Rx packet is less
+  than or equal to this parameter. Otherwise, PMD will attach the Rx packet to
+  the mbuf by external buffer attachment - ``rte_pktmbuf_attach_extbuf()``.
+  A mempool for external buffers will be allocated and managed by PMD. If Rx
+  packet is externally attached, ol_flags field of the mbuf will have
+  EXT_ATTACHED_MBUF and this flag must be preserved. ``RTE_MBUF_HAS_EXTBUF()``
+  checks the flag. The default value is 128, valid only if ``mprq_en`` is set.
+
+- ``rxqs_min_mprq`` parameter [int]
+
+  Configure Rx queues as Multi-Packet RQ if the total number of Rx queues is
+  greater or equal to this value. The default value is 12, valid only if
+  ``mprq_en`` is set.
 
 - ``txq_inline`` parameter [int]
 
@@ -254,34 +306,35 @@ Run-time configuration
 
   This option should be used in combination with ``txq_inline`` above.
 
-  On ConnectX-4, ConnectX-4 LX and ConnectX-5 without Enhanced MPW:
+  On ConnectX-4, ConnectX-4 LX, ConnectX-5 and Bluefield without
+  Enhanced MPW:
 
         - Disabled by default.
         - In case ``txq_inline`` is set recommendation is 4.
 
-  On ConnectX-5 with Enhanced MPW:
+  On ConnectX-5 and Bluefield with Enhanced MPW:
 
         - Set to 8 by default.
 
 - ``txq_mpw_en`` parameter [int]
 
   A nonzero value enables multi-packet send (MPS) for ConnectX-4 Lx and
-  enhanced multi-packet send (Enhanced MPS) for ConnectX-5. MPS allows the
-  TX burst function to pack up multiple packets in a single descriptor
-  session in order to save PCI bandwidth and improve performance at the
-  cost of a slightly higher CPU usage. When ``txq_inline`` is set along
-  with ``txq_mpw_en``, TX burst function tries to copy entire packet data
-  on to TX descriptor instead of including pointer of packet only if there
-  is enough room remained in the descriptor. ``txq_inline`` sets
-  per-descriptor space for either pointers or inlined packets. In addition,
-  Enhanced MPS supports hybrid mode - mixing inlined packets and pointers
-  in the same descriptor.
+  enhanced multi-packet send (Enhanced MPS) for ConnectX-5 and Bluefield.
+  MPS allows the TX burst function to pack up multiple packets in a
+  single descriptor session in order to save PCI bandwidth and improve
+  performance at the cost of a slightly higher CPU usage. When
+  ``txq_inline`` is set along with ``txq_mpw_en``, TX burst function tries
+  to copy entire packet data on to TX descriptor instead of including
+  pointer of packet only if there is enough room remained in the
+  descriptor. ``txq_inline`` sets per-descriptor space for either pointers
+  or inlined packets. In addition, Enhanced MPS supports hybrid mode -
+  mixing inlined packets and pointers in the same descriptor.
 
   This option cannot be used with certain offloads such as ``DEV_TX_OFFLOAD_TCP_TSO,
   DEV_TX_OFFLOAD_VXLAN_TNL_TSO, DEV_TX_OFFLOAD_GRE_TNL_TSO, DEV_TX_OFFLOAD_VLAN_INSERT``.
   When those offloads are requested the MPS send function will not be used.
 
-  It is currently only supported on the ConnectX-4 Lx and ConnectX-5
+  It is currently only supported on the ConnectX-4 Lx, ConnectX-5 and Bluefield
   families of adapters. Enabled by default.
 
 - ``txq_mpw_hdr_dseg_en`` parameter [int]
@@ -302,14 +355,14 @@ Run-time configuration
 
 - ``tx_vec_en`` parameter [int]
 
-  A nonzero value enables Tx vector on ConnectX-5 only NIC if the number of
+  A nonzero value enables Tx vector on ConnectX-5 and Bluefield NICs if the number of
   global Tx queues on the port is lesser than MLX5_VPMD_MIN_TXQS.
 
   This option cannot be used with certain offloads such as ``DEV_TX_OFFLOAD_TCP_TSO,
   DEV_TX_OFFLOAD_VXLAN_TNL_TSO, DEV_TX_OFFLOAD_GRE_TNL_TSO, DEV_TX_OFFLOAD_VLAN_INSERT``.
   When those offloads are requested the MPS send function will not be used.
 
-  Enabled by default on ConnectX-5.
+  Enabled by default on ConnectX-5 and Bluefield.
 
 - ``rx_vec_en`` parameter [int]
 
@@ -372,8 +425,9 @@ DPDK and must be installed separately:
 
 - **libmlx5**
 
-  Low-level user space driver library for Mellanox ConnectX-4/ConnectX-5
-  devices, it is automatically loaded by libibverbs.
+  Low-level user space driver library for Mellanox
+  ConnectX-4/ConnectX-5/Bluefield devices, it is automatically loaded
+  by libibverbs.
 
   This library basically implements send/receive calls to the hardware
   queues.
@@ -387,15 +441,16 @@ DPDK and must be installed separately:
   Unlike most other PMDs, these modules must remain loaded and bound to
   their devices:
 
-  - mlx5_core: hardware driver managing Mellanox ConnectX-4/ConnectX-5
-    devices and related Ethernet kernel network devices.
+  - mlx5_core: hardware driver managing Mellanox
+    ConnectX-4/ConnectX-5/Bluefield devices and related Ethernet kernel
+    network devices.
   - mlx5_ib: InifiniBand device driver.
   - ib_uverbs: user space driver for Verbs (entry point for libibverbs).
 
 - **Firmware update**
 
-  Mellanox OFED releases include firmware updates for ConnectX-4/ConnectX-5
-  adapters.
+  Mellanox OFED releases include firmware updates for
+  ConnectX-4/ConnectX-5/Bluefield adapters.
 
   Because each release provides new features, these updates must be applied to
   match the kernel modules and libraries they come with.
@@ -432,6 +487,7 @@ Mellanox OFED
   - ConnectX-4 Lx: **14.21.1000** and above.
   - ConnectX-5: **16.21.1000** and above.
   - ConnectX-5 Ex: **16.21.1000** and above.
+  - Bluefield: **18.99.3950** and above.
 
 While these libraries and kernel modules are available on OpenFabrics
 Alliance's `website <https://www.openfabrics.org/>`__ and provided by package
@@ -622,6 +678,12 @@ Performance tuning
         The XXX can be different on different systems. Make sure to configure
         according to the setpci output.
 
+7. To minimize overhead of searching Memory Regions:
+
+   - '--socket-mem' is recommended to pin memory by predictable amount.
+   - Configure per-lcore cache when creating Mempools for packet buffer.
+   - Refrain from dynamically allocating/freeing memory in run-time.
+
 Notes for testpmd
 -----------------
 
@@ -643,7 +705,7 @@ Usage example
 -------------
 
 This section demonstrates how to launch **testpmd** with Mellanox
-ConnectX-4/ConnectX-5 devices managed by librte_pmd_mlx5.
+ConnectX-4/ConnectX-5/Bluefield devices managed by librte_pmd_mlx5.
 
 #. Load the kernel modules:
 

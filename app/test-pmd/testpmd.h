@@ -334,9 +334,9 @@ extern volatile int test_done; /* stop packet forwarding when set to 1. */
 extern uint8_t lsc_interrupt; /**< disabled by "--no-lsc-interrupt" parameter */
 extern uint8_t rmv_interrupt; /**< disabled by "--no-rmv-interrupt" parameter */
 extern uint32_t event_print_mask;
-extern uint8_t hot_plug; /**< enable by "--hot-plug" parameter */
-
 /**< set by "--print-event xxxx" and "--mask-event xxxx parameters */
+extern uint8_t hot_plug; /**< enable by "--hot-plug" parameter */
+extern int do_mlockall; /**< set by "--mlockall" or "--no-mlockall" parameter */
 
 #ifdef RTE_LIBRTE_IXGBE_BYPASS
 extern uint32_t bypass_timeout; /**< Store the NIC bypass watchdog timeout */
@@ -596,6 +596,7 @@ void fwd_config_setup(void);
 void set_def_fwd_config(void);
 void reconfig(portid_t new_port_id, unsigned socket_id);
 int init_fwd_streams(void);
+void update_fwd_ports(portid_t new_pid);
 
 void set_fwd_eth_peer(portid_t port_id, char *peer_addr);
 
@@ -726,6 +727,7 @@ enum print_warning {
 	DISABLED_WARN
 };
 int port_id_is_invalid(portid_t port_id, enum print_warning warning);
+void print_valid_ports(void);
 int new_socket_id(unsigned int socket_id);
 
 queueid_t get_allowed_max_nb_rxq(portid_t *pid);

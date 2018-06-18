@@ -262,8 +262,6 @@ octeontx_dev_configure(struct rte_eth_dev *dev)
 	struct rte_eth_rxmode *rxmode = &conf->rxmode;
 	struct rte_eth_txmode *txmode = &conf->txmode;
 	struct octeontx_nic *nic = octeontx_pmd_priv(dev);
-	uint64_t configured_offloads;
-	uint64_t unsupported_offloads;
 	int ret;
 
 	PMD_INIT_FUNC_TRACE();
@@ -285,38 +283,14 @@ octeontx_dev_configure(struct rte_eth_dev *dev)
 		return -EINVAL;
 	}
 
-	configured_offloads = rxmode->offloads;
-
-	if (!(configured_offloads & DEV_RX_OFFLOAD_CRC_STRIP)) {
+	if (!(rxmode->offloads & DEV_RX_OFFLOAD_CRC_STRIP)) {
 		PMD_INIT_LOG(NOTICE, "can't disable hw crc strip");
-		configured_offloads |= DEV_RX_OFFLOAD_CRC_STRIP;
+		rxmode->offloads |= DEV_RX_OFFLOAD_CRC_STRIP;
 	}
 
-	unsupported_offloads = configured_offloads & ~OCTEONTX_RX_OFFLOADS;
-
-	if (unsupported_offloads) {
-		PMD_INIT_LOG(ERR, "Rx offloads 0x%" PRIx64 " are not supported. "
-		      "Requested 0x%" PRIx64 " supported 0x%" PRIx64 "\n",
-		      unsupported_offloads, configured_offloads,
-		      (uint64_t)OCTEONTX_RX_OFFLOADS);
-		return -ENOTSUP;
-	}
-
-	configured_offloads = txmode->offloads;
-
-	if (!(configured_offloads & DEV_TX_OFFLOAD_MT_LOCKFREE)) {
+	if (!(txmode->offloads & DEV_TX_OFFLOAD_MT_LOCKFREE)) {
 		PMD_INIT_LOG(NOTICE, "cant disable lockfree tx");
-		configured_offloads |= DEV_TX_OFFLOAD_MT_LOCKFREE;
-	}
-
-	unsupported_offloads = configured_offloads & ~OCTEONTX_TX_OFFLOADS;
-
-	if (unsupported_offloads) {
-		PMD_INIT_LOG(ERR, "Tx offloads 0x%" PRIx64 " are not supported."
-		      "Requested 0x%" PRIx64 " supported 0x%" PRIx64 ".\n",
-		      unsupported_offloads, configured_offloads,
-		      (uint64_t)OCTEONTX_TX_OFFLOADS);
-		return -ENOTSUP;
+		txmode->offloads |= DEV_TX_OFFLOAD_MT_LOCKFREE;
 	}
 
 	if (conf->link_speeds & ETH_LINK_SPEED_FIXED) {
@@ -627,10 +601,7 @@ octeontx_dev_info(struct rte_eth_dev *dev,
 
 	dev_info->default_txconf = (struct rte_eth_txconf) {
 		.tx_free_thresh = 0,
-		.txq_flags =
-			ETH_TXQ_FLAGS_NOMULTSEGS |
-			ETH_TXQ_FLAGS_NOOFFLOADS |
-			ETH_TXQ_FLAGS_NOXSUMS,
+		.offloads = OCTEONTX_TX_OFFLOADS,
 	};
 
 	dev_info->rx_offload_capa = OCTEONTX_RX_OFFLOADS;
@@ -738,14 +709,12 @@ octeontx_dev_tx_queue_release(void *tx_queue)
 static int
 octeontx_dev_tx_queue_setup(struct rte_eth_dev *dev, uint16_t qidx,
 			    uint16_t nb_desc, unsigned int socket_id,
-			    const struct rte_eth_txconf *tx_conf)
+			    const struct rte_eth_txconf *tx_conf __rte_unused)
 {
 	struct octeontx_nic *nic = octeontx_pmd_priv(dev);
 	struct octeontx_txq *txq = NULL;
 	uint16_t dq_num;
 	int res = 0;
-	uint64_t configured_offloads;
-	uint64_t unsupported_offloads;
 
 	RTE_SET_USED(nb_desc);
 	RTE_SET_USED(socket_id);
@@ -764,22 +733,6 @@ octeontx_dev_tx_queue_setup(struct rte_eth_dev *dev, uint16_t qidx,
 				qidx);
 		octeontx_dev_tx_queue_release(dev->data->tx_queues[qidx]);
 		dev->data->tx_queues[qidx] = NULL;
-	}
-
-	configured_offloads = tx_conf->offloads;
-
-	if (!(configured_offloads & DEV_TX_OFFLOAD_MT_LOCKFREE)) {
-		PMD_INIT_LOG(NOTICE, "cant disable lockfree tx");
-		configured_offloads |= DEV_TX_OFFLOAD_MT_LOCKFREE;
-	}
-
-	unsupported_offloads = configured_offloads & ~OCTEONTX_TX_OFFLOADS;
-	if (unsupported_offloads) {
-		PMD_INIT_LOG(ERR, "Tx offloads 0x%" PRIx64 " are not supported."
-		      "Requested 0x%" PRIx64 " supported 0x%" PRIx64 ".\n",
-		      unsupported_offloads, configured_offloads,
-		      (uint64_t)OCTEONTX_TX_OFFLOADS);
-		return -ENOTSUP;
 	}
 
 	/* Allocating tx queue data structure */
@@ -837,8 +790,6 @@ octeontx_dev_rx_queue_setup(struct rte_eth_dev *dev, uint16_t qidx,
 	uint8_t gaura;
 	unsigned int ev_queues = (nic->ev_queues * nic->port_id) + qidx;
 	unsigned int ev_ports = (nic->ev_ports * nic->port_id) + qidx;
-	uint64_t configured_offloads;
-	uint64_t unsupported_offloads;
 
 	RTE_SET_USED(nb_desc);
 
@@ -861,22 +812,6 @@ octeontx_dev_rx_queue_setup(struct rte_eth_dev *dev, uint16_t qidx,
 
 	port = nic->port_id;
 
-	configured_offloads = rx_conf->offloads;
-
-	if (!(configured_offloads & DEV_RX_OFFLOAD_CRC_STRIP)) {
-		PMD_INIT_LOG(NOTICE, "can't disable hw crc strip");
-		configured_offloads |= DEV_RX_OFFLOAD_CRC_STRIP;
-	}
-
-	unsupported_offloads = configured_offloads & ~OCTEONTX_RX_OFFLOADS;
-
-	if (unsupported_offloads) {
-		PMD_INIT_LOG(ERR, "Rx offloads 0x%" PRIx64 " are not supported. "
-		      "Requested 0x%" PRIx64 " supported 0x%" PRIx64 "\n",
-		      unsupported_offloads, configured_offloads,
-		      (uint64_t)OCTEONTX_RX_OFFLOADS);
-		return -ENOTSUP;
-	}
 	/* Rx deferred start is not supported */
 	if (rx_conf->rx_deferred_start) {
 		octeontx_log_err("rx deferred start not supported");
@@ -1081,6 +1016,7 @@ octeontx_create(struct rte_vdev_device *dev, int port, uint8_t evdev,
 
 		eth_dev->tx_pkt_burst = octeontx_xmit_pkts;
 		eth_dev->rx_pkt_burst = octeontx_recv_pkts;
+		rte_eth_dev_probing_finish(eth_dev);
 		return 0;
 	}
 
@@ -1165,6 +1101,7 @@ octeontx_create(struct rte_vdev_device *dev, int port, uint8_t evdev,
 	rte_octeontx_pchan_map[(nic->base_ochan >> 8) & 0x7]
 		[(nic->base_ochan >> 4) & 0xF] = data->port_id;
 
+	rte_eth_dev_probing_finish(eth_dev);
 	return data->port_id;
 
 err:
@@ -1245,6 +1182,7 @@ octeontx_probe(struct rte_vdev_device *dev)
 		}
 		/* TODO: request info from primary to set up Rx and Tx */
 		eth_dev->dev_ops = &octeontx_dev_ops;
+		rte_eth_dev_probing_finish(eth_dev);
 		return 0;
 	}
 

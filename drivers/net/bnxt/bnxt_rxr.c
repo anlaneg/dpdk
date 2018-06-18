@@ -48,7 +48,7 @@ static inline int bnxt_alloc_rx_data(struct bnxt_rx_queue *rxq,
 	rx_buf->mbuf = mbuf;
 	mbuf->data_off = RTE_PKTMBUF_HEADROOM;
 
-	rxbd->addr = rte_cpu_to_le_64(rte_mbuf_data_iova_default(mbuf));
+	rxbd->address = rte_cpu_to_le_64(rte_mbuf_data_iova_default(mbuf));
 
 	return 0;
 }
@@ -76,7 +76,7 @@ static inline int bnxt_alloc_ag_data(struct bnxt_rx_queue *rxq,
 	rx_buf->mbuf = mbuf;
 	mbuf->data_off = RTE_PKTMBUF_HEADROOM;
 
-	rxbd->addr = rte_cpu_to_le_64(rte_mbuf_data_iova_default(mbuf));
+	rxbd->address = rte_cpu_to_le_64(rte_mbuf_data_iova_default(mbuf));
 
 	return 0;
 }
@@ -97,7 +97,7 @@ static inline void bnxt_reuse_rx_mbuf(struct bnxt_rx_ring_info *rxr,
 
 	prod_bd = &rxr->rx_desc_ring[prod];
 
-	prod_bd->addr = rte_cpu_to_le_64(rte_mbuf_data_iova_default(mbuf));
+	prod_bd->address = rte_cpu_to_le_64(rte_mbuf_data_iova_default(mbuf));
 
 	rxr->rx_prod = prod;
 }
@@ -117,7 +117,7 @@ static void bnxt_reuse_ag_mbuf(struct bnxt_rx_ring_info *rxr, uint16_t cons,
 	prod_bd = &rxr->ag_desc_ring[prod];
 	cons_bd = &rxr->ag_desc_ring[cons];
 
-	prod_bd->addr = cons_bd->addr;
+	prod_bd->address = cons_bd->addr;
 }
 #endif
 
@@ -464,11 +464,15 @@ static int bnxt_rx_pkt(struct rte_mbuf **rx_pkt,
 
 	if (likely(RX_CMP_IP_CS_OK(rxcmp1)))
 		mbuf->ol_flags |= PKT_RX_IP_CKSUM_GOOD;
+	else if (likely(RX_CMP_IP_CS_UNKNOWN(rxcmp1)))
+		mbuf->ol_flags |= PKT_RX_IP_CKSUM_UNKNOWN;
 	else
 		mbuf->ol_flags |= PKT_RX_IP_CKSUM_BAD;
 
 	if (likely(RX_CMP_L4_CS_OK(rxcmp1)))
 		mbuf->ol_flags |= PKT_RX_L4_CKSUM_GOOD;
+	else if (likely(RX_CMP_L4_CS_UNKNOWN(rxcmp1)))
+		mbuf->ol_flags |= PKT_RX_L4_CKSUM_UNKNOWN;
 	else
 		mbuf->ol_flags |= PKT_RX_L4_CKSUM_BAD;
 
@@ -534,6 +538,7 @@ uint16_t bnxt_recv_pkts(void *rx_queue, struct rte_mbuf **rx_pkts,
 	uint16_t prod = rxr->rx_prod;
 	uint16_t ag_prod = rxr->ag_prod;
 	int rc = 0;
+	bool evt = false;
 
 	/* If Rx Q was stopped return */
 	if (rxq->rx_deferred_start)
@@ -558,14 +563,19 @@ uint16_t bnxt_recv_pkts(void *rx_queue, struct rte_mbuf **rx_pkts,
 				nb_rx_pkts++;
 			if (rc == -EBUSY)	/* partial completion */
 				break;
+		} else {
+			evt =
+			bnxt_event_hwrm_resp_handler(rxq->bp,
+						     (struct cmpl_base *)rxcmp);
 		}
+
 		raw_cons = NEXT_RAW_CMP(raw_cons);
-		if (nb_rx_pkts == nb_pkts)
+		if (nb_rx_pkts == nb_pkts || evt)
 			break;
 	}
 
 	cpr->cp_raw_cons = raw_cons;
-	if (prod == rxr->rx_prod && ag_prod == rxr->ag_prod) {
+	if ((prod == rxr->rx_prod && ag_prod == rxr->ag_prod) && !evt) {
 		/*
 		 * For PMD, there is no need to keep on pushing to REARM
 		 * the doorbell if there are no new completions
@@ -574,9 +584,12 @@ uint16_t bnxt_recv_pkts(void *rx_queue, struct rte_mbuf **rx_pkts,
 	}
 
 	B_CP_DIS_DB(cpr, cpr->cp_raw_cons);
-	B_RX_DB(rxr->rx_doorbell, rxr->rx_prod);
+	if (prod != rxr->rx_prod)
+		B_RX_DB(rxr->rx_doorbell, rxr->rx_prod);
+
 	/* Ring the AGG ring DB */
-	B_RX_DB(rxr->ag_doorbell, rxr->ag_prod);
+	if (ag_prod != rxr->ag_prod)
+		B_RX_DB(rxr->ag_doorbell, rxr->ag_prod);
 
 	/* Attempt to alloc Rx buf in case of a previous allocation failure. */
 	if (rc == -ENOMEM) {

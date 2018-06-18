@@ -222,7 +222,6 @@ struct ixgbe_tx_queue {
 	uint8_t             pthresh;       /**< Prefetch threshold register. */
 	uint8_t             hthresh;       /**< Host threshold register. */
 	uint8_t             wthresh;       /**< Write-back threshold reg. */
-	uint32_t txq_flags; /**< Holds flags for this TXq */
 	uint64_t offloads; /**< Tx offload flags of DEV_TX_OFFLOAD_* */
 	uint32_t            ctx_curr;      /**< Hardware context states. */
 	/** Hardware context0 history. */
@@ -240,20 +239,6 @@ struct ixgbe_txq_ops {
 	void (*free_swring)(struct ixgbe_tx_queue *txq);
 	void (*reset)(struct ixgbe_tx_queue *txq);
 };
-
-/*
- * The "simple" TX queue functions require that the following
- * flags are set when the TX queue is configured:
- *  - ETH_TXQ_FLAGS_NOMULTSEGS
- *  - ETH_TXQ_FLAGS_NOVLANOFFL
- *  - ETH_TXQ_FLAGS_NOXSUMSCTP
- *  - ETH_TXQ_FLAGS_NOXSUMUDP
- *  - ETH_TXQ_FLAGS_NOXSUMTCP
- * and that the RS bit threshold (tx_rs_thresh) is at least equal to
- * RTE_PMD_IXGBE_TX_MAX_BURST.
- */
-#define IXGBE_SIMPLE_FLAGS ((uint32_t)ETH_TXQ_FLAGS_NOMULTSEGS | \
-			    ETH_TXQ_FLAGS_NOOFFLOADS)
 
 /*
  * Populate descriptors with the following info:

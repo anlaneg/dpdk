@@ -13,7 +13,7 @@
 #include <rte_bbdev.h>
 #include <rte_bbdev_pmd.h>
 
-#define DRIVER_NAME bbdev_null
+#define DRIVER_NAME baseband_null
 
 /* NULL BBDev logging ID */
 static int bbdev_null_logtype;
@@ -71,7 +71,8 @@ info_get(struct rte_bbdev *dev, struct rte_bbdev_driver_info *dev_info)
 	dev_info->max_num_queues = internals->max_nb_queues;
 	dev_info->queue_size_lim = RTE_BBDEV_QUEUE_SIZE_LIMIT;
 	dev_info->hardware_accelerated = false;
-	dev_info->max_queue_priority = 0;
+	dev_info->max_dl_queue_priority = 0;
+	dev_info->max_ul_queue_priority = 0;
 	dev_info->default_queue_conf = default_queue_conf;
 	dev_info->capabilities = bbdev_capabilities;
 	dev_info->cpu_flag_reqs = NULL;
@@ -345,6 +346,7 @@ RTE_PMD_REGISTER_VDEV(DRIVER_NAME, bbdev_null_pmd_drv);
 RTE_PMD_REGISTER_PARAM_STRING(DRIVER_NAME,
 	BBDEV_NULL_MAX_NB_QUEUES_ARG"=<int> "
 	BBDEV_NULL_SOCKET_ID_ARG"=<int>");
+RTE_PMD_REGISTER_ALIAS(DRIVER_NAME, bbdev_null);
 
 RTE_INIT(null_bbdev_init_log);
 static void

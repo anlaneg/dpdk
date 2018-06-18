@@ -390,6 +390,7 @@ eth_ark_dev_init(struct rte_eth_dev *dev)
 		if (p == 0) {
 			/* First port is already allocated by DPDK */
 			eth_dev = ark->eth_dev;
+			rte_eth_dev_probing_finish(eth_dev);
 			continue;
 		}
 
@@ -422,6 +423,8 @@ eth_ark_dev_init(struct rte_eth_dev *dev)
 			ark->user_data[eth_dev->data->port_id] =
 				ark->user_ext.dev_init(dev, ark->a_bar, p);
 		}
+
+		rte_eth_dev_probing_finish(eth_dev);
 	}
 
 	return ret;

@@ -13,6 +13,7 @@
 #include <rte_pci.h>
 #include <rte_bus_pci.h>
 #include <rte_errno.h>
+#include <rte_string_fns.h>
 
 #include "efx.h"
 
@@ -84,7 +85,6 @@ static void
 sfc_dev_infos_get(struct rte_eth_dev *dev, struct rte_eth_dev_info *dev_info)
 {
 	struct sfc_adapter *sa = dev->data->dev_private;
-	const efx_nic_cfg_t *encp = efx_nic_cfg_get(sa->nic);
 	struct sfc_rss *rss = &sa->rss;
 	uint64_t txq_offloads_def = 0;
 
@@ -137,20 +137,6 @@ sfc_dev_infos_get(struct rte_eth_dev *dev, struct rte_eth_dev_info *dev_info)
 		txq_offloads_def |= DEV_TX_OFFLOAD_MBUF_FAST_FREE;
 
 	dev_info->default_txconf.offloads |= txq_offloads_def;
-
-	dev_info->default_txconf.txq_flags = ETH_TXQ_FLAGS_NOXSUMSCTP;
-	if ((~sa->dp_tx->features & SFC_DP_TX_FEAT_VLAN_INSERT) ||
-	    !encp->enc_hw_tx_insert_vlan_enabled)
-		dev_info->default_txconf.txq_flags |= ETH_TXQ_FLAGS_NOVLANOFFL;
-
-	if (~sa->dp_tx->features & SFC_DP_TX_FEAT_MULTI_SEG)
-		dev_info->default_txconf.txq_flags |= ETH_TXQ_FLAGS_NOMULTSEGS;
-
-	if (~sa->dp_tx->features & SFC_DP_TX_FEAT_MULTI_POOL)
-		dev_info->default_txconf.txq_flags |= ETH_TXQ_FLAGS_NOMULTMEMP;
-
-	if (~sa->dp_tx->features & SFC_DP_TX_FEAT_REFCNT)
-		dev_info->default_txconf.txq_flags |= ETH_TXQ_FLAGS_NOREFCOUNT;
 
 	if (rss->context_type != EFX_RX_SCALE_UNAVAILABLE) {
 		uint64_t rte_hf = 0;
@@ -663,7 +649,7 @@ sfc_xstats_get_names(struct rte_eth_dev *dev,
 	for (i = 0; i < EFX_MAC_NSTATS; ++i) {
 		if (EFX_MAC_STAT_SUPPORTED(port->mac_stats_mask, i)) {
 			if (xstats_names != NULL && nstats < xstats_count)
-				strncpy(xstats_names[nstats].name,
+				strlcpy(xstats_names[nstats].name,
 					efx_mac_stat_name(sa->nic, i),
 					sizeof(xstats_names[0].name));
 			nstats++;
@@ -741,9 +727,8 @@ sfc_xstats_get_names_by_id(struct rte_eth_dev *dev,
 		if ((ids == NULL) || (ids[nb_written] == nb_supported)) {
 			char *name = xstats_names[nb_written++].name;
 
-			strncpy(name, efx_mac_stat_name(sa->nic, i),
+			strlcpy(name, efx_mac_stat_name(sa->nic, i),
 				sizeof(xstats_names[0].name));
-			name[sizeof(xstats_names[0].name) - 1] = '\0';
 		}
 
 		++nb_supported;

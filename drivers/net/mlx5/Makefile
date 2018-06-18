@@ -82,10 +82,6 @@ else
 CFLAGS += -DNDEBUG -UPEDANTIC
 endif
 
-ifdef CONFIG_RTE_LIBRTE_MLX5_TX_MP_CACHE
-CFLAGS += -DMLX5_PMD_TX_MP_CACHE=$(CONFIG_RTE_LIBRTE_MLX5_TX_MP_CACHE)
-endif
-
 include $(RTE_SDK)/mk/rte.lib.mk
 
 # Generate and clean-up mlx5_autoconf.h.
@@ -102,9 +98,19 @@ mlx5_autoconf.h.new: FORCE
 mlx5_autoconf.h.new: $(RTE_SDK)/buildtools/auto-config-h.sh
 	$Q $(RM) -f -- '$@'
 	$Q sh -- '$<' '$@' \
+		HAVE_IBV_DEVICE_STRIDING_RQ_SUPPORT \
+		infiniband/mlx5dv.h \
+		enum MLX5DV_CONTEXT_MASK_STRIDING_RQ \
+		$(AUTOCONF_OUTPUT)
+	$Q sh -- '$<' '$@' \
 		HAVE_IBV_DEVICE_TUNNEL_SUPPORT \
 		infiniband/mlx5dv.h \
 		enum MLX5DV_CONTEXT_MASK_TUNNEL_OFFLOADS \
+		$(AUTOCONF_OUTPUT)
+	$Q sh -- '$<' '$@' \
+		HAVE_IBV_DEVICE_MPLS_SUPPORT \
+		infiniband/verbs.h \
+		enum IBV_FLOW_SPEC_MPLS \
 		$(AUTOCONF_OUTPUT)
 	$Q sh -- '$<' '$@' \
 		HAVE_IBV_WQ_FLAG_RX_END_PADDING \
@@ -114,7 +120,7 @@ mlx5_autoconf.h.new: $(RTE_SDK)/buildtools/auto-config-h.sh
 	$Q sh -- '$<' '$@' \
 		HAVE_IBV_MLX5_MOD_SWP \
 		infiniband/mlx5dv.h \
-		enum MLX5DV_CONTEXT_MASK_SWP \
+		type 'struct mlx5dv_sw_parsing_caps' \
 		$(AUTOCONF_OUTPUT)
 	$Q sh -- '$<' '$@' \
 		HAVE_IBV_MLX5_MOD_MPW \

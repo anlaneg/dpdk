@@ -393,6 +393,34 @@ List all items from the pctype mapping table::
 
    testpmd> show port (port_id) pctype mapping
 
+show rx offloading capabilities
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+List all per queue and per port Rx offloading capabilities of a port::
+
+   testpmd> show port (port_id) rx_offload capabilities
+
+show rx offloading configuration
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+List port level and all queue level Rx offloading configuration::
+
+   testpmd> show port (port_id) rx_offload configuration
+
+show tx offloading capabilities
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+List all per queue and per port Tx offloading capabilities of a port::
+
+   testpmd> show port (port_id) tx_offload capabilities
+
+show tx offloading configuration
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+List port level and all queue level Tx offloading configuration::
+
+   testpmd> show port (port_id) tx_offload configuration
+
 
 Configuration Functions
 -----------------------
@@ -1443,6 +1471,69 @@ where:
 Reset ptype mapping table::
 
    testpmd> ptype mapping reset (port_id)
+
+config per port Rx offloading
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Enable or disable a per port Rx offloading on all Rx queues of a port::
+
+   testpmd> port config (port_id) rx_offload (offloading) on|off
+
+* ``offloading``: can be any of these offloading capability:
+                  vlan_strip, ipv4_cksum, udp_cksum, tcp_cksum, tcp_lro,
+                  qinq_strip, outer_ipv4_cksum, macsec_strip,
+                  header_split, vlan_filter, vlan_extend, jumbo_frame,
+                  crc_strip, scatter, timestamp, security
+
+This command should be run when the port is stopped, or else it will fail.
+
+config per queue Rx offloading
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Enable or disable a per queue Rx offloading only on a specific Rx queue::
+
+   testpmd> port (port_id) rxq (queue_id) rx_offload (offloading) on|off
+
+* ``offloading``: can be any of these offloading capability:
+                  vlan_strip, ipv4_cksum, udp_cksum, tcp_cksum, tcp_lro,
+                  qinq_strip, outer_ipv4_cksum, macsec_strip,
+                  header_split, vlan_filter, vlan_extend, jumbo_frame,
+                  crc_strip, scatter, timestamp, security
+
+This command should be run when the port is stopped, or else it will fail.
+
+config per port Tx offloading
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Enable or disable a per port Tx offloading on all Tx queues of a port::
+
+   testpmd> port config (port_id) tx_offload (offloading) on|off
+
+* ``offloading``: can be any of these offloading capability:
+                  vlan_insert, ipv4_cksum, udp_cksum, udp_cksum,
+                  sctp_cksum, tcp_tso, udp_tso, outer_ipv4_cksum,
+                  qinq_insert, vxlan_tnl_tso, gre_tnl_tso,
+                  ipip_tnl_tso, geneve_tnl_tso, macsec_insert,
+                  mt_lockfree, multi_segs, fast_free, security
+
+This command should be run when the port is stopped, or else it will fail.
+
+config per queue Tx offloading
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Enable or disable a per queue Tx offloading only on a specific Tx queue::
+
+   testpmd> port (port_id) txq (queue_id) tx_offload (offloading) on|off
+
+* ``offloading``: can be any of these offloading capability:
+                  vlan_insert, ipv4_cksum, udp_cksum, udp_cksum,
+                  sctp_cksum, tcp_tso, udp_tso, outer_ipv4_cksum,
+                  qinq_insert, vxlan_tnl_tso, gre_tnl_tso,
+                  ipip_tnl_tso, geneve_tnl_tso, macsec_insert,
+                  mt_lockfree, multi_segs, fast_free, security
+
+This command should be run when the port is stopped, or else it will fail.
+
 
 Port Functions
 --------------
@@ -3823,3 +3914,59 @@ Validate and create a QinQ rule on port 0 to steer traffic to a queue on the hos
    ID      Group   Prio    Attr    Rule
    0       0       0       i-      ETH VLAN VLAN=>VF QUEUE
    1       0       0       i-      ETH VLAN VLAN=>PF QUEUE
+
+BPF Functions
+--------------
+
+The following sections show functions to load/unload eBPF based filters.
+
+bpf-load
+~~~~~~~~
+
+Load an eBPF program as a callback for partciular RX/TX queue::
+
+   testpmd> bpf-load rx|tx (portid) (queueid) (load-flags) (bpf-prog-filename)
+
+The available load-flags are:
+
+* ``J``: use JIT generated native code, otherwise BPF interpreter will be used.
+
+* ``M``: assume input parameter is a pointer to rte_mbuf, otherwise assume it is a pointer to first segment's data.
+
+* ``-``: none.
+
+.. note::
+
+   You'll need clang v3.7 or above to build bpf program you'd like to load
+
+For example:
+
+.. code-block:: console
+
+   cd test/bpf
+   clang -O2 -target bpf -c t1.c
+
+Then to load (and JIT compile) t1.o at RX queue 0, port 1::
+
+.. code-block:: console
+
+   testpmd> bpf-load rx 1 0 J ./dpdk.org/test/bpf/t1.o
+
+To load (not JITed) t1.o at TX queue 0, port 0::
+
+.. code-block:: console
+
+   testpmd> bpf-load tx 0 0 - ./dpdk.org/test/bpf/t1.o
+
+bpf-unload
+~~~~~~~~~~
+
+Unload previously loaded eBPF program for partciular RX/TX queue::
+
+   testpmd> bpf-unload rx|tx (portid) (queueid)
+
+For example to unload BPF filter from TX queue 0, port 0:
+
+.. code-block:: console
+
+   testpmd> bpf-load tx 0 0 - ./dpdk.org/test/bpf/t1.o

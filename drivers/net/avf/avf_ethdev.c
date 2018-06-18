@@ -339,17 +339,18 @@ static int avf_config_rx_queues_irqs(struct rte_eth_dev *dev,
 		AVF_WRITE_FLUSH(hw);
 		/* map all queues to the same interrupt */
 		for (i = 0; i < dev->data->nb_rx_queues; i++)
-			vf->rxq_map[0] |= 1 << i;
+			vf->rxq_map[vf->msix_base] |= 1 << i;
 	} else {
 		if (!rte_intr_allow_others(intr_handle)) {
 			vf->nb_msix = 1;
 			vf->msix_base = AVF_MISC_VEC_ID;
 			for (i = 0; i < dev->data->nb_rx_queues; i++) {
-				vf->rxq_map[0] |= 1 << i;
+				vf->rxq_map[vf->msix_base] |= 1 << i;
 				intr_handle->intr_vec[i] = AVF_MISC_VEC_ID;
 			}
 			PMD_DRV_LOG(DEBUG,
-				    "vector 0 are mapping to all Rx queues");
+				    "vector %u are mapping to all Rx queues",
+				    vf->msix_base);
 		} else {
 			/* If Rx interrupt is reuquired, and we can use
 			 * multi interrupts, then the vec is from 1
@@ -474,7 +475,7 @@ avf_dev_stop(struct rte_eth_dev *dev)
 {
 	struct avf_adapter *adapter =
 		AVF_DEV_PRIVATE_TO_ADAPTER(dev->data->dev_private);
-	struct avf_hw *hw = AVF_DEV_PRIVATE_TO_HW(dev);
+	struct avf_hw *hw = AVF_DEV_PRIVATE_TO_HW(dev->data->dev_private);
 	struct rte_pci_device *pci_dev = RTE_ETH_DEV_TO_PCI(dev);
 	struct rte_intr_handle *intr_handle = dev->intr_handle;
 	int ret, i;

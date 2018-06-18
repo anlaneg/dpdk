@@ -1067,13 +1067,13 @@ struct rte_eth_dev_info {
 	uint16_t max_vfs; /**< Maximum number of VFs. */
 	uint16_t max_vmdq_pools; /**< Maximum number of VMDq pools. */
 	uint64_t rx_offload_capa;
-	/**< Device per port RX offload capabilities. */
+	/**< All RX offload capabilities including all per-queue ones */
 	uint64_t tx_offload_capa;
-	/**< Device per port TX offload capabilities. */
+	/**< All TX offload capabilities including all per-queue ones */
 	uint64_t rx_queue_offload_capa;
-	/**< Device per queue RX offload capabilities. */
+	/**< Device per-queue RX offload capabilities. */
 	uint64_t tx_queue_offload_capa;
-	/**< Device per queue TX offload capabilities. */
+	/**< Device per-queue TX offload capabilities. */
 	uint16_t reta_size;
 	/**< Device redirection table size, the total number of entries. */
 	uint8_t hash_key_size; /**< Hash key size in bytes */
@@ -1270,12 +1270,16 @@ typedef uint16_t (*rte_tx_callback_fn)(uint16_t port_id, uint16_t queue,
 	struct rte_mbuf *pkts[], uint16_t nb_pkts, void *user_param);
 
 /**
- * A set of values to describe the possible states of an eth device.
+ * Possible states of an ethdev port.
  */
 enum rte_eth_dev_state {
+	/** Device is unused before being probed. */
 	RTE_ETH_DEV_UNUSED = 0,
+	/** Device is attached when allocated in probing. */
 	RTE_ETH_DEV_ATTACHED,
+	/** The deferred state is useless and replaced by ownership. */
 	RTE_ETH_DEV_DEFERRED,
+	/** Device is in removed state when plug-out is detected. */
 	RTE_ETH_DEV_REMOVED,
 };
 
@@ -1547,6 +1551,11 @@ const char * __rte_experimental rte_eth_dev_tx_offload_name(uint64_t offload);
  *        The Rx offload bitfield API is obsolete and will be deprecated.
  *        Applications should set the ignore_bitfield_offloads bit on *rxmode*
  *        structure and use offloads field to set per-port offloads instead.
+ *     -  Any offloading set in eth_conf->[rt]xmode.offloads must be within
+ *        the [rt]x_offload_capa returned from rte_eth_dev_infos_get().
+ *        Any type of device supported offloading set in the input argument
+ *        eth_conf->[rt]xmode.offloads to rte_eth_dev_configure() is enabled
+ *        on all queues and it can't be disabled in rte_eth_[rt]x_queue_setup().
  *     - the Receive Side Scaling (RSS) configuration when using multiple RX
  *         queues per port.
  *
@@ -1603,6 +1612,13 @@ rte_eth_dev_is_removed(uint16_t port_id);
  *   ring.
  *   In addition it contains the hardware offloads features to activate using
  *   the DEV_RX_OFFLOAD_* flags.
+ *   If an offloading set in rx_conf->offloads
+ *   hasn't been set in the input argument eth_conf->rxmode.offloads
+ *   to rte_eth_dev_configure(), it is a new added offloading, it must be
+ *   per-queue type and it is enabled for the queue.
+ *   No need to repeat any bit in rx_conf->offloads which has already been
+ *   enabled in rte_eth_dev_configure() at port level. An offloading enabled
+ *   at port level can't be disabled at queue level.
  * @param mb_pool
  *   The pointer to the memory pool from which to allocate *rte_mbuf* network
  *   memory buffers to populate each descriptor of the receive ring.
@@ -1661,7 +1677,13 @@ int rte_eth_rx_queue_setup(uint16_t port_id, uint16_t rx_queue_id,
  *     should set it to ETH_TXQ_FLAGS_IGNORE and use
  *     the offloads field below.
  *   - The *offloads* member contains Tx offloads to be enabled.
- *     Offloads which are not set cannot be used on the datapath.
+ *     If an offloading set in tx_conf->offloads
+ *     hasn't been set in the input argument eth_conf->txmode.offloads
+ *     to rte_eth_dev_configure(), it is a new added offloading, it must be
+ *     per-queue type and it is enabled for the queue.
+ *     No need to repeat any bit in tx_conf->offloads which has already been
+ *     enabled in rte_eth_dev_configure() at port level. An offloading enabled
+ *     at port level can't be disabled at queue level.
  *
  *     Note that setting *tx_free_thresh* or *tx_rs_thresh* value to 0 forces
  *     the transmit function to use default values.
@@ -3636,7 +3658,10 @@ rte_eth_dev_l2_tunnel_offload_set(uint16_t port_id,
 
 /**
 * Get the port id from pci address or device name
-* Ex: 0000:2:00.0 or vdev name net_pcap0
+* Example:
+* - PCIe, 0000:2:00.0
+* - SoC, fsl-gmac0
+* - vdev, net_pcap0
 *
 * @param name
 *  pci address or name of the device
@@ -3651,11 +3676,15 @@ rte_eth_dev_get_port_by_name(const char *name, uint16_t *port_id);
 
 /**
 * Get the device name from port id
+* Example:
+* - PCIe Bus:Domain:Function, 0000:02:00.0
+* - SoC device name, fsl-gmac0
+* - vdev dpdk name, net_[pcap0|null0|tun0|tap0]
 *
 * @param port_id
-*   pointer to port identifier of the device
+*   Port identifier of the device.
 * @param name
-*  pci address or name of the device
+*   Buffer of size RTE_ETH_NAME_MAX_LEN to store the name.
 * @return
 *   - (0) if successful.
 *   - (-EINVAL) on failure.
@@ -3803,6 +3832,7 @@ rte_eth_rx_burst(uint16_t port_id, uint16_t queue_id,
 		 struct rte_mbuf **rx_pkts, const uint16_t nb_pkts)
 {
 	struct rte_eth_dev *dev = &rte_eth_devices[port_id];
+	uint16_t nb_rx;
 
 #ifdef RTE_LIBRTE_ETHDEV_DEBUG
 	RTE_ETH_VALID_PORTID_OR_ERR_RET(port_id, 0);
@@ -3813,13 +3843,14 @@ rte_eth_rx_burst(uint16_t port_id, uint16_t queue_id,
 		return 0;
 	}
 #endif
-	int16_t nb_rx = (*dev->rx_pkt_burst)(dev->data->rx_queues[queue_id],
-			rx_pkts, nb_pkts);
+	nb_rx = (*dev->rx_pkt_burst)(dev->data->rx_queues[queue_id],
+				     rx_pkts, nb_pkts);
 
 #ifdef RTE_ETHDEV_RXTX_CALLBACKS
-	struct rte_eth_rxtx_callback *cb = dev->post_rx_burst_cbs[queue_id];
+	if (unlikely(dev->post_rx_burst_cbs[queue_id] != NULL)) {
+		struct rte_eth_rxtx_callback *cb =
+				dev->post_rx_burst_cbs[queue_id];
 
-	if (unlikely(cb != NULL)) {
 		do {
 			nb_rx = cb->fn.rx(port_id, queue_id, rx_pkts, nb_rx,
 						nb_pkts, cb->param);
@@ -3854,7 +3885,7 @@ rte_eth_rx_queue_count(uint16_t port_id, uint16_t queue_id)
 	if (queue_id >= dev->data->nb_rx_queues)
 		return -EINVAL;
 
-	return (*dev->dev_ops->rx_queue_count)(dev, queue_id);
+	return (int)(*dev->dev_ops->rx_queue_count)(dev, queue_id);
 }
 
 /**
@@ -4242,8 +4273,9 @@ rte_eth_tx_buffer_flush(uint16_t port_id, uint16_t queue_id,
 
 	/* All packets sent, or to be dealt with by callback below */
 	if (unlikely(sent != to_send))
-		buffer->error_callback(&buffer->pkts[sent], to_send - sent,
-				buffer->error_userdata);
+		buffer->error_callback(&buffer->pkts[sent],
+				       (uint16_t)(to_send - sent),
+				       buffer->error_userdata);
 
 	return sent;
 }

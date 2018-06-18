@@ -144,8 +144,8 @@ static const struct bnxt_xstats_name_off bnxt_func_stats_strings[] = {
 				tx_mcast_pkts)},
 	{"tx_bcast_pkts", offsetof(struct hwrm_func_qstats_output,
 				tx_bcast_pkts)},
-	{"tx_err_pkts", offsetof(struct hwrm_func_qstats_output,
-				tx_err_pkts)},
+	{"tx_discard_pkts", offsetof(struct hwrm_func_qstats_output,
+				tx_discard_pkts)},
 	{"tx_drop_pkts", offsetof(struct hwrm_func_qstats_output,
 				tx_drop_pkts)},
 	{"tx_ucast_bytes", offsetof(struct hwrm_func_qstats_output,
@@ -160,8 +160,8 @@ static const struct bnxt_xstats_name_off bnxt_func_stats_strings[] = {
 				rx_mcast_pkts)},
 	{"rx_bcast_pkts", offsetof(struct hwrm_func_qstats_output,
 				rx_bcast_pkts)},
-	{"rx_err_pkts", offsetof(struct hwrm_func_qstats_output,
-				rx_err_pkts)},
+	{"rx_discard_pkts", offsetof(struct hwrm_func_qstats_output,
+				rx_discard_pkts)},
 	{"rx_drop_pkts", offsetof(struct hwrm_func_qstats_output,
 				rx_drop_pkts)},
 	{"rx_ucast_bytes", offsetof(struct hwrm_func_qstats_output,
@@ -210,7 +210,7 @@ int bnxt_stats_get_op(struct rte_eth_dev *eth_dev,
 	memset(bnxt_stats, 0, sizeof(*bnxt_stats));
 	if (!(bp->flags & BNXT_FLAG_INIT_DONE)) {
 		PMD_DRV_LOG(ERR, "Device Initialization not complete!\n");
-		return 0;
+		return -1;
 	}
 
 	for (i = 0; i < bp->rx_cp_nr_rings; i++) {
@@ -265,11 +265,6 @@ int bnxt_dev_xstats_get_op(struct rte_eth_dev *eth_dev,
 
 	unsigned int count, i;
 	uint64_t tx_drop_pkts;
-
-	if (!(bp->flags & BNXT_FLAG_PORT_STATS)) {
-		PMD_DRV_LOG(ERR, "xstats not supported for VF\n");
-		return 0;
-	}
 
 	bnxt_hwrm_port_qstats(bp);
 	bnxt_hwrm_func_qstats_tx_drop(bp, 0xffff, &tx_drop_pkts);

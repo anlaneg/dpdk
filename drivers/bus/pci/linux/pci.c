@@ -34,7 +34,8 @@ extern struct rte_pci_bus rte_pci_bus;
 
 //获取pci设备用哪个kernel驱动
 static int
-pci_get_kernel_driver_by_path(const char *filename, char *dri_name)
+pci_get_kernel_driver_by_path(const char *filename, char *dri_name,
+			      size_t len)
 {
 	int count;
 	char path[PATH_MAX];
@@ -56,7 +57,7 @@ pci_get_kernel_driver_by_path(const char *filename, char *dri_name)
 
 	name = strrchr(path, '/');
 	if (name) {
-		strncpy(dri_name, name + 1, strlen(name + 1) + 1);
+		strlcpy(dri_name, name + 1, len);
 		return 0;
 	}
 
@@ -331,7 +332,7 @@ pci_scan_one(const char *dirname, const struct rte_pci_addr *addr)
 	/* parse driver */
 	snprintf(filename, sizeof(filename), "%s/driver", dirname);
 	//读取filename链接的地址或者其本身，如果返回值为0，则通过链接地址得知驱动名，如果为1，则为无驱动
-	ret = pci_get_kernel_driver_by_path(filename, driver);
+	ret = pci_get_kernel_driver_by_path(filename, driver, sizeof(driver));
 	if (ret < 0) {
 		RTE_LOG(ERR, EAL, "Fail to get kernel driver\n");
 		free(dev);

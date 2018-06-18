@@ -26,12 +26,13 @@
 #include <rte_pci.h>
 #include <rte_ether.h>
 #include <rte_ethdev_driver.h>
-#include <rte_spinlock.h>
+#include <rte_rwlock.h>
 #include <rte_interrupts.h>
 #include <rte_errno.h>
 #include <rte_flow.h>
 
 #include "mlx5_utils.h"
+#include "mlx5_mr.h"
 #include "mlx5_rxtx.h"
 #include "mlx5_autoconf.h"
 #include "mlx5_defs.h"
@@ -49,7 +50,18 @@ enum {
 	PCI_DEVICE_ID_MELLANOX_CONNECTX5VF = 0x1018,
 	PCI_DEVICE_ID_MELLANOX_CONNECTX5EX = 0x1019,
 	PCI_DEVICE_ID_MELLANOX_CONNECTX5EXVF = 0x101a,
+	PCI_DEVICE_ID_MELLANOX_CONNECTX5BF = 0xa2d2,
 };
+
+LIST_HEAD(mlx5_dev_list, priv);
+
+/* Shared memory between primary and secondary processes. */
+struct mlx5_shared_data {
+	struct mlx5_dev_list mem_event_cb_list;
+	rte_rwlock_t mem_event_rwlock;
+};
+
+extern struct mlx5_shared_data *mlx5_shared_data;
 
 struct mlx5_xstats_ctrl {
 	/* Number of device stats. */
@@ -82,6 +94,7 @@ struct mlx5_dev_config {
 	unsigned int mps:2; /* Multi-packet send supported mode. */
 	unsigned int tunnel_en:1;
 	/* Whether tunnel stateless offloads are supported. */
+	unsigned int mpls_en:1; /* MPLS over GRE/UDP is enabled. */
 	unsigned int flow_counter_en:1; /* Whether flow counter is supported. */
 	unsigned int cqe_comp:1; /* CQE compression is enabled. */
 	unsigned int tso:1; /* Whether TSO is supported. */
@@ -91,6 +104,16 @@ struct mlx5_dev_config {
 	unsigned int l3_vxlan_en:1; /* Enable L3 VXLAN flow creation. */
 	unsigned int vf_nl_en:1; /* Enable Netlink requests in VF mode. */
 	unsigned int swp:1; /* Tx generic tunnel checksum and TSO offload. */
+	struct {
+		unsigned int enabled:1; /* Whether MPRQ is enabled. */
+		unsigned int stride_num_n; /* Number of strides. */
+		unsigned int min_stride_size_n; /* Min size of a stride. */
+		unsigned int max_stride_size_n; /* Max size of a stride. */
+		unsigned int max_memcpy_len;
+		/* Maximum packet size to memcpy Rx packets. */
+		unsigned int min_rxqs_num;
+		/* Rx queue count threshold to enable MPRQ. */
+	} mprq; /* Configurations for Multi-Packet RQ. */
 	unsigned int max_verbs_prio; /* Number of Verb flow priorities. */
 	unsigned int tso_max_payload_sz; /* Maximum TCP payload for TSO. */
 	unsigned int ind_table_max_size; /* Maximum indirection table size. */
@@ -120,8 +143,11 @@ struct mlx5_verbs_alloc_ctx {
 	const void *obj; /* Pointer to the DPDK object. */
 };
 
+LIST_HEAD(mlx5_mr_list, mlx5_mr);
+
 struct priv {
-	struct rte_eth_dev *dev; /* Ethernet device of master process. */
+	LIST_ENTRY(priv) mem_event_cb; /* Called by memory event callback. */
+	struct rte_eth_dev_data *dev_data;  /* Pointer to device data. */
 	struct ibv_context *ctx; /* Verbs context. */
 	struct ibv_device_attr_ex device_attr; /* Device properties. */
 	struct ibv_pd *pd; /* Protection Domain. */
@@ -140,6 +166,7 @@ struct priv {
 	unsigned int txqs_n; /* TX queues array size. */
 	struct mlx5_rxq_data *(*rxqs)[]; /* RX queues. */
 	struct mlx5_txq_data *(*txqs)[]; /* TX queues. */
+	struct rte_mempool *mprq_mp; /* Mempool for Multi-Packet RQ. */
 	struct rte_eth_rss_conf rss_conf; /* RSS configuration. */
 	struct rte_intr_handle intr_handle; /* Interrupt handler. */
 	unsigned int (*reta_idx)[]; /* RETA index table. */
@@ -147,7 +174,13 @@ struct priv {
 	struct mlx5_hrxq_drop *flow_drop_queue; /* Flow drop queue. */
 	struct mlx5_flows flows; /* RTE Flow rules. */
 	struct mlx5_flows ctrl_flows; /* Control flow rules. */
-	LIST_HEAD(mr, mlx5_mr) mr; /* Memory region. */
+	struct {
+		uint32_t dev_gen; /* Generation number to flush local caches. */
+		rte_rwlock_t rwlock; /* MR Lock. */
+		struct mlx5_mr_btree cache; /* Global MR cache table. */
+		struct mlx5_mr_list mr_list; /* Registered MR list. */
+		struct mlx5_mr_list mr_free_list; /* Freed MR list. */
+	} mr;
 	LIST_HEAD(rxq, mlx5_rxq_ctrl) rxqsctrl; /* DPDK Rx queues. */
 	LIST_HEAD(rxqibv, mlx5_rxq_ibv) rxqsibv; /* Verbs Rx queues. */
 	LIST_HEAD(hrxq, mlx5_hrxq) hrxqs; /* Verbs Hash Rx queues. */
@@ -157,7 +190,6 @@ struct priv {
 	LIST_HEAD(ind_tables, mlx5_ind_table_ibv) ind_tbls;
 	uint32_t link_speed_capa; /* Link speed capabilities. */
 	struct mlx5_xstats_ctrl xstats_ctrl; /* Extended stats control. */
-	rte_spinlock_t mr_lock; /* MR Lock. */
 	int primary_socket; /* Unix socket for primary process. */
 	void *uar_base; /* Reserved address space for UAR mapping */
 	struct rte_intr_handle intr_handle_socket; /* Interrupt handler. */
@@ -167,6 +199,9 @@ struct priv {
 	int nl_socket; /* Netlink socket. */
 	uint32_t nl_sn; /* Netlink message sequence number. */
 };
+
+#define PORT_ID(priv) ((priv)->dev_data->port_id)
+#define ETH_DEV(priv) (&rte_eth_devices[PORT_ID(priv)])
 
 /* mlx5.c */
 
@@ -305,13 +340,6 @@ int mlx5_socket_init(struct rte_eth_dev *priv);
 void mlx5_socket_uninit(struct rte_eth_dev *priv);
 void mlx5_socket_handle(struct rte_eth_dev *priv);
 int mlx5_socket_connect(struct rte_eth_dev *priv);
-
-/* mlx5_mr.c */
-
-struct mlx5_mr *mlx5_mr_new(struct rte_eth_dev *dev, struct rte_mempool *mp);
-struct mlx5_mr *mlx5_mr_get(struct rte_eth_dev *dev, struct rte_mempool *mp);
-int mlx5_mr_release(struct mlx5_mr *mr);
-int mlx5_mr_verify(struct rte_eth_dev *dev);
 
 /* mlx5_nl.c */
 

@@ -101,6 +101,11 @@ mlx5_flow_create_gre(const struct rte_flow_item *item,
 		     const void *default_mask,
 		     struct mlx5_flow_data *data);
 
+static int
+mlx5_flow_create_mpls(const struct rte_flow_item *item,
+		      const void *default_mask,
+		      struct mlx5_flow_data *data);
+
 struct mlx5_flow_parse;
 
 static void
@@ -248,12 +253,14 @@ struct rte_flow {
 #define IS_TUNNEL(type) ( \
 	(type) == RTE_FLOW_ITEM_TYPE_VXLAN || \
 	(type) == RTE_FLOW_ITEM_TYPE_VXLAN_GPE || \
-	(type) == RTE_FLOW_ITEM_TYPE_GRE)
+	(type) == RTE_FLOW_ITEM_TYPE_GRE || \
+	(type) == RTE_FLOW_ITEM_TYPE_MPLS)
 
 const uint32_t flow_ptype[] = {
 	[RTE_FLOW_ITEM_TYPE_VXLAN] = RTE_PTYPE_TUNNEL_VXLAN,
 	[RTE_FLOW_ITEM_TYPE_VXLAN_GPE] = RTE_PTYPE_TUNNEL_VXLAN_GPE,
 	[RTE_FLOW_ITEM_TYPE_GRE] = RTE_PTYPE_TUNNEL_GRE,
+	[RTE_FLOW_ITEM_TYPE_MPLS] = RTE_PTYPE_TUNNEL_MPLS_IN_GRE,
 };
 
 #define PTYPE_IDX(t) ((RTE_PTYPE_TUNNEL_MASK & (t)) >> 12)
@@ -264,6 +271,10 @@ const uint32_t ptype_ext[] = {
 	[PTYPE_IDX(RTE_PTYPE_TUNNEL_VXLAN_GPE)]	= RTE_PTYPE_TUNNEL_VXLAN_GPE |
 						  RTE_PTYPE_L4_UDP,
 	[PTYPE_IDX(RTE_PTYPE_TUNNEL_GRE)] = RTE_PTYPE_TUNNEL_GRE,
+	[PTYPE_IDX(RTE_PTYPE_TUNNEL_MPLS_IN_GRE)] =
+		RTE_PTYPE_TUNNEL_MPLS_IN_GRE,
+	[PTYPE_IDX(RTE_PTYPE_TUNNEL_MPLS_IN_UDP)] =
+		RTE_PTYPE_TUNNEL_MPLS_IN_GRE | RTE_PTYPE_L4_UDP,
 };
 
 /** Structure to generate a simple graph of layers supported by the NIC. */
@@ -400,7 +411,8 @@ static const struct mlx5_flow_items mlx5_flow_items[] = {
 	},
 	[RTE_FLOW_ITEM_TYPE_UDP] = {
 		.items = ITEMS(RTE_FLOW_ITEM_TYPE_VXLAN,
-			       RTE_FLOW_ITEM_TYPE_VXLAN_GPE),
+			       RTE_FLOW_ITEM_TYPE_VXLAN_GPE,
+			       RTE_FLOW_ITEM_TYPE_MPLS),
 		.actions = valid_actions,
 		.mask = &(const struct rte_flow_item_udp){
 			.hdr = {
@@ -429,7 +441,8 @@ static const struct mlx5_flow_items mlx5_flow_items[] = {
 	[RTE_FLOW_ITEM_TYPE_GRE] = {
 		.items = ITEMS(RTE_FLOW_ITEM_TYPE_ETH,
 			       RTE_FLOW_ITEM_TYPE_IPV4,
-			       RTE_FLOW_ITEM_TYPE_IPV6),
+			       RTE_FLOW_ITEM_TYPE_IPV6,
+			       RTE_FLOW_ITEM_TYPE_MPLS),
 		.actions = valid_actions,
 		.mask = &(const struct rte_flow_item_gre){
 			.protocol = -1,
@@ -437,7 +450,26 @@ static const struct mlx5_flow_items mlx5_flow_items[] = {
 		.default_mask = &rte_flow_item_gre_mask,
 		.mask_sz = sizeof(struct rte_flow_item_gre),
 		.convert = mlx5_flow_create_gre,
+#ifdef HAVE_IBV_DEVICE_MPLS_SUPPORT
+		.dst_sz = sizeof(struct ibv_flow_spec_gre),
+#else
 		.dst_sz = sizeof(struct ibv_flow_spec_tunnel),
+#endif
+	},
+	[RTE_FLOW_ITEM_TYPE_MPLS] = {
+		.items = ITEMS(RTE_FLOW_ITEM_TYPE_ETH,
+			       RTE_FLOW_ITEM_TYPE_IPV4,
+			       RTE_FLOW_ITEM_TYPE_IPV6),
+		.actions = valid_actions,
+		.mask = &(const struct rte_flow_item_mpls){
+			.label_tc_s = "\xff\xff\xf0",
+		},
+		.default_mask = &rte_flow_item_mpls_mask,
+		.mask_sz = sizeof(struct rte_flow_item_mpls),
+		.convert = mlx5_flow_create_mpls,
+#ifdef HAVE_IBV_DEVICE_MPLS_SUPPORT
+		.dst_sz = sizeof(struct ibv_flow_spec_mpls),
+#endif
 	},
 	[RTE_FLOW_ITEM_TYPE_VXLAN] = {
 		.items = ITEMS(RTE_FLOW_ITEM_TYPE_ETH,
@@ -538,7 +570,7 @@ struct ibv_spec_header {
 };
 
 /**
- * Check support for a given item.
+ * Check item is fully supported by the NIC matching capability.
  *
  * @param item[in]
  *   Item specification.
@@ -555,60 +587,33 @@ static int
 mlx5_flow_item_validate(const struct rte_flow_item *item,
 			const uint8_t *mask, unsigned int size)
 {
-	if (!item->spec && (item->mask || item->last)) {
-		rte_errno = EINVAL;
-		return -rte_errno;
-	}
-	if (item->spec && !item->mask) {
-		unsigned int i;
-		const uint8_t *spec = item->spec;
+	unsigned int i;
+	const uint8_t *spec = item->spec;
+	const uint8_t *last = item->last;
+	const uint8_t *m = item->mask ? item->mask : mask;
 
-		for (i = 0; i < size; ++i)
-			if ((spec[i] | mask[i]) != mask[i]) {
-				rte_errno = EINVAL;
-				return -rte_errno;
-			}
-	}
-	if (item->last && !item->mask) {
-		unsigned int i;
-		const uint8_t *spec = item->last;
-
-		for (i = 0; i < size; ++i)
-			if ((spec[i] | mask[i]) != mask[i]) {
-				rte_errno = EINVAL;
-				return -rte_errno;
-			}
-	}
-	if (item->mask) {
-		unsigned int i;
-		const uint8_t *spec = item->spec;
-
-		for (i = 0; i < size; ++i)
-			if ((spec[i] | mask[i]) != mask[i]) {
-				rte_errno = EINVAL;
-				return -rte_errno;
-			}
-	}
-	if (item->spec && item->last) {
-		uint8_t spec[size];
-		uint8_t last[size];
-		const uint8_t *apply = mask;
-		unsigned int i;
-		int ret;
-
-		if (item->mask)
-			apply = item->mask;
-		for (i = 0; i < size; ++i) {
-			spec[i] = ((const uint8_t *)item->spec)[i] & apply[i];
-			last[i] = ((const uint8_t *)item->last)[i] & apply[i];
-		}
-		ret = memcmp(spec, last, size);
-		if (ret != 0) {
-			rte_errno = EINVAL;
-			return -rte_errno;
-		}
+	if (!spec && (item->mask || last))
+		goto error;
+	if (!spec)
+		return 0;
+	/*
+	 * Single-pass check to make sure that:
+	 * - item->mask is supported, no bits are set outside mask.
+	 * - Both masked item->spec and item->last are equal (no range
+	 *   supported).
+	 */
+	for (i = 0; i < size; i++) {
+		if (!m[i])
+			continue;
+		if ((m[i] | mask[i]) != mask[i])
+			goto error;
+		if (last && ((spec[i] & m[i]) != (last[i] & m[i])))
+			goto error;
 	}
 	return 0;
+error:
+	rte_errno = ENOTSUP;
+	return -rte_errno;
 }
 
 /**
@@ -800,7 +805,7 @@ mlx5_flow_convert_actions(struct rte_eth_dev *dev,
 			}
 			parser->rss_conf = (struct rte_flow_action_rss){
 				.func = RTE_ETH_HASH_FUNCTION_DEFAULT,
-				.level = rss->level,
+				.level = rss->level ? rss->level : 1,
 				.types = rss->types,
 				.key_len = rss_key_len,
 				.queue_num = rss->queue_num,
@@ -892,6 +897,7 @@ mlx5_flow_convert_items_validate(struct rte_eth_dev *dev,
 	struct priv *priv = dev->data->dev_private;
 	const struct mlx5_flow_items *cur_item = mlx5_flow_items;
 	unsigned int i;
+	unsigned int last_voids = 0;
 	int ret = 0;
 
 	/* Initialise the offsets to start after verbs attribute. */
@@ -901,8 +907,10 @@ mlx5_flow_convert_items_validate(struct rte_eth_dev *dev,
 		const struct mlx5_flow_items *token = NULL;
 		unsigned int n;
 
-		if (items->type == RTE_FLOW_ITEM_TYPE_VOID)
+		if (items->type == RTE_FLOW_ITEM_TYPE_VOID) {
+			last_voids++;
 			continue;
+		}
 		for (i = 0;
 		     cur_item->items &&
 		     cur_item->items[i] != RTE_FLOW_ITEM_TYPE_END;
@@ -923,12 +931,25 @@ mlx5_flow_convert_items_validate(struct rte_eth_dev *dev,
 		if (ret)
 			goto exit_item_not_supported;
 		if (IS_TUNNEL(items->type)) {
-			if (parser->tunnel) {
+			if (parser->tunnel &&
+			    !((items - last_voids - 1)->type ==
+			      RTE_FLOW_ITEM_TYPE_GRE && items->type ==
+			      RTE_FLOW_ITEM_TYPE_MPLS)) {
 				rte_flow_error_set(error, ENOTSUP,
 						   RTE_FLOW_ERROR_TYPE_ITEM,
 						   items,
 						   "Cannot recognize multiple"
 						   " tunnel encapsulations.");
+				return -rte_errno;
+			}
+			if (items->type == RTE_FLOW_ITEM_TYPE_MPLS &&
+			    !priv->config.mpls_en) {
+				rte_flow_error_set(error, ENOTSUP,
+						   RTE_FLOW_ERROR_TYPE_ITEM,
+						   items,
+						   "MPLS not supported or"
+						   " disabled in firmware"
+						   " configuration.");
 				return -rte_errno;
 			}
 			if (!priv->config.tunnel_en &&
@@ -948,6 +969,7 @@ mlx5_flow_convert_items_validate(struct rte_eth_dev *dev,
 			for (n = 0; n != hash_rxq_init_n; ++n)
 				parser->queue[n].offset += cur_item->dst_sz;
 		}
+		last_voids = 0;
 	}
 	if (parser->drop) {
 		parser->queue[HASH_RXQ_ETH].offset +=
@@ -1144,9 +1166,6 @@ mlx5_flow_convert_rss(struct mlx5_flow_parse *parser)
 	int outer = parser->tunnel && parser->rss_conf.level < 2;
 	uint64_t rss = parser->rss_conf.types;
 
-	/* Default to outer RSS. */
-	if (!parser->rss_conf.level)
-		parser->rss_conf.level = 1;
 	layer = outer ? parser->out_layer : parser->layer;
 	if (layer == HASH_RXQ_TUNNEL)
 		layer = HASH_RXQ_ETH;
@@ -1779,9 +1798,6 @@ mlx5_flow_create_vxlan(const struct rte_flow_item *item,
 	parser->tunnel = ptype_ext[PTYPE_IDX(RTE_PTYPE_TUNNEL_VXLAN)];
 	parser->out_layer = parser->layer;
 	parser->layer = HASH_RXQ_TUNNEL;
-	/* Default VXLAN to outer RSS. */
-	if (!parser->rss_conf.level)
-		parser->rss_conf.level = 1;
 	if (spec) {
 		if (!mask)
 			mask = default_mask;
@@ -1854,9 +1870,6 @@ mlx5_flow_create_vxlan_gpe(const struct rte_flow_item *item,
 	parser->tunnel = ptype_ext[PTYPE_IDX(RTE_PTYPE_TUNNEL_VXLAN_GPE)];
 	parser->out_layer = parser->layer;
 	parser->layer = HASH_RXQ_TUNNEL;
-	/* Default VXLAN-GPE to outer RSS. */
-	if (!parser->rss_conf.level)
-		parser->rss_conf.level = 1;
 	if (spec) {
 		if (!mask)
 			mask = default_mask;
@@ -1905,16 +1918,27 @@ mlx5_flow_create_vxlan_gpe(const struct rte_flow_item *item,
  *   0 on success, a negative errno value otherwise and rte_errno is set.
  */
 static int
-mlx5_flow_create_gre(const struct rte_flow_item *item __rte_unused,
-		     const void *default_mask __rte_unused,
+mlx5_flow_create_gre(const struct rte_flow_item *item,
+		     const void *default_mask,
 		     struct mlx5_flow_data *data)
 {
 	struct mlx5_flow_parse *parser = data->parser;
+#ifndef HAVE_IBV_DEVICE_MPLS_SUPPORT
+	(void)default_mask;
 	unsigned int size = sizeof(struct ibv_flow_spec_tunnel);
 	struct ibv_flow_spec_tunnel tunnel = {
 		.type = parser->inner | IBV_FLOW_SPEC_VXLAN_TUNNEL,
 		.size = size,
 	};
+#else
+	const struct rte_flow_item_gre *spec = item->spec;
+	const struct rte_flow_item_gre *mask = item->mask;
+	unsigned int size = sizeof(struct ibv_flow_spec_gre);
+	struct ibv_flow_spec_gre tunnel = {
+		.type = parser->inner | IBV_FLOW_SPEC_GRE,
+		.size = size,
+	};
+#endif
 	struct ibv_flow_spec_ipv4_ext *ipv4;
 	struct ibv_flow_spec_ipv6 *ipv6;
 	unsigned int i;
@@ -1923,9 +1947,20 @@ mlx5_flow_create_gre(const struct rte_flow_item *item __rte_unused,
 	parser->tunnel = ptype_ext[PTYPE_IDX(RTE_PTYPE_TUNNEL_GRE)];
 	parser->out_layer = parser->layer;
 	parser->layer = HASH_RXQ_TUNNEL;
-	/* Default GRE to inner RSS. */
-	if (!parser->rss_conf.level)
-		parser->rss_conf.level = 2;
+#ifdef HAVE_IBV_DEVICE_MPLS_SUPPORT
+	if (spec) {
+		if (!mask)
+			mask = default_mask;
+		tunnel.val.c_ks_res0_ver = spec->c_rsvd0_ver;
+		tunnel.val.protocol = spec->protocol;
+		tunnel.mask.c_ks_res0_ver = mask->c_rsvd0_ver;
+		tunnel.mask.protocol = mask->protocol;
+		/* Remove unwanted bits from values. */
+		tunnel.val.c_ks_res0_ver &= tunnel.mask.c_ks_res0_ver;
+		tunnel.val.protocol &= tunnel.mask.protocol;
+		tunnel.val.key &= tunnel.mask.key;
+	}
+#endif
 	/* Update encapsulation IP layer protocol. */
 	for (i = 0; i != hash_rxq_init_n; ++i) {
 		if (!parser->queue[i].ibv_attr)
@@ -1956,6 +1991,73 @@ mlx5_flow_create_gre(const struct rte_flow_item *item __rte_unused,
 					  "IP protocol of GRE must be 47");
 	mlx5_flow_create_copy(parser, &tunnel, size);
 	return 0;
+}
+
+/**
+ * Convert MPLS item to Verbs specification.
+ * MPLS tunnel types currently supported are MPLS-in-GRE and MPLS-in-UDP.
+ *
+ * @param item[in]
+ *   Item specification.
+ * @param default_mask[in]
+ *   Default bit-masks to use when item->mask is not provided.
+ * @param data[in, out]
+ *   User structure.
+ *
+ * @return
+ *   0 on success, a negative errno value otherwise and rte_errno is set.
+ */
+static int
+mlx5_flow_create_mpls(const struct rte_flow_item *item,
+		      const void *default_mask,
+		      struct mlx5_flow_data *data)
+{
+#ifndef HAVE_IBV_DEVICE_MPLS_SUPPORT
+	(void)default_mask;
+	return rte_flow_error_set(data->error, ENOTSUP,
+				  RTE_FLOW_ERROR_TYPE_ITEM,
+				  item,
+				  "MPLS is not supported by driver");
+#else
+	const struct rte_flow_item_mpls *spec = item->spec;
+	const struct rte_flow_item_mpls *mask = item->mask;
+	struct mlx5_flow_parse *parser = data->parser;
+	unsigned int size = sizeof(struct ibv_flow_spec_mpls);
+	struct ibv_flow_spec_mpls mpls = {
+		.type = IBV_FLOW_SPEC_MPLS,
+		.size = size,
+	};
+
+	parser->inner = IBV_FLOW_SPEC_INNER;
+	if (parser->layer == HASH_RXQ_UDPV4 ||
+	    parser->layer == HASH_RXQ_UDPV6) {
+		parser->tunnel =
+			ptype_ext[PTYPE_IDX(RTE_PTYPE_TUNNEL_MPLS_IN_UDP)];
+		parser->out_layer = parser->layer;
+	} else {
+		parser->tunnel =
+			ptype_ext[PTYPE_IDX(RTE_PTYPE_TUNNEL_MPLS_IN_GRE)];
+		/* parser->out_layer stays as in GRE out_layer. */
+	}
+	parser->layer = HASH_RXQ_TUNNEL;
+	if (spec) {
+		if (!mask)
+			mask = default_mask;
+		/*
+		 * The verbs label field includes the entire MPLS header:
+		 * bits 0:19 - label value field.
+		 * bits 20:22 - traffic class field.
+		 * bits 23 - bottom of stack bit.
+		 * bits 24:31 - ttl field.
+		 */
+		mpls.val.label = *(const uint32_t *)spec;
+		mpls.mask.label = *(const uint32_t *)mask;
+		/* Remove unwanted bits from values. */
+		mpls.val.label &= mpls.mask.label;
+	}
+	mlx5_flow_create_copy(parser, &mpls, size);
+	return 0;
+#endif
 }
 
 /**
@@ -2061,7 +2163,7 @@ mlx5_flow_create_action_queue_drop(struct rte_eth_dev *dev,
 		parser->queue[HASH_RXQ_ETH].ibv_attr;
 	if (parser->count)
 		flow->cs = parser->cs;
-	if (!priv->dev->data->dev_started)
+	if (!dev->data->dev_started)
 		return 0;
 	parser->queue[HASH_RXQ_ETH].ibv_attr = NULL;
 	flow->frxq[HASH_RXQ_ETH].ibv_flow =
@@ -2113,7 +2215,6 @@ mlx5_flow_create_action_queue_rss(struct rte_eth_dev *dev,
 				  struct rte_flow *flow,
 				  struct rte_flow_error *error)
 {
-	struct priv *priv = dev->data->dev_private;
 	unsigned int i;
 
 	for (i = 0; i != hash_rxq_init_n; ++i) {
@@ -2122,7 +2223,7 @@ mlx5_flow_create_action_queue_rss(struct rte_eth_dev *dev,
 		flow->frxq[i].ibv_attr = parser->queue[i].ibv_attr;
 		parser->queue[i].ibv_attr = NULL;
 		flow->frxq[i].hash_fields = parser->queue[i].hash_fields;
-		if (!priv->dev->data->dev_started)
+		if (!dev->data->dev_started)
 			continue;
 		flow->frxq[i].hrxq =
 			mlx5_hrxq_get(dev,
@@ -2216,7 +2317,12 @@ mlx5_flow_dump(struct rte_eth_dev *dev __rte_unused,
 	uint16_t j;
 	char buf[256];
 	uint8_t off;
+	uint64_t extra_hash_fields = 0;
 
+#ifdef HAVE_IBV_DEVICE_TUNNEL_SUPPORT
+	if (flow->tunnel && flow->rss_conf.level > 1)
+		extra_hash_fields = (uint32_t)IBV_RX_HASH_INNER;
+#endif
 	spec_ptr = (uintptr_t)(flow->frxq[hrxq_idx].ibv_attr + 1);
 	for (j = 0, off = 0; j < flow->frxq[hrxq_idx].ibv_attr->num_of_specs;
 	     j++) {
@@ -2233,9 +2339,7 @@ mlx5_flow_dump(struct rte_eth_dev *dev __rte_unused,
 		(void *)flow->frxq[hrxq_idx].hrxq,
 		(void *)flow->frxq[hrxq_idx].hrxq->qp,
 		(void *)flow->frxq[hrxq_idx].hrxq->ind_table,
-		flow->frxq[hrxq_idx].hash_fields |
-		(flow->tunnel &&
-		 flow->rss_conf.level > 1 ? (uint32_t)IBV_RX_HASH_INNER : 0),
+		(flow->frxq[hrxq_idx].hash_fields | extra_hash_fields),
 		flow->rss_conf.queue_num,
 		flow->frxq[hrxq_idx].ibv_attr->num_of_specs,
 		flow->frxq[hrxq_idx].ibv_attr->size,
@@ -2268,7 +2372,7 @@ mlx5_flow_create_action_queue(struct rte_eth_dev *dev,
 			      struct rte_flow *flow,
 			      struct rte_flow_error *error)
 {
-	struct priv *priv = dev->data->dev_private;
+	struct priv *priv __rte_unused = dev->data->dev_private;
 	int ret;
 	unsigned int i;
 	unsigned int flows_n = 0;
@@ -2281,7 +2385,7 @@ mlx5_flow_create_action_queue(struct rte_eth_dev *dev,
 		goto error;
 	if (parser->count)
 		flow->cs = parser->cs;
-	if (!priv->dev->data->dev_started)
+	if (!dev->data->dev_started)
 		return 0;
 	for (i = 0; i != hash_rxq_init_n; ++i) {
 		if (!flow->frxq[i].hrxq)
@@ -2379,7 +2483,7 @@ mlx5_flow_list_create(struct rte_eth_dev *dev,
 	flow->tunnel = parser.tunnel;
 	flow->rss_conf = (struct rte_flow_action_rss){
 		.func = RTE_ETH_HASH_FUNCTION_DEFAULT,
-		.level = 0,
+		.level = parser.rss_conf.level,
 		.types = parser.rss_conf.types,
 		.key_len = parser.rss_conf.key_len,
 		.queue_num = parser.rss_conf.queue_num,
@@ -3124,9 +3228,9 @@ mlx5_flow_isolate(struct rte_eth_dev *dev,
 	}
 	priv->isolated = !!enable;
 	if (enable)
-		priv->dev->dev_ops = &mlx5_dev_ops_isolate;
+		dev->dev_ops = &mlx5_dev_ops_isolate;
 	else
-		priv->dev->dev_ops = &mlx5_dev_ops;
+		dev->dev_ops = &mlx5_dev_ops;
 	return 0;
 }
 
@@ -3409,13 +3513,13 @@ mlx5_fdir_filter_delete(struct rte_eth_dev *dev,
 	if (parser.drop) {
 		struct ibv_flow_spec_action_drop *drop;
 
-		drop = (void *)((uintptr_t)parser.queue[parser.layer].ibv_attr +
-				parser.queue[parser.layer].offset);
+		drop = (void *)((uintptr_t)parser.queue[HASH_RXQ_ETH].ibv_attr +
+				parser.queue[HASH_RXQ_ETH].offset);
 		*drop = (struct ibv_flow_spec_action_drop){
 			.type = IBV_FLOW_SPEC_ACTION_DROP,
 			.size = sizeof(struct ibv_flow_spec_action_drop),
 		};
-		parser.queue[parser.layer].ibv_attr->num_of_specs++;
+		parser.queue[HASH_RXQ_ETH].ibv_attr->num_of_specs++;
 	}
 	TAILQ_FOREACH(flow, &priv->flows, next) {
 		struct ibv_flow_attr *attr;
@@ -3425,11 +3529,14 @@ mlx5_fdir_filter_delete(struct rte_eth_dev *dev,
 		struct ibv_spec_header *flow_h;
 		void *flow_spec;
 		unsigned int specs_n;
+		unsigned int queue_id = parser.drop ? HASH_RXQ_ETH :
+						      parser.layer;
 
-		attr = parser.queue[parser.layer].ibv_attr;
-		flow_attr = flow->frxq[parser.layer].ibv_attr;
+		attr = parser.queue[queue_id].ibv_attr;
+		flow_attr = flow->frxq[queue_id].ibv_attr;
 		/* Compare first the attributes. */
-		if (memcmp(attr, flow_attr, sizeof(struct ibv_flow_attr)))
+		if (!flow_attr ||
+		    memcmp(attr, flow_attr, sizeof(struct ibv_flow_attr)))
 			continue;
 		if (attr->num_of_specs == 0)
 			continue;
@@ -3514,11 +3621,10 @@ mlx5_fdir_filter_flush(struct rte_eth_dev *dev)
 static void
 mlx5_fdir_info_get(struct rte_eth_dev *dev, struct rte_eth_fdir_info *fdir_info)
 {
-	struct priv *priv = dev->data->dev_private;
 	struct rte_eth_fdir_masks *mask =
-		&priv->dev->data->dev_conf.fdir_conf.mask;
+		&dev->data->dev_conf.fdir_conf.mask;
 
-	fdir_info->mode = priv->dev->data->dev_conf.fdir_conf.mode;
+	fdir_info->mode = dev->data->dev_conf.fdir_conf.mode;
 	fdir_info->guarant_spc = 0;
 	rte_memcpy(&fdir_info->mask, mask, sizeof(fdir_info->mask));
 	fdir_info->max_flexpayload = 0;
@@ -3546,9 +3652,8 @@ static int
 mlx5_fdir_ctrl_func(struct rte_eth_dev *dev, enum rte_filter_op filter_op,
 		    void *arg)
 {
-	struct priv *priv = dev->data->dev_private;
 	enum rte_fdir_mode fdir_mode =
-		priv->dev->data->dev_conf.fdir_conf.mode;
+		dev->data->dev_conf.fdir_conf.mode;
 
 	if (filter_op == RTE_ETH_FILTER_NOP)
 		return 0;

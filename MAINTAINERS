@@ -41,6 +41,7 @@ T: git://dpdk.org/next/dpdk-next-net-mlx
 
 Next-virtio Tree
 M: Maxime Coquelin <maxime.coquelin@redhat.com>
+M: Tiwei Bie <tiwei.bie@intel.com>
 T: git://dpdk.org/next/dpdk-next-virtio
 
 Next-crypto Tree
@@ -81,11 +82,13 @@ F: devtools/check-dup-includes.sh
 F: devtools/check-maintainers.sh
 F: devtools/check-git-log.sh
 F: devtools/check-includes.sh
+F: devtools/check-symbol-maps.sh
 F: devtools/checkpatches.sh
 F: devtools/get-maintainer.sh
 F: devtools/git-log-fixes.sh
 F: devtools/load-devel-config
 F: devtools/test-build.sh
+F: devtools/test-meson-builds.sh
 F: license/
 
 
@@ -303,6 +306,8 @@ F: devtools/test-null.sh
 Flow API
 M: Adrien Mazarguil <adrien.mazarguil@6wind.com>
 T: git://dpdk.org/next/dpdk-next-net
+F: app/test-pmd/cmdline_flow.c
+F: doc/guides/prog_guide/rte_flow.rst
 F: lib/librte_ethdev/rte_flow*
 
 Traffic Management API - EXPERIMENTAL
@@ -341,6 +346,17 @@ T: git://dpdk.org/next/dpdk-next-crypto
 F: lib/librte_security/
 F: doc/guides/prog_guide/rte_security.rst
 
+Compression API - EXPERIMENTAL
+M: Fiona Trahe <fiona.trahe@intel.com>
+M: Pablo de Lara <pablo.de.lara.guarch@intel.com>
+M: Ashish Gupta <ashish.gupta@caviumnetworks.com>
+T: git://dpdk.org/next/dpdk-next-crypto
+F: lib/librte_compressdev/
+F: drivers/compress/
+F: test/test/test_compressdev*
+F: doc/guides/prog_guide/compressdev.rst
+F: doc/guides/compressdevs/features/default.ini
+
 Eventdev API
 M: Jerin Jacob <jerin.jacob@caviumnetworks.com>
 T: git://dpdk.org/next/dpdk-next-eventdev
@@ -361,6 +377,13 @@ T: git://dpdk.org/next/dpdk-next-eventdev
 F: lib/librte_eventdev/*timer_adapter*
 F: test/test/test_event_timer_adapter.c
 F: doc/guides/prog_guide/event_timer_adapter.rst
+
+Eventdev Crypto Adapter API - EXPERIMENTAL
+M: Abhinandan Gujjar <abhinandan.gujjar@intel.com>
+T: git://dpdk.org/next/dpdk-next-eventdev
+F: lib/librte_eventdev/*crypto_adapter*
+F: test/test/test_event_crypto_adapter.c
+F: doc/guides/prog_guide/event_crypto_adapter.rst
 
 Raw device API - EXPERIMENTAL
 M: Shreyansh Jain <shreyansh.jain@nxp.com>
@@ -383,6 +406,10 @@ F: drivers/mempool/bucket/
 Bus Drivers
 -----------
 
+Intel FPGA bus
+M: Rosen Xu <rosen.xu@intel.com>
+F: drivers/bus/ifpga/
+
 NXP buses
 M: Hemant Agrawal <hemant.agrawal@nxp.com>
 M: Shreyansh Jain <shreyansh.jain@nxp.com>
@@ -404,6 +431,7 @@ F: doc/guides/nics/features/default.ini
 
 Link bonding
 M: Declan Doherty <declan.doherty@intel.com>
+M: Chas Williams <chas3@att.com>
 F: drivers/net/bonding/
 F: doc/guides/prog_guide/link_bonding_poll_mode_drv_lib.rst
 F: test/test/test_link_bonding*
@@ -522,6 +550,7 @@ M: Qi Zhang <qi.z.zhang@intel.com>
 M: Xiao Wang <xiao.w.wang@intel.com>
 T: git://dpdk.org/next/dpdk-next-net-intel
 F: drivers/net/fm10k/
+F: doc/guides/nics/fm10k.rst
 F: doc/guides/nics/features/fm10k*.ini
 
 Intel avf
@@ -626,6 +655,8 @@ F: doc/guides/nics/features/vmxnet3.ini
 
 Vhost-user
 M: Maxime Coquelin <maxime.coquelin@redhat.com>
+M: Tiwei Bie <tiwei.bie@intel.com>
+M: Zhihong Wang <zhihong.wang@intel.com>
 T: git://dpdk.org/next/dpdk-next-virtio
 F: lib/librte_vhost/
 F: doc/guides/prog_guide/vhost_lib.rst
@@ -636,15 +667,18 @@ F: doc/guides/sample_app_ug/vhost_scsi.rst
 F: examples/vhost_crypto/
 
 Vhost PMD
-M: Tetsuya Mukawa <mtetsuyah@gmail.com>
 M: Maxime Coquelin <maxime.coquelin@redhat.com>
+M: Tiwei Bie <tiwei.bie@intel.com>
+M: Zhihong Wang <zhihong.wang@intel.com>
 T: git://dpdk.org/next/dpdk-next-virtio
 F: drivers/net/vhost/
+F: doc/guides/nics/vhost.rst
 F: doc/guides/nics/features/vhost.ini
 
 Virtio PMD
 M: Maxime Coquelin <maxime.coquelin@redhat.com>
 M: Tiwei Bie <tiwei.bie@intel.com>
+M: Zhihong Wang <zhihong.wang@intel.com>
 T: git://dpdk.org/next/dpdk-next-virtio
 F: drivers/net/virtio/
 F: doc/guides/nics/virtio.rst
@@ -664,7 +698,7 @@ F: doc/guides/nics/pcap_ring.rst
 F: doc/guides/nics/features/pcap.ini
 
 Tap PMD
-M: Pascal Mazon <pascal.mazon@6wind.com>
+M: Keith Wiles <keith.wiles@intel.com>
 F: drivers/net/tap/
 F: doc/guides/nics/tap.rst
 F: doc/guides/nics/features/tap.ini
@@ -692,6 +726,7 @@ Fail-safe PMD
 M: Gaetan Rivet <gaetan.rivet@6wind.com>
 F: drivers/net/failsafe/
 F: doc/guides/nics/fail_safe.rst
+F: doc/guides/nics/features/failsafe.ini
 
 Softnic PMD
 M: Jasvinder Singh <jasvinder.singh@intel.com>
@@ -753,9 +788,9 @@ M: Tomasz Duszynski <tdu@semihalf.com>
 M: Dmitri Epshtein <dima@marvell.com>
 M: Natalie Samsonov <nsamsono@marvell.com>
 M: Jianbo Liu <jianbo.liu@arm.com>
-F: drivers/crypto/mrvl/
-F: doc/guides/cryptodevs/mrvl.rst
-F: doc/guides/cryptodevs/features/mrvl.ini
+F: drivers/crypto/mvsam/
+F: doc/guides/cryptodevs/mvsam.rst
+F: doc/guides/cryptodevs/features/mvsam.ini
 
 Null Crypto
 M: Declan Doherty <declan.doherty@intel.com>
@@ -802,6 +837,18 @@ F: doc/guides/cryptodevs/zuc.rst
 F: doc/guides/cryptodevs/features/zuc.ini
 
 
+Compression Drivers
+-------------------
+M: Pablo de Lara <pablo.de.lara.guarch@intel.com>
+T: git://dpdk.org/next/dpdk-next-crypto
+
+ISA-L
+M: Lee Daly <lee.daly@intel.com>
+F: drivers/compress/isal/
+F: doc/guides/compressdevs/isal.rst
+F: doc/guides/compressdevs/features/isal.ini
+
+
 Eventdev Drivers
 ----------------
 M: Jerin Jacob <jerin.jacob@caviumnetworks.com>
@@ -845,6 +892,12 @@ F: doc/guides/eventdevs/opdl.rst
 
 Rawdev Drivers
 --------------
+
+Intel FPGA
+M: Rosen Xu <rosen.xu@intel.com>
+M: Tianfei zhang <tianfei.zhang@intel.com>
+F: drivers/raw/ifpga_rawdev/
+F: doc/guides/rawdevs/ifpga_rawdev.rst
 
 NXP DPAA2 QDMA
 M: Nipun Gupta <nipun.gupta@nxp.com>
@@ -1060,6 +1113,13 @@ Latency statistics
 M: Reshma Pattan <reshma.pattan@intel.com>
 F: lib/librte_latencystats/
 
+BPF - EXPERIMENTAL
+M: Konstantin Ananyev <konstantin.ananyev@intel.com>
+F: lib/librte_bpf/
+F: test/bpf/
+F: test/test/test_bpf.c
+F: doc/guides/prog_guide/bpf_lib.rst
+
 
 Test Applications
 -----------------
@@ -1083,6 +1143,7 @@ F: test/test/virtual_pmd.h
 Driver testing tool
 M: Wenzhuo Lu <wenzhuo.lu@intel.com>
 M: Jingjing Wu <jingjing.wu@intel.com>
+M: Bernard Iremonger <bernard.iremonger@intel.com>
 F: app/test-pmd/
 F: doc/guides/testpmd_app_ug/
 

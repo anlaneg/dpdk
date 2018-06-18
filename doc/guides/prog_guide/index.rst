@@ -22,6 +22,7 @@ Programmer's Guide
     traffic_management
     bbdev
     cryptodev_lib
+    compressdev
     rte_security
     rawdev
     link_bonding_poll_mode_drv_lib
@@ -44,6 +45,7 @@ Programmer's Guide
     eventdev
     event_ethernet_rx_adapter
     event_timer_adapter
+    event_crypto_adapter
     qos_framework
     power_man
     packet_classif_access_ctrl
@@ -51,6 +53,7 @@ Programmer's Guide
     vhost_lib
     metrics_lib
     port_hotplug_framework
+    bpf_lib
     source_org
     dev_kit_build_system
     dev_kit_root_make_help

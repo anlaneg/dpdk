@@ -35,9 +35,11 @@
 #include <rte_hypervisor.h>
 #include <rte_kvargs.h>
 #include <rte_log.h>
+#include <rte_string_fns.h>
 
 #define VDEV_NETVSC_DRIVER net_vdev_netvsc
 #define VDEV_NETVSC_DRIVER_NAME RTE_STR(VDEV_NETVSC_DRIVER)
+#define VDEV_NETVSC_DRIVER_NAME_LEN 15
 #define VDEV_NETVSC_ARG_IFACE "iface"
 #define VDEV_NETVSC_ARG_MAC "mac"
 #define VDEV_NETVSC_ARG_FORCE "force"
@@ -182,7 +184,7 @@ vdev_netvsc_foreach_iface(int (*func)(const struct if_nameindex *iface,
 		is_netvsc_ret = vdev_netvsc_iface_is_netvsc(&iface[i]) ? 1 : 0;
 		if (is_netvsc ^ is_netvsc_ret)
 			continue;
-		strncpy(req.ifr_name, iface[i].if_name, sizeof(req.ifr_name));
+		strlcpy(req.ifr_name, iface[i].if_name, sizeof(req.ifr_name));
 		if (ioctl(s, SIOCGIFHWADDR, &req) == -1) {
 			DRV_LOG(WARNING, "cannot retrieve information about"
 					 " interface \"%s\": %s",
@@ -327,12 +329,15 @@ static int
 vdev_netvsc_sysfs_readlink(char *buf, size_t size, const char *if_name,
 			   const char *relpath)
 {
+	struct vdev_netvsc_ctx *ctx;
+	char in[RTE_MAX(sizeof(ctx->yield), 256u)];
 	int ret;
 
-	ret = snprintf(buf, size, "/sys/class/net/%s/%s", if_name, relpath);
-	if (ret == -1 || (size_t)ret >= size)
+	ret = snprintf(in, sizeof(in) - 1, "/sys/class/net/%s/%s",
+		       if_name, relpath);
+	if (ret == -1 || (size_t)ret >= sizeof(in))
 		return -ENOBUFS;
-	ret = readlink(buf, buf, size);
+	ret = readlink(in, buf, size);
 	if (ret == -1)
 		return -errno;
 	if ((size_t)ret >= size - 1)
@@ -382,7 +387,7 @@ vdev_netvsc_device_probe(const struct if_nameindex *iface,
 		DRV_LOG(DEBUG,
 			"NetVSC interface \"%s\" (index %u) renamed \"%s\"",
 			ctx->if_name, ctx->if_index, iface->if_name);
-		strncpy(ctx->if_name, iface->if_name, sizeof(ctx->if_name));
+		strlcpy(ctx->if_name, iface->if_name, sizeof(ctx->if_name));
 		return 0;
 	}
 	if (!is_same_ether_addr(eth_addr, &ctx->if_addr))
@@ -580,7 +585,7 @@ vdev_netvsc_netvsc_probe(const struct if_nameindex *iface,
 		goto error;
 	}
 	ctx->id = vdev_netvsc_ctx_count;
-	strncpy(ctx->if_name, iface->if_name, sizeof(ctx->if_name));
+	strlcpy(ctx->if_name, iface->if_name, sizeof(ctx->if_name));
 	ctx->if_index = iface->if_index;
 	ctx->if_addr = *eth_addr;
 	ctx->pipe[0] = -1;
@@ -794,7 +799,8 @@ static int
 vdev_netvsc_cmp_rte_device(const struct rte_device *dev1,
 			   __rte_unused const void *_dev2)
 {
-	return strcmp(dev1->devargs->name, VDEV_NETVSC_DRIVER_NAME);
+	return strncmp(dev1->devargs->name, VDEV_NETVSC_DRIVER_NAME,
+		       VDEV_NETVSC_DRIVER_NAME_LEN);
 }
 
 /**
@@ -810,7 +816,8 @@ vdev_netvsc_scan_callback(__rte_unused void *arg)
 	struct rte_bus *vbus = rte_bus_find_by_name("vdev");
 
 	RTE_EAL_DEVARGS_FOREACH("vdev", devargs)
-		if (!strcmp(devargs->name, VDEV_NETVSC_DRIVER_NAME))
+		if (!strncmp(devargs->name, VDEV_NETVSC_DRIVER_NAME,
+			     VDEV_NETVSC_DRIVER_NAME_LEN))
 			return;
 	dev = (struct rte_vdev_device *)vbus->find_device(NULL,
 		vdev_netvsc_cmp_rte_device, VDEV_NETVSC_DRIVER_NAME);

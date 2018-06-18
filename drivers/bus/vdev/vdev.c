@@ -37,7 +37,9 @@ TAILQ_HEAD(vdev_device_list, rte_vdev_device);
 //所有已识别的vdev挂载在此链上
 static struct vdev_device_list vdev_device_list =
 	TAILQ_HEAD_INITIALIZER(vdev_device_list);
-static rte_spinlock_t vdev_device_list_lock = RTE_SPINLOCK_INITIALIZER;
+/* The lock needs to be recursive because a vdev can manage another vdev. */
+static rte_spinlock_recursive_t vdev_device_list_lock =
+	RTE_SPINLOCK_RECURSIVE_INITIALIZER;
 
 //所有注册的vdev挂载在此链上
 struct vdev_driver_list vdev_driver_list =
@@ -149,7 +151,7 @@ vdev_probe_all_drivers(struct rte_vdev_device *dev)
 	//取出driver名称
 	name = rte_vdev_device_name(dev);
 
-	VDEV_LOG(DEBUG, "Search driver %s to probe device %s\n", name,
+	VDEV_LOG(DEBUG, "Search driver %s to probe device %s", name,
 		rte_vdev_device_name(dev));
 
 	if (vdev_parse(name, &driver))
@@ -261,14 +263,14 @@ rte_vdev_init(const char *name, const char *args)
 	struct rte_devargs *devargs;
 	int ret;
 
-	rte_spinlock_lock(&vdev_device_list_lock);
+	rte_spinlock_recursive_lock(&vdev_device_list_lock);
 	ret = insert_vdev(name, args, &dev);//创建dev
 	if (ret == 0) {
 		//查驱动
 		ret = vdev_probe_all_drivers(dev);
 		if (ret) {
 			if (ret > 0)
-				VDEV_LOG(ERR, "no driver found for %s\n", name);
+				VDEV_LOG(ERR, "no driver found for %s", name);
 			/* If fails, remove it from vdev list */
 			devargs = dev->device.devargs;
 			TAILQ_REMOVE(&vdev_device_list, dev, next);
@@ -276,7 +278,7 @@ rte_vdev_init(const char *name, const char *args)
 			free(dev);
 		}
 	}
-	rte_spinlock_unlock(&vdev_device_list_lock);
+	rte_spinlock_recursive_unlock(&vdev_device_list_lock);
 	return ret;
 }
 
@@ -287,7 +289,7 @@ vdev_remove_driver(struct rte_vdev_device *dev)
 	const struct rte_vdev_driver *driver;
 
 	if (!dev->device.driver) {
-		VDEV_LOG(DEBUG, "no driver attach to device %s\n", name);
+		VDEV_LOG(DEBUG, "no driver attach to device %s", name);
 		return 1;
 	}
 
@@ -306,7 +308,7 @@ rte_vdev_uninit(const char *name)
 	if (name == NULL)
 		return -EINVAL;
 
-	rte_spinlock_lock(&vdev_device_list_lock);
+	rte_spinlock_recursive_lock(&vdev_device_list_lock);
 
 	dev = find_vdev(name);
 	if (!dev) {
@@ -324,7 +326,7 @@ rte_vdev_uninit(const char *name)
 	free(dev);
 
 unlock:
-	rte_spinlock_unlock(&vdev_device_list_lock);
+	rte_spinlock_recursive_unlock(&vdev_device_list_lock);
 	return ret;
 }
 
@@ -368,7 +370,7 @@ vdev_action(const struct rte_mp_msg *mp_msg, const void *peer)
 		ou->num = 1;
 		num = 0;
 
-		rte_spinlock_lock(&vdev_device_list_lock);
+		rte_spinlock_recursive_lock(&vdev_device_list_lock);
 		TAILQ_FOREACH(dev, &vdev_device_list, next) {
 			devname = rte_vdev_device_name(dev);
 			if (strlen(devname) == 0) {
@@ -382,7 +384,7 @@ vdev_action(const struct rte_mp_msg *mp_msg, const void *peer)
 					 devname, strerror(rte_errno));
 			num++;
 		}
-		rte_spinlock_unlock(&vdev_device_list_lock);
+		rte_spinlock_recursive_unlock(&vdev_device_list_lock);
 
 		ou->type = VDEV_SCAN_REP;
 		ou->num = num;
@@ -460,10 +462,10 @@ vdev_scan(void)
 		if (!dev)
 			return -1;
 
-		rte_spinlock_lock(&vdev_device_list_lock);
+		rte_spinlock_recursive_lock(&vdev_device_list_lock);
 
 		if (find_vdev(devargs->name)) {
-			rte_spinlock_unlock(&vdev_device_list_lock);
+			rte_spinlock_recursive_unlock(&vdev_device_list_lock);
 			free(dev);
 			continue;
 		}
@@ -475,7 +477,7 @@ vdev_scan(void)
 		//挂接设备
 		TAILQ_INSERT_TAIL(&vdev_device_list, dev, next);
 
-		rte_spinlock_unlock(&vdev_device_list_lock);
+		rte_spinlock_recursive_unlock(&vdev_device_list_lock);
 	}
 
 	return 0;
@@ -500,7 +502,7 @@ vdev_probe(void)
 
 		//为dev查找合适的驱动
 		if (vdev_probe_all_drivers(dev)) {
-			VDEV_LOG(ERR, "failed to initialize %s device\n",
+			VDEV_LOG(ERR, "failed to initialize %s device",
 				rte_vdev_device_name(dev));
 			ret = -1;
 		}
@@ -516,7 +518,7 @@ vdev_find_device(const struct rte_device *start, rte_dev_cmp_t cmp,
 	const struct rte_vdev_device *vstart;
 	struct rte_vdev_device *dev;
 
-	rte_spinlock_lock(&vdev_device_list_lock);
+	rte_spinlock_recursive_lock(&vdev_device_list_lock);
 	if (start != NULL) {
 		vstart = RTE_DEV_TO_VDEV_CONST(start);
 		dev = TAILQ_NEXT(vstart, next);
@@ -528,7 +530,7 @@ vdev_find_device(const struct rte_device *start, rte_dev_cmp_t cmp,
 			break;
 		dev = TAILQ_NEXT(dev, next);
 	}
-	rte_spinlock_unlock(&vdev_device_list_lock);
+	rte_spinlock_recursive_unlock(&vdev_device_list_lock);
 
 	return dev ? &dev->device : NULL;
 }

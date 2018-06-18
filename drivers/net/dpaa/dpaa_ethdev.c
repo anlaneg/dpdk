@@ -74,12 +74,13 @@ static uint64_t dev_tx_offloads_nodis =
 
 /* Keep track of whether QMAN and BMAN have been globally initialized */
 static int is_global_init;
-/* At present we only allow up to 4 push mode queues - as each of this queue
- * need dedicated portal and we are short of portals.
+/* At present we only allow up to 4 push mode queues as default - as each of
+ * this queue need dedicated portal and we are short of portals.
  */
-#define DPAA_MAX_PUSH_MODE_QUEUE       4
+#define DPAA_MAX_PUSH_MODE_QUEUE       8
+#define DPAA_DEFAULT_PUSH_MODE_QUEUE   4
 
-static int dpaa_push_mode_max_queue = DPAA_MAX_PUSH_MODE_QUEUE;
+static int dpaa_push_mode_max_queue = DPAA_DEFAULT_PUSH_MODE_QUEUE;
 static int dpaa_push_queue_idx; /* Queue index which are in push mode*/
 
 
@@ -176,14 +177,6 @@ dpaa_eth_dev_configure(struct rte_eth_dev *dev)
 	PMD_INIT_FUNC_TRACE();
 
 	/* Rx offloads validation */
-	if (~(dev_rx_offloads_sup | dev_rx_offloads_nodis) & rx_offloads) {
-		DPAA_PMD_ERR(
-		"Rx offloads non supported - requested 0x%" PRIx64
-		" supported 0x%" PRIx64,
-			rx_offloads,
-			dev_rx_offloads_sup | dev_rx_offloads_nodis);
-		return -ENOTSUP;
-	}
 	if (dev_rx_offloads_nodis & ~rx_offloads) {
 		DPAA_PMD_WARN(
 		"Rx offloads non configurable - requested 0x%" PRIx64
@@ -192,14 +185,6 @@ dpaa_eth_dev_configure(struct rte_eth_dev *dev)
 	}
 
 	/* Tx offloads validation */
-	if (~(dev_tx_offloads_sup | dev_tx_offloads_nodis) & tx_offloads) {
-		DPAA_PMD_ERR(
-		"Tx offloads non supported - requested 0x%" PRIx64
-		" supported 0x%" PRIx64,
-			tx_offloads,
-			dev_tx_offloads_sup | dev_tx_offloads_nodis);
-		return -ENOTSUP;
-	}
 	if (dev_tx_offloads_nodis & ~tx_offloads) {
 		DPAA_PMD_WARN(
 		"Tx offloads non configurable - requested 0x%" PRIx64
@@ -327,6 +312,8 @@ static void dpaa_eth_dev_info(struct rte_eth_dev *dev,
 					dev_rx_offloads_nodis;
 	dev_info->tx_offload_capa = dev_tx_offloads_sup |
 					dev_tx_offloads_nodis;
+	dev_info->default_rxportconf.burst_size = DPAA_DEF_RX_BURST_SIZE;
+	dev_info->default_txportconf.burst_size = DPAA_DEF_TX_BURST_SIZE;
 }
 
 static int dpaa_eth_link_update(struct rte_eth_dev *dev,
@@ -379,11 +366,11 @@ dpaa_dev_xstats_get(struct rte_eth_dev *dev, struct rte_eth_xstat *xstats,
 	unsigned int i = 0, num = RTE_DIM(dpaa_xstats_strings);
 	uint64_t values[sizeof(struct dpaa_if_stats) / 8];
 
-	if (xstats == NULL)
-		return 0;
-
 	if (n < num)
 		return num;
+
+	if (xstats == NULL)
+		return 0;
 
 	fman_if_stats_get_all(dpaa_intf->fif, values,
 			      sizeof(struct dpaa_if_stats) / 8);
@@ -1385,6 +1372,7 @@ rte_dpaa_probe(struct rte_dpaa_driver *dpaa_drv,
 		eth_dev = rte_eth_dev_attach_secondary(dpaa_dev->name);
 		if (!eth_dev)
 			return -ENOMEM;
+		rte_eth_dev_probing_finish(eth_dev);
 		return 0;
 	}
 
@@ -1434,8 +1422,10 @@ rte_dpaa_probe(struct rte_dpaa_driver *dpaa_drv,
 
 	/* Invoke PMD device initialization function */
 	diag = dpaa_dev_init(eth_dev);
-	if (diag == 0)
+	if (diag == 0) {
+		rte_eth_dev_probing_finish(eth_dev);
 		return 0;
+	}
 
 	if (rte_eal_process_type() == RTE_PROC_PRIMARY)
 		rte_free(eth_dev->data->dev_private);

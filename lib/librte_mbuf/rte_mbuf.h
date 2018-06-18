@@ -753,7 +753,8 @@ rte_mbuf_to_baddr(struct rte_mbuf *md)
 #define RTE_MBUF_CLONED(mb)     ((mb)->ol_flags & IND_ATTACHED_MBUF)
 
 /**
- * Returns TRUE if given mbuf is indirect, or FALSE otherwise.
+ * Deprecated.
+ * Use RTE_MBUF_CLONED().
  */
 #define RTE_MBUF_INDIRECT(mb)   RTE_MBUF_CLONED(mb)
 
@@ -822,7 +823,7 @@ rte_mbuf_refcnt_read(const struct rte_mbuf *m)
 static inline void
 rte_mbuf_refcnt_set(struct rte_mbuf *m, uint16_t new_value)
 {
-	rte_atomic16_set(&m->refcnt_atomic, new_value);
+	rte_atomic16_set(&m->refcnt_atomic, (int16_t)new_value);
 }
 
 /* internal */
@@ -852,8 +853,9 @@ rte_mbuf_refcnt_update(struct rte_mbuf *m, int16_t value)
 	 * reference counter can occur.
 	 */
 	if (likely(rte_mbuf_refcnt_read(m) == 1)) {
-		rte_mbuf_refcnt_set(m, 1 + value);
-		return 1 + value;
+		++value;
+		rte_mbuf_refcnt_set(m, (uint16_t)value);
+		return (uint16_t)value;
 	}
 
 	return __rte_mbuf_refcnt_update(m, value);
@@ -924,7 +926,7 @@ static inline void
 rte_mbuf_ext_refcnt_set(struct rte_mbuf_ext_shared_info *shinfo,
 	uint16_t new_value)
 {
-	rte_atomic16_set(&shinfo->refcnt_atomic, new_value);
+	rte_atomic16_set(&shinfo->refcnt_atomic, (int16_t)new_value);
 }
 
 /**
@@ -943,8 +945,9 @@ rte_mbuf_ext_refcnt_update(struct rte_mbuf_ext_shared_info *shinfo,
 	int16_t value)
 {
 	if (likely(rte_mbuf_ext_refcnt_read(shinfo) == 1)) {
-		rte_mbuf_ext_refcnt_set(shinfo, 1 + value);
-		return 1 + value;
+		++value;
+		rte_mbuf_ext_refcnt_set(shinfo, (uint16_t)value);
+		return (uint16_t)value;
 	}
 
 	return (uint16_t)rte_atomic16_add_return(&shinfo->refcnt_atomic, value);
@@ -1215,7 +1218,8 @@ rte_pktmbuf_priv_size(struct rte_mempool *mp)
  */
 static inline void rte_pktmbuf_reset_headroom(struct rte_mbuf *m)
 {
-	m->data_off = RTE_MIN(RTE_PKTMBUF_HEADROOM, (uint16_t)m->buf_len);
+	m->data_off = (uint16_t)RTE_MIN((uint16_t)RTE_PKTMBUF_HEADROOM,
+					(uint16_t)m->buf_len);
 }
 
 /**
@@ -1361,17 +1365,19 @@ rte_pktmbuf_ext_shinfo_init_helper(void *buf_addr, uint16_t *buf_len,
 {
 	struct rte_mbuf_ext_shared_info *shinfo;
 	void *buf_end = RTE_PTR_ADD(buf_addr, *buf_len);
+	void *addr;
 
-	shinfo = RTE_PTR_ALIGN_FLOOR(RTE_PTR_SUB(buf_end,
-				sizeof(*shinfo)), sizeof(uintptr_t));
-	if ((void *)shinfo <= buf_addr)
+	addr = RTE_PTR_ALIGN_FLOOR(RTE_PTR_SUB(buf_end, sizeof(*shinfo)),
+				   sizeof(uintptr_t));
+	if (addr <= buf_addr)
 		return NULL;
 
+	shinfo = (struct rte_mbuf_ext_shared_info *)addr;
 	shinfo->free_cb = free_cb;
 	shinfo->fcb_opaque = fcb_opaque;
 	rte_mbuf_ext_refcnt_set(shinfo, 1);
 
-	*buf_len = RTE_PTR_DIFF(shinfo, buf_addr);
+	*buf_len = (uint16_t)RTE_PTR_DIFF(shinfo, buf_addr);
 	return shinfo;
 }
 
@@ -1582,7 +1588,8 @@ __rte_pktmbuf_free_direct(struct rte_mbuf *m)
 static inline void rte_pktmbuf_detach(struct rte_mbuf *m)
 {
 	struct rte_mempool *mp = m->pool;
-	uint32_t mbuf_size, buf_len, priv_size;
+	uint32_t mbuf_size, buf_len;
+	uint16_t priv_size;
 
 	if (RTE_MBUF_HAS_EXTBUF(m))
 		__rte_pktmbuf_free_extbuf(m);
@@ -1590,7 +1597,7 @@ static inline void rte_pktmbuf_detach(struct rte_mbuf *m)
 		__rte_pktmbuf_free_direct(m);
 
 	priv_size = rte_pktmbuf_priv_size(mp);
-	mbuf_size = sizeof(struct rte_mbuf) + priv_size;
+	mbuf_size = (uint32_t)(sizeof(struct rte_mbuf) + priv_size);
 	buf_len = rte_pktmbuf_data_room_size(mp);
 
 	m->priv_size = priv_size;
@@ -1922,7 +1929,10 @@ static inline char *rte_pktmbuf_prepend(struct rte_mbuf *m,
 	if (unlikely(len > rte_pktmbuf_headroom(m)))
 		return NULL;//超过headroom，返回NULL
 
-	m->data_off -= len;//data_off前移
+	/* NB: elaborating the subtraction like this instead of using
+	 *     -= allows us to ensure the result type is uint16_t
+	 *     avoiding compiler warnings on gcc 8.1 at least */
+	m->data_off = (uint16_t)(m->data_off - len);//data_off前移
 	m->data_len = (uint16_t)(m->data_len + len);
 	m->pkt_len  = (m->pkt_len + len);
 
@@ -1982,8 +1992,11 @@ static inline char *rte_pktmbuf_adj(struct rte_mbuf *m, uint16_t len)
 	if (unlikely(len > m->data_len))
 		return NULL;
 
+	/* NB: elaborating the addition like this instead of using
+	 *     += allows us to ensure the result type is uint16_t
+	 *     avoiding compiler warnings on gcc 8.1 at least */
 	m->data_len = (uint16_t)(m->data_len - len);
-	m->data_off += len;
+	m->data_off = (uint16_t)(m->data_off + len);
 	m->pkt_len  = (m->pkt_len - len);
 	return (char *)m->buf_addr + m->data_off;
 }
@@ -2095,8 +2108,11 @@ static inline int rte_pktmbuf_chain(struct rte_mbuf *head, struct rte_mbuf *tail
 	cur_tail = rte_pktmbuf_lastseg(head);
 	cur_tail->next = tail;
 
-	/* accumulate number of segments and total length. */
-	head->nb_segs += tail->nb_segs;
+	/* accumulate number of segments and total length.
+	 * NB: elaborating the addition like this instead of using
+	 *     -= allows us to ensure the result type is uint16_t
+	 *     avoiding compiler warnings on gcc 8.1 at least */
+	head->nb_segs = (uint16_t)(head->nb_segs + tail->nb_segs);
 	head->pkt_len += tail->pkt_len;
 
 	/* pkt_len is only set in the head */
@@ -2126,7 +2142,11 @@ rte_validate_tx_offload(const struct rte_mbuf *m)
 		return 0;
 
 	if (ol_flags & PKT_TX_OUTER_IP_CKSUM)
-		inner_l3_offset += m->outer_l2_len + m->outer_l3_len;
+		/* NB: elaborating the addition like this instead of using
+		 *     += gives the result uint64_t type instead of int,
+		 *     avoiding compiler warnings on gcc 8.1 at least */
+		inner_l3_offset = inner_l3_offset + m->outer_l2_len +
+				  m->outer_l3_len;
 
 	/* Headers are fragmented */
 	if (rte_pktmbuf_data_len(m) < inner_l3_offset + m->l3_len + m->l4_len)
@@ -2171,7 +2191,7 @@ rte_validate_tx_offload(const struct rte_mbuf *m)
 static inline int
 rte_pktmbuf_linearize(struct rte_mbuf *mbuf)
 {
-	int seg_len, copy_len;
+	size_t seg_len, copy_len;
 	struct rte_mbuf *m;
 	struct rte_mbuf *m_next;
 	char *buffer;

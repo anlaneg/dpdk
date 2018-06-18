@@ -80,6 +80,12 @@ cperf_initialize_cryptodev(struct cperf_options *opts, uint8_t *enabled_cdevs,
 
 	nb_lcores = rte_lcore_count() - 1;
 
+	if (nb_lcores < 1) {
+		RTE_LOG(ERR, USER1,
+			"Number of enabled cores need to be higher than 1\n");
+		return -EINVAL;
+	}
+
 	/*
 	 * Use less number of devices,
 	 * if there are more available than cores.
@@ -91,7 +97,7 @@ cperf_initialize_cryptodev(struct cperf_options *opts, uint8_t *enabled_cdevs,
 	uint32_t max_sess_size = 0, sess_size;
 
 	for (cdev_id = 0; cdev_id < rte_cryptodev_count(); cdev_id++) {
-		sess_size = rte_cryptodev_get_private_session_size(cdev_id);
+		sess_size = rte_cryptodev_sym_get_private_session_size(cdev_id);
 		if (sess_size > max_sess_size)
 			max_sess_size = sess_size;
 	}

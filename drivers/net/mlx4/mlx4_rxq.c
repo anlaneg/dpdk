@@ -488,6 +488,7 @@ mlx4_rxq_attach(struct rxq *rxq)
 	}
 
 	struct priv *priv = rxq->priv;
+	struct rte_eth_dev *dev = priv->dev;
 	const uint32_t elts_n = 1 << rxq->elts_n;
 	const uint32_t sges_n = 1 << rxq->sges_n;
 	struct rte_mbuf *(*elts)[elts_n] = rxq->elts;
@@ -552,6 +553,11 @@ mlx4_rxq_attach(struct rxq *rxq)
 		msg = "failed to obtain device information from WQ/CQ objects";
 		goto error;
 	}
+	/* Pre-register Rx mempool. */
+	DEBUG("port %u Rx queue %u registering mp %s having %u chunks",
+	      priv->dev->data->port_id, rxq->stats.idx,
+	      rxq->mp->name, rxq->mp->nb_mem_chunks);
+	mlx4_mr_update_mp(dev, &rxq->mr_ctrl, rxq->mp);
 	wqes = (volatile struct mlx4_wqe_data_seg (*)[])
 		((uintptr_t)dv_rwq.buf.buf + dv_rwq.rq.offset);
 	for (i = 0; i != RTE_DIM(*elts); ++i) {
@@ -583,7 +589,7 @@ mlx4_rxq_attach(struct rxq *rxq)
 			.addr = rte_cpu_to_be_64(rte_pktmbuf_mtod(buf,
 								  uintptr_t)),
 			.byte_count = rte_cpu_to_be_32(buf->data_len),
-			.lkey = rte_cpu_to_be_32(rxq->mr->lkey),
+			.lkey = mlx4_rx_mb2mr(rxq, buf),
 		};
 		(*elts)[i] = buf;
 	}
@@ -665,10 +671,9 @@ mlx4_rxq_detach(struct rxq *rxq)
 uint64_t
 mlx4_get_rx_queue_offloads(struct priv *priv)
 {
-	uint64_t offloads = DEV_RX_OFFLOAD_SCATTER;
+	uint64_t offloads = DEV_RX_OFFLOAD_SCATTER |
+			    DEV_RX_OFFLOAD_CRC_STRIP;
 
-	if (priv->hw_fcs_strip)
-		offloads |= DEV_RX_OFFLOAD_CRC_STRIP;
 	if (priv->hw_csum)
 		offloads |= DEV_RX_OFFLOAD_CHECKSUM;
 	return offloads;
@@ -690,26 +695,6 @@ mlx4_get_rx_port_offloads(struct priv *priv)
 
 	(void)priv;
 	return offloads;
-}
-
-/**
- * Checks if the per-queue offload configuration is valid.
- *
- * @param priv
- *   Pointer to private structure.
- * @param requested
- *   Per-queue offloads configuration.
- *
- * @return
- *   Nonzero when configuration is valid.
- */
-static int
-mlx4_check_rx_queue_offloads(struct priv *priv, uint64_t requested)
-{
-	uint64_t mandatory = priv->dev->data->dev_conf.rxmode.offloads;
-	uint64_t supported = mlx4_get_rx_port_offloads(priv);
-
-	return !((mandatory ^ requested) & supported);
 }
 
 /**
@@ -754,20 +739,13 @@ mlx4_rx_queue_setup(struct rte_eth_dev *dev, uint16_t idx, uint16_t desc,
 	};
 	int ret;
 	uint32_t crc_present;
+	uint64_t offloads;
 
-	(void)conf; /* Thresholds configuration (ignored). */
+	offloads = conf->offloads | dev->data->dev_conf.rxmode.offloads;
+
 	DEBUG("%p: configuring queue %u for %u descriptors",
 	      (void *)dev, idx, desc);
-	if (!mlx4_check_rx_queue_offloads(priv, conf->offloads)) {
-		rte_errno = ENOTSUP;
-		ERROR("%p: Rx queue offloads 0x%" PRIx64 " don't match port "
-		      "offloads 0x%" PRIx64 " or supported offloads 0x%" PRIx64,
-		      (void *)dev, conf->offloads,
-		      dev->data->dev_conf.rxmode.offloads,
-		      (mlx4_get_rx_port_offloads(priv) |
-		       mlx4_get_rx_queue_offloads(priv)));
-		return -rte_errno;
-	}
+
 	if (idx >= dev->data->nb_rx_queues) {
 		rte_errno = EOVERFLOW;
 		ERROR("%p: queue index out of range (%u >= %u)",
@@ -793,7 +771,7 @@ mlx4_rx_queue_setup(struct rte_eth_dev *dev, uint16_t idx, uint16_t desc,
 		     (void *)dev, idx, desc);
 	}
 	/* By default, FCS (CRC) is stripped by hardware. */
-	if (conf->offloads & DEV_RX_OFFLOAD_CRC_STRIP) {
+	if (offloads & DEV_RX_OFFLOAD_CRC_STRIP) {
 		crc_present = 0;
 	} else if (priv->hw_fcs_strip) {
 		crc_present = 1;
@@ -825,9 +803,9 @@ mlx4_rx_queue_setup(struct rte_eth_dev *dev, uint16_t idx, uint16_t desc,
 		.elts = elts,
 		/* Toggle Rx checksum offload if hardware supports it. */
 		.csum = priv->hw_csum &&
-			(conf->offloads & DEV_RX_OFFLOAD_CHECKSUM),
+			(offloads & DEV_RX_OFFLOAD_CHECKSUM),
 		.csum_l2tun = priv->hw_csum_l2tun &&
-			      (conf->offloads & DEV_RX_OFFLOAD_CHECKSUM),
+			      (offloads & DEV_RX_OFFLOAD_CHECKSUM),
 		.crc_present = crc_present,
 		.l2tun_offload = priv->hw_csum_l2tun,
 		.stats = {
@@ -840,7 +818,7 @@ mlx4_rx_queue_setup(struct rte_eth_dev *dev, uint16_t idx, uint16_t desc,
 	if (dev->data->dev_conf.rxmode.max_rx_pkt_len <=
 	    (mb_len - RTE_PKTMBUF_HEADROOM)) {
 		;
-	} else if (conf->offloads & DEV_RX_OFFLOAD_SCATTER) {
+	} else if (offloads & DEV_RX_OFFLOAD_SCATTER) {
 		uint32_t size =
 			RTE_PKTMBUF_HEADROOM +
 			dev->data->dev_conf.rxmode.max_rx_pkt_len;
@@ -883,11 +861,9 @@ mlx4_rx_queue_setup(struct rte_eth_dev *dev, uint16_t idx, uint16_t desc,
 		      1 << rxq->sges_n);
 		goto error;
 	}
-	/* Use the entire Rx mempool as the memory region. */
-	rxq->mr = mlx4_mr_get(priv, mp);
-	if (!rxq->mr) {
-		ERROR("%p: MR creation failure: %s",
-		      (void *)dev, strerror(rte_errno));
+	if (mlx4_mr_btree_init(&rxq->mr_ctrl.cache_bh,
+			       MLX4_MR_BTREE_CACHE_N, socket)) {
+		/* rte_errno is already set. */
 		goto error;
 	}
 	if (dev->data->dev_conf.intr_conf.rxq) {
@@ -947,7 +923,6 @@ mlx4_rx_queue_release(void *dpdk_rxq)
 	assert(!rxq->rq_db);
 	if (rxq->channel)
 		claim_zero(mlx4_glue->destroy_comp_channel(rxq->channel));
-	if (rxq->mr)
-		mlx4_mr_put(rxq->mr);
+	mlx4_mr_btree_free(&rxq->mr_ctrl.cache_bh);
 	rte_free(rxq);
 }

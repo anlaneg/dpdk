@@ -154,26 +154,12 @@ dpaa2_eventdev_enqueue(void *port, const struct rte_event *ev)
 static void dpaa2_eventdev_dequeue_wait(uint64_t timeout_ticks)
 {
 	struct epoll_event epoll_ev;
-	int ret, i = 0;
 
 	qbman_swp_interrupt_clear_status(DPAA2_PER_LCORE_PORTAL,
 					 QBMAN_SWP_INTERRUPT_DQRI);
 
-RETRY:
-	ret = epoll_wait(DPAA2_PER_LCORE_DPIO->epoll_fd,
+	epoll_wait(DPAA2_PER_LCORE_DPIO->epoll_fd,
 			 &epoll_ev, 1, timeout_ticks);
-	if (ret < 1) {
-		/* sometimes due to some spurious interrupts epoll_wait fails
-		 * with errno EINTR. so here we are retrying epoll_wait in such
-		 * case to avoid the problem.
-		 */
-		if (errno == EINTR) {
-			DPAA2_EVENTDEV_DEBUG("epoll_wait fails");
-			if (i++ > 10)
-				DPAA2_EVENTDEV_DEBUG("Dequeue burst Failed");
-		goto RETRY;
-		}
-	}
 }
 
 static void dpaa2_eventdev_process_parallel(struct qbman_swp *swp,
@@ -474,7 +460,6 @@ dpaa2_eventdev_port_unlink(struct rte_eventdev *dev, void *port,
 		dpio_remove_static_dequeue_channel(dpaa2_portal->dpio_dev->dpio,
 					0, dpaa2_portal->dpio_dev->token,
 			evq_info->dpcon->dpcon_id);
-		evq_info->link = 0;
 	}
 
 	return (int)nb_unlinks;
@@ -495,8 +480,6 @@ dpaa2_eventdev_port_link(struct rte_eventdev *dev, void *port,
 
 	for (i = 0; i < nb_links; i++) {
 		evq_info = &priv->evq_info[queues[i]];
-		if (evq_info->link)
-			continue;
 
 		ret = dpio_add_static_dequeue_channel(
 			dpaa2_portal->dpio_dev->dpio,
@@ -511,7 +494,6 @@ dpaa2_eventdev_port_link(struct rte_eventdev *dev, void *port,
 		qbman_swp_push_set(dpaa2_portal->dpio_dev->sw_portal,
 				   channel_index, 1);
 		evq_info->dpcon->channel_index = channel_index;
-		evq_info->link = 1;
 	}
 
 	RTE_SET_USED(priorities);
@@ -525,7 +507,6 @@ err:
 		dpio_remove_static_dequeue_channel(dpaa2_portal->dpio_dev->dpio,
 					0, dpaa2_portal->dpio_dev->token,
 			evq_info->dpcon->dpcon_id);
-		evq_info->link = 0;
 	}
 	return ret;
 }

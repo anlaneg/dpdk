@@ -1405,6 +1405,11 @@ lio_dev_start(struct rte_eth_dev *eth_dev)
 	/* Configure RSS if device configured with multiple RX queues. */
 	lio_dev_mq_rx_configure(eth_dev);
 
+	/* Before update the link info,
+	 * must set linfo.link.link_status64 to 0.
+	 */
+	lio_dev->linfo.link.link_status64 = 0;
+
 	/* start polling for lsc */
 	ret = rte_eal_alarm_set(LIO_LSC_TIMEOUT,
 				lio_sync_link_state_check,
@@ -2110,19 +2115,8 @@ static int
 lio_eth_dev_pci_probe(struct rte_pci_driver *pci_drv __rte_unused,
 		      struct rte_pci_device *pci_dev)
 {
-	struct rte_eth_dev *eth_dev;
-	int ret;
-
-	eth_dev = rte_eth_dev_pci_allocate(pci_dev,
-					   sizeof(struct lio_device));
-	if (eth_dev == NULL)
-		return -ENOMEM;
-
-	ret = lio_eth_dev_init(eth_dev);
-	if (ret)
-		rte_eth_dev_pci_release(eth_dev);
-
-	return ret;
+	return rte_eth_dev_pci_generic_probe(pci_dev, sizeof(struct lio_device),
+			lio_eth_dev_init);
 }
 
 static int

@@ -23,10 +23,8 @@
 
 void bnxt_free_rxq_stats(struct bnxt_rx_queue *rxq)
 {
-	struct bnxt_cp_ring_info *cpr = rxq->cp_ring;
-
-	if (cpr->hw_stats)
-		cpr->hw_stats = NULL;
+	if (rxq && rxq->cp_ring && rxq->cp_ring->hw_stats)
+		rxq->cp_ring->hw_stats = NULL;
 }
 
 int bnxt_mq_rx_configure(struct bnxt *bp)
@@ -79,6 +77,7 @@ int bnxt_mq_rx_configure(struct bnxt *bp)
 		switch (dev_conf->rxmode.mq_mode) {
 		case ETH_MQ_RX_VMDQ_RSS:
 		case ETH_MQ_RX_VMDQ_ONLY:
+			/* FALLTHROUGH */
 			/* ETH_8/64_POOLs */
 			pools = conf->nb_queue_pools;
 			/* For each pool, allocate MACVLAN CFA rule & VNIC */
@@ -209,7 +208,8 @@ static void bnxt_rx_queue_release_mbufs(struct bnxt_rx_queue *rxq)
 	if (rxq) {
 		sw_ring = rxq->rx_ring->rx_buf_ring;
 		if (sw_ring) {
-			for (i = 0; i < rxq->nb_rx_desc; i++) {
+			for (i = 0;
+			     i < rxq->rx_ring->rx_ring_struct->ring_size; i++) {
 				if (sw_ring[i].mbuf) {
 					rte_pktmbuf_free_seg(sw_ring[i].mbuf);
 					sw_ring[i].mbuf = NULL;
@@ -219,7 +219,8 @@ static void bnxt_rx_queue_release_mbufs(struct bnxt_rx_queue *rxq)
 		/* Free up mbufs in Agg ring */
 		sw_ring = rxq->rx_ring->ag_buf_ring;
 		if (sw_ring) {
-			for (i = 0; i < rxq->nb_rx_desc; i++) {
+			for (i = 0;
+			     i < rxq->rx_ring->ag_ring_struct->ring_size; i++) {
 				if (sw_ring[i].mbuf) {
 					rte_pktmbuf_free_seg(sw_ring[i].mbuf);
 					sw_ring[i].mbuf = NULL;
@@ -290,7 +291,7 @@ int bnxt_rx_queue_setup_op(struct rte_eth_dev *eth_dev,
 		PMD_DRV_LOG(ERR,
 			"Cannot create Rx ring %d. Only %d rings available\n",
 			queue_idx, bp->max_rx_rings);
-		return -ENOSPC;
+		return -EINVAL;
 	}
 
 	if (!nb_desc || nb_desc > MAX_RX_DESC_CNT) {

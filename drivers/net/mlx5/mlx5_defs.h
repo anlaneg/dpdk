@@ -37,16 +37,11 @@
  */
 #define MLX5_TX_COMP_THRESH_INLINE_DIV (1 << 3)
 
-/*
- * Maximum number of cached Memory Pools (MPs) per TX queue. Each RTE MP
- * from which buffers are to be transmitted will have to be mapped by this
- * driver to their own Memory Region (MR). This is a slow operation.
- *
- * This value is always 1 for RX queues.
- */
-#ifndef MLX5_PMD_TX_MP_CACHE
-#define MLX5_PMD_TX_MP_CACHE 8
-#endif
+/* Size of per-queue MR cache array for linear search. */
+#define MLX5_MR_CACHE_N 8
+
+/* Size of MR cache table for binary search. */
+#define MLX5_MR_BTREE_CACHE_N 256
 
 /*
  * If defined, only use software counters. The PMD will never ask the hardware
@@ -99,5 +94,23 @@
  * packets invisible to HW.
  */
 #define MLX5_UAR_OFFSET (1ULL << 32)
+
+/* Log 2 of the default number of strides per WQE for Multi-Packet RQ. */
+#define MLX5_MPRQ_STRIDE_NUM_N 4U
+
+/* Two-byte shift is disabled for Multi-Packet RQ. */
+#define MLX5_MPRQ_TWO_BYTE_SHIFT 0
+
+/*
+ * Minimum size of packet to be memcpy'd instead of being attached as an
+ * external buffer.
+ */
+#define MLX5_MPRQ_MEMCPY_DEFAULT_LEN 128
+
+/* Minimum number Rx queues to enable Multi-Packet RQ. */
+#define MLX5_MPRQ_MIN_RXQS 12
+
+/* Cache size of mempool for Multi-Packet RQ. */
+#define MLX5_MPRQ_MP_CACHE_SZ 32
 
 #endif /* RTE_PMD_MLX5_DEFS_H_ */

@@ -122,7 +122,10 @@ int enic_get_vnic_config(struct enic *enic)
 		"loopback tag 0x%04x\n",
 		ENIC_SETTING(enic, TXCSUM) ? "yes" : "no",
 		ENIC_SETTING(enic, RXCSUM) ? "yes" : "no",
-		ENIC_SETTING(enic, RSS) ? "yes" : "no",
+		ENIC_SETTING(enic, RSS) ?
+			(ENIC_SETTING(enic, RSSHASH_UDPIPV4) ? "+UDP" :
+			((ENIC_SETTING(enic, RSSHASH_UDP_WEAK) ? "+udp" :
+			"yes"))) : "no",
 		c->intr_mode == VENET_INTR_MODE_INTX ? "INTx" :
 		c->intr_mode == VENET_INTR_MODE_MSI ? "MSI" :
 		c->intr_mode == VENET_INTR_MODE_ANY ? "any" :
@@ -138,21 +141,35 @@ int enic_get_vnic_config(struct enic *enic)
 	enic->hash_key_size = ENIC_RSS_HASH_KEY_SIZE;
 	enic->flow_type_rss_offloads = 0;
 	if (ENIC_SETTING(enic, RSSHASH_IPV4))
-		enic->flow_type_rss_offloads |= ETH_RSS_IPV4;
+		/*
+		 * IPV4 hash type handles both non-frag and frag packet types.
+		 * TCP/UDP is controlled via a separate flag below.
+		 */
+		enic->flow_type_rss_offloads |= ETH_RSS_IPV4 |
+			ETH_RSS_FRAG_IPV4 | ETH_RSS_NONFRAG_IPV4_OTHER;
 	if (ENIC_SETTING(enic, RSSHASH_TCPIPV4))
 		enic->flow_type_rss_offloads |= ETH_RSS_NONFRAG_IPV4_TCP;
 	if (ENIC_SETTING(enic, RSSHASH_IPV6))
-		enic->flow_type_rss_offloads |= ETH_RSS_IPV6;
+		/*
+		 * The VIC adapter can perform RSS on IPv6 packets with and
+		 * without extension headers. An IPv6 "fragment" is an IPv6
+		 * packet with the fragment extension header.
+		 */
+		enic->flow_type_rss_offloads |= ETH_RSS_IPV6 |
+			ETH_RSS_IPV6_EX | ETH_RSS_FRAG_IPV6 |
+			ETH_RSS_NONFRAG_IPV6_OTHER;
 	if (ENIC_SETTING(enic, RSSHASH_TCPIPV6))
-		enic->flow_type_rss_offloads |= ETH_RSS_NONFRAG_IPV6_TCP;
-	if (ENIC_SETTING(enic, RSSHASH_IPV6_EX))
-		enic->flow_type_rss_offloads |= ETH_RSS_IPV6_EX;
-	if (ENIC_SETTING(enic, RSSHASH_TCPIPV6_EX))
-		enic->flow_type_rss_offloads |= ETH_RSS_IPV6_TCP_EX;
-	if (vnic_dev_capable_udp_rss(enic->vdev)) {
+		enic->flow_type_rss_offloads |= ETH_RSS_NONFRAG_IPV6_TCP |
+			ETH_RSS_IPV6_TCP_EX;
+	if (ENIC_SETTING(enic, RSSHASH_UDP_WEAK))
 		enic->flow_type_rss_offloads |=
-			ETH_RSS_NONFRAG_IPV4_UDP | ETH_RSS_NONFRAG_IPV6_UDP;
-	}
+			ETH_RSS_NONFRAG_IPV4_UDP | ETH_RSS_NONFRAG_IPV6_UDP |
+			ETH_RSS_IPV6_UDP_EX;
+	if (ENIC_SETTING(enic, RSSHASH_UDPIPV4))
+		enic->flow_type_rss_offloads |= ETH_RSS_NONFRAG_IPV4_UDP;
+	if (ENIC_SETTING(enic, RSSHASH_UDPIPV6))
+		enic->flow_type_rss_offloads |= ETH_RSS_NONFRAG_IPV6_UDP |
+			ETH_RSS_IPV6_UDP_EX;
 
 	/* Zero offloads if RSS is not enabled */
 	if (!ENIC_SETTING(enic, RSS))
@@ -165,12 +182,16 @@ int enic_get_vnic_config(struct enic *enic)
 	 * flags if it enables overlay offloads.
 	 */
 	enic->tx_offload_capa =
+		DEV_TX_OFFLOAD_MULTI_SEGS |
 		DEV_TX_OFFLOAD_VLAN_INSERT |
 		DEV_TX_OFFLOAD_IPV4_CKSUM |
 		DEV_TX_OFFLOAD_UDP_CKSUM |
 		DEV_TX_OFFLOAD_TCP_CKSUM |
 		DEV_TX_OFFLOAD_TCP_TSO;
 	enic->rx_offload_capa =
+		DEV_RX_OFFLOAD_SCATTER |
+		DEV_RX_OFFLOAD_JUMBO_FRAME |
+		DEV_RX_OFFLOAD_CRC_STRIP |
 		DEV_RX_OFFLOAD_VLAN_STRIP |
 		DEV_RX_OFFLOAD_IPV4_CKSUM |
 		DEV_RX_OFFLOAD_UDP_CKSUM |

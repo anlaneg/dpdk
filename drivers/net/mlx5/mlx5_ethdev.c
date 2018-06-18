@@ -34,6 +34,7 @@
 #include <rte_interrupts.h>
 #include <rte_malloc.h>
 #include <rte_string_fns.h>
+#include <rte_rwlock.h>
 
 #include "mlx5.h"
 #include "mlx5_glue.h"
@@ -330,30 +331,8 @@ mlx5_dev_configure(struct rte_eth_dev *dev)
 	unsigned int reta_idx_n;
 	const uint8_t use_app_rss_key =
 		!!dev->data->dev_conf.rx_adv_conf.rss_conf.rss_key;
-	uint64_t supp_tx_offloads = mlx5_get_tx_port_offloads(dev);
-	uint64_t tx_offloads = dev->data->dev_conf.txmode.offloads;
-	uint64_t supp_rx_offloads =
-		(mlx5_get_rx_port_offloads() |
-		 mlx5_get_rx_queue_offloads(dev));
-	uint64_t rx_offloads = dev->data->dev_conf.rxmode.offloads;
 	int ret = 0;
 
-	if ((tx_offloads & supp_tx_offloads) != tx_offloads) {
-		DRV_LOG(ERR,
-			"port %u some Tx offloads are not supported requested"
-			" 0x%" PRIx64 " supported 0x%" PRIx64,
-			dev->data->port_id, tx_offloads, supp_tx_offloads);
-		rte_errno = ENOTSUP;
-		return -rte_errno;
-	}
-	if ((rx_offloads & supp_rx_offloads) != rx_offloads) {
-		DRV_LOG(ERR,
-			"port %u some Rx offloads are not supported requested"
-			" 0x%" PRIx64 " supported 0x%" PRIx64,
-			dev->data->port_id, rx_offloads, supp_rx_offloads);
-		rte_errno = ENOTSUP;
-		return -rte_errno;
-	}
 	if (use_app_rss_key &&
 	    (dev->data->dev_conf.rx_adv_conf.rss_conf.rss_key_len !=
 	     rss_hash_default_key_len)) {
@@ -417,6 +396,45 @@ mlx5_dev_configure(struct rte_eth_dev *dev)
 }
 
 /**
+ * Sets default tuning parameters.
+ *
+ * @param dev
+ *   Pointer to Ethernet device.
+ * @param[out] info
+ *   Info structure output buffer.
+ */
+static void
+mlx5_set_default_params(struct rte_eth_dev *dev, struct rte_eth_dev_info *info)
+{
+	struct priv *priv = dev->data->dev_private;
+
+	/* Minimum CPU utilization. */
+	info->default_rxportconf.ring_size = 256;
+	info->default_txportconf.ring_size = 256;
+	info->default_rxportconf.burst_size = 64;
+	info->default_txportconf.burst_size = 64;
+	if (priv->link_speed_capa & ETH_LINK_SPEED_100G) {
+		info->default_rxportconf.nb_queues = 16;
+		info->default_txportconf.nb_queues = 16;
+		if (dev->data->nb_rx_queues > 2 ||
+		    dev->data->nb_tx_queues > 2) {
+			/* Max Throughput. */
+			info->default_rxportconf.ring_size = 2048;
+			info->default_txportconf.ring_size = 2048;
+		}
+	} else {
+		info->default_rxportconf.nb_queues = 8;
+		info->default_txportconf.nb_queues = 8;
+		if (dev->data->nb_rx_queues > 2 ||
+		    dev->data->nb_tx_queues > 2) {
+			/* Max Throughput. */
+			info->default_rxportconf.ring_size = 4096;
+			info->default_txportconf.ring_size = 4096;
+		}
+	}
+}
+
+/**
  * DPDK callback to get information about the device.
  *
  * @param dev
@@ -458,6 +476,7 @@ mlx5_dev_infos_get(struct rte_eth_dev *dev, struct rte_eth_dev_info *info)
 	info->hash_key_size = rss_hash_default_key_len;
 	info->speed_capa = priv->link_speed_capa;
 	info->flow_type_rss_offloads = ~MLX5_RSS_HF_MASK;
+	mlx5_set_default_params(dev, info);
 }
 
 /**
@@ -491,6 +510,7 @@ mlx5_dev_supported_ptypes_get(struct rte_eth_dev *dev)
 	};
 
 	if (dev->rx_pkt_burst == mlx5_rx_burst ||
+	    dev->rx_pkt_burst == mlx5_rx_burst_mprq ||
 	    dev->rx_pkt_burst == mlx5_rx_burst_vec)
 		return ptypes;
 	return NULL;
@@ -697,9 +717,9 @@ mlx5_link_update(struct rte_eth_dev *dev, int wait_to_complete)
 	time_t start_time = time(NULL);
 
 	do {
-		ret = mlx5_link_update_unlocked_gset(dev, &dev_link);
+		ret = mlx5_link_update_unlocked_gs(dev, &dev_link);
 		if (ret)
-			ret = mlx5_link_update_unlocked_gs(dev, &dev_link);
+			ret = mlx5_link_update_unlocked_gset(dev, &dev_link);
 		if (ret == 0)
 			break;
 		/* Handle wait to complete situation. */
@@ -1089,7 +1109,9 @@ mlx5_select_tx_function(struct rte_eth_dev *dev)
 	uint64_t tx_offloads = dev->data->dev_conf.txmode.offloads;
 	int tso = !!(tx_offloads & (DEV_TX_OFFLOAD_TCP_TSO |
 				    DEV_TX_OFFLOAD_VXLAN_TNL_TSO |
-				    DEV_TX_OFFLOAD_GRE_TNL_TSO));
+				    DEV_TX_OFFLOAD_GRE_TNL_TSO |
+				    DEV_TX_OFFLOAD_IP_TNL_TSO |
+				    DEV_TX_OFFLOAD_UDP_TNL_TSO));
 	int swp = !!(tx_offloads & (DEV_TX_OFFLOAD_IP_TNL_TSO |
 				    DEV_TX_OFFLOAD_UDP_TNL_TSO |
 				    DEV_TX_OFFLOAD_OUTER_IPV4_CKSUM));
@@ -1146,6 +1168,8 @@ mlx5_select_rx_function(struct rte_eth_dev *dev)
 		rx_pkt_burst = mlx5_rx_burst_vec;
 		DRV_LOG(DEBUG, "port %u selected Rx vectorized function",
 			dev->data->port_id);
+	} else if (mlx5_mprq_enabled(dev)) {
+		rx_pkt_burst = mlx5_rx_burst_mprq;
 	}
 	return rx_pkt_burst;
 }

@@ -57,10 +57,14 @@
 #define RTE_CRYPTO_MAX_DEVS 64
 #define RTE_CRYPTODEV_NAME_LEN 64
 
+/* compressdev defines */
+#define RTE_COMPRESS_MAX_DEVS 64
+
 /* eventdev defines */
 #define RTE_EVENT_MAX_DEVS 16
 #define RTE_EVENT_MAX_QUEUES_PER_DEV 64
 #define RTE_EVENT_TIMER_ADAPTER_NUM_MAX 32
+#define RTE_EVENT_CRYPTO_ADAPTER_MAX_INSTANCE 32
 
 /* rawdev defines */
 #define RTE_RAWDEV_MAX_DEVS 10

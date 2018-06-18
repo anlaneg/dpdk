@@ -2448,22 +2448,6 @@ ixgbe_get_tx_port_offloads(struct rte_eth_dev *dev)
 	return tx_offload_capa;
 }
 
-static int
-ixgbe_check_tx_queue_offloads(struct rte_eth_dev *dev, uint64_t requested)
-{
-	uint64_t port_offloads = dev->data->dev_conf.txmode.offloads;
-	uint64_t queue_supported = ixgbe_get_tx_queue_offloads(dev);
-	uint64_t port_supported = ixgbe_get_tx_port_offloads(dev);
-
-	if ((requested & (queue_supported | port_supported)) != requested)
-		return 0;
-
-	if ((port_offloads ^ requested) & port_supported)
-		return 0;
-
-	return 1;
-}
-
 int __attribute__((cold))
 ixgbe_dev_tx_queue_setup(struct rte_eth_dev *dev,
 			 uint16_t queue_idx,
@@ -2475,25 +2459,12 @@ ixgbe_dev_tx_queue_setup(struct rte_eth_dev *dev,
 	struct ixgbe_tx_queue *txq;
 	struct ixgbe_hw     *hw;
 	uint16_t tx_rs_thresh, tx_free_thresh;
+	uint64_t offloads;
 
 	PMD_INIT_FUNC_TRACE();
 	hw = IXGBE_DEV_PRIVATE_TO_HW(dev->data->dev_private);
 
-	/*
-	 * Don't verify port offloads for application which
-	 * use the old API.
-	 */
-	if (!ixgbe_check_tx_queue_offloads(dev, tx_conf->offloads)) {
-		PMD_INIT_LOG(ERR, "%p: Tx queue offloads 0x%" PRIx64
-			" don't match port offloads 0x%" PRIx64
-			" or supported queue offloads 0x%" PRIx64
-			" or supported port offloads 0x%" PRIx64,
-			(void *)dev, tx_conf->offloads,
-			dev->data->dev_conf.txmode.offloads,
-			ixgbe_get_tx_queue_offloads(dev),
-			ixgbe_get_tx_port_offloads(dev));
-		return -ENOTSUP;
-	}
+	offloads = tx_conf->offloads | dev->data->dev_conf.txmode.offloads;
 
 	/*
 	 * Validate number of transmit descriptors.
@@ -2620,8 +2591,7 @@ ixgbe_dev_tx_queue_setup(struct rte_eth_dev *dev,
 	txq->reg_idx = (uint16_t)((RTE_ETH_DEV_SRIOV(dev).active == 0) ?
 		queue_idx : RTE_ETH_DEV_SRIOV(dev).def_pool_q_idx + queue_idx);
 	txq->port_id = dev->data->port_id;
-	txq->txq_flags = tx_conf->txq_flags;
-	txq->offloads = tx_conf->offloads;
+	txq->offloads = offloads;
 	txq->ops = &def_txq_ops;
 	txq->tx_deferred_start = tx_conf->tx_deferred_start;
 #ifdef RTE_LIBRTE_SECURITY
@@ -2915,22 +2885,6 @@ ixgbe_get_rx_port_offloads(struct rte_eth_dev *dev)
 	return offloads;
 }
 
-static int
-ixgbe_check_rx_queue_offloads(struct rte_eth_dev *dev, uint64_t requested)
-{
-	uint64_t port_offloads = dev->data->dev_conf.rxmode.offloads;
-	uint64_t queue_supported = ixgbe_get_rx_queue_offloads(dev);
-	uint64_t port_supported = ixgbe_get_rx_port_offloads(dev);
-
-	if ((requested & (queue_supported | port_supported)) != requested)
-		return 0;
-
-	if ((port_offloads ^ requested) & port_supported)
-		return 0;
-
-	return 1;
-}
-
 int __attribute__((cold))
 ixgbe_dev_rx_queue_setup(struct rte_eth_dev *dev,
 			 uint16_t queue_idx,
@@ -2945,21 +2899,12 @@ ixgbe_dev_rx_queue_setup(struct rte_eth_dev *dev,
 	uint16_t len;
 	struct ixgbe_adapter *adapter =
 		(struct ixgbe_adapter *)dev->data->dev_private;
+	uint64_t offloads;
 
 	PMD_INIT_FUNC_TRACE();
 	hw = IXGBE_DEV_PRIVATE_TO_HW(dev->data->dev_private);
 
-	if (!ixgbe_check_rx_queue_offloads(dev, rx_conf->offloads)) {
-		PMD_INIT_LOG(ERR, "%p: Rx queue offloads 0x%" PRIx64
-			" don't match port offloads 0x%" PRIx64
-			" or supported port offloads 0x%" PRIx64
-			" or supported queue offloads 0x%" PRIx64,
-			(void *)dev, rx_conf->offloads,
-			dev->data->dev_conf.rxmode.offloads,
-			ixgbe_get_rx_port_offloads(dev),
-			ixgbe_get_rx_queue_offloads(dev));
-		return -ENOTSUP;
-	}
+	offloads = rx_conf->offloads | dev->data->dev_conf.rxmode.offloads;
 
 	/*
 	 * Validate number of receive descriptors.
@@ -2994,7 +2939,7 @@ ixgbe_dev_rx_queue_setup(struct rte_eth_dev *dev,
 		DEV_RX_OFFLOAD_CRC_STRIP) ? 0 : ETHER_CRC_LEN);
 	rxq->drop_en = rx_conf->rx_drop_en;
 	rxq->rx_deferred_start = rx_conf->rx_deferred_start;
-	rxq->offloads = rx_conf->offloads;
+	rxq->offloads = offloads;
 
 	/*
 	 * The packet type in RX descriptor is different for different NICs.
@@ -4842,7 +4787,8 @@ ixgbe_set_rsc(struct rte_eth_dev *dev)
 		 * at most 500us latency for a single RSC aggregation.
 		 */
 		eitr &= ~IXGBE_EITR_ITR_INT_MASK;
-		eitr |= IXGBE_EITR_INTERVAL_US(500) | IXGBE_EITR_CNT_WDIS;
+		eitr |= IXGBE_EITR_INTERVAL_US(IXGBE_QUEUE_ITR_INTERVAL_DEFAULT);
+		eitr |= IXGBE_EITR_CNT_WDIS;
 
 		IXGBE_WRITE_REG(hw, IXGBE_SRRCTL(rxq->reg_idx), srrctl);
 		IXGBE_WRITE_REG(hw, IXGBE_RSCCTL(rxq->reg_idx), rscctl);
@@ -5441,7 +5387,6 @@ ixgbe_txq_info_get(struct rte_eth_dev *dev, uint16_t queue_id,
 
 	qinfo->conf.tx_free_thresh = txq->tx_free_thresh;
 	qinfo->conf.tx_rs_thresh = txq->tx_rs_thresh;
-	qinfo->conf.txq_flags = txq->txq_flags;
 	qinfo->conf.offloads = txq->offloads;
 	qinfo->conf.tx_deferred_start = txq->tx_deferred_start;
 }

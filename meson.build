@@ -2,7 +2,7 @@
 # Copyright(c) 2017 Intel Corporation
 
 project('DPDK', 'C',
-	version: '18.05-rc2',
+	version: '18.08-rc0',
 	license: 'BSD',
 	default_options: ['buildtype=release', 'default_library=static'],
 	meson_version: '>= 0.41'
@@ -26,7 +26,6 @@ subdir('config')
 
 # build libs and drivers
 subdir('lib')
-subdir('kernel')
 subdir('buildtools')
 subdir('drivers')
 
@@ -38,6 +37,11 @@ subdir('test')
 # build any examples explicitly requested - useful for developers
 if get_option('examples') != ''
 	subdir('examples')
+endif
+
+# build kernel modules if enabled
+if get_option('enable_kmods')
+	subdir('kernel')
 endif
 
 # write the build config

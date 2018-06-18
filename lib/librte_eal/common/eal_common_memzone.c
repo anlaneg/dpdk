@@ -206,7 +206,7 @@ memzone_reserve_aligned_thread_unsafe(const char *name, size_t len,
 
 	if (mz == NULL) {
 		RTE_LOG(ERR, EAL, "%s(): Cannot find free memzone\n", __func__);
-		malloc_elem_free(elem);
+		malloc_heap_free(elem);
 		rte_errno = ENOSPC;
 		return NULL;
 	}
@@ -214,7 +214,8 @@ memzone_reserve_aligned_thread_unsafe(const char *name, size_t len,
 	snprintf(mz->name, sizeof(mz->name), "%s", name);
 	mz->iova = rte_malloc_virt2iova(mz_addr);
 	mz->addr = mz_addr;
-	mz->len = (requested_len == 0 ? elem->size : requested_len);
+	mz->len = (requested_len == 0 ?
+			(elem->size - MALLOC_ELEM_OVERHEAD) : requested_len);
 	mz->hugepage_sz = elem->msl->page_sz;
 	mz->socket_id = elem->msl->socket_id;
 	mz->flags = 0;

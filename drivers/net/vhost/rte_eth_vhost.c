@@ -99,7 +99,7 @@ struct pmd_internal {
 	char *dev_name;
 	char *iface_name;
 	uint16_t max_queues;
-	uint16_t vid;
+	int vid;
 	rte_atomic32_t started;
 	uint8_t vlan_strip;
 };
@@ -406,7 +406,6 @@ eth_vhost_rx(void *q, struct rte_mbuf **bufs, uint16_t nb_bufs)
 
 	for (i = 0; likely(i < nb_rx); i++) {
 		bufs[i]->port = r->port;
-		bufs[i]->ol_flags = 0;
 		bufs[i]->vlan_tci = 0;
 
 		if (r->internal->vlan_strip)
@@ -503,12 +502,7 @@ eth_dev_configure(struct rte_eth_dev *dev __rte_unused)
 	struct pmd_internal *internal = dev->data->dev_private;
 	const struct rte_eth_rxmode *rxmode = &dev->data->dev_conf.rxmode;
 
-	internal->vlan_strip = rxmode->hw_vlan_strip;
-
-	if (rxmode->hw_vlan_filter)
-		VHOST_LOG(WARNING,
-			"vhost(%s): vlan filtering not available\n",
-			internal->dev_name);
+	internal->vlan_strip = !!(rxmode->offloads & DEV_RX_OFFLOAD_VLAN_STRIP);
 
 	return 0;
 }
@@ -1089,6 +1083,10 @@ eth_dev_info(struct rte_eth_dev *dev,
 	dev_info->max_rx_queues = internal->max_queues;
 	dev_info->max_tx_queues = internal->max_queues;
 	dev_info->min_rx_bufsize = 0;
+
+	dev_info->tx_offload_capa = DEV_TX_OFFLOAD_MULTI_SEGS |
+				DEV_TX_OFFLOAD_VLAN_INSERT;
+	dev_info->rx_offload_capa = DEV_RX_OFFLOAD_VLAN_STRIP;
 }
 
 static int
@@ -1277,6 +1275,7 @@ eth_dev_vhost_create(struct rte_vdev_device *dev, char *iface_name,
 	data->nb_rx_queues = queues;//收队列数
 	data->nb_tx_queues = queues;//发队列数
 	internal->max_queues = queues;
+	internal->vid = -1;
 	data->dev_link = pmd_link;
 	data->mac_addrs = eth_addr;
 	data->dev_flags = RTE_ETH_DEV_INTR_LSC;
@@ -1305,6 +1304,7 @@ eth_dev_vhost_create(struct rte_vdev_device *dev, char *iface_name,
 		goto error;
 	}
 
+	rte_eth_dev_probing_finish(eth_dev);
 	return data->port_id;
 
 error:
@@ -1378,6 +1378,7 @@ rte_pmd_vhost_probe(struct rte_vdev_device *dev)
 		}
 		/* TODO: request info from primary to set up Rx and Tx */
 		eth_dev->dev_ops = &ops;
+		rte_eth_dev_probing_finish(eth_dev);
 		return 0;
 	}
 

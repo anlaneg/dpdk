@@ -287,7 +287,7 @@ enic_alloc_rx_queue_mbufs(struct enic *enic, struct vnic_rq *rq)
 		  rq->ring.desc_count);
 
 	/*
-	 * If *not* using scatter and the mbuf size is smaller than the
+	 * If *not* using scatter and the mbuf size is greater than the
 	 * requested max packet size (max_rx_pkt_len), then reduce the
 	 * posted buffer size to max_rx_pkt_len. HW still receives packets
 	 * larger than max_rx_pkt_len, but they will be truncated, which we
@@ -315,6 +315,24 @@ enic_alloc_rx_queue_mbufs(struct enic *enic, struct vnic_rq *rq)
 				rq_buf_len);
 		rq->mbuf_ring[i] = mb;
 	}
+	/*
+	 * Do not post the buffers to the NIC until we enable the RQ via
+	 * enic_start_rq().
+	 */
+	rq->need_initial_post = true;
+	return 0;
+}
+
+/*
+ * Post the Rx buffers for the first time. enic_alloc_rx_queue_mbufs() has
+ * allocated the buffers and filled the RQ descriptor ring. Just need to push
+ * the post index to the NIC.
+ */
+static void
+enic_initial_post_rx(struct enic *enic, struct vnic_rq *rq)
+{
+	if (!rq->in_use || !rq->need_initial_post)
+		return;
 
 	/* make sure all prior writes are complete before doing the PIO write */
 	rte_rmb();
@@ -329,9 +347,7 @@ enic_alloc_rx_queue_mbufs(struct enic *enic, struct vnic_rq *rq)
 	iowrite32(rq->posted_index, &rq->ctrl->posted_index);
 	iowrite32(0, &rq->ctrl->fetch_index);
 	rte_rmb();
-
-	return 0;
-
+	rq->need_initial_post = false;
 }
 
 static void *
@@ -619,10 +635,13 @@ void enic_start_rq(struct enic *enic, uint16_t queue_idx)
 	rq_data = &enic->rq[rq_sop->data_queue_idx];
 	struct rte_eth_dev *eth_dev = enic->rte_dev;
 
-	if (rq_data->in_use)
+	if (rq_data->in_use) {
 		vnic_rq_enable(rq_data);
+		enic_initial_post_rx(enic, rq_data);
+	}
 	rte_mb();
 	vnic_rq_enable(rq_sop);
+	enic_initial_post_rx(enic, rq_sop);
 	eth_dev->data->rx_queue_state[queue_idx] = RTE_ETH_QUEUE_STATE_STARTED;
 }
 
@@ -711,7 +730,7 @@ int enic_alloc_rq(struct enic *enic, uint16_t queue_idx,
 		 * See enic_alloc_rx_queue_mbufs().
 		 */
 		if (max_rx_pkt_len <
-		    enic_mtu_to_max_rx_pktlen(enic->rte_dev->data->mtu)) {
+		    enic_mtu_to_max_rx_pktlen(enic->max_mtu)) {
 			dev_warning(enic, "rxmode.max_rx_pkt_len is ignored"
 				    " when scatter rx mode is in use.\n");
 		}
@@ -1171,30 +1190,32 @@ int enic_set_rss_conf(struct enic *enic, struct rte_eth_rss_conf *rss_conf)
 	    (eth_dev->data->dev_conf.rxmode.mq_mode & ETH_MQ_RX_RSS_FLAG) &&
 	    rss_hf != 0) {
 		rss_enable = 1;
-		if (rss_hf & ETH_RSS_IPV4)
+		if (rss_hf & (ETH_RSS_IPV4 | ETH_RSS_FRAG_IPV4 |
+			      ETH_RSS_NONFRAG_IPV4_OTHER))
 			rss_hash_type |= NIC_CFG_RSS_HASH_TYPE_IPV4;
 		if (rss_hf & ETH_RSS_NONFRAG_IPV4_TCP)
 			rss_hash_type |= NIC_CFG_RSS_HASH_TYPE_TCP_IPV4;
 		if (rss_hf & ETH_RSS_NONFRAG_IPV4_UDP) {
-			/*
-			 * 'TCP' is not a typo. HW does not have a separate
-			 * enable bit for UDP RSS. The TCP bit enables both TCP
-			 * and UDP RSS..
-			 */
-			rss_hash_type |= NIC_CFG_RSS_HASH_TYPE_TCP_IPV4;
+			rss_hash_type |= NIC_CFG_RSS_HASH_TYPE_UDP_IPV4;
+			if (ENIC_SETTING(enic, RSSHASH_UDP_WEAK)) {
+				/*
+				 * 'TCP' is not a typo. The "weak" version of
+				 * UDP RSS requires both the TCP and UDP bits
+				 * be set. It does enable TCP RSS as well.
+				 */
+				rss_hash_type |= NIC_CFG_RSS_HASH_TYPE_TCP_IPV4;
+			}
 		}
-		if (rss_hf & ETH_RSS_IPV6)
+		if (rss_hf & (ETH_RSS_IPV6 | ETH_RSS_IPV6_EX |
+			      ETH_RSS_FRAG_IPV6 | ETH_RSS_NONFRAG_IPV6_OTHER))
 			rss_hash_type |= NIC_CFG_RSS_HASH_TYPE_IPV6;
-		if (rss_hf & ETH_RSS_NONFRAG_IPV6_TCP)
+		if (rss_hf & (ETH_RSS_NONFRAG_IPV6_TCP | ETH_RSS_IPV6_TCP_EX))
 			rss_hash_type |= NIC_CFG_RSS_HASH_TYPE_TCP_IPV6;
-		if (rss_hf & ETH_RSS_NONFRAG_IPV6_UDP) {
-			/* Again, 'TCP' is not a typo. */
-			rss_hash_type |= NIC_CFG_RSS_HASH_TYPE_TCP_IPV6;
+		if (rss_hf & (ETH_RSS_NONFRAG_IPV6_UDP | ETH_RSS_IPV6_UDP_EX)) {
+			rss_hash_type |= NIC_CFG_RSS_HASH_TYPE_UDP_IPV6;
+			if (ENIC_SETTING(enic, RSSHASH_UDP_WEAK))
+				rss_hash_type |= NIC_CFG_RSS_HASH_TYPE_TCP_IPV6;
 		}
-		if (rss_hf & ETH_RSS_IPV6_EX)
-			rss_hash_type |= NIC_CFG_RSS_HASH_TYPE_IPV6_EX;
-		if (rss_hf & ETH_RSS_IPV6_TCP_EX)
-			rss_hash_type |= NIC_CFG_RSS_HASH_TYPE_TCP_IPV6_EX;
 	} else {
 		rss_enable = 0;
 		rss_hf = 0;
@@ -1397,20 +1418,26 @@ int enic_set_mtu(struct enic *enic, uint16_t new_mtu)
 			"MTU (%u) is greater than value configured in NIC (%u)\n",
 			new_mtu, config_mtu);
 
-	/* The easy case is when scatter is disabled. However if the MTU
-	 * becomes greater than the mbuf data size, packet drops will ensue.
-	 */
-	if (!(enic->rte_dev->data->dev_conf.rxmode.offloads &
-	      DEV_RX_OFFLOAD_SCATTER)) {
-		eth_dev->data->mtu = new_mtu;
-		goto set_mtu_done;
-	}
+	/* Update the MTU and maximum packet length */
+	eth_dev->data->mtu = new_mtu;
+	eth_dev->data->dev_conf.rxmode.max_rx_pkt_len =
+		enic_mtu_to_max_rx_pktlen(new_mtu);
 
-	/* Rx scatter is enabled so reconfigure RQ's on the fly. The point is to
-	 * change Rx scatter mode if necessary for better performance. I.e. if
-	 * MTU was greater than the mbuf size and now it's less, scatter Rx
-	 * doesn't have to be used and vice versa.
-	  */
+	/*
+	 * If the device has not started (enic_enable), nothing to do.
+	 * Later, enic_enable() will set up RQs reflecting the new maximum
+	 * packet length.
+	 */
+	if (!eth_dev->data->dev_started)
+		goto set_mtu_done;
+
+	/*
+	 * The device has started, re-do RQs on the fly. In the process, we
+	 * pick up the new maximum packet length.
+	 *
+	 * Some applications rely on the ability to change MTU without stopping
+	 * the device. So keep this behavior for now.
+	 */
 	rte_spinlock_lock(&enic->mtu_lock);
 
 	/* Stop traffic on all RQs */
@@ -1435,8 +1462,6 @@ int enic_set_mtu(struct enic *enic, uint16_t new_mtu)
 
 	/* now it is safe to reconfigure the RQs */
 
-	/* update the mtu */
-	eth_dev->data->mtu = new_mtu;
 
 	/* free and reallocate RQs with the new MTU */
 	for (rq_idx = 0; rq_idx < enic->rq_count; rq_idx++) {

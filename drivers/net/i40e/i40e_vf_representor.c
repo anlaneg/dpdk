@@ -139,15 +139,126 @@ i40e_vf_representor_tx_queue_setup(__rte_unused struct rte_eth_dev *dev,
 	return 0;
 }
 
+static void
+i40evf_stat_update_48(uint64_t *offset,
+		   uint64_t *stat)
+{
+	if (*stat >= *offset)
+		*stat = *stat - *offset;
+	else
+		*stat = (uint64_t)((*stat +
+			((uint64_t)1 << I40E_48_BIT_WIDTH)) - *offset);
+
+	*stat &= I40E_48_BIT_MASK;
+}
+
+static void
+i40evf_stat_update_32(uint64_t *offset,
+		   uint64_t *stat)
+{
+	if (*stat >= *offset)
+		*stat = (uint64_t)(*stat - *offset);
+	else
+		*stat = (uint64_t)((*stat +
+			((uint64_t)1 << I40E_32_BIT_WIDTH)) - *offset);
+}
+
+static int
+rte_pmd_i40e_get_vf_native_stats(uint16_t port,
+			  uint16_t vf_id,
+			  struct i40e_eth_stats *stats)
+{
+	struct rte_eth_dev *dev;
+	struct i40e_pf *pf;
+	struct i40e_vsi *vsi;
+
+	RTE_ETH_VALID_PORTID_OR_ERR_RET(port, -ENODEV);
+
+	dev = &rte_eth_devices[port];
+
+	if (!is_i40e_supported(dev))
+		return -ENOTSUP;
+
+	pf = I40E_DEV_PRIVATE_TO_PF(dev->data->dev_private);
+
+	if (vf_id >= pf->vf_num || !pf->vfs) {
+		PMD_DRV_LOG(ERR, "Invalid VF ID.");
+		return -EINVAL;
+	}
+
+	vsi = pf->vfs[vf_id].vsi;
+	if (!vsi) {
+		PMD_DRV_LOG(ERR, "Invalid VSI.");
+		return -EINVAL;
+	}
+
+	i40e_update_vsi_stats(vsi);
+	memcpy(stats, &vsi->eth_stats, sizeof(vsi->eth_stats));
+
+	return 0;
+}
+
 static int
 i40e_vf_representor_stats_get(struct rte_eth_dev *ethdev,
 		struct rte_eth_stats *stats)
 {
 	struct i40e_vf_representor *representor = ethdev->data->dev_private;
+	struct i40e_eth_stats native_stats;
+	int ret;
 
-	return rte_pmd_i40e_get_vf_stats(
+	ret = rte_pmd_i40e_get_vf_native_stats(
 		representor->adapter->eth_dev->data->port_id,
-		representor->vf_id, stats);
+		representor->vf_id, &native_stats);
+	if (ret == 0) {
+		i40evf_stat_update_48(
+			&representor->stats_offset.rx_bytes,
+			&native_stats.rx_bytes);
+		i40evf_stat_update_48(
+			&representor->stats_offset.rx_unicast,
+			&native_stats.rx_unicast);
+		i40evf_stat_update_48(
+			&representor->stats_offset.rx_multicast,
+			&native_stats.rx_multicast);
+		i40evf_stat_update_48(
+			&representor->stats_offset.rx_broadcast,
+			&native_stats.rx_broadcast);
+		i40evf_stat_update_32(
+			&representor->stats_offset.rx_discards,
+			&native_stats.rx_discards);
+		i40evf_stat_update_32(
+			&representor->stats_offset.rx_unknown_protocol,
+			&native_stats.rx_unknown_protocol);
+		i40evf_stat_update_48(
+			&representor->stats_offset.tx_bytes,
+			&native_stats.tx_bytes);
+		i40evf_stat_update_48(
+			&representor->stats_offset.tx_unicast,
+			&native_stats.tx_unicast);
+		i40evf_stat_update_48(
+			&representor->stats_offset.tx_multicast,
+			&native_stats.tx_multicast);
+		i40evf_stat_update_48(
+			&representor->stats_offset.tx_broadcast,
+			&native_stats.tx_broadcast);
+		i40evf_stat_update_32(
+			&representor->stats_offset.tx_errors,
+			&native_stats.tx_errors);
+		i40evf_stat_update_32(
+			&representor->stats_offset.tx_discards,
+			&native_stats.tx_discards);
+
+		stats->ipackets = native_stats.rx_unicast +
+			native_stats.rx_multicast +
+			native_stats.rx_broadcast;
+		stats->opackets = native_stats.tx_unicast +
+			native_stats.tx_multicast +
+			native_stats.tx_broadcast;
+		stats->ibytes   = native_stats.rx_bytes;
+		stats->obytes   = native_stats.tx_bytes;
+		stats->ierrors  = native_stats.rx_discards;
+		stats->oerrors  = native_stats.tx_errors + native_stats.tx_discards;
+	}
+	return ret;
 }
 
 static void
@@ -155,9 +266,9 @@ i40e_vf_representor_stats_reset(struct rte_eth_dev *ethdev)
 {
 	struct i40e_vf_representor *representor = ethdev->data->dev_private;
 
-	rte_pmd_i40e_reset_vf_stats(
+	rte_pmd_i40e_get_vf_native_stats(
 		representor->adapter->eth_dev->data->port_id,
-		representor->vf_id);
+		representor->vf_id, &representor->stats_offset);
 }
 
 static void
@@ -267,7 +378,8 @@ i40e_vf_representor_vlan_offload_set(struct rte_eth_dev *ethdev, int mask)
 
 	if (mask & ETH_VLAN_FILTER_MASK) {
 		/* Enable or disable VLAN filtering offload */
-		if (ethdev->data->dev_conf.rxmode.hw_vlan_filter)
+		if (ethdev->data->dev_conf.rxmode.offloads &
+		    DEV_RX_OFFLOAD_VLAN_FILTER)
 			return i40e_vsi_config_vlan_filter(vsi, TRUE);
 		else
 			return i40e_vsi_config_vlan_filter(vsi, FALSE);
@@ -275,7 +387,8 @@ i40e_vf_representor_vlan_offload_set(struct rte_eth_dev *ethdev, int mask)
 
 	if (mask & ETH_VLAN_STRIP_MASK) {
 		/* Enable or disable VLAN stripping offload */
-		if (ethdev->data->dev_conf.rxmode.hw_vlan_strip)
+		if (ethdev->data->dev_conf.rxmode.offloads &
+		    DEV_RX_OFFLOAD_VLAN_STRIP)
 			return i40e_vsi_config_vlan_stripping(vsi, TRUE);
 		else
 			return i40e_vsi_config_vlan_stripping(vsi, FALSE);
@@ -337,6 +450,20 @@ struct eth_dev_ops i40e_representor_dev_ops = {
 
 };
 
+static uint16_t
+i40e_vf_representor_rx_burst(__rte_unused void *rx_queue,
+	__rte_unused struct rte_mbuf **rx_pkts, __rte_unused uint16_t nb_pkts)
+{
+	return 0;
+}
+
+static uint16_t
+i40e_vf_representor_tx_burst(__rte_unused void *tx_queue,
+	__rte_unused struct rte_mbuf **tx_pkts, __rte_unused uint16_t nb_pkts)
+{
+	return 0;
+}
+
 int
 i40e_vf_representor_init(struct rte_eth_dev *ethdev, void *init_params)
 {
@@ -365,9 +492,11 @@ i40e_vf_representor_init(struct rte_eth_dev *ethdev, void *init_params)
 	/* Set representor device ops */
 	ethdev->dev_ops = &i40e_representor_dev_ops;
 
-	/* No data-path so no RX/TX functions */
-	ethdev->rx_pkt_burst = NULL;
-	ethdev->tx_pkt_burst = NULL;
+	/* No data-path, but need stub Rx/Tx functions to avoid crash
+	 * when testing with the likes of testpmd.
+	 */
+	ethdev->rx_pkt_burst = i40e_vf_representor_rx_burst;
+	ethdev->tx_pkt_burst = i40e_vf_representor_tx_burst;
 
 	vf = &pf->vfs[representor->vf_id];
 

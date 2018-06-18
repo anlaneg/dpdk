@@ -1,7 +1,7 @@
 /*
- * Copyright (c) 2016 QLogic Corporation.
+ * Copyright (c) 2016 - 2018 Cavium Inc.
  * All rights reserved.
- * www.qlogic.com
+ * www.cavium.com
  *
  * See LICENSE.qede_pmd for copyright and licensing details.
  */
@@ -2514,7 +2514,7 @@ enum _ecore_status_t ecore_hw_init(struct ecore_dev *p_dev,
 		}
 
 		/* Log and clean previous pglue_b errors if such exist */
-		ecore_pglueb_rbc_attn_handler(p_hwfn, p_hwfn->p_main_ptt);
+		ecore_pglueb_rbc_attn_handler(p_hwfn, p_hwfn->p_main_ptt, true);
 		ecore_pglueb_clear_err(p_hwfn, p_hwfn->p_main_ptt);
 
 		/* Enable the PF's internal FID_enable in the PXP */

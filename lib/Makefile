@@ -31,8 +31,12 @@ DIRS-$(CONFIG_RTE_LIBRTE_SECURITY) += librte_security
 DEPDIRS-librte_security := librte_eal librte_mempool librte_ring librte_mbuf
 DEPDIRS-librte_security += librte_ethdev
 DEPDIRS-librte_security += librte_cryptodev
+DIRS-$(CONFIG_RTE_LIBRTE_COMPRESSDEV) += librte_compressdev
+DEPDIRS-librte_compressdev := librte_eal librte_mempool librte_ring librte_mbuf
+DEPDIRS-librte_compressdev += librte_kvargs
 DIRS-$(CONFIG_RTE_LIBRTE_EVENTDEV) += librte_eventdev
-DEPDIRS-librte_eventdev := librte_eal librte_ring librte_ethdev librte_hash librte_mempool librte_timer
+DEPDIRS-librte_eventdev := librte_eal librte_ring librte_ethdev librte_hash \
+                           librte_mempool librte_timer librte_cryptodev
 DIRS-$(CONFIG_RTE_LIBRTE_RAWDEV) += librte_rawdev
 DEPDIRS-librte_rawdev := librte_eal librte_ethdev
 DIRS-$(CONFIG_RTE_LIBRTE_VHOST) += librte_vhost
@@ -98,6 +102,8 @@ DEPDIRS-librte_pdump := librte_eal librte_mempool librte_mbuf librte_ethdev
 DIRS-$(CONFIG_RTE_LIBRTE_GSO) += librte_gso
 DEPDIRS-librte_gso := librte_eal librte_mbuf librte_ethdev librte_net
 DEPDIRS-librte_gso += librte_mempool
+DIRS-$(CONFIG_RTE_LIBRTE_BPF) += librte_bpf
+DEPDIRS-librte_bpf := librte_eal librte_mempool librte_mbuf librte_ethdev
 
 ifeq ($(CONFIG_RTE_EXEC_ENV_LINUXAPP),y)
 DIRS-$(CONFIG_RTE_LIBRTE_KNI) += librte_kni

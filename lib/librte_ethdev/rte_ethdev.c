@@ -10,6 +10,7 @@
 #include <string.h>
 #include <stdarg.h>
 #include <errno.h>
+#include <stdbool.h>
 #include <stdint.h>
 #include <inttypes.h>
 #include <netinet/in.h>
@@ -49,7 +50,7 @@ static int ethdev_logtype;
 static const char *MZ_RTE_ETH_DEV_DATA = "rte_eth_dev_data";
 //网络设备对象（用于管理按口编号等）
 struct rte_eth_dev rte_eth_devices[RTE_MAX_ETHPORTS];
-static uint8_t eth_dev_last_created_port;
+static uint16_t eth_dev_last_created_port;
 
 /* spinlock for eth device callbacks */
 static rte_spinlock_t rte_eth_dev_cb_lock = RTE_SPINLOCK_INITIALIZER;
@@ -229,18 +230,40 @@ rte_eth_dev_shared_data_prepare(void)
 	rte_spinlock_unlock(&rte_eth_shared_data_lock);
 }
 
+static bool
+is_allocated(const struct rte_eth_dev *ethdev)
+{
+	return ethdev->data->name[0] != '\0';
+}
+
 //给定eth设备名称，获取其对应的ret_eth-devices结构体
-struct rte_eth_dev *
-rte_eth_dev_allocated(const char *name)
+static struct rte_eth_dev *
+_rte_eth_dev_allocated(const char *name)
 {
 	unsigned i;
 
 	for (i = 0; i < RTE_MAX_ETHPORTS; i++) {
-		if ((rte_eth_devices[i].state == RTE_ETH_DEV_ATTACHED) &&
+		if (rte_eth_devices[i].data != NULL &&
 		    strcmp(rte_eth_devices[i].data->name, name) == 0)
 			return &rte_eth_devices[i];
 	}
 	return NULL;
+}
+
+struct rte_eth_dev *
+rte_eth_dev_allocated(const char *name)
+{
+	struct rte_eth_dev *ethdev;
+
+	rte_eth_dev_shared_data_prepare();
+
+	rte_spinlock_lock(&rte_eth_dev_shared_data->ownership_lock);
+
+	ethdev = _rte_eth_dev_allocated(name);
+
+	rte_spinlock_unlock(&rte_eth_dev_shared_data->ownership_lock);
+
+	return ethdev;
 }
 
 //分配空闲的eth-dev
@@ -266,7 +289,6 @@ eth_dev_get(uint16_t port_id)
 	struct rte_eth_dev *eth_dev = &rte_eth_devices[port_id];
 
 	eth_dev->data = &rte_eth_dev_shared_data->data[port_id];
-	eth_dev->state = RTE_ETH_DEV_ATTACHED;//标记占用
 
 	eth_dev_last_created_port = port_id;
 
@@ -284,20 +306,18 @@ rte_eth_dev_allocate(const char *name)
 	/* Synchronize port creation between primary and secondary threads. */
 	rte_spinlock_lock(&rte_eth_dev_shared_data->ownership_lock);
 
+	if (_rte_eth_dev_allocated(name) != NULL) {
+		//如果name已有对应的eth-dev结构，则报错
+		ethdev_log(ERR, "Ethernet device with name %s already allocated",
+				name);
+		goto unlock;
+	}
+
 	//分配空间的端口号（对应的eth-dev对象）
 	port_id = rte_eth_dev_find_free_port();
 	if (port_id == RTE_MAX_ETHPORTS) {
 		//无空闲节点可分配
 		ethdev_log(ERR, "Reached maximum number of Ethernet ports");
-		goto unlock;
-	}
-
-	//分配空间
-	if (rte_eth_dev_allocated(name) != NULL) {
-		//如果name已有对应的eth-dev结构，则报错
-		ethdev_log(ERR,
-			"Ethernet Device with name %s already allocated!",
-			name);
 		goto unlock;
 	}
 
@@ -308,9 +328,6 @@ rte_eth_dev_allocate(const char *name)
 
 unlock:
 	rte_spinlock_unlock(&rte_eth_dev_shared_data->ownership_lock);
-
-	if (eth_dev != NULL)
-		_rte_eth_dev_callback_process(eth_dev, RTE_ETH_EVENT_NEW, NULL);
 
 	return eth_dev;
 }
@@ -356,6 +373,8 @@ rte_eth_dev_release_port(struct rte_eth_dev *eth_dev)
 
 	rte_eth_dev_shared_data_prepare();
 
+	_rte_eth_dev_callback_process(eth_dev, RTE_ETH_EVENT_DESTROY, NULL);
+
 	rte_spinlock_lock(&rte_eth_dev_shared_data->ownership_lock);
 
 	eth_dev->state = RTE_ETH_DEV_UNUSED;
@@ -363,8 +382,6 @@ rte_eth_dev_release_port(struct rte_eth_dev *eth_dev)
 	memset(eth_dev->data, 0, sizeof(struct rte_eth_dev_data));
 
 	rte_spinlock_unlock(&rte_eth_dev_shared_data->ownership_lock);
-
-	_rte_eth_dev_callback_process(eth_dev, RTE_ETH_EVENT_DESTROY, NULL);
 
 	return 0;
 }
@@ -385,7 +402,7 @@ rte_eth_is_valid_owner_id(uint64_t owner_id)
 {
 	if (owner_id == RTE_ETH_DEV_NO_OWNER ||
 	    rte_eth_dev_shared_data->next_owner_id <= owner_id) {
-		RTE_PMD_DEBUG_TRACE("Invalid owner_id=%016lX.\n", owner_id);
+		RTE_PMD_DEBUG_TRACE("Invalid owner_id=%016"PRIX64".\n", owner_id);
 		return 0;
 	}
 	return 1;
@@ -423,10 +440,14 @@ static int
 _rte_eth_dev_owner_set(const uint16_t port_id, const uint64_t old_owner_id,
 		       const struct rte_eth_dev_owner *new_owner)
 {
+	struct rte_eth_dev *ethdev = &rte_eth_devices[port_id];
 	struct rte_eth_dev_owner *port_owner;
 	int sret;
 
-	RTE_ETH_VALID_PORTID_OR_ERR_RET(port_id, -ENODEV);
+	if (port_id >= RTE_MAX_ETHPORTS || !is_allocated(ethdev)) {
+		RTE_PMD_DEBUG_TRACE("Port id %"PRIu16" is not allocated.\n", port_id);
+		return -ENODEV;
+	}
 
 	if (!rte_eth_is_valid_owner_id(new_owner->id) &&
 	    !rte_eth_is_valid_owner_id(old_owner_id))
@@ -435,7 +456,7 @@ _rte_eth_dev_owner_set(const uint16_t port_id, const uint64_t old_owner_id,
 	port_owner = &rte_eth_devices[port_id].data->owner;
 	if (port_owner->id != old_owner_id) {
 		RTE_PMD_DEBUG_TRACE("Cannot set owner to port %d already owned"
-				    " by %s_%016lX.\n", port_id,
+				    " by %s_%016"PRIX64".\n", port_id,
 				    port_owner->name, port_owner->id);
 		return -EPERM;
 	}
@@ -448,7 +469,7 @@ _rte_eth_dev_owner_set(const uint16_t port_id, const uint64_t old_owner_id,
 
 	port_owner->id = new_owner->id;
 
-	RTE_PMD_DEBUG_TRACE("Port %d owner is %s_%016lX.\n", port_id,
+	RTE_PMD_DEBUG_TRACE("Port %d owner is %s_%016"PRIX64".\n", port_id,
 			    new_owner->name, new_owner->id);
 
 	return 0;
@@ -497,11 +518,12 @@ rte_eth_dev_owner_delete(const uint64_t owner_id)
 	rte_spinlock_lock(&rte_eth_dev_shared_data->ownership_lock);
 
 	if (rte_eth_is_valid_owner_id(owner_id)) {
-		RTE_ETH_FOREACH_DEV_OWNED_BY(port_id, owner_id)
-			memset(&rte_eth_devices[port_id].data->owner, 0,
-			       sizeof(struct rte_eth_dev_owner));
-		RTE_PMD_DEBUG_TRACE("All port owners owned by %016X identifier"
-				    " have removed.\n", owner_id);
+		for (port_id = 0; port_id < RTE_MAX_ETHPORTS; port_id++)
+			if (rte_eth_devices[port_id].data->owner.id == owner_id)
+				memset(&rte_eth_devices[port_id].data->owner, 0,
+				       sizeof(struct rte_eth_dev_owner));
+		RTE_PMD_DEBUG_TRACE("All port owners owned by %016"PRIX64
+				" identifier have removed.\n", owner_id);
 	}
 
 	rte_spinlock_unlock(&rte_eth_dev_shared_data->ownership_lock);
@@ -511,17 +533,17 @@ int __rte_experimental
 rte_eth_dev_owner_get(const uint16_t port_id, struct rte_eth_dev_owner *owner)
 {
 	int ret = 0;
+	struct rte_eth_dev *ethdev = &rte_eth_devices[port_id];
 
 	rte_eth_dev_shared_data_prepare();
 
 	rte_spinlock_lock(&rte_eth_dev_shared_data->ownership_lock);
 
-	if (!rte_eth_dev_is_valid_port(port_id)) {
-		RTE_PMD_DEBUG_TRACE("Invalid port_id=%d\n", port_id);
+	if (port_id >= RTE_MAX_ETHPORTS || !is_allocated(ethdev)) {
+		RTE_PMD_DEBUG_TRACE("Port id %"PRIu16" is not allocated.\n", port_id);
 		ret = -ENODEV;
 	} else {
-		rte_memcpy(owner, &rte_eth_devices[port_id].data->owner,
-			   sizeof(*owner));
+		rte_memcpy(owner, &ethdev->data->owner, sizeof(*owner));
 	}
 
 	rte_spinlock_unlock(&rte_eth_dev_shared_data->ownership_lock);
@@ -1057,7 +1079,9 @@ rte_eth_dev_configure(uint16_t port_id, uint16_t nb_rx_q, uint16_t nb_tx_q,
 	dev = &rte_eth_devices[port_id];
 
 	RTE_FUNC_PTR_OR_ERR_RET(*dev->dev_ops->dev_infos_get, -ENOTSUP);
-	(*dev->dev_ops->dev_infos_get)(dev, &dev_info);
+	RTE_FUNC_PTR_OR_ERR_RET(*dev->dev_ops->dev_configure, -ENOTSUP);
+
+	rte_eth_dev_info_get(port_id, &dev_info);
 
 	/* If number of queues specified by application for both Rx and Tx is
 	 * zero, use driver preferred values. This cannot be done individually
@@ -1087,9 +1111,6 @@ rte_eth_dev_configure(uint16_t port_id, uint16_t nb_rx_q, uint16_t nb_tx_q,
 			nb_tx_q, RTE_MAX_QUEUES_PER_PORT);
 		return -EINVAL;
 	}
-
-	RTE_FUNC_PTR_OR_ERR_RET(*dev->dev_ops->dev_infos_get, -ENOTSUP);
-	RTE_FUNC_PTR_OR_ERR_RET(*dev->dev_ops->dev_configure, -ENOTSUP);
 
 	if (dev->data->dev_started) {
 		RTE_PMD_DEBUG_TRACE(
@@ -1168,6 +1189,30 @@ rte_eth_dev_configure(uint16_t port_id, uint16_t nb_rx_q, uint16_t nb_tx_q,
 			/* Use default value */
 			dev->data->dev_conf.rxmode.max_rx_pkt_len =
 							ETHER_MAX_LEN;
+	}
+
+	/* Any requested offloading must be within its device capabilities */
+	if ((local_conf.rxmode.offloads & dev_info.rx_offload_capa) !=
+	     local_conf.rxmode.offloads) {
+		ethdev_log(ERR, "ethdev port_id=%d requested Rx offloads "
+				"0x%" PRIx64 " doesn't match Rx offloads "
+				"capabilities 0x%" PRIx64 " in %s()\n",
+				port_id,
+				local_conf.rxmode.offloads,
+				dev_info.rx_offload_capa,
+				__func__);
+		/* Will return -EINVAL in the next release */
+	}
+	if ((local_conf.txmode.offloads & dev_info.tx_offload_capa) !=
+	     local_conf.txmode.offloads) {
+		ethdev_log(ERR, "ethdev port_id=%d requested Tx offloads "
+				"0x%" PRIx64 " doesn't match Tx offloads "
+				"capabilities 0x%" PRIx64 " in %s()\n",
+				port_id,
+				local_conf.txmode.offloads,
+				dev_info.tx_offload_capa,
+				__func__);
+		/* Will return -EINVAL in the next release */
 	}
 
 	/* Check that device supports requested rss hash functions. */
@@ -1515,8 +1560,9 @@ rte_eth_rx_queue_setup(uint16_t port_id, uint16_t rx_queue_id,
 			RTE_ETH_DEV_CAPA_RUNTIME_RX_QUEUE_SETUP))
 		return -EBUSY;
 
-	if (dev->data->rx_queue_state[rx_queue_id] !=
-		RTE_ETH_QUEUE_STATE_STOPPED)
+	if (dev->data->dev_started &&
+		(dev->data->rx_queue_state[rx_queue_id] !=
+			RTE_ETH_QUEUE_STATE_STOPPED))
 		return -EBUSY;
 
 	rxq = dev->data->rx_queues;
@@ -1540,6 +1586,38 @@ rte_eth_rx_queue_setup(uint16_t port_id, uint16_t rx_queue_id,
 						    &local_conf.offloads);
 	}
 
+	/*
+	 * If an offloading has already been enabled in
+	 * rte_eth_dev_configure(), it has been enabled on all queues,
+	 * so there is no need to enable it in this queue again.
+	 * The local_conf.offloads input to underlying PMD only carries
+	 * those offloadings which are only enabled on this queue and
+	 * not enabled on all queues.
+	 */
+	local_conf.offloads &= ~dev->data->dev_conf.rxmode.offloads;
+
+	/*
+	 * New added offloadings for this queue are those not enabled in
+	 * rte_eth_dev_configure() and they must be per-queue type.
+	 * A pure per-port offloading can't be enabled on a queue while
+	 * disabled on another queue. A pure per-port offloading can't
+	 * be enabled for any queue as new added one if it hasn't been
+	 * enabled in rte_eth_dev_configure().
+	 */
+	if ((local_conf.offloads & dev_info.rx_queue_offload_capa) !=
+	     local_conf.offloads) {
+		ethdev_log(ERR, "Ethdev port_id=%d rx_queue_id=%d, new "
+				"added offloads 0x%" PRIx64 " must be "
+				"within pre-queue offload capabilities 0x%"
+				PRIx64 " in %s()\n",
+				port_id,
+				rx_queue_id,
+				local_conf.offloads,
+				dev_info.rx_queue_offload_capa,
+				__func__);
+		/* Will return -EINVAL in the next release */
+	}
+
 	ret = (*dev->dev_ops->rx_queue_setup)(dev, rx_queue_id, nb_rx_desc,
 					      socket_id, &local_conf, mp);
 	if (!ret) {
@@ -1549,6 +1627,30 @@ rte_eth_rx_queue_setup(uint16_t port_id, uint16_t rx_queue_id,
 	}
 
 	return eth_err(port_id, ret);
+}
+
+/**
+ * Convert from tx offloads to txq_flags.
+ */
+static void
+rte_eth_convert_tx_offload(const uint64_t tx_offloads, uint32_t *txq_flags)
+{
+	uint32_t flags = 0;
+
+	if (!(tx_offloads & DEV_TX_OFFLOAD_MULTI_SEGS))
+		flags |= ETH_TXQ_FLAGS_NOMULTSEGS;
+	if (!(tx_offloads & DEV_TX_OFFLOAD_VLAN_INSERT))
+		flags |= ETH_TXQ_FLAGS_NOVLANOFFL;
+	if (!(tx_offloads & DEV_TX_OFFLOAD_SCTP_CKSUM))
+		flags |= ETH_TXQ_FLAGS_NOXSUMSCTP;
+	if (!(tx_offloads & DEV_TX_OFFLOAD_UDP_CKSUM))
+		flags |= ETH_TXQ_FLAGS_NOXSUMUDP;
+	if (!(tx_offloads & DEV_TX_OFFLOAD_TCP_CKSUM))
+		flags |= ETH_TXQ_FLAGS_NOXSUMTCP;
+	if (tx_offloads & DEV_TX_OFFLOAD_MBUF_FAST_FREE)
+		flags |= ETH_TXQ_FLAGS_NOREFCOUNT | ETH_TXQ_FLAGS_NOMULTMEMP;
+
+	*txq_flags = flags;
 }
 
 /**
@@ -1627,8 +1729,9 @@ rte_eth_tx_queue_setup(uint16_t port_id, uint16_t tx_queue_id,
 			RTE_ETH_DEV_CAPA_RUNTIME_TX_QUEUE_SETUP))
 		return -EBUSY;
 
-	if (dev->data->tx_queue_state[tx_queue_id] !=
-		RTE_ETH_QUEUE_STATE_STOPPED)
+	if (dev->data->dev_started &&
+		(dev->data->tx_queue_state[tx_queue_id] !=
+			RTE_ETH_QUEUE_STATE_STOPPED))
 		return -EBUSY;
 
 	txq = dev->data->tx_queues;
@@ -1652,6 +1755,38 @@ rte_eth_tx_queue_setup(uint16_t port_id, uint16_t tx_queue_id,
 	if (!(tx_conf->txq_flags & ETH_TXQ_FLAGS_IGNORE)) {
 		rte_eth_convert_txq_flags(tx_conf->txq_flags,
 					  &local_conf.offloads);
+	}
+
+	/*
+	 * If an offloading has already been enabled in
+	 * rte_eth_dev_configure(), it has been enabled on all queues,
+	 * so there is no need to enable it in this queue again.
+	 * The local_conf.offloads input to underlying PMD only carries
+	 * those offloadings which are only enabled on this queue and
+	 * not enabled on all queues.
+	 */
+	local_conf.offloads &= ~dev->data->dev_conf.txmode.offloads;
+
+	/*
+	 * New added offloadings for this queue are those not enabled in
+	 * rte_eth_dev_configure() and they must be per-queue type.
+	 * A pure per-port offloading can't be enabled on a queue while
+	 * disabled on another queue. A pure per-port offloading can't
+	 * be enabled for any queue as new added one if it hasn't been
+	 * enabled in rte_eth_dev_configure().
+	 */
+	if ((local_conf.offloads & dev_info.tx_queue_offload_capa) !=
+	     local_conf.offloads) {
+		ethdev_log(ERR, "Ethdev port_id=%d tx_queue_id=%d, new "
+				"added offloads 0x%" PRIx64 " must be "
+				"within pre-queue offload capabilities 0x%"
+				PRIx64 " in %s()\n",
+				port_id,
+				tx_queue_id,
+				local_conf.offloads,
+				dev_info.tx_queue_offload_capa,
+				__func__);
+		/* Will return -EINVAL in the next release */
 	}
 
 	//创建tx队列tx_queue_id,队列的发送描述符nb_tx_desc,内存位置socket_id
@@ -2406,6 +2541,7 @@ void
 rte_eth_dev_info_get(uint16_t port_id, struct rte_eth_dev_info *dev_info)
 {
 	struct rte_eth_dev *dev;
+	struct rte_eth_txconf *txconf;
 	const struct rte_eth_desc_lim lim = {
 		.nb_max = UINT16_MAX,
 		.nb_min = 0,
@@ -2427,6 +2563,9 @@ rte_eth_dev_info_get(uint16_t port_id, struct rte_eth_dev_info *dev_info)
 	dev_info->nb_tx_queues = dev->data->nb_tx_queues;
 
 	dev_info->dev_flags = &dev->data->dev_flags;
+	txconf = &dev_info->default_txconf;
+	/* convert offload to txq_flags to support legacy app */
+	rte_eth_convert_tx_offload(txconf->offloads, &txconf->txq_flags);
 }
 
 int
@@ -3388,6 +3527,17 @@ _rte_eth_dev_callback_process(struct rte_eth_dev *dev,
 	return rc;
 }
 
+void
+rte_eth_dev_probing_finish(struct rte_eth_dev *dev)
+{
+	if (dev == NULL)
+		return;
+
+	_rte_eth_dev_callback_process(dev, RTE_ETH_EVENT_NEW, NULL);
+
+	dev->state = RTE_ETH_DEV_ATTACHED;
+}
+
 int
 rte_eth_dev_rx_intr_ctl(uint16_t port_id, int epfd, int op, void *data)
 {
@@ -3501,6 +3651,8 @@ rte_eth_dev_create(struct rte_device *device, const char *name,
 		RTE_LOG(ERR, EAL, "ethdev initialisation failed");
 		goto probe_failed;
 	}
+
+	rte_eth_dev_probing_finish(ethdev);
 
 	return retval;
 probe_failed:
@@ -3854,6 +4006,7 @@ rte_eth_tx_queue_info_get(uint16_t port_id, uint16_t queue_id,
 	struct rte_eth_txq_info *qinfo)
 {
 	struct rte_eth_dev *dev;
+	struct rte_eth_txconf *txconf = &qinfo->conf;
 
 	RTE_ETH_VALID_PORTID_OR_ERR_RET(port_id, -ENODEV);
 
@@ -3870,6 +4023,9 @@ rte_eth_tx_queue_info_get(uint16_t port_id, uint16_t queue_id,
 
 	memset(qinfo, 0, sizeof(*qinfo));
 	dev->dev_ops->txq_info_get(dev, queue_id, qinfo);
+	/* convert offload to txq_flags to support legacy app */
+	rte_eth_convert_tx_offload(txconf->offloads, &txconf->txq_flags);
+
 	return 0;
 }
 

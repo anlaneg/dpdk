@@ -48,17 +48,10 @@ mlx5_txq_start(struct rte_eth_dev *dev)
 
 	/* Add memory regions to Tx queues. */
 	for (i = 0; i != priv->txqs_n; ++i) {
-		unsigned int idx = 0;
-		struct mlx5_mr *mr;
 		struct mlx5_txq_ctrl *txq_ctrl = mlx5_txq_get(dev, i);
 
 		if (!txq_ctrl)
 			continue;
-		LIST_FOREACH(mr, &priv->mr, next) {
-			mlx5_txq_mp2mr_reg(&txq_ctrl->txq, mr->mp, idx++);
-			if (idx == MLX5_PMD_TX_MP_CACHE)
-				break;
-		}
 		txq_alloc_elts(txq_ctrl);
 		txq_ctrl->ibv = mlx5_txq_ibv_new(dev, i);
 		if (!txq_ctrl->ibv) {
@@ -109,11 +102,24 @@ mlx5_rxq_start(struct rte_eth_dev *dev)
 	unsigned int i;
 	int ret = 0;
 
+	/* Allocate/reuse/resize mempool for Multi-Packet RQ. */
+	if (mlx5_mprq_alloc_mp(dev))
+		goto error;
 	for (i = 0; i != priv->rxqs_n; ++i) {
 		struct mlx5_rxq_ctrl *rxq_ctrl = mlx5_rxq_get(dev, i);
+		struct rte_mempool *mp;
 
 		if (!rxq_ctrl)
 			continue;
+		/* Pre-register Rx mempool. */
+		mp = mlx5_rxq_mprq_enabled(&rxq_ctrl->rxq) ?
+		     rxq_ctrl->rxq.mprq_mp : rxq_ctrl->rxq.mp;
+		DRV_LOG(DEBUG,
+			"port %u Rx queue %u registering"
+			" mp %s having %u chunks",
+			dev->data->port_id, rxq_ctrl->idx,
+			mp->name, mp->nb_mem_chunks);
+		mlx5_mr_update_mp(dev, &rxq_ctrl->rxq.mr_ctrl, mp);
 		ret = rxq_alloc_elts(rxq_ctrl);
 		if (ret)
 			goto error;
@@ -144,13 +150,11 @@ int
 mlx5_dev_start(struct rte_eth_dev *dev)
 {
 	struct priv *priv = dev->data->dev_private;
-	struct mlx5_mr *mr = NULL;
 	int ret;
 
 	dev->data->dev_started = 1;
 	DRV_LOG(DEBUG, "port %u allocating and configuring hash Rx queues",
 		dev->data->port_id);
-	rte_mempool_walk(mlx5_mp2mr_iter, priv);
 	ret = mlx5_txq_start(dev);
 	if (ret) {
 		DRV_LOG(ERR, "port %u Tx queue allocation failed: %s",
@@ -163,6 +167,8 @@ mlx5_dev_start(struct rte_eth_dev *dev)
 			dev->data->port_id, strerror(rte_errno));
 		goto error;
 	}
+	if (rte_log_get_level(mlx5_logtype) == RTE_LOG_DEBUG)
+		mlx5_mr_dump_dev(dev);
 	ret = mlx5_rx_intr_vec_enable(dev);
 	if (ret) {
 		DRV_LOG(ERR, "port %u Rx interrupt vector creation failed",
@@ -190,8 +196,6 @@ error:
 	ret = rte_errno; /* Save rte_errno before cleanup. */
 	/* Rollback. */
 	dev->data->dev_started = 0;
-	for (mr = LIST_FIRST(&priv->mr); mr; mr = LIST_FIRST(&priv->mr))
-		mlx5_mr_release(mr);
 	mlx5_flow_stop(dev, &priv->flows);
 	mlx5_traffic_disable(dev);
 	mlx5_txq_stop(dev);
@@ -212,7 +216,6 @@ void
 mlx5_dev_stop(struct rte_eth_dev *dev)
 {
 	struct priv *priv = dev->data->dev_private;
-	struct mlx5_mr *mr;
 
 	dev->data->dev_started = 0;
 	/* Prevent crashes when queues are still in use. */
@@ -228,8 +231,6 @@ mlx5_dev_stop(struct rte_eth_dev *dev)
 	mlx5_dev_interrupt_handler_uninstall(dev);
 	mlx5_txq_stop(dev);
 	mlx5_rxq_stop(dev);
-	for (mr = LIST_FIRST(&priv->mr); mr; mr = LIST_FIRST(&priv->mr))
-		mlx5_mr_release(mr);
 }
 
 /**

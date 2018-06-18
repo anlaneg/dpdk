@@ -336,7 +336,7 @@ efx_intr_fini(
 
 #if EFSYS_OPT_MAC_STATS
 
-/* START MKCONFIG GENERATED EfxHeaderMacBlock 7d59c0d68431a5d1 */
+/* START MKCONFIG GENERATED EfxHeaderMacBlock ea466a9bc8789994 */
 typedef enum efx_mac_stat_e {
 	EFX_MAC_RX_OCTETS,
 	EFX_MAC_RX_PKTS,
@@ -441,6 +441,9 @@ typedef enum efx_mac_stat_e {
 	EFX_MAC_CTPIO_FALLBACK,
 	EFX_MAC_CTPIO_POISON,
 	EFX_MAC_CTPIO_ERASE,
+	EFX_MAC_RXDP_SCATTER_DISABLED_TRUNC,
+	EFX_MAC_RXDP_HLB_IDLE,
+	EFX_MAC_RXDP_HLB_TIMEOUT,
 	EFX_MAC_NSTATS
 } efx_mac_stat_t;
 
@@ -1293,6 +1296,7 @@ typedef struct efx_nic_cfg_s {
 	/* Firmware support for extended MAC_STATS buffer */
 	uint32_t		enc_mac_stats_nstats;
 	boolean_t		enc_fec_counters;
+	boolean_t		enc_hlb_counters;
 	/* Firmware support for "FLAG" and "MARK" filter actions */
 	boolean_t		enc_filter_action_flag_supported;
 	boolean_t		enc_filter_action_mark_supported;

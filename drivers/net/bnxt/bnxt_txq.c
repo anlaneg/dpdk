@@ -19,16 +19,17 @@
 
 void bnxt_free_txq_stats(struct bnxt_tx_queue *txq)
 {
-	struct bnxt_cp_ring_info *cpr = txq->cp_ring;
-
-	if (cpr->hw_stats)
-		cpr->hw_stats = NULL;
+	if (txq && txq->cp_ring && txq->cp_ring->hw_stats)
+		txq->cp_ring->hw_stats = NULL;
 }
 
 static void bnxt_tx_queue_release_mbufs(struct bnxt_tx_queue *txq)
 {
 	struct bnxt_sw_tx_bd *sw_ring;
 	uint16_t i;
+
+	if (!txq)
+		return;
 
 	sw_ring = txq->tx_ring->tx_buf_ring;
 	if (sw_ring) {
@@ -86,7 +87,7 @@ int bnxt_tx_queue_setup_op(struct rte_eth_dev *eth_dev,
 		PMD_DRV_LOG(ERR,
 			"Cannot create Tx ring %d. Only %d rings available\n",
 			queue_idx, bp->max_tx_rings);
-		return -ENOSPC;
+		return -EINVAL;
 	}
 
 	if (!nb_desc || nb_desc > MAX_TX_DESC_CNT) {

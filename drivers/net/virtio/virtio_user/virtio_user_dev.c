@@ -17,6 +17,8 @@
 #include "virtio_user_dev.h"
 #include "../virtio_ethdev.h"
 
+#define VIRTIO_USER_MEM_EVENT_CLB_NAME "virtio_user_mem_event_clb"
+
 static int
 virtio_user_create_queue(struct virtio_user_dev *dev, uint32_t queue_sel)
 {
@@ -110,8 +112,10 @@ virtio_user_start_device(struct virtio_user_dev *dev)
 	uint64_t features;
 	int ret;
 
+	pthread_mutex_lock(&dev->mutex);
+
 	if (is_vhost_user_by_type(dev->path) && dev->vhostfd < 0)
-		return -1;
+		goto error;
 
 	/* Do not check return as already done in init, or reset in stop */
 	dev->ops->send_request(dev, VHOST_USER_SET_OWNER, NULL);
@@ -146,8 +150,12 @@ virtio_user_start_device(struct virtio_user_dev *dev)
 	 */
 	dev->ops->enable_qp(dev, 0, 1);
 
+	dev->started = true;
+	pthread_mutex_unlock(&dev->mutex);
+
 	return 0;
 error:
+	pthread_mutex_unlock(&dev->mutex);
 	/* TODO: free resource here or caller to check */
 	return -1;
 }
@@ -156,13 +164,17 @@ int virtio_user_stop_device(struct virtio_user_dev *dev)
 {
 	uint32_t i;
 
+	pthread_mutex_lock(&dev->mutex);
 	for (i = 0; i < dev->max_queue_pairs; ++i)
 		dev->ops->enable_qp(dev, i, 0);
 
 	if (dev->ops->send_request(dev, VHOST_USER_RESET_OWNER, NULL) < 0) {
 		PMD_DRV_LOG(INFO, "Failed to reset the device\n");
+		pthread_mutex_unlock(&dev->mutex);
 		return -1;
 	}
+	dev->started = false;
+	pthread_mutex_unlock(&dev->mutex);
 
 	return 0;
 }
@@ -267,6 +279,35 @@ virtio_user_fill_intr_handle(struct virtio_user_dev *dev)
 	return 0;
 }
 
+static void
+virtio_user_mem_event_cb(enum rte_mem_event type __rte_unused,
+						 const void *addr __rte_unused,
+						 size_t len __rte_unused,
+						 void *arg)
+{
+	struct virtio_user_dev *dev = arg;
+	uint16_t i;
+
+	pthread_mutex_lock(&dev->mutex);
+
+	if (dev->started == false)
+		goto exit;
+
+	/* Step 1: pause the active queues */
+	for (i = 0; i < dev->queue_pairs; i++)
+		dev->ops->enable_qp(dev, i, 0);
+
+	/* Step 2: update memory regions */
+	dev->ops->send_request(dev, VHOST_USER_SET_MEM_TABLE, NULL);
+
+	/* Step 3: resume the active queues */
+	for (i = 0; i < dev->queue_pairs; i++)
+		dev->ops->enable_qp(dev, i, 1);
+
+exit:
+	pthread_mutex_unlock(&dev->mutex);
+}
+
 static int
 virtio_user_dev_setup(struct virtio_user_dev *dev)
 {
@@ -342,7 +383,9 @@ int
 virtio_user_dev_init(struct virtio_user_dev *dev, char *path, int queues,
 		     int cq, int queue_size, const char *mac, char **ifname)
 {
+	pthread_mutex_init(&dev->mutex, NULL);
 	snprintf(dev->path, PATH_MAX, "%s", path);
+	dev->started = 0;
 	dev->max_queue_pairs = queues;
 	dev->queue_pairs = 1; /* mq disabled by default */
 	dev->queue_size = queue_size;
@@ -359,7 +402,7 @@ virtio_user_dev_init(struct virtio_user_dev *dev, char *path, int queues,
 		return -1;
 	}
 
-	if (dev->vhostfd >= 0) {
+	if (!dev->is_server) {
 		if (dev->ops->send_request(dev, VHOST_USER_SET_OWNER,
 					   NULL) < 0) {
 			PMD_INIT_LOG(ERR, "set_owner fails: %s",
@@ -384,6 +427,8 @@ virtio_user_dev_init(struct virtio_user_dev *dev, char *path, int queues,
 
 	if (dev->mac_specified)
 		dev->device_features |= (1ull << VIRTIO_NET_F_MAC);
+	else
+		dev->device_features &= ~(1ull << VIRTIO_NET_F_MAC);
 
 	if (cq) {
 		/* device does not really need to know anything about CQ,
@@ -406,6 +451,15 @@ virtio_user_dev_init(struct virtio_user_dev *dev, char *path, int queues,
 
 	dev->device_features &= VIRTIO_USER_SUPPORTED_FEATURES;
 
+	if (rte_mem_event_callback_register(VIRTIO_USER_MEM_EVENT_CLB_NAME,
+				virtio_user_mem_event_cb, dev)) {
+		if (rte_errno != ENOTSUP) {
+			PMD_INIT_LOG(ERR, "Failed to register mem event"
+					" callback\n");
+			return -1;
+		}
+	}
+
 	return 0;
 }
 
@@ -415,6 +469,8 @@ virtio_user_dev_uninit(struct virtio_user_dev *dev)
 	uint32_t i;
 
 	virtio_user_stop_device(dev);
+
+	rte_mem_event_callback_unregister(VIRTIO_USER_MEM_EVENT_CLB_NAME, dev);
 
 	for (i = 0; i < dev->max_queue_pairs * 2; ++i) {
 		close(dev->callfds[i]);
@@ -441,7 +497,7 @@ virtio_user_dev_uninit(struct virtio_user_dev *dev)
 		unlink(dev->path);
 }
 
-static uint8_t
+uint8_t
 virtio_user_handle_mq(struct virtio_user_dev *dev, uint16_t q_pairs)
 {
 	uint16_t i;
@@ -453,11 +509,17 @@ virtio_user_handle_mq(struct virtio_user_dev *dev, uint16_t q_pairs)
 		return -1;
 	}
 
-	for (i = 0; i < q_pairs; ++i)
-		ret |= dev->ops->enable_qp(dev, i, 1);
-	for (i = q_pairs; i < dev->max_queue_pairs; ++i)
-		ret |= dev->ops->enable_qp(dev, i, 0);
-
+	/* Server mode can't enable queue pairs if vhostfd is invalid,
+	 * always return 0 in this case.
+	 */
+	if (dev->vhostfd >= 0) {
+		for (i = 0; i < q_pairs; ++i)
+			ret |= dev->ops->enable_qp(dev, i, 1);
+		for (i = q_pairs; i < dev->max_queue_pairs; ++i)
+			ret |= dev->ops->enable_qp(dev, i, 0);
+	} else if (!dev->is_server) {
+		ret = ~0;
+	}
 	dev->queue_pairs = q_pairs;
 
 	return ret;

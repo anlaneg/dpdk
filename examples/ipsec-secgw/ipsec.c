@@ -327,18 +327,6 @@ flow_create_failure:
 
 		rte_cryptodev_info_get(ipsec_ctx->tbl[cdev_id_qp].id,
 				&cdev_info);
-		if (cdev_info.sym.max_nb_sessions_per_qp > 0) {
-			ret = rte_cryptodev_queue_pair_attach_sym_session(
-					ipsec_ctx->tbl[cdev_id_qp].id,
-					ipsec_ctx->tbl[cdev_id_qp].qp,
-					sa->crypto_session);
-			if (ret < 0) {
-				RTE_LOG(ERR, IPSEC,
-					"Session cannot be attached to qp %u\n",
-					ipsec_ctx->tbl[cdev_id_qp].qp);
-				return -1;
-			}
-		}
 	}
 	sa->cdev_id_qp = cdev_id_qp;
 
@@ -348,13 +336,19 @@ flow_create_failure:
 static inline void
 enqueue_cop(struct cdev_qp *cqp, struct rte_crypto_op *cop)
 {
-	int32_t ret, i;
+	int32_t ret = 0, i;
 
 	cqp->buf[cqp->len++] = cop;
 
 	if (cqp->len == MAX_PKT_BURST) {
-		ret = rte_cryptodev_enqueue_burst(cqp->id, cqp->qp,
-				cqp->buf, cqp->len);
+		int enq_size = cqp->len;
+		if ((cqp->in_flight + enq_size) > MAX_INFLIGHT)
+			enq_size -=
+			    (int)((cqp->in_flight + enq_size) - MAX_INFLIGHT);
+
+		if (enq_size > 0)
+			ret = rte_cryptodev_enqueue_burst(cqp->id, cqp->qp,
+					cqp->buf, enq_size);
 		if (ret < cqp->len) {
 			RTE_LOG_DP(DEBUG, IPSEC, "Cryptodev %u queue %u:"
 					" enqueued %u crypto ops out of %u\n",
@@ -489,9 +483,12 @@ ipsec_dequeue(ipsec_xform_fn xform_func, struct ipsec_ctx *ipsec_ctx,
 	struct ipsec_sa *sa;
 	struct rte_mbuf *pkt;
 
-	for (i = 0; i < ipsec_ctx->nb_qps && nb_pkts < max_pkts;) {
+	for (i = 0; i < ipsec_ctx->nb_qps && nb_pkts < max_pkts; i++) {
 		struct cdev_qp *cqp;
-		cqp = &ipsec_ctx->tbl[ipsec_ctx->last_qp];
+
+		cqp = &ipsec_ctx->tbl[ipsec_ctx->last_qp++];
+		if (ipsec_ctx->last_qp == ipsec_ctx->nb_qps)
+			ipsec_ctx->last_qp %= ipsec_ctx->nb_qps;
 
 		while (ipsec_ctx->ol_pkts_cnt > 0 && nb_pkts < max_pkts) {
 			pkt = ipsec_ctx->ol_pkts[--ipsec_ctx->ol_pkts_cnt];
@@ -506,13 +503,8 @@ ipsec_dequeue(ipsec_xform_fn xform_func, struct ipsec_ctx *ipsec_ctx,
 			pkts[nb_pkts++] = pkt;
 		}
 
-		if (cqp->in_flight == 0) {
-			ipsec_ctx->last_qp++;
-			if (ipsec_ctx->last_qp == ipsec_ctx->nb_qps)
-				ipsec_ctx->last_qp %= ipsec_ctx->nb_qps;
-			i++;
+		if (cqp->in_flight == 0)
 			continue;
-		}
 
 		nb_cops = rte_cryptodev_dequeue_burst(cqp->id, cqp->qp,
 				cops, max_pkts - nb_pkts);
@@ -536,12 +528,6 @@ ipsec_dequeue(ipsec_xform_fn xform_func, struct ipsec_ctx *ipsec_ctx,
 				}
 			}
 			pkts[nb_pkts++] = pkt;
-			if (cqp->in_flight < max_pkts) {
-				ipsec_ctx->last_qp++;
-				if (ipsec_ctx->last_qp == ipsec_ctx->nb_qps)
-					ipsec_ctx->last_qp %= ipsec_ctx->nb_qps;
-				i++;
-			}
 		}
 	}
 

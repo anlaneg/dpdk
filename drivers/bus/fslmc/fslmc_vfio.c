@@ -402,9 +402,6 @@ static int64_t vfio_map_mcp_obj(struct fslmc_vfio_group *group, char *mcp_obj)
 		goto MC_FAILURE;
 	}
 
-	DPAA2_BUS_DEBUG("Region offset = 0x%"PRIx64"  , region size = %"PRIu64"",
-			(uint64_t)reg_info.offset, (uint64_t)reg_info.size);
-
 	v_addr = (size_t)mmap(NULL, reg_info.size,
 		PROT_WRITE | PROT_READ, MAP_SHARED,
 		mc_fd, reg_info.offset);
@@ -564,46 +561,47 @@ fslmc_process_iodevices(struct rte_dpaa2_device *dev)
 		break;
 	}
 
-	DPAA2_BUS_DEBUG("Device (%s) abstracted from VFIO",
-			dev->device.name);
+	DPAA2_BUS_LOG(DEBUG, "Device (%s) abstracted from VFIO",
+		      dev->device.name);
 	return 0;
 }
 
 static int
 fslmc_process_mcp(struct rte_dpaa2_device *dev)
 {
+	int ret;
 	intptr_t v_addr;
-	char *dev_name;
+	char *dev_name = NULL;
 	struct fsl_mc_io dpmng  = {0};
 	struct mc_version mc_ver_info = {0};
 
 	rte_mcp_ptr_list = malloc(sizeof(void *) * 1);
 	if (!rte_mcp_ptr_list) {
 		DPAA2_BUS_ERR("Unable to allocate MC portal memory");
-		return -ENOMEM;
+		ret = -ENOMEM;
+		goto cleanup;
 	}
 
 	dev_name = strdup(dev->device.name);
 	if (!dev_name) {
 		DPAA2_BUS_ERR("Unable to allocate MC device name memory");
-		free(rte_mcp_ptr_list);
-		rte_mcp_ptr_list = NULL;
-		return -ENOMEM;
+		ret = -ENOMEM;
+		goto cleanup;
 	}
 
 	v_addr = vfio_map_mcp_obj(&vfio_group, dev_name);
 	if (v_addr == (intptr_t)MAP_FAILED) {
 		DPAA2_BUS_ERR("Error mapping region (errno = %d)", errno);
-		free(rte_mcp_ptr_list);
-		rte_mcp_ptr_list = NULL;
-		return -1;
+		ret = -1;
+		goto cleanup;
 	}
 
 	/* check the MC version compatibility */
 	dpmng.regs = (void *)v_addr;
 	if (mc_get_version(&dpmng, CMD_PRI_LOW, &mc_ver_info)) {
 		DPAA2_BUS_ERR("Unable to obtain MC version");
-		return -1;
+		ret = -1;
+		goto cleanup;
 	}
 
 	if ((mc_ver_info.major != MC_VER_MAJOR) ||
@@ -613,13 +611,24 @@ fslmc_process_mcp(struct rte_dpaa2_device *dev)
 			      MC_VER_MAJOR, MC_VER_MINOR,
 			      mc_ver_info.major, mc_ver_info.minor,
 			      mc_ver_info.revision);
-		free(rte_mcp_ptr_list);
-		rte_mcp_ptr_list = NULL;
-		return -1;
+		ret = -1;
+		goto cleanup;
 	}
 	rte_mcp_ptr_list[0] = (void *)v_addr;
 
+	free(dev_name);
 	return 0;
+
+cleanup:
+	if (dev_name)
+		free(dev_name);
+
+	if (rte_mcp_ptr_list) {
+		free(rte_mcp_ptr_list);
+		rte_mcp_ptr_list = NULL;
+	}
+
+	return ret;
 }
 
 int
@@ -656,9 +665,6 @@ fslmc_vfio_process_group(void)
 	}
 
 	TAILQ_FOREACH_SAFE(dev, &rte_fslmc_bus.device_list, next, dev_temp) {
-		if (!dev)
-			break;
-
 		switch (dev->dev_type) {
 		case DPAA2_ETH:
 		case DPAA2_CRYPTO:

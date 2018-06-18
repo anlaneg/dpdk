@@ -6,9 +6,9 @@
  * Gary Zambrano     <zambrano@broadcom.com>
  *
  * Copyright (c) 2013-2015 Brocade Communications Systems, Inc.
- * Copyright (c) 2015 QLogic Corporation.
+ * Copyright (c) 2015-2018 Cavium Inc.
  * All rights reserved.
- * www.qlogic.com
+ * www.cavium.com
  *
  * See LICENSE.bnx2x_pmd for copyright and licensing details.
  */
@@ -170,10 +170,10 @@ bnx2x_dma_alloc(struct bnx2x_softc *sc, size_t size, struct bnx2x_dma *dma,
 
 	dma->sc = sc;
 	if (IS_PF(sc))
-		sprintf(mz_name, "bnx2x%d_%s_%" PRIx64, SC_ABS_FUNC(sc), msg,
+		snprintf(mz_name, sizeof(mz_name), "bnx2x%d_%s_%" PRIx64, SC_ABS_FUNC(sc), msg,
 			rte_get_timer_cycles());
 	else
-		sprintf(mz_name, "bnx2x%d_%s_%" PRIx64, sc->pcie_device, msg,
+		snprintf(mz_name, sizeof(mz_name), "bnx2x%d_%s_%" PRIx64, sc->pcie_device, msg,
 			rte_get_timer_cycles());
 
 	/* Caller must take care that strlen(mz_name) < RTE_MEMZONE_NAMESIZE */

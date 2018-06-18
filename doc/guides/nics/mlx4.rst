@@ -85,14 +85,6 @@ These options can be modified in the ``.config`` file.
   adds additional run-time checks and debugging messages at the cost of
   lower performance.
 
-- ``CONFIG_RTE_LIBRTE_MLX4_TX_MP_CACHE`` (default **8**)
-
-  Maximum number of cached memory pools (MPs) per TX queue. Each MP from
-  which buffers are to be transmitted must be associated to memory regions
-  (MRs). This is a slow operation that must be cached.
-
-  This value is always 1 for RX queues since they use a single MP.
-
 Environment variables
 ~~~~~~~~~~~~~~~~~~~~~
 
@@ -142,6 +134,13 @@ below.
   - **-7**: configure optimized steering mode to improve performance with the
     following limitation: VLAN filtering is not supported with this mode.
     This is the recommended mode in case VLAN filter is not needed.
+
+Limitations
+-----------
+
+- CRC stripping is supported by default and always reported as "true".
+  The ability to enable/disable CRC stripping requires OFED version
+  4.3-1.5.0.0 and above  or rdma-core version v18 and above.
 
 Prerequisites
 -------------
@@ -211,7 +210,7 @@ Current RDMA core package and Linux kernel (recommended)
 Mellanox OFED as a fallback
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-- `Mellanox OFED`_ version: **4.2, 4.3**.
+- `Mellanox OFED`_ version: **4.3**.
 - firmware version: **2.42.5000** and above.
 
 .. _`Mellanox OFED`: http://www.mellanox.com/page/products_dyn?product_family=26&mtag=linux_sw_drivers
@@ -370,6 +369,12 @@ Performance tuning
 
         The XXX can be different on different systems. Make sure to configure
         according to the setpci output.
+
+6. To minimize overhead of searching Memory Regions:
+
+   - '--socket-mem' is recommended to pin memory by predictable amount.
+   - Configure per-lcore cache when creating Mempools for packet buffer.
+   - Refrain from dynamically allocating/freeing memory in run-time.
 
 Usage example
 -------------

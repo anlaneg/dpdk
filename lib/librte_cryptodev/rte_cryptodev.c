@@ -262,19 +262,40 @@ rte_cryptodev_sym_capability_get(uint8_t dev_id,
 
 }
 
-#define param_range_check(x, y) \
-	(((x < y.min) || (x > y.max)) || \
-	(y.increment != 0 && (x % y.increment) != 0))
+static int
+param_range_check(uint16_t size, const struct rte_crypto_param_range *range)
+{
+	unsigned int next_size;
+
+	/* Check lower/upper bounds */
+	if (size < range->min)
+		return -1;
+
+	if (size > range->max)
+		return -1;
+
+	/* If range is actually only one value, size is correct */
+	if (range->increment == 0)
+		return 0;
+
+	/* Check if value is one of the supported sizes */
+	for (next_size = range->min; next_size <= range->max;
+			next_size += range->increment)
+		if (size == next_size)
+			return 0;
+
+	return -1;
+}
 
 int
 rte_cryptodev_sym_capability_check_cipher(
 		const struct rte_cryptodev_symmetric_capability *capability,
 		uint16_t key_size, uint16_t iv_size)
 {
-	if (param_range_check(key_size, capability->cipher.key_size))
+	if (param_range_check(key_size, &capability->cipher.key_size) != 0)
 		return -1;
 
-	if (param_range_check(iv_size, capability->cipher.iv_size))
+	if (param_range_check(iv_size, &capability->cipher.iv_size) != 0)
 		return -1;
 
 	return 0;
@@ -285,13 +306,13 @@ rte_cryptodev_sym_capability_check_auth(
 		const struct rte_cryptodev_symmetric_capability *capability,
 		uint16_t key_size, uint16_t digest_size, uint16_t iv_size)
 {
-	if (param_range_check(key_size, capability->auth.key_size))
+	if (param_range_check(key_size, &capability->auth.key_size) != 0)
 		return -1;
 
-	if (param_range_check(digest_size, capability->auth.digest_size))
+	if (param_range_check(digest_size, &capability->auth.digest_size) != 0)
 		return -1;
 
-	if (param_range_check(iv_size, capability->auth.iv_size))
+	if (param_range_check(iv_size, &capability->auth.iv_size) != 0)
 		return -1;
 
 	return 0;
@@ -303,16 +324,16 @@ rte_cryptodev_sym_capability_check_aead(
 		uint16_t key_size, uint16_t digest_size, uint16_t aad_size,
 		uint16_t iv_size)
 {
-	if (param_range_check(key_size, capability->aead.key_size))
+	if (param_range_check(key_size, &capability->aead.key_size) != 0)
 		return -1;
 
-	if (param_range_check(digest_size, capability->aead.digest_size))
+	if (param_range_check(digest_size, &capability->aead.digest_size) != 0)
 		return -1;
 
-	if (param_range_check(aad_size, capability->aead.aad_size))
+	if (param_range_check(aad_size, &capability->aead.aad_size) != 0)
 		return -1;
 
-	if (param_range_check(iv_size, capability->aead.iv_size))
+	if (param_range_check(iv_size, &capability->aead.iv_size) != 0)
 		return -1;
 
 	return 0;
@@ -346,6 +367,8 @@ rte_cryptodev_get_feature_name(uint64_t flag)
 		return "CPU_NEON";
 	case RTE_CRYPTODEV_FF_CPU_ARM_CE:
 		return "CPU_ARM_CE";
+	case RTE_CRYPTODEV_FF_SECURITY:
+		return "SECURITY_PROTOCOL";
 	default:
 		return NULL;
 	}
@@ -1204,6 +1227,12 @@ rte_cryptodev_sym_session_free(struct rte_cryptodev_sym_session *sess)
 unsigned int
 rte_cryptodev_get_header_session_size(void)
 {
+	return rte_cryptodev_sym_get_header_session_size();
+}
+
+unsigned int
+rte_cryptodev_sym_get_header_session_size(void)
+{
 	/*
 	 * Header contains pointers to the private data
 	 * of all registered drivers, and a flag which
@@ -1214,6 +1243,12 @@ rte_cryptodev_get_header_session_size(void)
 
 unsigned int
 rte_cryptodev_get_private_session_size(uint8_t dev_id)
+{
+	return rte_cryptodev_sym_get_private_session_size(dev_id);
+}
+
+unsigned int
+rte_cryptodev_sym_get_private_session_size(uint8_t dev_id)
 {
 	struct rte_cryptodev *dev;
 	unsigned int header_size = sizeof(void *) * nb_drivers;

@@ -179,6 +179,8 @@ rte_eth_dev_pci_generic_probe(struct rte_pci_device *pci_dev,
 	if (ret)
 		//初始化失败，释放port
 		rte_eth_dev_pci_release(eth_dev);
+	else
+		rte_eth_dev_probing_finish(eth_dev);
 
 	return ret;
 }

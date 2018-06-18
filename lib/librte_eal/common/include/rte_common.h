@@ -124,7 +124,7 @@ static void __attribute__((constructor(RTE_PRIO(prio)), used)) func(void)
 /*********** Macros for pointer arithmetic ********/
 
 /**
- * add a byte-value offset from a pointer
+ * add a byte-value offset to a pointer
  */
 #define RTE_PTR_ADD(ptr, x) ((void*)((uintptr_t)(ptr) + (x)))
 
@@ -414,7 +414,7 @@ rte_align64prevpow2(uint64_t v)
 static inline uint32_t
 rte_bsf32(uint32_t v)
 {
-	return __builtin_ctz(v);
+	return (uint32_t)__builtin_ctz(v);
 }
 
 /**
