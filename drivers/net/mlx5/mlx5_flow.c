@@ -632,6 +632,7 @@ mlx5_flow_convert_attributes(const struct rte_flow_attr *attr,
 			     struct rte_flow_error *error)
 {
 	if (attr->group) {
+		//不支持组
 		rte_flow_error_set(error, ENOTSUP,
 				   RTE_FLOW_ERROR_TYPE_ATTR_GROUP,
 				   NULL,
@@ -639,6 +640,7 @@ mlx5_flow_convert_attributes(const struct rte_flow_attr *attr,
 		return -rte_errno;
 	}
 	if (attr->priority && attr->priority != MLX5_CTRL_FLOW_PRIORITY) {
+		//只支持优先级等于MLX5_CTRL_FLOW_PRIORITY
 		rte_flow_error_set(error, ENOTSUP,
 				   RTE_FLOW_ERROR_TYPE_ATTR_PRIORITY,
 				   NULL,
@@ -646,6 +648,7 @@ mlx5_flow_convert_attributes(const struct rte_flow_attr *attr,
 		return -rte_errno;
 	}
 	if (attr->egress) {
+		//不支持egress过滤
 		rte_flow_error_set(error, ENOTSUP,
 				   RTE_FLOW_ERROR_TYPE_ATTR_EGRESS,
 				   NULL,
@@ -653,6 +656,7 @@ mlx5_flow_convert_attributes(const struct rte_flow_attr *attr,
 		return -rte_errno;
 	}
 	if (attr->transfer) {
+		//不支持报文转换
 		rte_flow_error_set(error, ENOTSUP,
 				   RTE_FLOW_ERROR_TYPE_ATTR_TRANSFER,
 				   NULL,
@@ -660,6 +664,7 @@ mlx5_flow_convert_attributes(const struct rte_flow_attr *attr,
 		return -rte_errno;
 	}
 	if (!attr->ingress) {
+		//必须有ingress标记
 		rte_flow_error_set(error, ENOTSUP,
 				   RTE_FLOW_ERROR_TYPE_ATTR_INGRESS,
 				   NULL,
@@ -3713,6 +3718,7 @@ mlx5_dev_filter_ctrl(struct rte_eth_dev *dev,
 			rte_errno = EINVAL;
 			return -rte_errno;
 		}
+		//返回mlx5的flow_ops
 		*(const void **)arg = &mlx5_flow_ops;
 		return 0;
 	case RTE_ETH_FILTER_FDIR:

@@ -1128,6 +1128,7 @@ mlx4_flow_toggle(struct priv *priv,
 	assert(qp);
 	if (flow->ibv_flow)
 		return 0;
+	//创建flow
 	flow->ibv_flow = mlx4_glue->create_flow(qp, flow->ibv_attr);
 	if (flow->ibv_flow)
 		return 0;
@@ -1199,8 +1200,10 @@ mlx4_flow_isolate(struct rte_eth_dev *dev,
 	struct priv *priv = dev->data->dev_private;
 
 	if (!!enable == !!priv->isolated)
-		return 0;
-	priv->isolated = !!enable;
+		return 0;//已开启或已关闭，直接返回，用于支持重复调用
+	priv->isolated = !!enable;//置为开启或关闭
+
+	//同步流规则
 	if (mlx4_flow_sync(priv, error)) {
 		priv->isolated = !enable;
 		return -rte_errno;
@@ -1551,6 +1554,7 @@ mlx4_flow_sync(struct priv *priv, struct rte_flow_error *error)
 		 * Get rid of them in isolated mode, stop at the first
 		 * non-internal rule found.
 		 */
+		//销毁priv->flows链表头上flow->internal为真的flow
 		for (flow = LIST_FIRST(&priv->flows);
 		     flow && flow->internal;
 		     flow = LIST_FIRST(&priv->flows))

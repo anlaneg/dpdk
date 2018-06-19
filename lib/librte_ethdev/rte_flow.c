@@ -270,12 +270,14 @@ rte_flow_isolate(uint16_t port_id,
 		 int set,
 		 struct rte_flow_error *error)
 {
+	//取对应netdev的flow ops操作
 	struct rte_eth_dev *dev = &rte_eth_devices[port_id];
 	const struct rte_flow_ops *ops = rte_flow_ops_get(port_id, error);
 
 	if (!ops)
 		return -rte_errno;
 	if (likely(!!ops->isolate))
+		//调用对应的isolate回调
 		return flow_err(port_id, ops->isolate(dev, set, error), error);
 	return rte_flow_error_set(error, ENOSYS,
 				  RTE_FLOW_ERROR_TYPE_UNSPECIFIED,
