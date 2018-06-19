@@ -70,9 +70,13 @@ struct mlx4_rss {
 	uint32_t usecnt; /**< Number of users relying on @p qp and @p ind. */
 	struct ibv_qp *qp; /**< Queue pair. */
 	struct ibv_rwq_ind_table *ind; /**< Indirection table. */
+	//rss处理字段样式
 	uint64_t fields; /**< Fields for RSS processing (Verbs format). */
+	//hash计算时采用的key
 	uint8_t key[MLX4_RSS_HASH_KEY_SIZE]; /**< Hash key to use. */
+	//队列id数组长度
 	uint16_t queues; /**< Number of target queues. */
+	//队列id数组
 	uint16_t queue_id[]; /**< Target queues. */
 };
 

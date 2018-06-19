@@ -172,7 +172,7 @@ struct priv {
 	unsigned int (*reta_idx)[]; /* RETA index table. */
 	unsigned int reta_idx_n; /* RETA index size. */
 	struct mlx5_hrxq_drop *flow_drop_queue; /* Flow drop queue. */
-	struct mlx5_flows flows; /* RTE Flow rules. */
+	struct mlx5_flows flows; /* RTE Flow rules. */ //记录转换后的规则
 	struct mlx5_flows ctrl_flows; /* Control flow rules. */
 	struct {
 		uint32_t dev_gen; /* Generation number to flush local caches. */

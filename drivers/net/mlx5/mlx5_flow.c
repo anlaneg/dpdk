@@ -507,7 +507,7 @@ struct mlx5_flow_parse {
 	uint32_t drop:1; /**< Target is a drop queue. */
 	uint32_t mark:1; /**< Mark is present in the flow. */
 	uint32_t count:1; /**< Count is present in the flow. */
-	uint32_t mark_id; /**< Mark identifier. */
+	uint32_t mark_id; /**< Mark identifier. */ //命中后设置id
 	struct rte_flow_action_rss rss_conf; /**< RSS configuration */
 	uint16_t queues[RTE_MAX_QUEUES_PER_PORT]; /**< Queues indexes to use. */
 	uint8_t rss_key[40]; /**< copy of the RSS key. */
@@ -526,7 +526,7 @@ struct mlx5_flow_parse {
 
 static const struct rte_flow_ops mlx5_flow_ops = {
 	.validate = mlx5_flow_validate,
-	.create = mlx5_flow_create,
+	.create = mlx5_flow_create,//flow规则创建
 	.destroy = mlx5_flow_destroy,
 	.flush = mlx5_flow_flush,
 #ifdef HAVE_IBV_DEVICE_COUNTERS_SET_SUPPORT
@@ -703,11 +703,13 @@ mlx5_flow_convert_actions(struct rte_eth_dev *dev,
 		if (actions->type == RTE_FLOW_ACTION_TYPE_VOID) {
 			continue;
 		} else if (actions->type == RTE_FLOW_ACTION_TYPE_DROP) {
+			//drop action处理
 			if (overlap & FATE)
 				goto exit_action_overlap;
 			overlap |= FATE;
 			parser->drop = 1;
 		} else if (actions->type == RTE_FLOW_ACTION_TYPE_QUEUE) {
+			//匹配后入队处理
 			const struct rte_flow_action_queue *queue =
 				(const struct rte_flow_action_queue *)
 				actions->conf;
@@ -717,12 +719,13 @@ mlx5_flow_convert_actions(struct rte_eth_dev *dev,
 			overlap |= FATE;
 			if (!queue || (queue->index > (priv->rxqs_n - 1)))
 				goto exit_action_not_supported;
-			parser->queues[0] = queue->index;
+			parser->queues[0] = queue->index;//入队到单个队列
 			parser->rss_conf = (struct rte_flow_action_rss){
 				.queue_num = 1,
 				.queue = parser->queues,
 			};
 		} else if (actions->type == RTE_FLOW_ACTION_TYPE_RSS) {
+			//匹配上后按rss hash入队列
 			const struct rte_flow_action_rss *rss =
 				(const struct rte_flow_action_rss *)
 				actions->conf;
@@ -743,6 +746,7 @@ mlx5_flow_convert_actions(struct rte_eth_dev *dev,
 				return -rte_errno;
 			}
 #ifndef HAVE_IBV_DEVICE_TUNNEL_SUPPORT
+			//未定义HAVE_IBV_DEVICE_TUNNEL_SUPPORT时不支持level > 1
 			if (parser->rss_conf.level > 1) {
 				rte_flow_error_set(error, EINVAL,
 						   RTE_FLOW_ERROR_TYPE_ACTION,
@@ -752,6 +756,7 @@ mlx5_flow_convert_actions(struct rte_eth_dev *dev,
 				return -rte_errno;
 			}
 #endif
+			//不支持level > 2
 			if (parser->rss_conf.level > 2) {
 				rte_flow_error_set(error, EINVAL,
 						   RTE_FLOW_ERROR_TYPE_ACTION,
@@ -761,6 +766,7 @@ mlx5_flow_convert_actions(struct rte_eth_dev *dev,
 				return -rte_errno;
 			}
 			if (rss->types & MLX5_RSS_HF_MASK) {
+				//不支持除ip,udp,tcp以外的rss hash
 				rte_flow_error_set(error, EINVAL,
 						   RTE_FLOW_ERROR_TYPE_ACTION,
 						   actions,
@@ -768,6 +774,7 @@ mlx5_flow_convert_actions(struct rte_eth_dev *dev,
 						   " requested");
 				return -rte_errno;
 			}
+			//hash key设置
 			if (rss->key_len) {
 				rss_key_len = rss->key_len;
 				rss_key = rss->key;
@@ -821,6 +828,7 @@ mlx5_flow_convert_actions(struct rte_eth_dev *dev,
 						rss->queue_num),
 			};
 		} else if (actions->type == RTE_FLOW_ACTION_TYPE_MARK) {
+			//支持匹配后添加mark
 			const struct rte_flow_action_mark *mark =
 				(const struct rte_flow_action_mark *)
 				actions->conf;
@@ -835,6 +843,7 @@ mlx5_flow_convert_actions(struct rte_eth_dev *dev,
 						   "mark must be defined");
 				return -rte_errno;
 			} else if (mark->id >= MLX5_FLOW_MARK_MAX) {
+				//最多支持167w
 				rte_flow_error_set(error, ENOTSUP,
 						   RTE_FLOW_ERROR_TYPE_ACTION,
 						   actions,
@@ -845,12 +854,14 @@ mlx5_flow_convert_actions(struct rte_eth_dev *dev,
 			parser->mark = 1;
 			parser->mark_id = mark->id;
 		} else if (actions->type == RTE_FLOW_ACTION_TYPE_FLAG) {
+			//设置标记位
 			if (overlap & MARK)
 				goto exit_action_overlap;
 			overlap |= MARK;
 			parser->mark = 1;
 		} else if (actions->type == RTE_FLOW_ACTION_TYPE_COUNT &&
 			   priv->config.flow_counter_en) {
+			//规则计数
 			if (overlap & COUNT)
 				goto exit_action_overlap;
 			overlap |= COUNT;
@@ -1290,12 +1301,15 @@ mlx5_flow_convert(struct rte_eth_dev *dev,
 		.layer = HASH_RXQ_ETH,
 		.mark_id = MLX5_FLOW_MARK_DEFAULT,
 	};
+	//属性校验
 	ret = mlx5_flow_convert_attributes(attr, error);
 	if (ret)
 		return ret;
+	//action校验
 	ret = mlx5_flow_convert_actions(dev, actions, error, parser);
 	if (ret)
 		return ret;
+	//匹配项校验
 	ret = mlx5_flow_convert_items_validate(dev, items, error, parser);
 	if (ret)
 		return ret;
@@ -1305,6 +1319,7 @@ mlx5_flow_convert(struct rte_eth_dev *dev,
 	 * Allocate the memory space to store verbs specifications.
 	 */
 	if (parser->drop) {
+		//drop action处理
 		unsigned int offset = parser->queue[HASH_RXQ_ETH].offset;
 
 		parser->queue[HASH_RXQ_ETH].ibv_attr =
@@ -1338,6 +1353,7 @@ mlx5_flow_convert(struct rte_eth_dev *dev,
 
 		if (items->type == RTE_FLOW_ITEM_TYPE_VOID)
 			continue;
+		//实现匹配项转换
 		cur_item = &mlx5_flow_items[items->type];
 		ret = cur_item->convert(items,
 					(cur_item->default_mask ?
@@ -1348,6 +1364,7 @@ mlx5_flow_convert(struct rte_eth_dev *dev,
 			goto exit_free;
 	}
 	if (!parser->drop) {
+		//转换rss
 		/* RSS check, remove unused hash types. */
 		ret = mlx5_flow_convert_rss(parser);
 		if (ret)
@@ -1357,8 +1374,10 @@ mlx5_flow_convert(struct rte_eth_dev *dev,
 	}
 	mlx5_flow_update_priority(dev, parser, attr);
 	if (parser->mark)
+		//转换标记
 		mlx5_flow_create_flag_mark(parser, parser->mark_id);
 	if (parser->count && parser->create) {
+		//转换规则计数
 		mlx5_flow_create_count(dev, parser);
 		if (!parser->cs)
 			goto exit_count_error;
@@ -2469,6 +2488,7 @@ mlx5_flow_list_create(struct rte_eth_dev *dev,
 	unsigned int i;
 	int ret;
 
+	//将规则，action,属性转换为parser
 	ret = mlx5_flow_convert(dev, attr, items, actions, error, &parser);
 	if (ret)
 		goto exit;
@@ -2502,12 +2522,15 @@ mlx5_flow_list_create(struct rte_eth_dev *dev,
 	flow->mark = parser.mark;
 	/* finalise the flow. */
 	if (parser.drop)
+		//创建drop 规则
 		ret = mlx5_flow_create_action_queue_drop(dev, &parser, flow,
 							 error);
 	else
+		//创建队列规则
 		ret = mlx5_flow_create_action_queue(dev, &parser, flow, error);
 	if (ret)
 		goto exit;
+	//将规则缓存起来
 	TAILQ_INSERT_TAIL(list, flow, next);
 	DRV_LOG(DEBUG, "port %u flow created %p", dev->data->port_id,
 		(void *)flow);
@@ -2556,6 +2579,7 @@ mlx5_flow_create(struct rte_eth_dev *dev,
 {
 	struct priv *priv = dev->data->dev_private;
 
+	//创建规则，并将规则添加到priv->flows列表中
 	return mlx5_flow_list_create(dev, &priv->flows, attr, items, actions,
 				     error);
 }
@@ -2900,6 +2924,7 @@ mlx5_flow_stop(struct rte_eth_dev *dev, struct mlx5_flows *list)
  * @return
  *   0 on success, a negative errno value otherwise and rte_errno is set.
  */
+//将规则下发给硬件
 int
 mlx5_flow_start(struct rte_eth_dev *dev, struct mlx5_flows *list)
 {

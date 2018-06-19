@@ -82,6 +82,7 @@ struct priv {
 	/* Device properties. */
 	uint16_t mtu; /**< Configured MTU. */
 	uint8_t port; /**< Physical port number. */
+	//指明设备已被调用了start
 	uint32_t started:1; /**< Device started, flows enabled. */
 	uint32_t vf:1; /**< This is a VF device. */
 	uint32_t intr_alarm:1; /**< An interrupt alarm is scheduled. */
@@ -100,6 +101,7 @@ struct priv {
 		struct mlx4_mr_list mr_list; /* Registered MR list. */
 		struct mlx4_mr_list mr_free_list; /* Freed MR list. */
 	} mr;
+	//用来串链rss配置信息
 	LIST_HEAD(, mlx4_rss) rss; /**< Shared targets for Rx flow rules. */
 	//流规则处理
 	LIST_HEAD(, rte_flow) flows; /**< Configured flow rule handles. */

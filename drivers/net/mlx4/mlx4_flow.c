@@ -94,6 +94,7 @@ struct mlx4_drop {
  *   Converted RSS hash fields on success, (uint64_t)-1 otherwise and
  *   rte_errno is set.
  */
+//将dpdk的rss_type转换为mlx4对应的rss_type或者相反的转换
 uint64_t
 mlx4_conv_rss_types(struct priv *priv, uint64_t types, int verbs_to_dpdk)
 {
@@ -104,8 +105,11 @@ mlx4_conv_rss_types(struct priv *priv, uint64_t types, int verbs_to_dpdk)
 		IPV4_TCP, IPV4_UDP, IPV6_TCP, IPV6_TCP_1, IPV6_UDP, IPV6_UDP_1,
 	};
 	enum {
+		//ipv4 src地址，dst地址
 		VERBS_IPV4 = IBV_RX_HASH_SRC_IPV4 | IBV_RX_HASH_DST_IPV4,
+		//ipv6 src地址，dst地址
 		VERBS_IPV6 = IBV_RX_HASH_SRC_IPV6 | IBV_RX_HASH_DST_IPV6,
+		//srcport,dstport
 		VERBS_TCP = IBV_RX_HASH_SRC_PORT_TCP | IBV_RX_HASH_DST_PORT_TCP,
 		VERBS_UDP = IBV_RX_HASH_SRC_PORT_UDP | IBV_RX_HASH_DST_PORT_UDP,
 	};
@@ -129,38 +133,42 @@ mlx4_conv_rss_types(struct priv *priv, uint64_t types, int verbs_to_dpdk)
 	};
 	static const uint64_t verbs[RTE_DIM(dpdk)] = {
 		[INNER] = IBV_RX_HASH_INNER,
-		[IPV4] = VERBS_IPV4,
+		[IPV4] = VERBS_IPV4,//统一转为ipv4(srcaddr,dstaddr)
 		[IPV4_1] = VERBS_IPV4,
 		[IPV4_2] = VERBS_IPV4,
 		[IPV6] = VERBS_IPV6,
 		[IPV6_1] = VERBS_IPV6,
 		[IPV6_2] = VERBS_IPV6,
 		[IPV6_3] = VERBS_IPV6,
-		[TCP] = VERBS_TCP,
+		[TCP] = VERBS_TCP,//仅srcport,dstport
 		[UDP] = VERBS_UDP,
-		[IPV4_TCP] = VERBS_IPV4 | VERBS_TCP,
+		[IPV4_TCP] = VERBS_IPV4 | VERBS_TCP,//仅ipv4(srcaddr,dstadd,srcport,dstport)
 		[IPV4_UDP] = VERBS_IPV4 | VERBS_UDP,
 		[IPV6_TCP] = VERBS_IPV6 | VERBS_TCP,
 		[IPV6_TCP_1] = VERBS_IPV6 | VERBS_TCP,
 		[IPV6_UDP] = VERBS_IPV6 | VERBS_UDP,
 		[IPV6_UDP_1] = VERBS_IPV6 | VERBS_UDP,
 	};
+	//确定是由哪个集合向哪个集合转换
 	const uint64_t *in = verbs_to_dpdk ? verbs : dpdk;
 	const uint64_t *out = verbs_to_dpdk ? dpdk : verbs;
-	uint64_t seen = 0;
-	uint64_t conv = 0;
+	uint64_t seen = 0;//我们看到的flag
+	uint64_t conv = 0;//我们转换后的flag
 	unsigned int i;
 
 	if (!types) {
+		//未指定type时，使用硬件初始时配置的types
 		if (!verbs_to_dpdk)
 			return priv->hw_rss_sup;
 		types = priv->hw_rss_sup;
 	}
 	for (i = 0; i != RTE_DIM(dpdk); ++i)
 		if (in[i] && (types & in[i]) == in[i]) {
+			//如果in[i]配置了，则更新seen,更新conv
 			seen |= types & in[i];
 			conv |= out[i];
 		}
+	//types与seen一致时，认为转换有效
 	if ((verbs_to_dpdk || (conv & priv->hw_rss_sup) == conv) &&
 	    !(types & ~seen))
 		return conv;
@@ -763,6 +771,7 @@ fill:
 			continue;//忽略掉空的action
 		/* Fate-deciding actions may appear exactly once. */
 		if (overlap) {
+			//不支持合并多个action
 			msg = "cannot combine several fate-deciding actions,"
 				" choose between DROP, QUEUE or RSS";
 			goto exit_action_not_supported;
@@ -776,10 +785,11 @@ fill:
 			uint64_t fields;
 			unsigned int i;
 
+		//丢包action
 		case RTE_FLOW_ACTION_TYPE_DROP:
 			flow->drop = 1;
 			break;
-		case RTE_FLOW_ACTION_TYPE_QUEUE://入队action
+		case RTE_FLOW_ACTION_TYPE_QUEUE://入队action,处理为rss方式，仅入一个队
 			if (flow->rss)
 				break;//flow中指定有rss,则跳出
 			//检查队列配置
@@ -789,24 +799,27 @@ fill:
 					" configured Rx queues";
 				goto exit_action_not_supported;//配置的队列比报文实现的收队列还大，报错
 			}
+			//创建rss,fields=0,队列索引数组长度为1
 			flow->rss = mlx4_rss_get
 				(priv, 0, mlx4_rss_hash_key_default, 1,
 				 &queue->index);
-			if (!flow->rss) {
+			if (!flow->rss) {//申请内存失败
 				msg = "not enough resources for additional"
 					" single-queue RSS context";
 				goto exit_action_not_supported;
 			}
 			break;
-		case RTE_FLOW_ACTION_TYPE_RSS:
+		case RTE_FLOW_ACTION_TYPE_RSS://由rssh计算后进行入队出理
 			if (flow->rss)
 				break;
 			rss = action->conf;
 			/* Default RSS configuration if none is provided. */
 			if (rss->key_len) {
+				//用户指定了key时
 				rss_key = rss->key;
 				rss_key_len = rss->key_len;
 			} else {
+				//用户未指定key时，采用默认的key
 				rss_key = mlx4_rss_hash_key_default;
 				rss_key_len = MLX4_RSS_HASH_KEY_SIZE;
 			}
@@ -814,23 +827,28 @@ fill:
 			for (i = 0; i < rss->queue_num; ++i)
 				if (rss->queue[i] >=
 				    priv->dev->data->nb_rx_queues)
-					break;
+					break;//配置的队列号不得大于设备的实际收队列数
 			if (i != rss->queue_num) {
+				//提前即出，即队列配置有误，队列号过大。
 				msg = "queue index target beyond number of"
 					" configured Rx queues";
 				goto exit_action_not_supported;
 			}
+			//队列数不是2的N次方
 			if (!rte_is_power_of_2(rss->queue_num)) {
 				msg = "for RSS, mlx4 requires the number of"
 					" queues to be a power of two";
 				goto exit_action_not_supported;
 			}
+			//只支持长度为40的key
 			if (rss_key_len != sizeof(flow->rss->key)) {
 				msg = "mlx4 supports exactly one RSS hash key"
 					" length: "
 					MLX4_STR_EXPAND(MLX4_RSS_HASH_KEY_SIZE);
 				goto exit_action_not_supported;
 			}
+
+			//配置的rss queue必须是连续的
 			for (i = 1; i < rss->queue_num; ++i)
 				if (rss->queue[i] - rss->queue[i - 1] != 1)
 					break;
@@ -839,29 +857,36 @@ fill:
 					" consecutive queue indices only";
 				goto exit_action_not_supported;
 			}
+			//首个queue id必须为rss->queue_num的整数倍，例如4，5，6，7 相对于4
 			if (rss->queue[0] % rss->queue_num) {
 				msg = "mlx4 requires the first queue of a RSS"
 					" context to be aligned on a multiple"
 					" of the context size";
 				goto exit_action_not_supported;
 			}
+			//队列函数必须指定为“托普利兹矩阵”
 			if (rss->func &&
 			    rss->func != RTE_ETH_HASH_FUNCTION_TOEPLITZ) {
 				msg = "the only supported RSS hash function"
 					" is Toeplitz";
 				goto exit_action_not_supported;
 			}
+			//level必须指定为0
 			if (rss->level) {
 				msg = "a nonzero RSS encapsulation level is"
 					" not supported";
 				goto exit_action_not_supported;
 			}
 			rte_errno = 0;
+			//转换rss配置（dpdk样式）到mlx4 rss配置样式 (实际上没什么大不了的，
+			//就是看hash计算时采用srcaddr,dstaddr,srcport,dstport等）
 			fields = mlx4_conv_rss_types(priv, rss->types, 0);
 			if (fields == (uint64_t)-1 && rte_errno) {
+				//转换失败，报错
 				msg = "unsupported RSS hash type requested";
 				goto exit_action_not_supported;
 			}
+			//创建rss,队列索引数组长度为rss->queue_num
 			flow->rss = mlx4_rss_get
 				(priv, fields, rss_key, rss->queue_num,
 				 rss->queue);
@@ -873,19 +898,23 @@ fill:
 			}
 			break;
 		default:
+			//其它的action不支持
 			goto exit_action_not_supported;
 		}
 	}
 	/* When fate is unknown, drop traffic. */
 	if (!overlap)
+		//默认处理为drop action {适用于未明确action的配置）
 		flow->drop = 1;
 	/* Validation ends here. */
 	if (!addr) {
+		//无addr,则flow->rss无用
 		if (flow->rss)
 			mlx4_rss_put(flow->rss);
 		return 0;
 	}
 	if (flow == &temp) {
+		//为flow申请空间
 		/* Allocate proper handle based on collected data. */
 		const struct mlx4_malloc_vec vec[] = {
 			{
@@ -900,7 +929,9 @@ fill:
 			},
 		};
 
+		//为vec的addr申请空间，并重新设置addr（vec在其后没有被使用？）
 		if (!mlx4_zmallocv(__func__, vec, RTE_DIM(vec))) {
+			//空间申请失败
 			if (temp.rss)
 				mlx4_rss_put(temp.rss);
 			return rte_flow_error_set
@@ -1036,6 +1067,7 @@ mlx4_drop_put(struct mlx4_drop *drop)
  * @return
  *   0 on success, a negative errno value otherwise and rte_errno is set.
  */
+//触发流配置
 static int
 mlx4_flow_toggle(struct priv *priv,
 		 struct rte_flow *flow,
@@ -1047,6 +1079,7 @@ mlx4_flow_toggle(struct priv *priv,
 	int err;
 
 	if (!enable) {
+		//此条flow没有enable时处理
 		if (!flow->ibv_flow)
 			return 0;
 		//claim_zero用于断言参数为0
@@ -1077,6 +1110,7 @@ mlx4_flow_toggle(struct priv *priv,
 		       " is reserved when not in isolated mode");
 		goto error;
 	}
+	//此flow入队或者要求rss分散到多个队列
 	if (flow->rss) {
 		struct mlx4_rss *rss = flow->rss;
 		int missing = 0;
@@ -1088,7 +1122,7 @@ mlx4_flow_toggle(struct priv *priv,
 			    priv->dev->data->nb_rx_queues ||
 			    !priv->dev->data->rx_queues[rss->queue_id[i]]) {
 				missing = 1;
-				break;
+				break;//对应的队列不存在时，跳出
 			}
 		if (flow->ibv_flow) {
 			if (missing ^ !flow->drop)
@@ -1102,6 +1136,7 @@ mlx4_flow_toggle(struct priv *priv,
 				mlx4_rss_detach(rss);
 		}
 		if (!missing) {
+			//所有队列均存在，没有出现missing的情况
 			err = mlx4_rss_attach(rss);
 			if (err) {
 				err = -err;
@@ -1160,9 +1195,11 @@ mlx4_flow_create(struct rte_eth_dev *dev,
 	struct rte_flow *flow;
 	int err;
 
+	//按pattern,action，attr构造flow
 	err = mlx4_flow_prepare(priv, attr, pattern, actions, error, &flow);
 	if (err)
 		return NULL;
+	//如果当前设备已经started,则此条flow认为enable
 	err = mlx4_flow_toggle(priv, flow, priv->started, error);
 	if (!err) {
 		struct rte_flow *curr = LIST_FIRST(&priv->flows);
@@ -1566,6 +1603,7 @@ mlx4_flow_sync(struct priv *priv, struct rte_flow_error *error)
 			return ret;
 	}
 	/* Toggle the remaining flow rules . */
+	//触发流配置
 	LIST_FOREACH(flow, &priv->flows, next) {
 		ret = mlx4_flow_toggle(priv, flow, priv->started, error);
 		if (ret)

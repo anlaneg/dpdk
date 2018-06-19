@@ -470,6 +470,7 @@ mlx4_hw_rss_sup(struct ibv_context *ctx, struct ibv_pd *pd,
 			.rx_hash_conf = {
 				.rx_hash_function = IBV_RX_HASH_FUNC_TOEPLITZ,
 				.rx_hash_key_len = MLX4_RSS_HASH_KEY_SIZE,
+				//传入rss hash所用的key
 				.rx_hash_key = mlx4_rss_hash_key_default,
 				.rx_hash_fields_mask = hw_rss_sup,
 			},

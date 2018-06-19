@@ -50,6 +50,14 @@
  *
  * Note: this is not const to work around API quirks.
  */
+//82599中datasheet中给出的rss hashcode为
+/**
+ * 0x6d, 0x5a, 0x56, 0xda, 0x25, 0x5b, 0x0e, 0xc2,
+   0x41, 0x67, 0x25, 0x3d, 0x43, 0xa3, 0x8f, 0xb0,
+   0xd0, 0xca, 0x2b, 0xcb, 0xae, 0x7b, 0x30, 0xb4,
+   0x77, 0xcb, 0x2d, 0xa3, 0x80, 0x30, 0xf2, 0x0c,
+   0x6a, 0x42, 0xb7, 0x3b, 0xbe, 0xac, 0x01, 0xfa
+ */
 uint8_t
 mlx4_rss_hash_key_default[MLX4_RSS_HASH_KEY_SIZE] = {
 	0x2c, 0xc6, 0x81, 0xd1,
@@ -86,6 +94,7 @@ mlx4_rss_hash_key_default[MLX4_RSS_HASH_KEY_SIZE] = {
  * @return
  *   Pointer to RSS context on success, NULL otherwise and rte_errno is set.
  */
+//尝试引用rss配置，如果与已有的rss配置相同则直接引用，否则创建之
 struct mlx4_rss *
 mlx4_rss_get(struct priv *priv, uint64_t fields,
 	     const uint8_t key[MLX4_RSS_HASH_KEY_SIZE],
@@ -100,12 +109,14 @@ mlx4_rss_get(struct priv *priv, uint64_t fields,
 		    !memcmp(key, rss->key, MLX4_RSS_HASH_KEY_SIZE) &&
 		    !memcmp(queue_id, rss->queue_id, queue_id_size)) {
 			++rss->refcnt;
-			return rss;
+			return rss;//复用已有的rss
 		}
+	//新建rss配置，并将其串在priv->ss链表上
 	rss = rte_malloc(__func__, offsetof(struct mlx4_rss, queue_id) +
 			 queue_id_size, 0);
 	if (!rss)
 		goto error;
+	//填充rss
 	*rss = (struct mlx4_rss){
 		.priv = priv,
 		.refcnt = 1,
@@ -137,6 +148,7 @@ error:
  * @param rss
  *   RSS context to release.
  */
+//减少引用计数，如果引用计数减为0，则释放
 void
 mlx4_rss_put(struct mlx4_rss *rss)
 {
@@ -164,6 +176,7 @@ mlx4_rss_put(struct mlx4_rss *rss)
  * @return
  *   0 on success, a negative errno value otherwise and rte_errno is set.
  */
+//调用mlx4_glue实现rss分流（具体细节无法观看，调用了相应库）
 int
 mlx4_rss_attach(struct mlx4_rss *rss)
 {

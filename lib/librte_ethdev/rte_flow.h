@@ -1304,7 +1304,7 @@ enum rte_flow_action_type {
 	 *
 	 * See struct rte_flow_action_queue.
 	 */
-	RTE_FLOW_ACTION_TYPE_QUEUE,//设置报文到某个队列
+	RTE_FLOW_ACTION_TYPE_QUEUE,//设置报文定向到某个队列
 
 	/**
 	 * Drops packets.

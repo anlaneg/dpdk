@@ -50,6 +50,7 @@ mlx4_fd_set_non_blocking(int fd)
  * C11 code would include stdalign.h and use alignof(max_align_t) however
  * we'll stick with C99 for the time being.
  */
+//为vec申请内存，并赋值（ps.这个函数与其上层函数写的一样屎）
 static inline size_t
 mlx4_mallocv_inline(const char *type, const struct mlx4_malloc_vec *vec,
 		    unsigned int cnt, int zero, int socket)
@@ -67,20 +68,26 @@ fill:
 		size_t align = (uintptr_t)vec[i].align;
 
 		if (!align) {
+			//未指明对齐时，对齐以sizeof(double）定义
 			align = sizeof(double);
 		} else if (!rte_is_power_of_2(align)) {
+			//指定对齐时，校验对齐是否为2的整数次方
 			rte_errno = EINVAL;
 			goto error;
 		}
 		if (least < align)
 			least = align;
+		//使size对齐
 		align = RTE_ALIGN_CEIL(size, align);
 		size = align + vec[i].size;
 		if (fill && vec[i].addr)
+			//当fill为1时，为每个vec[i]填充addr
 			*vec[i].addr = data + align;
 	}
 	if (fill)
+		//申请成功时，自此返回
 		return size;
+	//申请大页内存
 	if (!zero)
 		data = rte_malloc_socket(type, size, least, socket);
 	else

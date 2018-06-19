@@ -247,6 +247,7 @@ bnxt_filter_type_check(const struct rte_flow_item pattern[],
 	const struct rte_flow_item *item = nxt_non_void_pattern(pattern);
 	int use_ntuple = 1;
 
+	//支持匹配以太头，vlan,ipv4,ipv6,tcp,udp的匹配
 	while (item->type != RTE_FLOW_ITEM_TYPE_END) {
 		switch (item->type) {
 		case RTE_FLOW_ITEM_TYPE_ETH:
@@ -860,6 +861,7 @@ bnxt_validate_and_parse_flow(struct rte_eth_dev *dev,
 
 	switch (act->type) {
 	case RTE_FLOW_ACTION_TYPE_QUEUE:
+		//报文重定向到队列
 		/* Allow this flow. Redirect to a VNIC. */
 		act_q = (const struct rte_flow_action_queue *)act->conf;
 		if (act_q->index >= bp->rx_nr_rings) {
@@ -890,6 +892,7 @@ bnxt_validate_and_parse_flow(struct rte_eth_dev *dev,
 		PMD_DRV_LOG(DEBUG, "VNIC found\n");
 		break;
 	case RTE_FLOW_ACTION_TYPE_DROP:
+		//drop报
 		vnic0 = STAILQ_FIRST(&bp->ff_pool[0]);
 		filter1 = bnxt_get_l2_filter(bp, filter, vnic0);
 		if (filter1 == NULL) {
@@ -905,6 +908,7 @@ bnxt_validate_and_parse_flow(struct rte_eth_dev *dev,
 				HWRM_CFA_NTUPLE_FILTER_ALLOC_INPUT_FLAGS_DROP;
 		break;
 	case RTE_FLOW_ACTION_TYPE_COUNT:
+		//规则计数
 		vnic0 = STAILQ_FIRST(&bp->ff_pool[0]);
 		filter1 = bnxt_get_l2_filter(bp, filter, vnic0);
 		if (filter1 == NULL) {
@@ -915,6 +919,7 @@ bnxt_validate_and_parse_flow(struct rte_eth_dev *dev,
 		filter->flags = HWRM_CFA_NTUPLE_FILTER_ALLOC_INPUT_FLAGS_METER;
 		break;
 	case RTE_FLOW_ACTION_TYPE_VF:
+		//输出到vf
 		act_vf = (const struct rte_flow_action_vf *)act->conf;
 		vf = act_vf->id;
 		if (!BNXT_PF(bp)) {
@@ -961,6 +966,7 @@ bnxt_validate_and_parse_flow(struct rte_eth_dev *dev,
 		break;
 
 	default:
+		//其它类型不支持
 		rte_flow_error_set(error, EINVAL,
 				   RTE_FLOW_ERROR_TYPE_ACTION, act,
 				   "Invalid action.");
