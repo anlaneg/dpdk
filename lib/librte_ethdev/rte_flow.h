@@ -1217,10 +1217,10 @@ struct rte_flow_item_mark {
  */
 struct rte_flow_item {
 	enum rte_flow_item_type type; /**< Item type. */
-	//指向设置的值
+	//指向type类型对应的值，例如匹配以太头时，其对应的为struct rte_flow_item_eth结构体
 	const void *spec; /**< Pointer to item specification structure. */
 	const void *last; /**< Defines an inclusive range (spec to last). */
-	//指向掩码
+	//指向type类型对应的掩码，例如匹配以太头时，其对应的是struct rte_flow_item_eth结构体
 	const void *mask; /**< Bit-mask applied to spec and last. */
 };
 
@@ -1883,7 +1883,9 @@ struct rte_flow_action_nvgre_encap {
  * For simple actions without a configuration structure, conf remains NULL.
  */
 struct rte_flow_action {
+	//action类型
 	enum rte_flow_action_type type; /**< Action type. */
+	//指向action的配置信息（由各action规定相应的配置结构体）
 	const void *conf; /**< Pointer to action configuration structure. */
 };
 

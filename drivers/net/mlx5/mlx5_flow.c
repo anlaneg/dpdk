@@ -280,16 +280,20 @@ const uint32_t ptype_ext[] = {
 /** Structure to generate a simple graph of layers supported by the NIC. */
 struct mlx5_flow_items {
 	/** List of possible actions for these items. */
+	//此项支持的action
 	const enum rte_flow_action_type *const actions;
 	/** Bit-masks corresponding to the possibilities for the item. */
+	//此项对应的mask
 	const void *mask;
 	/**
 	 * Default bit-masks to use when item->mask is not provided. When
 	 * \default_mask is also NULL, the full supported bit-mask (\mask) is
 	 * used instead.
 	 */
+	//如果用户不给出mask,默认采用那种mask
 	const void *default_mask;
 	/** Bit-masks size in bytes. */
+	//mask的内存大小
 	const unsigned int mask_sz;
 	/**
 	 * Conversion function from rte_flow to NIC specific flow.
@@ -305,12 +309,14 @@ struct mlx5_flow_items {
 	 *   0 on success, a negative errno value otherwise and rte_errno is
 	 *   set.
 	 */
+	//将rte_flow的匹配项(item)转换为nic可识别的item
 	int (*convert)(const struct rte_flow_item *item,
 		       const void *default_mask,
 		       struct mlx5_flow_data *data);
 	/** Size in bytes of the destination structure. */
 	const unsigned int dst_sz;
 	/** List of possible following items.  */
+	//列出此项后面可以出现的item
 	const enum rte_flow_item_type *const items;
 };
 
@@ -335,17 +341,23 @@ static const struct mlx5_flow_items mlx5_flow_items[] = {
 			       RTE_FLOW_ITEM_TYPE_GRE),
 	},
 	[RTE_FLOW_ITEM_TYPE_ETH] = {
+		//以太头后面可以有vlan,ipv4,ipv6
 		.items = ITEMS(RTE_FLOW_ITEM_TYPE_VLAN,
 			       RTE_FLOW_ITEM_TYPE_IPV4,
 			       RTE_FLOW_ITEM_TYPE_IPV6),
+		//以太头可能的action
 		.actions = valid_actions,
+		//对所有数据项均显示mask
 		.mask = &(const struct rte_flow_item_eth){
 			.dst.addr_bytes = "\xff\xff\xff\xff\xff\xff",
 			.src.addr_bytes = "\xff\xff\xff\xff\xff\xff",
 			.type = -1,
 		},
+		//默认mask是不匹配type项的
 		.default_mask = &rte_flow_item_eth_mask,
+		//mask结构大小
 		.mask_sz = sizeof(struct rte_flow_item_eth),
+		//将以太头匹配项，转换为nic可识别的匹配项
 		.convert = mlx5_flow_create_eth,
 		.dst_sz = sizeof(struct ibv_flow_spec_eth),
 	},
@@ -447,6 +459,7 @@ static const struct mlx5_flow_items mlx5_flow_items[] = {
 		.mask = &(const struct rte_flow_item_gre){
 			.protocol = -1,
 		},
+		//默认仅匹配gre的协议字段
 		.default_mask = &rte_flow_item_gre_mask,
 		.mask_sz = sizeof(struct rte_flow_item_gre),
 		.convert = mlx5_flow_create_gre,
@@ -504,10 +517,12 @@ struct mlx5_flow_parse {
 	uint32_t inner; /**< Verbs value, set once tunnel is encountered. */
 	uint32_t create:1;
 	/**< Whether resources should remain after a validate. */
+	//action要求drop时为True
 	uint32_t drop:1; /**< Target is a drop queue. */
 	uint32_t mark:1; /**< Mark is present in the flow. */
 	uint32_t count:1; /**< Count is present in the flow. */
 	uint32_t mark_id; /**< Mark identifier. */ //命中后设置id
+	//rss配置信息
 	struct rte_flow_action_rss rss_conf; /**< RSS configuration */
 	uint16_t queues[RTE_MAX_QUEUES_PER_PORT]; /**< Queues indexes to use. */
 	uint8_t rss_key[40]; /**< copy of the RSS key. */
@@ -640,7 +655,7 @@ mlx5_flow_convert_attributes(const struct rte_flow_attr *attr,
 		return -rte_errno;
 	}
 	if (attr->priority && attr->priority != MLX5_CTRL_FLOW_PRIORITY) {
-		//只支持优先级等于MLX5_CTRL_FLOW_PRIORITY
+		//如果给定了优先级，则只支持优先级等于MLX5_CTRL_FLOW_PRIORITY
 		rte_flow_error_set(error, ENOTSUP,
 				   RTE_FLOW_ERROR_TYPE_ATTR_PRIORITY,
 				   NULL,
@@ -699,11 +714,12 @@ mlx5_flow_convert_actions(struct rte_eth_dev *dev,
 	uint32_t overlap = 0;
 	struct priv *priv = dev->data->dev_private;
 
+	//遍历action直接action数组结束
 	for (; actions->type != RTE_FLOW_ACTION_TYPE_END; ++actions) {
 		if (actions->type == RTE_FLOW_ACTION_TYPE_VOID) {
-			continue;
+			continue;//跳过占位action
 		} else if (actions->type == RTE_FLOW_ACTION_TYPE_DROP) {
-			//drop action处理
+			//drop action处理(同时检测drop action是否出现多次）
 			if (overlap & FATE)
 				goto exit_action_overlap;
 			overlap |= FATE;
@@ -736,6 +752,7 @@ mlx5_flow_convert_actions(struct rte_eth_dev *dev,
 			if (overlap & FATE)
 				goto exit_action_overlap;
 			overlap |= FATE;
+			//当前仅支持Toeplitz算法
 			if (rss->func &&
 			    rss->func != RTE_ETH_HASH_FUNCTION_TOEPLITZ) {
 				rte_flow_error_set(error, EINVAL,
@@ -797,6 +814,7 @@ mlx5_flow_convert_actions(struct rte_eth_dev *dev,
 						   "no valid queues");
 				return -rte_errno;
 			}
+			//配置的队列过大，超过parser队列最大值
 			if (rss->queue_num > RTE_DIM(parser->queues)) {
 				rte_flow_error_set(error, EINVAL,
 						   RTE_FLOW_ERROR_TYPE_ACTION,
@@ -805,6 +823,7 @@ mlx5_flow_convert_actions(struct rte_eth_dev *dev,
 						   " context");
 				return -rte_errno;
 			}
+			//队列号不能大于队列数
 			for (n = 0; n < rss->queue_num; ++n) {
 				if (rss->queue[n] >= priv->rxqs_n) {
 					rte_flow_error_set(error, EINVAL,
@@ -815,6 +834,8 @@ mlx5_flow_convert_actions(struct rte_eth_dev *dev,
 					return -rte_errno;
 				}
 			}
+
+			//对应的rss配置
 			parser->rss_conf = (struct rte_flow_action_rss){
 				.func = RTE_ETH_HASH_FUNCTION_DEFAULT,
 				.level = rss->level ? rss->level : 1,
@@ -1429,11 +1450,12 @@ mlx5_flow_create_copy(struct mlx5_flow_parse *parser, void *src,
 	for (i = 0; i != hash_rxq_init_n; ++i) {
 		if (!parser->queue[i].ibv_attr)
 			continue;
+		//设置匹配项
 		dst = (void *)((uintptr_t)parser->queue[i].ibv_attr +
 				parser->queue[i].offset);
 		memcpy(dst, src, size);
 		++parser->queue[i].ibv_attr->num_of_specs;
-		parser->queue[i].offset += size;
+		parser->queue[i].offset += size;//增加offset以便继续匹配
 	}
 }
 
@@ -1460,7 +1482,7 @@ mlx5_flow_create_eth(const struct rte_flow_item *item,
 	struct mlx5_flow_parse *parser = data->parser;
 	const unsigned int eth_size = sizeof(struct ibv_flow_spec_eth);
 	struct ibv_flow_spec_eth eth = {
-		.type = parser->inner | IBV_FLOW_SPEC_ETH,
+		.type = parser->inner | IBV_FLOW_SPEC_ETH,//指明以太头
 		.size = eth_size,
 	};
 
@@ -1477,12 +1499,15 @@ mlx5_flow_create_eth(const struct rte_flow_item *item,
 		memcpy(&eth.mask.src_mac, mask->src.addr_bytes, ETHER_ADDR_LEN);
 		eth.mask.ether_type = mask->type;
 		/* Remove unwanted bits from values. */
+		//按mask取与，丢掉未被mask设定的值
 		for (i = 0; i < ETHER_ADDR_LEN; ++i) {
 			eth.val.dst_mac[i] &= eth.mask.dst_mac[i];
 			eth.val.src_mac[i] &= eth.mask.src_mac[i];
 		}
 		eth.val.ether_type &= eth.mask.ether_type;
 	}
+
+	//设置以太头匹配项
 	mlx5_flow_create_copy(parser, &eth, eth_size);
 	return 0;
 }
