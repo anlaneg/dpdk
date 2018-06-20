@@ -946,7 +946,7 @@ mlx5_flow_convert_items_validate(struct rte_eth_dev *dev,
 
 		if (items->type == RTE_FLOW_ITEM_TYPE_VOID) {
 			last_voids++;
-			continue;
+			continue;//跳过void
 		}
 		for (i = 0;
 		     cur_item->items &&
