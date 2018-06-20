@@ -415,7 +415,7 @@ rte_eth_find_next_owned_by(uint16_t port_id, const uint64_t owner_id)
 	       ((rte_eth_devices[port_id].state != RTE_ETH_DEV_ATTACHED &&
 	       rte_eth_devices[port_id].state != RTE_ETH_DEV_REMOVED) ||
 	       rte_eth_devices[port_id].data->owner.id != owner_id))
-		port_id++;
+		port_id++;//计算识别的port数
 
 	if (port_id >= RTE_MAX_ETHPORTS)
 		return RTE_MAX_ETHPORTS;

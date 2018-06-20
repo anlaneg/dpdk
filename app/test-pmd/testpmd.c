@@ -1287,6 +1287,7 @@ start_packet_forwarding(int with_tx_first)
 			"Either rxq or txq are 0, cannot use %s fwd mode\n",
 			cur_fwd_eng->fwd_mode_name);
 
+	//确认是否所有接口均已start
 	if (all_ports_started() == 0) {
 		printf("Not all ports were started\n");
 		return;
@@ -2590,6 +2591,7 @@ init_port_dcb_config(portid_t pid,
 	return 0;
 }
 
+//申请ports数组
 static void
 init_port(void)
 {
@@ -2608,7 +2610,7 @@ static void
 force_quit(void)
 {
 	pmd_test_exit();
-	prompt_exit();
+	prompt_exit();//退出命令行
 }
 
 static void
@@ -2643,11 +2645,12 @@ signal_handler(int signum)
 		/* Set flag to indicate the force termination. */
 		f_quit = 1;
 		/* exit with the expected status */
-		signal(signum, SIG_DFL);
+		signal(signum, SIG_DFL);//改为默认函数，并发信号杀死自已
 		kill(getpid(), signum);
 	}
 }
 
+//test-pmd测试程序入口
 int
 main(int argc, char** argv)
 {
@@ -2655,6 +2658,7 @@ main(int argc, char** argv)
 	portid_t port_id;
 	int ret;
 
+	//收到SIGINT,SIGTERM信号处，执行进程退出
 	signal(SIGINT, signal_handler);
 	signal(SIGTERM, signal_handler);
 
@@ -2665,6 +2669,7 @@ main(int argc, char** argv)
 	testpmd_logtype = rte_log_register("testpmd");
 	if (testpmd_logtype < 0)
 		rte_panic("Cannot register log type");
+	//设置此模块的debug level
 	rte_log_set_level(testpmd_logtype, RTE_LOG_DEBUG);
 
 #ifdef RTE_LIBRTE_PDUMP
@@ -2674,6 +2679,7 @@ main(int argc, char** argv)
 
 	nb_ports = (portid_t) rte_eth_dev_count_avail();
 	if (nb_ports == 0)
+		//未识别出ports,报错
 		TESTPMD_LOG(WARNING, "No probed ethernet devices\n");
 
 	/* allocate port structures, and init them */
@@ -2704,6 +2710,7 @@ main(int argc, char** argv)
 	if (argc > 1)
 		launch_args_parse(argc, argv);
 
+	//防止内存换出
 	if (do_mlockall && mlockall(MCL_CURRENT | MCL_FUTURE)) {
 		TESTPMD_LOG(NOTICE, "mlockall() failed with error \"%s\"\n",
 			strerror(errno));
@@ -2719,6 +2726,7 @@ main(int argc, char** argv)
 		lsc_interrupt = 0;
 	}
 
+	//收发队列数不能为0
 	if (!nb_rxq && !nb_txq)
 		printf("Warning: Either rx or tx queues should be non-zero\n");
 
@@ -2744,6 +2752,7 @@ main(int argc, char** argv)
 		rte_exit(EXIT_FAILURE, "Start ports failed\n");
 
 	/* set all ports to promiscuous mode by default */
+	//所有接口开启混杂模式
 	RTE_ETH_FOREACH_DEV(port_id)
 		rte_eth_promiscuous_enable(port_id);
 

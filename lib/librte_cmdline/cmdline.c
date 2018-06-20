@@ -205,6 +205,7 @@ cmdline_quit(struct cmdline *cl)
 	rdline_quit(&cl->rdl);
 }
 
+//读取命令行输入
 int
 cmdline_poll(struct cmdline *cl)
 {
@@ -216,6 +217,7 @@ cmdline_poll(struct cmdline *cl)
 	if (!cl)
 		return -EINVAL;
 	else if (cl->rdl.status == RDLINE_EXITED)
+		//如果要求命令行退出，则直接返回退出
 		return RDLINE_EXITED;
 
 	pfd.fd = cl->s_in;
@@ -229,6 +231,7 @@ cmdline_poll(struct cmdline *cl)
 		c = -1;
 		read_status = read(cl->s_in, &c, 1);//读一个字符
 		if (read_status < 0)
+			//读取失败，返回
 			return read_status;
 
 		status = cmdline_in(cl, &c, 1);//输入一个字符
