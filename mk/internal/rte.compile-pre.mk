@@ -79,7 +79,7 @@ PMDINFO_TO_O = if grep -q 'RTE_PMD_REGISTER_.*(.*)' $<; then \
 	$(PMDINFO_LD) && \
 	mv -f $@.o $@; fi
 C_TO_O_CMD = 'cmd_$@ = $(C_TO_O_STR)'
-#将C转换为O执行的脚本
+#将C转换为O执行的脚本（包括编译前的输出）
 C_TO_O_DO = @set -e; \
 	echo $(C_TO_O_DISP); \
 	$(C_TO_O) && \

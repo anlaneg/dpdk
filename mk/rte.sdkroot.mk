@@ -114,7 +114,7 @@ examples examples_clean:
 # all other build targets
 # 其它类目标,目标"all"将走此流程
 %:
-	#执行checkconfig
+	#执行checkconfig，确保config.h生成，且已配置
 	$(Q)$(MAKE) -f $(RTE_SDK)/mk/rte.sdkconfig.mk checkconfig
 	#执行相应目标$@
 	$(Q)$(MAKE) -f $(RTE_SDK)/mk/rte.sdkbuild.mk $@

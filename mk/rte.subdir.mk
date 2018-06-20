@@ -14,10 +14,12 @@ ALL_DEPDIRS := $(patsubst DEPDIRS-%,%,$(filter DEPDIRS-%,$(.VARIABLES)))
 CLEANDIRS = $(addsuffix _clean,$(DIRS-y) $(DIRS-n) $(DIRS-))
 
 VPATH += $(SRCDIR)
+#由_postbuild目标在rte.build-post.mk中我们会依赖于_BUILD目标，故所有子目录将被编译
 _BUILD = $(DIRS-y)
 _INSTALL = $(INSTALL-FILES-y) $(SYMLINK-FILES-y)
 _CLEAN = $(CLEANDIRS)
 
+#定义编译入口all目标
 .PHONY: all
 all: install
 
@@ -31,7 +33,7 @@ build: _postbuild
 
 .SECONDEXPANSION:
 .PHONY: $(DIRS-y)
-#各目录编译目标
+#进入各子目录编译目标
 $(DIRS-y):
 	@[ -d $(CURDIR)/$@ ] || mkdir -p $(CURDIR)/$@
 	#进行指定源代码子目录进行编译

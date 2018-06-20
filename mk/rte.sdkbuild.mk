@@ -47,7 +47,7 @@ test-build: test
 
 .SECONDEXPANSION:
 .PHONY: $(ROOTDIRS-y) $(ROOTDIRS-)
-#各目标处理
+#各目标处理(源代码编译入口）
 $(ROOTDIRS-y) $(ROOTDIRS-):
 	#创建$(BUILDDIR)/$@目录，开始构造$@
 	@[ -d $(BUILDDIR)/$@ ] || mkdir -p $(BUILDDIR)/$@
