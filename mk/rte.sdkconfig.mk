@@ -70,6 +70,7 @@ defconfig:
 
 .PHONY: config
 ifeq ($(RTE_CONFIG_TEMPLATE),)
+#未发现配置模板定义，报错
 config: notemplate
 else
 #配置实际上仅要求rte_config.h已生成，且Makefile已生成
@@ -129,6 +130,7 @@ $(RTE_OUTPUT)/Makefile: | $(RTE_OUTPUT)
 # clean installed files, and generate a new config header file
 # if NODOTCONF variable is defined, don't try to rebuild .config
 $(RTE_OUTPUT)/include/rte_config.h: $(RTE_OUTPUT)/.config
+	#移除$(RTE_OUTPUT)中目录（防止之前编译过）
 	$(Q)rm -rf $(RTE_OUTPUT)/include $(RTE_OUTPUT)/app \
 		$(RTE_OUTPUT)/lib \
 		$(RTE_OUTPUT)/hostlib $(RTE_OUTPUT)/kmod $(RTE_OUTPUT)/build
@@ -153,7 +155,7 @@ checkconfig:
 		echo "No .config in build directory"; \
 		exit 1; \
 	fi
-	#检查配置时，不要求生成.config文件
+	#检查配置时，不要求生成.config文件,故采用-f指定自身并传入变量
 	$(Q)$(MAKE) -f $(RTE_SDK)/mk/rte.sdkconfig.mk \
 		headerconfig NODOTCONF=1
 
