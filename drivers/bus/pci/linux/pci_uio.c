@@ -129,7 +129,7 @@ static int
 pci_get_uio_dev(struct rte_pci_device *dev, char *dstbuf,
 			   unsigned int buflen, int create)
 {
-	struct rte_pci_addr *loc = &dev->addr;
+	struct rte_pci_addr *loc = &dev->addr;//设备的pci地址
 	int uio_num = -1;
 	struct dirent *e;
 	DIR *dir;
@@ -153,7 +153,7 @@ pci_get_uio_dev(struct rte_pci_device *dev, char *dstbuf,
 		dir = opendir(dirname);
 
 		if (dir == NULL) {
-			//再尝试失败
+			//再尝试失败,pci设备不存在，报错
 			RTE_LOG(ERR, EAL, "Cannot opendir %s\n", dirname);
 			return -1;
 		}
@@ -168,13 +168,14 @@ pci_get_uio_dev(struct rte_pci_device *dev, char *dstbuf,
 		char *endptr;
 
 		if (strncmp(e->d_name, "uio", 3) != 0)
-			continue;
+			continue;//非uio开头的文件名，直接跳过
 
 		//我们找到了名称为"uio%d"目录
 		/* first try uio%d */
 		errno = 0;
 		uio_num = strtoull(e->d_name + shortprefix_len, &endptr, 10);//取uio对应的%d
 		if (errno == 0 && endptr != (e->d_name + shortprefix_len)) {
+			//格式错误
 			snprintf(dstbuf, buflen, "%s/uio%u", dirname, uio_num);
 			break;
 		}
@@ -183,6 +184,7 @@ pci_get_uio_dev(struct rte_pci_device *dev, char *dstbuf,
 		errno = 0;
 		uio_num = strtoull(e->d_name + longprefix_len, &endptr, 10);//尝试接uio:uio对应的%d
 		if (errno == 0 && endptr != (e->d_name + longprefix_len)) {
+			//格式错误
 			snprintf(dstbuf, buflen, "%s/uio:uio%u", dirname, uio_num);
 			break;
 		}
@@ -191,6 +193,7 @@ pci_get_uio_dev(struct rte_pci_device *dev, char *dstbuf,
 
 	/* No uio resource found */
 	if (e == NULL)
+		//没有找到uio模块
 		return -1;
 
 	/* create uio device if we've been asked to */
@@ -219,6 +222,7 @@ pci_uio_free_resource(struct rte_pci_device *dev,
 	}
 }
 
+//为pci设备申请资源（通过uio)
 int
 pci_uio_alloc_resource(struct rte_pci_device *dev,
 		struct mapped_pci_resource **uio_res)

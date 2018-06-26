@@ -28,6 +28,7 @@ cavium_tim = {'Class': '08', 'Vendor': '177d', 'Device': 'a051',
 avp_vnic = {'Class': '05', 'Vendor': '1af4', 'Device': '1110',
               'SVendor': None, 'SDevice': None}
 
+#网络设备（pci中class为02的设备）
 network_devices = [network_class, cavium_pkx, avp_vnic]
 crypto_devices = [encryption_class, intel_processor_class]
 eventdev_devices = [cavium_sso, cavium_tim]
@@ -223,6 +224,7 @@ def get_device_details(devices_type):
     dev = {}
     dev_lines = check_output(["lspci", "-Dvmmnnk"]).splitlines()
     """
+    显示格式如下示：
 Slot:    0000:00:00.0
 Class:    Host bridge [0600]
 Vendor:    Intel Corporation [8086]
@@ -237,6 +239,16 @@ Vendor:    Intel Corporation [8086]
 Device:    82371SB PIIX3 ISA [Natoma/Triton II] [7000]
 SVendor:    Red Hat, Inc [1af4]
 SDevice:    Qemu virtual machine [1100]
+
+Slot:    0000:82:00.1
+Class:    Ethernet controller [0200]
+Vendor:    Broadcom Corporation [14e4]
+Device:    Device [16d7]
+SVendor:    Broadcom Corporation [14e4]
+SDevice:    Device [1402]
+PhySlot:    42
+Rev:    01
+Driver:    bnxt_en
     """
 
 
@@ -251,6 +263,7 @@ SDevice:    Qemu virtual machine [1100]
                 if "Module" in dev.keys():
                     dev["Module_str"] = dev.pop("Module")
                 # use dict to make copy of dev
+                #记录设备情况（pci address)
                 devices[dev["Slot"]] = dict(dev)
             # Clear previous device's data
             dev = {}
@@ -311,13 +324,16 @@ SDevice:    Qemu virtual machine [1100]
                 devices[d]["Module_str"] = ",".join(modules)
 
 
+#检查设备是否可与devices_type相匹配
 def device_type_match(dev, devices_type):
     for i in range(len(devices_type)):
         param_count = len(
             [x for x in devices_type[i].values() if x is not None])
         match_count = 0
         if dev["Class"][0:2] == devices_type[i]["Class"]:
+            #class中的前两个字节于devices_type中的class相等时进入，例如Class:    Ethernet controller [0200]
             match_count = match_count + 1
+            #其它key比对
             for key in devices_type[i].keys():
                 if key != 'Class' and devices_type[i][key]:
                     value_list = devices_type[i][key].split(',')
@@ -588,6 +604,7 @@ def show_status():
     kernel driver or to no driver'''
 
     if status_dev == "net" or status_dev == "all":
+        #显示设备状态
         show_device_status(network_devices, "Network")
 
     if status_dev == "crypto" or status_dev == "all":
@@ -666,8 +683,10 @@ def do_arg_actions():
     if b_flag == "none" or b_flag == "None":
         unbind_all(args, force_flag)
     elif b_flag is not None:
+        #实现binding
         bind_all(args, b_flag, force_flag)
     if status_flag:
+        #执行./dpdk-devbind.py --status
         if b_flag is not None:
             clear_data()
             # refresh if we have changed anything
