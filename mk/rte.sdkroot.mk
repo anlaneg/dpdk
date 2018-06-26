@@ -17,6 +17,7 @@ endif
 endif
 export Q
 
+#如果RTE_SDK未定义，则是报错
 ifeq ($(RTE_SDK),)
 $(error RTE_SDK is not defined)
 endif
@@ -44,7 +45,7 @@ export RTE_CONFIG_TEMPLATE
 # Default output is $(RTE_SRCDIR)/build
 # output files wil go in a separate directory
 #
-# 如果命令行指定了o,则指定输出，否则按默认输出
+# 如果命令行指定了o,则指定输出，否则按默认输出到$(RTE_SRCDIR)/build
 ifdef O
 ifeq ("$(origin O)", "command line")
 RTE_OUTPUT := $(abspath $(O))
@@ -60,7 +61,7 @@ export BUILDDIR
 
 export ROOTDIRS-y ROOTDIRS- ROOTDIRS-n
 
-#定义首目标default
+#定义首目标default,其依赖于all
 .PHONY: default
 default: all
 
@@ -105,12 +106,15 @@ doc-%:
 gcov gcovclean:
 	$(Q)$(MAKE) -f $(RTE_SDK)/mk/rte.sdkgcov.mk $@
 
+#示例代码相关
 .PHONY: examples examples_clean
 examples examples_clean:
 	$(Q)$(MAKE) -f $(RTE_SDK)/mk/rte.sdkexamples.mk $@
 
 # all other build targets
-# 其它类目标
+# 其它类目标,目标"all"将走此流程
 %:
+	#执行checkconfig，确保config.h生成，且已配置
 	$(Q)$(MAKE) -f $(RTE_SDK)/mk/rte.sdkconfig.mk checkconfig
+	#执行相应目标$@
 	$(Q)$(MAKE) -f $(RTE_SDK)/mk/rte.sdkbuild.mk $@

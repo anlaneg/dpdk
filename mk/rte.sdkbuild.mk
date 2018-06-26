@@ -38,6 +38,7 @@ clean: $(CLEANDIRS)
 	@[ -d $(RTE_OUTPUT)/include ] || mkdir -p $(RTE_OUTPUT)/include
 	@$(RTE_SDK)/buildtools/gen-config-h.sh $(RTE_OUTPUT)/.config \
 		> $(RTE_OUTPUT)/include/rte_config.h
+	#执行覆盖率清除
 	$(Q)$(MAKE) -f $(RTE_SDK)/GNUmakefile gcovclean
 	@echo Clean complete
 
@@ -46,7 +47,7 @@ test-build: test
 
 .SECONDEXPANSION:
 .PHONY: $(ROOTDIRS-y) $(ROOTDIRS-)
-#各目标处理
+#各目标处理(源代码编译入口）
 $(ROOTDIRS-y) $(ROOTDIRS-):
 	#创建$(BUILDDIR)/$@目录，开始构造$@
 	@[ -d $(BUILDDIR)/$@ ] || mkdir -p $(BUILDDIR)/$@

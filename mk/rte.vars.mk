@@ -7,6 +7,8 @@
 # config file of SDK. It also includes the config file from external
 # application if any.
 #
+#通过载入.config文件完成配置变量的定义，每个模块在编译时，均会先引入此makefile完成
+#配置变量的定义。
 
 ifeq ($(RTE_SDK),)
 $(error RTE_SDK is not defined)

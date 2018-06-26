@@ -18,6 +18,7 @@ endif
 endif
 
 ifeq ($(CONFIG_RTE_BUILD_SHARED_LIB),y)
+#如果编译为共享库时，则更新为.so
 LIB := $(patsubst %.a,%.so.$(LIBABIVER),$(LIB))
 ifeq ($(EXTLIB_BUILD),n)
 ifeq ($(CONFIG_RTE_MAJOR_ABI),)
@@ -29,12 +30,13 @@ CPU_LDFLAGS += --version-script=$(SRCDIR)/$(EXPORT_MAP)
 endif
 endif
 
-
+#同理在rte.build-post.mk中将使_postbuild指向_BUILD变量中的目标
 _BUILD = $(LIB)
 PREINSTALL = $(SYMLINK-FILES-y)
 _INSTALL = $(INSTALL-FILES-y) $(RTE_OUTPUT)/lib/$(LIB)
 _CLEAN = doclean
 
+#lib方式编译入口
 .PHONY: all
 all: install
 
@@ -62,6 +64,7 @@ else
 _CPU_LDFLAGS := $(CPU_LDFLAGS)
 endif
 
+#object到静态库命令
 O_TO_A = $(AR) crDs $(LIB) $(OBJS-y)
 O_TO_A_STR = $(subst ','\'',$(O_TO_A)) #'# fix syntax highlight
 O_TO_A_DISP = $(if $(V),"$(O_TO_A_STR)","  AR $(@)")
@@ -75,6 +78,7 @@ ifneq ($(CC_SUPPORTS_Z),false)
 NO_UNDEFINED := -z defs
 endif
 
+#obj生成共享库命令
 O_TO_S = $(LD) -L$(RTE_SDK_BIN)/lib $(_CPU_LDFLAGS) $(EXTRA_LDFLAGS) \
 	  -shared $(OBJS-y) $(NO_UNDEFINED) $(LDLIBS) -Wl,-soname,$(LIB) -o $(LIB)
 O_TO_S_STR = $(subst ','\'',$(O_TO_S)) #'# fix syntax highlight

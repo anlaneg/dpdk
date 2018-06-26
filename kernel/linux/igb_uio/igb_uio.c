@@ -476,6 +476,7 @@ igbuio_pci_probe(struct pci_dev *dev, const struct pci_device_id *id)
 
 #ifdef HAVE_PCI_IS_BRIDGE_API
 	if (pci_is_bridge(dev)) {
+		//pci桥设备，将被忽略
 		dev_warn(&dev->dev, "Ignoring PCI bridge device\n");
 		return -ENODEV;
 	}
@@ -543,6 +544,7 @@ igbuio_pci_probe(struct pci_dev *dev, const struct pci_device_id *id)
 	 * the iommu identity mapping if kernel boots with iommu=pt.
 	 * Note this is not a problem if no IOMMU at all.
 	 */
+	//dma内存映射
 	map_addr = dma_alloc_coherent(&dev->dev, 1024, &map_dma_addr,
 			GFP_KERNEL);
 	if (map_addr)
@@ -586,6 +588,7 @@ igbuio_pci_remove(struct pci_dev *dev)
 	kfree(udev);
 }
 
+//设置中断模式
 static int
 igbuio_config_intr_mode(char *intr_str)
 {
@@ -619,6 +622,7 @@ static struct pci_driver igbuio_pci_driver = {
 	.remove = igbuio_pci_remove,
 };
 
+//igbuio模块初始化
 static int __init
 igbuio_pci_init_module(void)
 {
@@ -628,6 +632,7 @@ igbuio_pci_init_module(void)
 	if (ret < 0)
 		return ret;
 
+	//注册pci driver
 	return pci_register_driver(&igbuio_pci_driver);
 }
 

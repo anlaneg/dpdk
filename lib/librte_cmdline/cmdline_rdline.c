@@ -83,6 +83,7 @@ rdline_stop(struct rdline *rdl)
 	rdl->status = RDLINE_INIT;
 }
 
+//设置命令行退出
 void
 rdline_quit(struct rdline *rdl)
 {

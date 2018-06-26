@@ -219,10 +219,11 @@ rte_log_lookup(const char *name)
 		if (rte_logs.dynamic_types[i].name == NULL)
 			continue;
 		if (strcmp(name, rte_logs.dynamic_types[i].name) == 0)
+			//此名称已存在，返回索引
 			return i;
 	}
 
-	return -1;
+	return -1;//名称不存在，返回-1
 }
 
 /* register an extended log type, assuming table is large enough, and id
@@ -251,8 +252,9 @@ rte_log_register(const char *name)
 
 	id = rte_log_lookup(name);
 	if (id >= 0)
-		return id;
+		return id;//返回此log对应的id
 
+	//不存在，注册此id
 	new_dynamic_types = realloc(rte_logs.dynamic_types,
 		sizeof(struct rte_log_dynamic_type) *
 		(rte_logs.dynamic_types_len + 1));

@@ -5,6 +5,7 @@
 # Head Makefile for compiling rte SDK
 #
 
+#导出RTE_SDK
 RTE_SDK := $(CURDIR)
 export RTE_SDK
 

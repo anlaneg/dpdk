@@ -114,9 +114,10 @@ pipeline_run(void *pipeline)
 	//命令行处理
 	status = cmdline_poll(p->cl);
 	if (status < 0)
+		//读标准输入失败，挂掉进程
 		rte_panic("CLI poll error (%" PRId32 ")\n", status);
 	else if (status == RDLINE_EXITED) {
-		//退出
+		//执行进程退出
 		cmdline_stdin_exit(p->cl);
 		rte_exit(0, "Bye!\n");
 	}
