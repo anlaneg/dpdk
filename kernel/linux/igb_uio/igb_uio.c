@@ -379,6 +379,7 @@ igbuio_pci_setup_iomem(struct pci_dev *dev, struct uio_info *info,
 	internal_addr = ioremap(addr, len);
 	if (internal_addr == NULL)
 		return -1;
+	//设置内存segment的name,addr,size
 	info->mem[n].name = name;
 	info->mem[n].addr = addr;
 	info->mem[n].internal_addr = internal_addr;
@@ -444,12 +445,14 @@ igbuio_setup_bars(struct pci_dev *dev, struct uio_info *info)
 				pci_resource_start(dev, i) != 0) {
 			flags = pci_resource_flags(dev, i);
 			if (flags & IORESOURCE_MEM) {
+				//内存资源
 				ret = igbuio_pci_setup_iomem(dev, info, iom,
 							     i, bar_names[i]);
 				if (ret != 0)
 					return ret;
 				iom++;
 			} else if (flags & IORESOURCE_IO) {
+				//io资源
 				ret = igbuio_pci_setup_ioport(dev, info, iop,
 							      i, bar_names[i]);
 				if (ret != 0)
@@ -501,6 +504,7 @@ igbuio_pci_probe(struct pci_dev *dev, const struct pci_device_id *id)
 	pci_set_master(dev);
 
 	/* remap IO memory */
+	//内存信息填充到udev->info中
 	err = igbuio_setup_bars(dev, &udev->info);
 	if (err != 0)
 		goto fail_release_iomem;
@@ -532,7 +536,7 @@ igbuio_pci_probe(struct pci_dev *dev, const struct pci_device_id *id)
 		goto fail_release_iomem;
 
 	/* register uio driver */
-	//igb_uio注册uio设备
+	//将igb_uio注册到uio设备
 	err = uio_register_device(&dev->dev, &udev->info);
 	if (err != 0)
 		goto fail_remove_group;
@@ -618,6 +622,7 @@ igbuio_config_intr_mode(char *intr_str)
 static struct pci_driver igbuio_pci_driver = {
 	.name = "igb_uio",
 	.id_table = NULL,
+	//设备与驱动匹配时调用
 	.probe = igbuio_pci_probe,
 	.remove = igbuio_pci_remove,
 };
