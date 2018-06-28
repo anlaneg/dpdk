@@ -32,7 +32,8 @@ M: Ferruh Yigit <ferruh.yigit@intel.com>
 T: git://dpdk.org/next/dpdk-next-net
 
 Next-net-intel Tree
-M: Helin Zhang <helin.zhang@intel.com>
+M: Qi Zhang <qi.z.zhang@intel.com>
+M: Beilei Xing <beilei.xing@intel.com>
 T: git://dpdk.org/next/dpdk-next-net-intel
 
 Next-net-mlx Tree
@@ -564,8 +565,8 @@ Intel ifc
 M: Xiao Wang <xiao.w.wang@intel.com>
 T: git://dpdk.org/next/dpdk-next-net-intel
 F: drivers/net/ifc/
-F: doc/guides/nics/ifcvf.rst
-F: doc/guides/nics/features/ifcvf.ini
+F: doc/guides/nics/ifc.rst
+F: doc/guides/nics/features/ifc*.ini
 
 Marvell mvpp2
 M: Tomasz Duszynski <tdu@semihalf.com>
@@ -1242,7 +1243,7 @@ M: John McNamara <john.mcnamara@intel.com>
 F: examples/skeleton/
 F: doc/guides/sample_app_ug/skeleton.rst
 
-M: Jijiang Liu <jijiang.liu@intel.com>
+M: Xiaoyun Li <xiaoyun.li@intel.com>
 F: examples/tep_termination/
 
 F: examples/vmdq/

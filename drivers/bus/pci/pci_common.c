@@ -26,6 +26,9 @@
 
 #include "private.h"
 
+
+static void rte_pci_remove_device(struct rte_pci_device *pci_device);
+
 extern struct rte_pci_bus rte_pci_bus;
 
 #define SYSFS_PCI_DEVICES "/sys/bus/pci/devices"
@@ -268,82 +271,6 @@ pci_probe_all_drivers(struct rte_pci_device *dev)
 }
 
 /*
- * Find the pci device specified by pci address, then invoke probe function of
- * the driver of the device.
- */
-int
-rte_pci_probe_one(const struct rte_pci_addr *addr)
-{
-	struct rte_pci_device *dev = NULL;
-
-	int ret = 0;
-
-	if (addr == NULL)
-		return -1;
-
-	/* update current pci device in global list, kernel bindings might have
-	 * changed since last time we looked at it.
-	 */
-	if (pci_update_device(addr) < 0)
-		goto err_return;
-
-	FOREACH_DEVICE_ON_PCIBUS(dev) {
-		if (rte_pci_addr_cmp(&dev->addr, addr))
-			continue;
-
-		//找到要求probe的设备
-		ret = pci_probe_all_drivers(dev);
-		if (ret)
-			goto err_return;
-		return 0;
-	}
-	return -1;
-
-err_return:
-	RTE_LOG(WARNING, EAL,
-		"Requested device " PCI_PRI_FMT " cannot be used\n",
-		addr->domain, addr->bus, addr->devid, addr->function);
-	return -1;
-}
-
-/*
- * Detach device specified by its pci address.
- */
-int
-rte_pci_detach(const struct rte_pci_addr *addr)
-{
-	struct rte_pci_device *dev = NULL;
-	int ret = 0;
-
-	if (addr == NULL)
-		return -1;
-
-	FOREACH_DEVICE_ON_PCIBUS(dev) {
-		if (rte_pci_addr_cmp(&dev->addr, addr))
-			continue;
-
-		ret = rte_pci_detach_dev(dev);
-		if (ret < 0)
-			/* negative value is an error */
-			goto err_return;
-		if (ret > 0)
-			/* positive value means driver doesn't support it */
-			continue;
-
-		rte_pci_remove_device(dev);
-		free(dev);
-		return 0;
-	}
-	return -1;
-
-err_return:
-	RTE_LOG(WARNING, EAL, "Requested device " PCI_PRI_FMT
-			" cannot be used\n", dev->addr.domain, dev->addr.bus,
-			dev->addr.devid, dev->addr.function);
-	return -1;
-}
-
-/*
  * Scan the content of the PCI bus, and call the probe() function for
  * all registered drivers that have a matching entry in its id_table
  * for discovered devices.
@@ -465,7 +392,7 @@ rte_pci_insert_device(struct rte_pci_device *exist_pci_dev,
 }
 
 /* Remove a device from PCI bus */
-void
+static void
 rte_pci_remove_device(struct rte_pci_device *pci_dev)
 {
 	TAILQ_REMOVE(&rte_pci_bus.device_list, pci_dev, next);
