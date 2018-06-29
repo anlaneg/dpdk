@@ -21,10 +21,15 @@ LDLIBS += -lrte_cryptodev
 LDLIBS += -lrte_pci -lrte_bus_pci
 
 # library source files
-SRCS-$(CONFIG_RTE_LIBRTE_PMD_QAT) += qat_crypto.c
+SRCS-$(CONFIG_RTE_LIBRTE_PMD_QAT) += qat_sym.c
+SRCS-$(CONFIG_RTE_LIBRTE_PMD_QAT) += qat_device.c
 SRCS-$(CONFIG_RTE_LIBRTE_PMD_QAT) += qat_qp.c
-SRCS-$(CONFIG_RTE_LIBRTE_PMD_QAT) += qat_adf/qat_algs_build_desc.c
-SRCS-$(CONFIG_RTE_LIBRTE_PMD_QAT) += rte_qat_cryptodev.c
+SRCS-$(CONFIG_RTE_LIBRTE_PMD_QAT) += qat_sym_session.c
+SRCS-$(CONFIG_RTE_LIBRTE_PMD_QAT) += qat_common.c
+SRCS-$(CONFIG_RTE_LIBRTE_PMD_QAT) += qat_logs.c
+SRCS-$(CONFIG_RTE_LIBRTE_PMD_QAT) += qat_sym_pmd.c
+SRCS-$(CONFIG_RTE_LIBRTE_PMD_QAT) += qat_asym_pmd.c
+SRCS-$(CONFIG_RTE_LIBRTE_PMD_QAT) += qat_comp_pmd.c
 
 # export include files
 SYMLINK-y-include +=

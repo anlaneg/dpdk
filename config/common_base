@@ -486,15 +486,10 @@ CONFIG_RTE_DPAA_SEC_PMD_MAX_NB_SESSIONS=2048
 # Compile PMD for QuickAssist based devices
 #
 CONFIG_RTE_LIBRTE_PMD_QAT=n
-CONFIG_RTE_LIBRTE_PMD_QAT_DEBUG_INIT=n
-CONFIG_RTE_LIBRTE_PMD_QAT_DEBUG_TX=n
-CONFIG_RTE_LIBRTE_PMD_QAT_DEBUG_RX=n
-CONFIG_RTE_LIBRTE_PMD_QAT_DEBUG_DRIVER=n
 #
-# Number of sessions to create in the session memory pool
-# on a single QuickAssist device.
+# Max. number of QuickAssist devices, which can be detected and attached
 #
-CONFIG_RTE_QAT_PMD_MAX_NB_SESSIONS=2048
+CONFIG_RTE_PMD_QAT_MAX_PCI_DEVICES=48
 
 #
 # Compile PMD for virtio crypto devices
@@ -861,11 +856,11 @@ CONFIG_RTE_LIBRTE_VHOST_DEBUG=n
 CONFIG_RTE_LIBRTE_PMD_VHOST=n
 
 #
-# Compile IFCVF driver
+# Compile IFC driver
 # To compile, CONFIG_RTE_LIBRTE_VHOST and CONFIG_RTE_EAL_VFIO
 # should be enabled.
 #
-CONFIG_RTE_LIBRTE_IFCVF_VDPA_PMD=n
+CONFIG_RTE_LIBRTE_IFC_PMD=n
 
 #
 # Compile librte_bpf

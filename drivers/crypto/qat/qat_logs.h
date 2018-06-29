@@ -5,45 +5,30 @@
 #ifndef _QAT_LOGS_H_
 #define _QAT_LOGS_H_
 
-#define PMD_INIT_LOG(level, fmt, args...) \
-	rte_log(RTE_LOG_ ## level, RTE_LOGTYPE_PMD, \
-		"PMD: %s(): " fmt "\n", __func__, ##args)
+extern int qat_gen_logtype;
+extern int qat_dp_logtype;
 
-#ifdef RTE_LIBRTE_PMD_QAT_DEBUG_INIT
-#define PMD_INIT_FUNC_TRACE() PMD_INIT_LOG(DEBUG, " >>")
-#else
-#define PMD_INIT_FUNC_TRACE() do { } while (0)
-#endif
+#define QAT_LOG(level, fmt, args...)			\
+	rte_log(RTE_LOG_ ## level, qat_gen_logtype,		\
+			"%s(): " fmt "\n", __func__, ## args)
 
-#ifdef RTE_LIBRTE_PMD_QAT_DEBUG_RX
-#define PMD_RX_LOG(level, fmt, args...) \
-	RTE_LOG(level, PMD, "%s(): " fmt "\n", __func__, ## args)
-#else
-#define PMD_RX_LOG(level, fmt, args...) do { } while (0)
-#endif
+#define QAT_DP_LOG(level, fmt, args...)			\
+	rte_log(RTE_LOG_ ## level, qat_dp_logtype,		\
+			"%s(): " fmt "\n", __func__, ## args)
 
-#ifdef RTE_LIBRTE_PMD_QAT_DEBUG_TX
-#define PMD_TX_LOG(level, fmt, args...) \
-	RTE_LOG(level, PMD, "%s(): " fmt "\n", __func__, ## args)
-#else
-#define PMD_TX_LOG(level, fmt, args...) do { } while (0)
-#endif
+#define QAT_DP_HEXDUMP_LOG(level, title, buf, len)		\
+	qat_hexdump_log(RTE_LOG_ ## level, qat_dp_logtype, title, buf, len)
 
-#ifdef RTE_LIBRTE_PMD_QAT_DEBUG_TX_FREE
-#define PMD_TX_FREE_LOG(level, fmt, args...) \
-	RTE_LOG(level, PMD, "%s(): " fmt "\n", __func__, ## args)
-#else
-#define PMD_TX_FREE_LOG(level, fmt, args...) do { } while (0)
-#endif
-
-#ifdef RTE_LIBRTE_PMD_QAT_DEBUG_DRIVER
-#define PMD_DRV_LOG_RAW(level, fmt, args...) \
-	RTE_LOG(level, PMD, "%s(): " fmt, __func__, ## args)
-#else
-#define PMD_DRV_LOG_RAW(level, fmt, args...) do { } while (0)
-#endif
-
-#define PMD_DRV_LOG(level, fmt, args...) \
-	PMD_DRV_LOG_RAW(level, fmt "\n", ## args)
+/**
+ * qat_hexdump_log - Dump out memory in a special hex dump format.
+ *
+ * Dump out the message buffer in a special hex dump output format with
+ * characters printed for each line of 16 hex values. The message will be sent
+ * to the stream defined by rte_logs.file or to stderr in case of rte_logs.file
+ * is undefined.
+ */
+int
+qat_hexdump_log(uint32_t level, uint32_t logtype, const char *title,
+		const void *buf, unsigned int len);
 
 #endif /* _QAT_LOGS_H_ */

@@ -272,14 +272,6 @@ vhost_new_device(void)
 	struct virtio_net *dev;
 	int i;
 
-	//申请一个virtio_net
-	dev = rte_zmalloc(NULL, sizeof(struct virtio_net), 0);
-	if (dev == NULL) {
-		RTE_LOG(ERR, VHOST_CONFIG,
-			"Failed to allocate memory for new dev.\n");
-		return -1;
-	}
-
 	//分配一个vhost_id(通过找空闲的vhost_devices来确定）
 	for (i = 0; i < MAX_VHOST_DEVICE; i++) {
 		if (vhost_devices[i] == NULL)
@@ -290,7 +282,13 @@ vhost_new_device(void)
 	if (i == MAX_VHOST_DEVICE) {
 		RTE_LOG(ERR, VHOST_CONFIG,
 			"Failed to find a free slot for new device.\n");
-		rte_free(dev);
+		return -1;
+	}
+
+	dev = rte_zmalloc(NULL, sizeof(struct virtio_net), 0);
+	if (dev == NULL) {
+		RTE_LOG(ERR, VHOST_CONFIG,
+			"Failed to allocate memory for new dev.\n");
 		return -1;
 	}
 
@@ -300,8 +298,25 @@ vhost_new_device(void)
 	dev->flags = VIRTIO_DEV_BUILTIN_VIRTIO_NET;
 	dev->slave_req_fd = -1;
 	dev->vdpa_dev_id = -1;
+	rte_spinlock_init(&dev->slave_req_lock);
 
 	return i;
+}
+
+void
+vhost_destroy_device_notify(struct virtio_net *dev)
+{
+	struct rte_vdpa_device *vdpa_dev;
+	int did;
+
+	if (dev->flags & VIRTIO_DEV_RUNNING) {
+		did = dev->vdpa_dev_id;
+		vdpa_dev = rte_vdpa_get_device(did);
+		if (vdpa_dev && vdpa_dev->ops->dev_close)
+			vdpa_dev->ops->dev_close(dev->vid);
+		dev->flags &= ~VIRTIO_DEV_RUNNING;
+		dev->notify_ops->destroy_device(dev->vid);
+	}
 }
 
 /*
@@ -313,21 +328,12 @@ void
 vhost_destroy_device(int vid)
 {
 	struct virtio_net *dev = get_device(vid);
-	struct rte_vdpa_device *vdpa_dev;
-	int did = -1;
 
 	if (dev == NULL)
 		return;
 
-	if (dev->flags & VIRTIO_DEV_RUNNING) {
-		did = dev->vdpa_dev_id;
-		vdpa_dev = rte_vdpa_get_device(did);
-		if (vdpa_dev && vdpa_dev->ops->dev_close)
-			vdpa_dev->ops->dev_close(dev->vid);
-		dev->flags &= ~VIRTIO_DEV_RUNNING;
-		//销毁dev
-		dev->notify_ops->destroy_device(vid);
-	}
+	//销毁dev
+	vhost_destroy_device_notify(dev);
 
 	cleanup_device(dev, 1);
 	free_device(dev);
@@ -356,6 +362,8 @@ vhost_detach_vdpa_device(int vid)
 
 	if (dev == NULL)
 		return;
+
+	vhost_user_host_notifier_ctrl(vid, false);
 
 	dev->vdpa_dev_id = -1;
 }

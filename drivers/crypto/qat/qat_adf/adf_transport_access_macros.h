@@ -50,8 +50,10 @@
 #define ADF_MAX_RING_SIZE ADF_RING_SIZE_4M
 #define ADF_DEFAULT_RING_SIZE ADF_RING_SIZE_16K
 
-#define ADF_NUM_BUNDLES_PER_DEV         1
-#define ADF_NUM_SYM_QPS_PER_BUNDLE      2
+/* Maximum number of qps on a device for any service type */
+#define ADF_MAX_QPS_ON_ANY_SERVICE	2
+#define ADF_RING_DIR_TX			0
+#define ADF_RING_DIR_RX			1
 
 /* Valid internal msg size values */
 #define ADF_MSG_SIZE_32 0x01
@@ -130,4 +132,5 @@ do { \
 #define WRITE_CSR_INT_FLAG_AND_COL(csr_base_addr, bank, value) \
 	ADF_CSR_WR(csr_base_addr, (ADF_RING_BUNDLE_SIZE * bank) + \
 			ADF_RING_CSR_INT_FLAG_AND_COL, value)
-#endif
+
+#endif /*ADF_TRANSPORT_ACCESS_MACROS_H */
