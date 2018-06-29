@@ -1,4 +1,4 @@
 #! /bin/bash
-#libnuma-dev
+#require gcc numactl-devel libnuma-dev
 make config T=x86_64-native-linuxapp-gcc
-make all V=1
+make
