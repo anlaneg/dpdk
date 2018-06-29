@@ -2046,9 +2046,11 @@ setup_fwd_config_of_each_lcore(struct fwd_config *cfg)
 	nb_fs = cfg->nb_fwd_streams;
 	nb_fc = cfg->nb_fwd_lcores;
 	if (nb_fs <= nb_fc) {
+		//转发流数比core数少时，每个core上一个转发流
 		nb_fs_per_lcore = 1;
 		nb_extra = 0;
 	} else {
+		//转发流数/转发core数
 		nb_fs_per_lcore = (streamid_t) (nb_fs / nb_fc);
 		nb_extra = (lcoreid_t) (nb_fs % nb_fc);
 	}
@@ -2057,6 +2059,7 @@ setup_fwd_config_of_each_lcore(struct fwd_config *cfg)
 	sm_id = 0;
 	for (lc_id = 0; lc_id < nb_lc; lc_id++) {
 		fwd_lcores[lc_id]->stream_idx = sm_id;
+		//指字转发stream数目
 		fwd_lcores[lc_id]->stream_nb = nb_fs_per_lcore;
 		sm_id = (streamid_t) (sm_id + nb_fs_per_lcore);
 	}
@@ -2766,6 +2769,7 @@ setup_gso(const char *mode, portid_t port_id)
 	}
 }
 
+//列出所有forward modules
 char*
 list_pkt_forwarding_modes(void)
 {
@@ -2787,6 +2791,7 @@ list_pkt_forwarding_modes(void)
 	return fwd_modes;
 }
 
+//列出转发模式名称（跳过rx_only_engine)
 char*
 list_pkt_forwarding_retry_modes(void)
 {
@@ -2798,7 +2803,7 @@ list_pkt_forwarding_retry_modes(void)
 	if (strlen(fwd_modes) == 0) {
 		while ((fwd_eng = fwd_engines[i++]) != NULL) {
 			if (fwd_eng == &rx_only_engine)
-				continue;
+				continue;//跳过rx_only_engine
 			strncat(fwd_modes, fwd_eng->fwd_mode_name,
 					sizeof(fwd_modes) -
 					strlen(fwd_modes) - 1);
@@ -2812,6 +2817,7 @@ list_pkt_forwarding_retry_modes(void)
 	return fwd_modes;
 }
 
+//设置转发引擎
 void
 set_pkt_forwarding_mode(const char *fwd_mode_name)
 {

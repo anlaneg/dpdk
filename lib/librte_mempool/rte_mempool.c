@@ -35,6 +35,7 @@
 
 TAILQ_HEAD(rte_mempool_list, rte_tailq_entry);
 
+//用于串连系统中所有mempool
 static struct rte_tailq_elem rte_mempool_tailq = {
 	.name = "RTE_MEMPOOL",
 };
@@ -843,7 +844,7 @@ static void
 mempool_cache_init(struct rte_mempool_cache *cache, uint32_t size)
 {
 	cache->size = size;
-	cache->flushthresh = CALC_CACHE_FLUSHTHRESH(size);
+	cache->flushthresh = CALC_CACHE_FLUSHTHRESH(size);//1.5倍的size
 	cache->len = 0;
 }
 
@@ -961,6 +962,7 @@ rte_mempool_create_empty(const char *name, unsigned n, unsigned elt_size,
 		goto exit_unlock;
 	}
 
+	//创建memzone
 	mz = rte_memzone_reserve(mz_name, mempool_size, socket_id, mz_flags);
 	if (mz == NULL)
 		goto exit_unlock;
@@ -994,15 +996,18 @@ rte_mempool_create_empty(const char *name, unsigned n, unsigned elt_size,
 		RTE_PTR_ADD(mp, MEMPOOL_HEADER_SIZE(mp, 0));
 
 	/* Init all default caches. */
+	//要求开始cache时，初始化cache
 	if (cache_size != 0) {
 		for (lcore_id = 0; lcore_id < RTE_MAX_LCORE; lcore_id++)
 			mempool_cache_init(&mp->local_cache[lcore_id],
 					   cache_size);
 	}
 
+	//使te指出mbuf
 	te->data = mp;
 
 	rte_rwlock_write_lock(RTE_EAL_TAILQ_RWLOCK);
+	//将此mbuf挂载在mempool_list上
 	TAILQ_INSERT_TAIL(mempool_list, te, next);
 	rte_rwlock_write_unlock(RTE_EAL_TAILQ_RWLOCK);
 	rte_rwlock_write_unlock(RTE_EAL_MEMPOOL_RWLOCK);

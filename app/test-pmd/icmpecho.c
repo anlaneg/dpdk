@@ -330,6 +330,7 @@ reply_to_icmp_echo_rqsts(struct fwd_stream *fs)
 			ether_addr_dump("  ETH:  src=", &eth_h->s_addr);
 			ether_addr_dump(" dst=", &eth_h->d_addr);
 		}
+		//vlan处理
 		if (eth_type == ETHER_TYPE_VLAN) {
 			vlan_h = (struct vlan_hdr *)
 				((char *)eth_h + sizeof(struct ether_hdr));
@@ -381,6 +382,7 @@ reply_to_icmp_echo_rqsts(struct fwd_stream *fs)
 				ipv4_addr_dump(" tip=", ip_addr);
 				printf("\n");
 			}
+			//仅处理arp request,进入arp响应
 			if (arp_op != ARP_OP_REQUEST) {
 				rte_pktmbuf_free(pkt);
 				continue;
@@ -409,6 +411,7 @@ reply_to_icmp_echo_rqsts(struct fwd_stream *fs)
 			continue;
 		}
 
+		//仅处理ipv4报文
 		if (eth_type != ETHER_TYPE_IPv4) {
 			rte_pktmbuf_free(pkt);
 			continue;
@@ -422,6 +425,8 @@ reply_to_icmp_echo_rqsts(struct fwd_stream *fs)
 			       ip_proto_name(ip_h->next_proto_id));
 		}
 
+		//仅处理icmp echo request报文，如果不是reqeust，则丢包
+		//否则进行icmp reply报文构造并发送
 		/*
 		 * Check if packet is a ICMP echo request.
 		 */

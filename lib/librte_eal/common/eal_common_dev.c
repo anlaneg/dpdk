@@ -237,6 +237,7 @@ rte_dev_event_callback_register(const char *device_name,
 
 	/* create a new callback. */
 	if (event_cb == NULL) {
+		//未发现已存在的注册，创建回调
 		event_cb = malloc(sizeof(struct dev_event_callback));
 		if (event_cb != NULL) {
 			event_cb->cb_fn = cb_fn;
@@ -260,6 +261,7 @@ rte_dev_event_callback_register(const char *device_name,
 			goto error;
 		}
 	} else {
+		//报错，重复注册
 		RTE_LOG(ERR, EAL,
 			"The callback is already exist, no need "
 			"to register again.\n");

@@ -68,16 +68,17 @@ struct rdline {
 	char left_buf[RDLINE_BUF_SIZE+2]; /* reserve 2 chars for the \n\0 */
 	char right_buf[RDLINE_BUF_SIZE];
 
+	//提示语
 	char prompt[RDLINE_PROMPT_SIZE];
-	unsigned int prompt_size;
+	unsigned int prompt_size;//提示语长度
 
 	char kill_buf[RDLINE_BUF_SIZE];
 	unsigned int kill_size;
 
 	/* history */
 	struct cirbuf history;//命令行历史
-	char history_buf[RDLINE_HISTORY_BUF_SIZE];
-	int history_cur_line;
+	char history_buf[RDLINE_HISTORY_BUF_SIZE];//cirbuf所需要缓冲区
+	int history_cur_line;//当前历史行
 
 	/* callbacks and func pointers */
 	rdline_write_char_t *write_char;

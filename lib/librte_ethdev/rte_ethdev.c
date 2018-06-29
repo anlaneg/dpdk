@@ -408,6 +408,7 @@ rte_eth_is_valid_owner_id(uint64_t owner_id)
 	return 1;
 }
 
+//从port_id端口开始，查找第一个非RTE_ETH_DEV_ATTACHED,非RTE_ETH_DEV_REMOVED(即未使用的port)，owner.id不等于ower_id的port
 uint64_t
 rte_eth_find_next_owned_by(uint16_t port_id, const uint64_t owner_id)
 {
@@ -418,7 +419,7 @@ rte_eth_find_next_owned_by(uint16_t port_id, const uint64_t owner_id)
 		port_id++;//计算识别的port数
 
 	if (port_id >= RTE_MAX_ETHPORTS)
-		return RTE_MAX_ETHPORTS;
+		return RTE_MAX_ETHPORTS;//找不到，返回最大值
 
 	return port_id;
 }

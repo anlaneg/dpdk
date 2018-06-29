@@ -22,9 +22,11 @@ static uint64_t eal_tsc_resolution_hz;
 /* Pointer to user delay function */
 void (*rte_delay_us)(unsigned int) = NULL;
 
+//rte_delay_us的默认函数
 void
 rte_delay_us_block(unsigned int us)
 {
+	//利用cpu cycle来度量时间
 	const uint64_t start = rte_get_timer_cycles();
 	const uint64_t ticks = (uint64_t)us * rte_get_timer_hz() / 1E6;
 	while ((rte_get_timer_cycles() - start) < ticks)
@@ -70,6 +72,7 @@ void rte_delay_us_callback_register(void (*userfunc)(unsigned int))
 
 RTE_INIT(rte_timer_init)
 {
+	//为rte_delay_us提供默认函数
 	/* set rte_delay_us_block as a delay function */
 	rte_delay_us_callback_register(rte_delay_us_block);
 }

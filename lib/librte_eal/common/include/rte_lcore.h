@@ -81,6 +81,7 @@ rte_lcore_id(void)
  * @return
  *   the id of the master lcore
  */
+//获取master对应的core id
 static inline unsigned
 rte_get_master_lcore(void)
 {
@@ -170,6 +171,7 @@ rte_socket_id_by_idx(unsigned int idx);
  * @return
  *   the ID of lcoreid's physical socket
  */
+//取logic core 对应的socket id
 static inline unsigned
 rte_lcore_to_socket_id(unsigned lcore_id)
 {

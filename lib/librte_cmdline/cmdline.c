@@ -47,6 +47,7 @@ cmdline_complete_buffer(struct rdline *rdl, const char *buf,
 	return cmdline_complete(cl, buf, state, dstbuf, dstsize);
 }
 
+//向s_out中写入单个字符
 int
 cmdline_write_char(struct rdline *rdl, char c)
 {
@@ -119,6 +120,7 @@ cmdline_free(struct cmdline *cl)
 	free(cl);
 }
 
+//命令行输出语句
 void
 cmdline_printf(const struct cmdline *cl, const char *fmt, ...)
 {

@@ -65,6 +65,7 @@ err:
 	return ret;
 }
 
+//将buf解析成rte_dev_event
 static int
 dev_uev_parse(const char *buf, struct rte_dev_event *event, int length)
 {
@@ -151,6 +152,7 @@ dev_uev_handler(__rte_unused void *param)
 	memset(&uevent, 0, sizeof(struct rte_dev_event));
 	memset(buf, 0, EAL_UEV_MSG_LEN);
 
+	//自fd中读取数据
 	ret = recv(intr_handle.fd, buf, EAL_UEV_MSG_LEN, MSG_DONTWAIT);
 	if (ret < 0 && errno == EAGAIN)
 		return;
@@ -161,6 +163,7 @@ dev_uev_handler(__rte_unused void *param)
 		return;
 	}
 
+	//解析uevent
 	ret = dev_uev_parse(buf, &uevent, EAL_UEV_MSG_LEN);
 	if (ret < 0) {
 		RTE_LOG(DEBUG, EAL, "It is not an valid event "
@@ -172,6 +175,7 @@ dev_uev_handler(__rte_unused void *param)
 		uevent.devname, uevent.type, uevent.subsystem);
 
 	if (uevent.devname)
+		//udevent处理
 		dev_callback_process(uevent.devname, uevent.type);
 }
 
@@ -181,14 +185,16 @@ rte_dev_event_monitor_start(void)
 	int ret;
 
 	if (monitor_started)
-		return 0;
+		return 0;//已开启时，直接返回
 
+	//创建netlink socket fd
 	ret = dev_uev_socket_fd_create();
 	if (ret) {
 		RTE_LOG(ERR, EAL, "error create device event fd.\n");
 		return -1;
 	}
 
+	//注册中断回调
 	intr_handle.type = RTE_INTR_HANDLE_DEV_EVENT;
 	ret = rte_intr_callback_register(&intr_handle, dev_uev_handler, NULL);
 

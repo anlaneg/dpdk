@@ -25,8 +25,9 @@ cmdline_file_new(cmdline_parse_ctx_t *ctx, const char *prompt, const char *path)
 
 	/* everything else is checked in cmdline_new() */
 	if (!path)
-		return NULL;
+		return NULL;//无指出文件返回NULL
 
+	//打开cmd文件
 	fd = open(path, O_RDONLY, 0);
 	if (fd < 0) {
 		dprintf("open() failed\n");

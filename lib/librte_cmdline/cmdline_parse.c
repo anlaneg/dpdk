@@ -124,21 +124,24 @@ match_inst(cmdline_parse_inst_t *inst, const char *buf,
 		memset(resbuf, 0, resbuf_size);
 	/* check if we match all tokens of inst */
 	while (!nb_match_token || i < nb_match_token) {
-		token_p = get_token(inst, i);//检查是否可完成匹配
+		//取inst命令第i个token
+		token_p = get_token(inst, i);
 		if (!token_p)
-			break;
+			break;//无i token,匹配失败
 		memcpy(&token_hdr, token_p, sizeof(token_hdr));
 
 		debug_printf("TK\n");
 		/* skip spaces */
+		//跳过前导的空字符
 		while (isblank2(*buf)) {
 			buf++;
 		}
 
 		/* end of buf */
 		if ( isendofline(*buf) || iscomment(*buf) )
-			break;
+			break;//包含空字符的串，无法匹配，跳出
 
+		//调用token的解析函数，完成命令行中此token的解析
 		if (resbuf == NULL) {
 			n = token_hdr.ops->parse(token_p, buf, NULL, 0);
 		} else {
@@ -158,8 +161,9 @@ match_inst(cmdline_parse_inst_t *inst, const char *buf,
 		}
 
 		if (n < 0)
-			break;
+			break;//解析失败
 
+		//解析成功，切换到下一个token的处理
 		debug_printf("TK parsed (len=%d)\n", n);
 		i++;
 		buf += n;
@@ -172,9 +176,9 @@ match_inst(cmdline_parse_inst_t *inst, const char *buf,
 	/* in case we want to match a specific num of token */
 	if (nb_match_token) {
 		if (i == nb_match_token) {
-			return 0;
+			return 0;//指定match token数时，且已匹配完成，则返回0
 		}
-		return i;
+		return i;//否则返回匹配数
 	}
 
 	/* we don't match all the tokens */
@@ -196,6 +200,23 @@ match_inst(cmdline_parse_inst_t *inst, const char *buf,
 }
 
 
+//实现命令行解析
+//dpdk中的命令行功能，使用起来非常麻烦，解析起来了也事情比较多
+/**
+ * 这块应这样做
+ * 1。定义已知的类型（dpdk中也有这种概念，例如cmdline_parse_token_string_t），
+ * 2。针对已知类型，定义字面型式，例如"<string>","<uin8>","<ipv4>" 及其对应的parse函数，可自主扩展
+ * 3. 如果（1），（2）完成，则对于任意命令 均可写成token流形式，例如 ifconfig <string> <ipv4> <ipmask>
+ * 4. （3）步可实现命令配的匹配及参数提取，可定义validate对参数进入联想调验
+ * 5。定义命令集对应的help,incomplete函数
+ * 6。 命令提供对应的f函数，完成命令对应的业务
+ *
+ * 以下可实现：
+ * 1。用户通过2步定义的元素，定义自已的命令，如果需要命令层次需定义相应的分隔符
+ * 2. 用户提供此命令对应的校验函数   ＊大工作
+ * 3。用户提供此命令对应的help文字
+ * 4。用户提供此命令对应的f函数完成业务 ＊大工作
+ */
 int
 cmdline_parse(struct cmdline *cl, const char * buf)
 {
@@ -227,14 +248,17 @@ cmdline_parse(struct cmdline *cl, const char * buf)
 	 * - count line length
 	 */
 	curbuf = buf;
+	//如果*curbuf非换行符，则继续循环（用于在buf中找出换行符位置）
 	while (! isendofline(*curbuf)) {
 		if ( *curbuf == '\0' ) {
 			debug_printf("Incomplete buf (len=%d)\n", linelen);
 			return 0;
 		}
+		//遇到注释符
 		if ( iscomment(*curbuf) ) {
 			comment = 1;
 		}
+		//如果非注释符，非空字符，则为需要解析字符
 		if ( ! isblank2(*curbuf) && ! comment) {
 			parse_it = 1;
 		}
@@ -243,11 +267,13 @@ cmdline_parse(struct cmdline *cl, const char * buf)
 	}
 
 	/* skip all endofline chars */
+	//跳过第一个endofline后面的其它endofline
 	while (isendofline(buf[linelen])) {
 		linelen++;
 	}
 
 	/* empty line */
+	//空行（含全注释行，目前不支持半注释行）
 	if ( parse_it == 0 ) {
 		debug_printf("Empty line (len=%d)\n", linelen);
 		return linelen;
@@ -257,6 +283,7 @@ cmdline_parse(struct cmdline *cl, const char * buf)
 		     linelen, linelen > 64 ? 64 : linelen, buf);
 
 	/* parse it !! */
+	//遍历命令数组，找到匹配此行的命令
 	inst = ctx[inst_num];
 	while (inst) {
 		debug_printf("INST %d\n", inst_num);
@@ -297,6 +324,7 @@ cmdline_parse(struct cmdline *cl, const char * buf)
 	}
 
 	/* call func */
+	//有命令回调，执行命令回调
 	if (f) {
 		f(result.buf, cl, data);
 	}

@@ -17257,6 +17257,7 @@ cmdline_parse_inst_t cmd_config_per_queue_tx_offload = {
 /* ******************************************************************************** */
 
 /* list of instructions */
+//命令行数组
 cmdline_parse_ctx_t main_ctx[] = {
 	(cmdline_parse_inst_t *)&cmd_help_brief,
 	(cmdline_parse_inst_t *)&cmd_help_long,
@@ -17519,6 +17520,7 @@ cmdline_parse_ctx_t main_ctx[] = {
 };
 
 /* read cmdline commands from file */
+//自文件中读取cmd
 void
 cmdline_read_from_file(const char *filename)
 {

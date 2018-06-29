@@ -220,6 +220,7 @@ struct fwd_lcore {
 	struct rte_mempool *mbp; /**< The mbuf pool to use by this core */
 	void *gro_ctx;		/**< GRO context */
 	streamid_t stream_idx;   /**< index of 1st stream in "fwd_streams" */
+	//多少转发流
 	streamid_t stream_nb;    /**< number of streams in "fwd_streams" */
 	lcoreid_t  cpuid_idx;    /**< index of logical core in CPU id table */
 	queueid_t  tx_queue;     /**< TX queue to send forwarded packets */
@@ -497,6 +498,7 @@ current_fwd_lcore(void)
 	return fwd_lcores[lcore_num()];
 }
 
+//构造mbuf pool名称
 /* Mbuf Pools */
 static inline void
 mbuf_poolname_build(unsigned int sock_id, char* mp_name, int name_size)

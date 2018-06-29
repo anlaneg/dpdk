@@ -33,7 +33,7 @@ struct rte_logs {
 	uint32_t level; /**< Log level. */
 	FILE *file;     /**< Output file set by rte_openlog_stream, or NULL. */
 	size_t dynamic_types_len;
-	struct rte_log_dynamic_type *dynamic_types;
+	struct rte_log_dynamic_type *dynamic_types;//指出动态模块的日志级别
 };
 
 /** Global log informations */

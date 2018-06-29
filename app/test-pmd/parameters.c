@@ -546,6 +546,7 @@ launch_args_parse(int argc, char** argv)
 	uint16_t rec_nb_pkts;
 
 	static struct option lgopts[] = {
+		//1.选项名；2。参数控制（1有参数，0无参数，2可选参数）;3.保存value的指针;4.val值
 		{ "help",			0, 0, 0 },
 #ifdef RTE_LIBRTE_CMDLINE
 		{ "interactive",		0, 0, 0 },
@@ -640,17 +641,20 @@ launch_args_parse(int argc, char** argv)
 		switch (opt) {
 #ifdef RTE_LIBRTE_CMDLINE
 		case 'i':
+			//交互模式
 			printf("Interactive-mode selected\n");
 			interactive = 1;
 			break;
 #endif
 		case 'a':
 			printf("Auto-start selected\n");
+			//自动开始
 			auto_start = 1;
 			break;
 
 		case 0: /*long options */
 			if (!strcmp(lgopts[opt_idx].name, "help")) {
+				//help显示
 				usage(argv[0]);
 				rte_exit(EXIT_SUCCESS, "Displayed help\n");
 			}
@@ -922,6 +926,7 @@ launch_args_parse(int argc, char** argv)
 						 optarg);
 			}
 			if (!strcmp(lgopts[opt_idx].name, "forward-mode"))
+				//设置转发引擎
 				set_pkt_forwarding_mode(optarg);
 			if (!strcmp(lgopts[opt_idx].name, "rss-ip"))
 				rss_hf = ETH_RSS_IP;

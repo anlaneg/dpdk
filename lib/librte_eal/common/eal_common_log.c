@@ -55,8 +55,8 @@ struct log_cur_msg {
 };
 
 struct rte_log_dynamic_type {
-	const char *name;
-	uint32_t loglevel;
+	const char *name;//模块名称
+	uint32_t loglevel;//日志级别
 };
 
  /* per core log */
@@ -95,13 +95,14 @@ rte_log_get_level(uint32_t type)
 	return rte_logs.dynamic_types[type].loglevel;
 }
 
+//设置模块的日志级别
 int
 rte_log_set_level(uint32_t type, uint32_t level)
 {
 	if (type >= rte_logs.dynamic_types_len)
-		return -1;
+		return -1;//模块查找失败，报错
 	if (level > RTE_LOG_DEBUG)
-		return -1;
+		return -1;//日志级别错误
 
 	rte_logs.dynamic_types[type].loglevel = level;
 

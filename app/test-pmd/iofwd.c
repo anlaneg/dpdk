@@ -64,21 +64,24 @@ pkt_burst_io_forward(struct fwd_stream *fs)
 	/*
 	 * Receive a burst of packets and forward them.
 	 */
+	//自rx_port读取报文
 	nb_rx = rte_eth_rx_burst(fs->rx_port, fs->rx_queue,
 			pkts_burst, nb_pkt_per_burst);
 	if (unlikely(nb_rx == 0))
 		return;
-	fs->rx_packets += nb_rx;
+	fs->rx_packets += nb_rx;//增加收包统计
 
 #ifdef RTE_TEST_PMD_RECORD_BURST_STATS
 	fs->rx_burst_stats.pkt_burst_spread[nb_rx]++;
 #endif
+	//自tx_port写入报文
 	nb_tx = rte_eth_tx_burst(fs->tx_port, fs->tx_queue,
 			pkts_burst, nb_rx);
 	/*
 	 * Retry if necessary
 	 */
 	if (unlikely(nb_tx < nb_rx) && fs->retry_enabled) {
+		//如果未全部发出，且开启了发送重试，则尝试再次发送
 		retry = 0;
 		while (nb_tx < nb_rx && retry++ < burst_tx_retry_num) {
 			rte_delay_us(burst_tx_delay_time);
@@ -86,10 +89,12 @@ pkt_burst_io_forward(struct fwd_stream *fs)
 					&pkts_burst[nb_tx], nb_rx - nb_tx);
 		}
 	}
+	//报文发送
 	fs->tx_packets += nb_tx;
 #ifdef RTE_TEST_PMD_RECORD_BURST_STATS
 	fs->tx_burst_stats.pkt_burst_spread[nb_tx]++;
 #endif
+	//增加丢包数
 	if (unlikely(nb_tx < nb_rx)) {
 		fs->fwd_dropped += (nb_rx - nb_tx);
 		do {

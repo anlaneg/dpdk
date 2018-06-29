@@ -33,6 +33,7 @@ RTE_DEFINE_PER_LCORE(rte_cpuset_t, _cpuset);
  * function f with argument arg. Once the execution is done, the
  * remote lcore switch in FINISHED state.
  */
+//为slave分配任务，并通知其运行，等待其开始运行后退出
 int
 rte_eal_remote_launch(int (*f)(void *), void *arg, unsigned slave_id)
 {

@@ -81,13 +81,17 @@ struct rte_mempool_debug_stats {
  * A structure that stores a per-core object cache.
  */
 struct rte_mempool_cache {
+	//缓存的最大数目
 	uint32_t size;	      /**< Size of the cache */
+	//flush门限
 	uint32_t flushthresh; /**< Threshold before we flush excess elements */
+	//当前缓存数目
 	uint32_t len;	      /**< Current cache count */
 	/*
 	 * Cache is allocated to this size to allow it to overflow in certain
 	 * cases to avoid needless emptying of cache.
 	 */
+	//存放obj
 	void *objs[RTE_MEMPOOL_CACHE_MAX_SIZE * 3]; /**< Cache objects */
 } __rte_cache_aligned;
 
@@ -226,6 +230,7 @@ struct rte_mempool {
 	const struct rte_memzone *mz;    /**< Memzone where pool is alloc'd. */
 	unsigned int flags;              /**< Flags of the mempool. */
 	int socket_id;                   /**< Socket id passed at create. */
+	//元素数
 	uint32_t size;                   /**< Max size of the mempool. */
 	uint32_t cache_size;
 	/**< Size of per-lcore default local cache. */
@@ -244,6 +249,7 @@ struct rte_mempool {
 	 */
 	int32_t ops_index;
 
+	//mp针对每个core的cache
 	struct rte_mempool_cache *local_cache; /**< Per-lcore local cache */
 
 	uint32_t populated_size;         /**< Number of populated objects. */
@@ -1361,9 +1367,10 @@ __mempool_generic_put(struct rte_mempool *mp, void * const *obj_table,
 
 	/* No cache provided or if put would overflow mem allocated for cache */
 	if (unlikely(cache == NULL || n > RTE_MEMPOOL_CACHE_MAX_SIZE))
+		//需要cache的object过多，采用直接入队方式
 		goto ring_enqueue;
 
-	cache_objs = &cache->objs[cache->len];
+	cache_objs = &cache->objs[cache->len];//指向当前最后一个cache位置
 
 	/*
 	 * The cache follows the following algorithm
@@ -1373,11 +1380,13 @@ __mempool_generic_put(struct rte_mempool *mp, void * const *obj_table,
 	 */
 
 	/* Add elements back into the cache */
+	//将要放入cache的元素直接copy到cache
 	rte_memcpy(&cache_objs[0], obj_table, sizeof(void *) * n);
 
 	cache->len += n;
 
 	if (cache->len >= cache->flushthresh) {
+		//缓存的cache过多，将过多的cache入队到mp
 		rte_mempool_ops_enqueue_bulk(mp, &cache->objs[cache->size],
 				cache->len - cache->size);
 		cache->len = cache->size;

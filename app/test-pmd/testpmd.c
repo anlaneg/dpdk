@@ -125,6 +125,7 @@ portid_t nb_peer_eth_addrs = 0;
 struct rte_port *ports;	       /**< For all probed ethernet ports. */
 portid_t nb_ports;             /**< Number of probed ethernet ports. */
 struct fwd_lcore **fwd_lcores; /**< For all probed logical cores. */
+//检测出的可用于转发的core数目
 lcoreid_t nb_lcores;           /**< Number of probed logical cores. */
 
 /*
@@ -135,8 +136,10 @@ lcoreid_t nb_lcores;           /**< Number of probed logical cores. */
 lcoreid_t nb_cfg_lcores; /**< Number of configured logical cores. */
 lcoreid_t nb_fwd_lcores; /**< Number of forwarding logical cores. */
 portid_t  nb_cfg_ports;  /**< Number of configured ports. */
+//设置要转发的接口数
 portid_t  nb_fwd_ports;  /**< Number of forwarding ports. */
 
+//可用于转发的core
 unsigned int fwd_lcores_cpuids[RTE_MAX_LCORE]; /**< CPU ids configuration. */
 portid_t fwd_ports_ids[RTE_MAX_ETHPORTS];      /**< Port ids configuration. */
 
@@ -145,6 +148,7 @@ streamid_t nb_fwd_streams;       /**< Is equal to (nb_ports * nb_rxq). */
 
 /*
  * Forwarding engines.
+ * 转发engines
  */
 struct fwd_engine * fwd_engines[] = {
 	&io_fwd_engine,
@@ -165,12 +169,15 @@ struct fwd_engine * fwd_engines[] = {
 	NULL,
 };
 
+//配置的转发配置
 struct fwd_config cur_fwd_config;
+//配置的转发引擎,默认是io_fwd_engine
 struct fwd_engine *cur_fwd_eng = &io_fwd_engine; /**< IO mode by default. */
 uint32_t retry_enabled;
 uint32_t burst_tx_delay_time = BURST_TX_WAIT_US;
 uint32_t burst_tx_retry_num = BURST_TX_RETRIES;
 
+//mbuf缓冲区大小
 uint16_t mbuf_data_size = DEFAULT_MBUF_DATA_SIZE; /**< Mbuf data space size. */
 uint32_t param_total_num_mbufs = 0;  /**< number of mbufs in all pools - if
                                       * specified on command-line. */
@@ -381,6 +388,7 @@ uint16_t nb_rx_queue_stats_mappings = 0;
 uint8_t xstats_hide_zero;
 
 unsigned int num_sockets = 0;
+//记录系统出现的socket id
 unsigned int socket_ids[RTE_MAX_NUMA_NODES];
 
 #ifdef RTE_LIBRTE_BITRATE
@@ -420,6 +428,7 @@ uint16_t gso_max_segment_size = ETHER_MAX_LEN - ETHER_CRC_LEN;
  * Helper function to check if socket is already discovered.
  * If yes, return positive value. If not, return zero.
  */
+//检查socket_id是否为一个新出现的socket id
 int
 new_socket_id(unsigned int socket_id)
 {
@@ -439,13 +448,14 @@ static void
 set_default_fwd_lcores_config(void)
 {
 	unsigned int i;
-	unsigned int nb_lc;
+	unsigned int nb_lc;//原文：number logic core
 	unsigned int sock_num;
 
 	nb_lc = 0;
 	for (i = 0; i < RTE_MAX_LCORE; i++) {
 		sock_num = rte_lcore_to_socket_id(i);
 		if (new_socket_id(sock_num)) {
+			//识别出新的socket,检查sockets是否超限
 			if (num_sockets >= RTE_MAX_NUMA_NODES) {
 				rte_exit(EXIT_FAILURE,
 					 "Total sockets greater than %u\n",
@@ -453,10 +463,12 @@ set_default_fwd_lcores_config(void)
 			}
 			socket_ids[num_sockets++] = sock_num;
 		}
+		//跳过未启用的core,跳过master core
 		if (!rte_lcore_is_enabled(i))
 			continue;
 		if (i == rte_get_master_lcore())
 			continue;
+		//记录可用于转发的core
 		fwd_lcores_cpuids[nb_lc++] = i;
 	}
 	nb_lcores = (lcoreid_t) nb_lc;
@@ -464,6 +476,7 @@ set_default_fwd_lcores_config(void)
 	nb_fwd_lcores = 1;
 }
 
+//设置对端默认以太网地址'02:00:00:00:00:$port_id'
 static void
 set_def_peer_eth_addrs(void)
 {
@@ -481,6 +494,7 @@ set_default_fwd_ports_config(void)
 	portid_t pt_id;
 	int i = 0;
 
+	//遍历所有未用port
 	RTE_ETH_FOREACH_DEV(pt_id)
 		fwd_ports_ids[i++] = pt_id;
 
@@ -491,6 +505,7 @@ set_default_fwd_ports_config(void)
 void
 set_def_fwd_config(void)
 {
+	//默认使用除master以外所有enable的core
 	set_default_fwd_lcores_config();
 	set_def_peer_eth_addrs();
 	set_default_fwd_ports_config();
@@ -499,11 +514,13 @@ set_def_fwd_config(void)
 /*
  * Configuration initialisation done once at init time.
  */
+//创建mbuf pool,每个mbuf大小@mbuf_seg_size,mbuf的数量@nb_mbuf
+//在哪个numa上创建pool @socket_id
 static void
 mbuf_pool_create(uint16_t mbuf_seg_size, unsigned nb_mbuf,
 		 unsigned int socket_id)
 {
-	char pool_name[RTE_MEMPOOL_NAMESIZE];
+	char pool_name[RTE_MEMPOOL_NAMESIZE];//pool 名称
 	struct rte_mempool *rte_mp = NULL;
 	uint32_t mb_size;
 
@@ -515,6 +532,7 @@ mbuf_pool_create(uint16_t mbuf_seg_size, unsigned nb_mbuf,
 		pool_name, nb_mbuf, mbuf_seg_size, socket_id);
 
 	if (mp_anon != 0) {
+		//创建mempool
 		rte_mp = rte_mempool_create_empty(pool_name, nb_mbuf,
 			mb_size, (unsigned) mb_mempool_cache,
 			sizeof(struct rte_pktmbuf_pool_private),
@@ -705,6 +723,7 @@ init_config(void)
 		/* Apply default TxRx configuration for all ports */
 		port->dev_conf.txmode = tx_mode;
 		port->dev_conf.rxmode = rx_mode;
+		//取设备信息
 		rte_eth_dev_info_get(pid, &port->dev_info);
 
 		if (!(port->dev_info.rx_offload_capa &
@@ -754,6 +773,7 @@ init_config(void)
 	if (param_total_num_mbufs)
 		nb_mbuf_per_pool = param_total_num_mbufs;
 	else {
+		//如果未指定mbuf数量，则自动计算mbuf数量
 		nb_mbuf_per_pool = RTE_TEST_RX_DESC_MAX +
 			(nb_lcores * mb_mempool_cache) +
 			RTE_TEST_TX_DESC_MAX + MAX_PKT_BURST;
@@ -764,9 +784,11 @@ init_config(void)
 		uint8_t i;
 
 		for (i = 0; i < num_sockets; i++)
+			//创建mbuf pool
 			mbuf_pool_create(mbuf_data_size, nb_mbuf_per_pool,
 					 socket_ids[i]);
 	} else {
+		//非numa情况，只创建一个mbuf pool
 		if (socket_num == UMA_NO_CONFIG)
 			mbuf_pool_create(mbuf_data_size, nb_mbuf_per_pool, 0);
 		else
@@ -782,6 +804,7 @@ init_config(void)
 	 * Records which Mbuf pool to use by each logical core, if needed.
 	 */
 	for (lc_id = 0; lc_id < nb_lcores; lc_id++) {
+		//取lc_id对应socket的mbuf
 		mbp = mbuf_pool_find(
 			rte_lcore_to_socket_id(fwd_lcores_cpuids[lc_id]));
 
@@ -1180,6 +1203,7 @@ run_pkt_fwd_on_lcore(struct fwd_lcore *fc, packet_fwd_t pkt_fwd)
 	} while (! fc->stopped);
 }
 
+//每个core上运行报文发送
 static int
 start_pkt_forward_on_core(void *fwd_arg)
 {
@@ -1218,15 +1242,18 @@ launch_packet_forwarding(lcore_function_t *pkt_fwd_on_lcore)
 	unsigned int lc_id;
 	int diag;
 
+	//如果在forward_begin回调，则在执行forward前执行begin回调
 	port_fwd_begin = cur_fwd_config.fwd_eng->port_fwd_begin;
 	if (port_fwd_begin != NULL) {
 		for (i = 0; i < cur_fwd_config.nb_fwd_ports; i++)
 			(*port_fwd_begin)(fwd_ports_ids[i]);
 	}
+	//执行forward回调
 	for (i = 0; i < cur_fwd_config.nb_fwd_lcores; i++) {
 		lc_id = fwd_lcores_cpuids[i];
 		if ((interactive == 0) || (lc_id != rte_lcore_id())) {
 			fwd_lcores[i]->stopped = 0;
+			//执行core $lc_id运行pkt_fwd_on_lcore函数（fwd_lcores是它的参数）
 			diag = rte_eal_remote_launch(pkt_fwd_on_lcore,
 						     fwd_lcores[i], lc_id);
 			if (diag != 0)
@@ -1743,6 +1770,7 @@ start_port(portid_t pid)
 			RTE_PORT_HANDLING, RTE_PORT_STARTED) == 0)
 			printf("Port %d can not be set into started\n", pi);
 
+		//显示设备网卡
 		rte_eth_macaddr_get(pi, &mac_addr);
 		printf("Port %d: %02X:%02X:%02X:%02X:%02X:%02X\n", pi,
 				mac_addr.addr_bytes[0], mac_addr.addr_bytes[1],
@@ -2678,11 +2706,11 @@ main(int argc, char** argv)
 
 	nb_ports = (portid_t) rte_eth_dev_count_avail();
 	if (nb_ports == 0)
-		//未识别出ports,报错
+		//未识别出任何port,报错
 		TESTPMD_LOG(WARNING, "No probed ethernet devices\n");
 
 	/* allocate port structures, and init them */
-	init_port();
+	init_port();//申请port数组
 
 	set_def_fwd_config();
 	if (nb_lcores == 0)
@@ -2707,6 +2735,7 @@ main(int argc, char** argv)
 	argc -= diag;
 	argv += diag;
 	if (argc > 1)
+		//存在传入给test-pmd的参数，这里解析这些参数
 		launch_args_parse(argc, argv);
 
 	//防止内存换出
@@ -2715,6 +2744,7 @@ main(int argc, char** argv)
 			strerror(errno));
 	}
 
+	//参数互斥检查
 	if (tx_first && interactive)
 		rte_exit(EXIT_FAILURE, "--tx-first cannot be used on "
 				"interactive mode.\n");
@@ -2747,6 +2777,7 @@ main(int argc, char** argv)
 
 	}
 
+	//启动所有port
 	if (start_port(RTE_PORT_ALL) != 0)
 		rte_exit(EXIT_FAILURE, "Start ports failed\n");
 

@@ -11,6 +11,7 @@
 #include "cmdline_cirbuf.h"
 
 
+//初始化circle buffer
 int
 cirbuf_init(struct cirbuf *cbuf, char *buf, unsigned int start, unsigned int maxlen)
 {

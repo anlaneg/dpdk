@@ -48,6 +48,7 @@ rdline_init(struct rdline *rdl,
 	rdl->complete = complete;
 	rdl->write_char = write_char;
 	rdl->status = RDLINE_INIT;
+	//初始化history指针
 	return cirbuf_init(&rdl->history, rdl->history_buf, 0, RDLINE_HISTORY_BUF_SIZE);
 }
 
@@ -68,6 +69,7 @@ rdline_newline(struct rdline *rdl, const char *prompt)
 		memcpy(rdl->prompt, prompt, rdl->prompt_size);
 	rdl->prompt[RDLINE_PROMPT_SIZE-1] = '\0';
 
+	//输出提示语
 	for (i=0 ; i<rdl->prompt_size ; i++)
 		rdl->write_char(rdl, rdl->prompt[i]);
 	rdl->status = RDLINE_RUNNING;
