@@ -1011,7 +1011,6 @@ eal_parse_log_level(const char *arg)
 	} else if ((level = strchr(str, ':'))) {
 		pattern = str;
 		*level++ = '\0';
->>>>>>> upstream/master
 	} else {
 		level = str;
 	}

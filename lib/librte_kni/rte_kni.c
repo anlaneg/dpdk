@@ -69,7 +69,7 @@ struct rte_kni_memzone_slot {
 	uint8_t in_use : 1;                    /**< slot in use */
 
 	/* Memzones */
-	const struct rte_memzone *m_ctx;       /**< KNI ctx */　//其申请的地址对应（struct rte_kni *）
+	const struct rte_memzone *m_ctx;       /**< KNI ctx */ //其申请的地址对应（struct rte_kni *）
 	const struct rte_memzone *m_tx_q;      /**< TX queue */
 	const struct rte_memzone *m_rx_q;      /**< RX queue */
 	const struct rte_memzone *m_alloc_q;   /**< Allocated mbufs queue */

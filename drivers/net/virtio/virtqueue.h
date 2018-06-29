@@ -225,7 +225,7 @@ struct virtio_net_hdr {
 	uint16_t hdr_len;     /**< Ethernet + IP + tcp/udp hdrs */
 	uint16_t gso_size;    /**< Bytes to append to hdr_len per frame */ //gso的大小（例如tso segment)
 	uint16_t csum_start;  /**< Position to start checksumming from */ //用来计算checksum的起始位置
-	uint16_t csum_offset; /**< Offset after that to place checksum */　//checksum数据头部偏移（例如跳过tcp头，udp头，scp头）
+	uint16_t csum_offset; /**< Offset after that to place checksum */ //checksum数据头部偏移（例如跳过tcp头，udp头，scp头）
 };
 
 /**

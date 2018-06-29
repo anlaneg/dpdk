@@ -1783,7 +1783,6 @@ eth_ixgbe_pci_probe(struct rte_pci_driver *pci_drv __rte_unused,
 	}
 
 	return 0;
->>>>>>> upstream/master
 }
 
 static int eth_ixgbe_pci_remove(struct rte_pci_device *pci_dev)

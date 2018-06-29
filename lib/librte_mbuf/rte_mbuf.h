@@ -258,7 +258,7 @@ extern "C" {
  *  - if it's IPv4, set the PKT_TX_IP_CKSUM flag
  *  - fill the mbuf offload information: l2_len, l3_len, l4_len, tso_segsz
  */
-#define PKT_TX_TCP_SEG       (1ULL << 50)　//tso功能标记
+#define PKT_TX_TCP_SEG       (1ULL << 50) //tso功能标记
 
 #define PKT_TX_IEEE1588_TMST (1ULL << 51) /**< TX IEEE1588 packet to timestamp. */
 
@@ -291,7 +291,7 @@ extern "C" {
  * packet. If the packet is a tunneled packet, this flag is related to
  * the inner headers.
  */
-#define PKT_TX_IPV4          (1ULL << 55)//指明报文为ipv4,为了使用tso需要告知网卡报文为ipv4
+#define PKT_TX_IPV4          (1ULL << 55) //指明报文为ipv4,为了使用tso需要告知网卡报文为ipv4
 
 /**
  * Packet is IPv6. This flag must be set when using an offload feature

@@ -308,7 +308,6 @@ copy_mbuf_to_desc(struct virtio_net *dev, struct vhost_virtqueue *vq,
 		desc_offset = dev->vhost_hlen;
 		desc_chunck_len -= dev->vhost_hlen;
 	}
->>>>>>> upstream/master
 
 	mbuf_avail  = rte_pktmbuf_data_len(m);//当前mbuf中的数据长度
 	mbuf_offset = 0;
