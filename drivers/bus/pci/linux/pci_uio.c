@@ -267,6 +267,7 @@ pci_uio_alloc_resource(struct rte_pci_device *dev,
 	if (dev->kdrv == RTE_KDRV_IGB_UIO)
 		dev->intr_handle.type = RTE_INTR_HANDLE_UIO;
 	else {
+		//非igb_uio方式
 		dev->intr_handle.type = RTE_INTR_HANDLE_UIO_INTX;
 
 		/* set bus master that is not done by uio_pci_generic */
@@ -339,22 +340,24 @@ pci_uio_map_resource_by_index(struct rte_pci_device *dev, int res_idx,
 	if (pci_map_addr == NULL)
 		pci_map_addr = pci_find_max_end_va();
 
+	//对这块地址进行映射（设备资源）
 	mapaddr = pci_map_resource(pci_map_addr, fd, 0,
 			(size_t)dev->mem_resource[res_idx].len, 0);
 	close(fd);
 	if (mapaddr == MAP_FAILED)
 		goto error;
 
-	//取映射的内存地址
+	//取映射的内存地址（虚地址的结束位置，用于映射下一段）
 	pci_map_addr = RTE_PTR_ADD(mapaddr,
 			(size_t)dev->mem_resource[res_idx].len);
 
 	//记录映射的地址
-	maps[map_idx].phaddr = dev->mem_resource[res_idx].phys_addr;
-	maps[map_idx].size = dev->mem_resource[res_idx].len;
-	maps[map_idx].addr = mapaddr;
+	maps[map_idx].phaddr = dev->mem_resource[res_idx].phys_addr;//物理地址
+	maps[map_idx].size = dev->mem_resource[res_idx].len;//这段地址的长度
+	maps[map_idx].addr = mapaddr;//对应的虚拟地址
 	maps[map_idx].offset = 0;
 	strcpy(maps[map_idx].path, devname);
+	//设备资源对应的虚拟地址（有了些地址，就可以实现设备的控制）
 	dev->mem_resource[res_idx].addr = mapaddr;
 
 	return 0;

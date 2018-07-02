@@ -42,10 +42,12 @@ TAILQ_HEAD(rte_pci_device_list, rte_pci_device);
 /** List of PCI drivers */
 TAILQ_HEAD(rte_pci_driver_list, rte_pci_driver);
 
+//遍历所有device
 /* PCI Bus iterators */
 #define FOREACH_DEVICE_ON_PCIBUS(p)	\
 		TAILQ_FOREACH(p, &(rte_pci_bus.device_list), next)
 
+//遍历所有driver
 #define FOREACH_DRIVER_ON_PCIBUS(p)	\
 		TAILQ_FOREACH(p, &(rte_pci_bus.driver_list), next)
 

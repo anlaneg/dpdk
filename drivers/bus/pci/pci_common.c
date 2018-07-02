@@ -166,7 +166,8 @@ rte_pci_probe_one_driver(struct rte_pci_driver *dr,
 	RTE_LOG(INFO, EAL, "  probe driver: %x:%x %s\n", dev->id.vendor_id,
 		dev->id.device_id, dr->driver.name);
 
-	//如果driver要求mapping，则进行资源map
+	//如果driver要求mapping，则进行资源map(例如bnxt驱动就要求进行mapping)
+	//按理解，所有采用igb_uio方式绑定的均要走此函数
 	if (dr->drv_flags & RTE_PCI_DRV_NEED_MAPPING) {
 		/* map resources for devices that use igb_uio */
 		ret = rte_pci_map_device(dev);
@@ -174,6 +175,7 @@ rte_pci_probe_one_driver(struct rte_pci_driver *dr,
 			return ret;
 	}
 
+	//为设备暂时赋上此驱动，进行probe(这段代码与kernel极其相似）
 	/* reference driver structure */
 	dev->driver = dr;
 	dev->device.driver = &dr->driver;
@@ -184,6 +186,7 @@ rte_pci_probe_one_driver(struct rte_pci_driver *dr,
 	if (ret) {
 		dev->driver = NULL;
 		dev->device.driver = NULL;
+		//适配失败，检查是否需要unmap资源
 		if ((dr->drv_flags & RTE_PCI_DRV_NEED_MAPPING) &&
 			/* Don't unmap if device is unsupported and
 			 * driver needs mapped resources.
@@ -241,7 +244,7 @@ rte_pci_detach_dev(struct rte_pci_device *dev)
  * registered driver for the given device. Return -1 if initialization
  * failed, return 1 if no driver is found for this device.
  */
-//探测当前device，检查其是否可以匹配已知的driver
+//针对当前device，检查其是否可以匹配已知的driver
 static int
 pci_probe_all_drivers(struct rte_pci_device *dev)
 {
@@ -256,7 +259,7 @@ pci_probe_all_drivers(struct rte_pci_device *dev)
 	if (dev->driver != NULL)
 		return 0;
 
-	//遍历已注册的pci驱动
+	//遍历已注册的所有pci驱动，检查是否有驱动可适配dev
 	FOREACH_DRIVER_ON_PCIBUS(dr) {
 		rc = rte_pci_probe_one_driver(dr, dev);
 		if (rc < 0)
@@ -442,7 +445,7 @@ pci_unplug(struct rte_device *dev)
 
 struct rte_pci_bus rte_pci_bus = {
 	.bus = {
-		.scan = rte_pci_scan,//扫描函数
+		.scan = rte_pci_scan,//扫描函数,找到系统中所有pci设备
 		.probe = rte_pci_probe,//探测
 		.find_device = pci_find_device,
 		.plug = pci_plug,

@@ -457,6 +457,7 @@ static struct rte_bus rte_ifpga_bus = {
 	.parse       = ifpga_parse,
 };
 
+//注册fpga bus
 RTE_REGISTER_BUS(IFPGA_BUS_NAME, rte_ifpga_bus);
 
 RTE_INIT(ifpga_init_log)

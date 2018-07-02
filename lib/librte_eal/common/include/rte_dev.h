@@ -135,7 +135,7 @@ enum rte_dev_policy {
 struct rte_mem_resource {
 	uint64_t phys_addr; /**< Physical address, 0 if not resource. */ //起始地址
 	uint64_t len;       /**< Length of the resource. */ //资源长度
-	void *addr;         /**< Virtual address, NULL when not mapped. */
+	void *addr;         /**< Virtual address, NULL when not mapped. */　//这段地址的虚拟起始地址
 };
 
 /**

@@ -61,6 +61,7 @@ rte_bus_register(struct rte_bus *bus)
 	RTE_LOG(DEBUG, EAL, "Registered [%s] bus.\n", bus->name);
 }
 
+//bus解注册
 void
 rte_bus_unregister(struct rte_bus *bus)
 {
@@ -69,7 +70,7 @@ rte_bus_unregister(struct rte_bus *bus)
 }
 
 /* Scan all the buses for registered devices */
-//做bus扫描
+//做系统所有bus的扫描，每个bus在scan时会将发现自已bus上的所有设备
 int
 rte_bus_scan(void)
 {

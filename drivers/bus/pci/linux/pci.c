@@ -78,6 +78,7 @@ rte_pci_map_device(struct rte_pci_device *dev)
 			ret = pci_vfio_map_resource(dev);
 #endif
 		break;
+		//采用igb_uio方式时，映射资源
 	case RTE_KDRV_IGB_UIO:
 	case RTE_KDRV_UIO_GENERIC:
 		if (rte_eal_using_phys_addrs()) {
@@ -245,6 +246,7 @@ pci_scan_one(const char *dirname, const struct rte_pci_addr *addr)
 	dev->addr = *addr;
 
 	/* get vendor id */
+	//取设备的vendor_id
 	snprintf(filename, sizeof(filename), "%s/vendor", dirname);
 	if (eal_parse_sysfs_value(filename, &tmp) < 0) {
 		free(dev);
@@ -322,6 +324,7 @@ pci_scan_one(const char *dirname, const struct rte_pci_addr *addr)
 	pci_name_set(dev);
 
 	/* parse resources */
+	//取设备的resource
 	snprintf(filename, sizeof(filename), "%s/resource", dirname);
 	if (pci_parse_sysfs_resource(filename, dev) < 0) {
 		RTE_LOG(ERR, EAL, "%s(): cannot parse resource\n", __func__);
@@ -452,6 +455,7 @@ error:
  * list
  */
 //pci扫描，识别所有pci设备
+//通过遍历sys目录中的pci/devices完成此功能
 int
 rte_pci_scan(void)
 {
@@ -485,7 +489,7 @@ rte_pci_scan(void)
 		//0000:00:00.0  0000:00:16.0  0000:00:1f.0  0000:00:1f.4  0000:01:00.1
 		//0000:00:01.0  0000:00:16.3  0000:00:1f.2  0000:00:1f.6
 		//0000:00:14.0  0000:00:17.0  0000:00:1f.3  0000:01:00.0
-		//解析pci地址,domain,bus,driver-id,function
+		//解析pci地址,domain,bus,driver-id,function　得到一个具体的pci设备
 		if (parse_pci_addr_format(e->d_name, sizeof(e->d_name), &addr) != 0)
 			continue;
 

@@ -370,11 +370,12 @@ rte_config_init(void)
 	case RTE_PROC_PRIMARY://进程为主类型
 		rte_eal_config_create();
 		break;
-	case RTE_PROC_SECONDARY:
+	case RTE_PROC_SECONDARY://进程为从类型
 		rte_eal_config_attach();
 		rte_eal_mcfg_wait_complete(rte_config.mem_config);
 		rte_eal_config_reattach();
 		break;
+		//此时必须已将auto,invalid实现了转换
 	case RTE_PROC_AUTO:
 	case RTE_PROC_INVALID:
 		rte_panic("Invalid process type\n");
@@ -611,7 +612,8 @@ eal_parse_args(int argc, char **argv)
 
 		ret = eal_parse_common_option(opt, optarg, &internal_config);
 		/* common parser is not happy */
-		if (ret < 0) {//失败处理
+		if (ret < 0) {
+			//失败处理
 			eal_usage(prgname);
 			ret = -1;
 			goto out;
@@ -799,6 +801,7 @@ rte_eal_init(int argc, char **argv)
 
 	/* checks if the machine is adequate */
 	if (!rte_cpu_is_supported()) {
+		//检查是否为支持的cpu类型
 		rte_eal_init_alert("unsupported cpu type.");
 		rte_errno = ENOTSUP;
 		return -1;
@@ -846,6 +849,7 @@ rte_eal_init(int argc, char **argv)
 		return -1;
 	}
 
+	//插件机制初始化
 	if (eal_plugins_init() < 0) {
 		rte_eal_init_alert("Cannot init plugins\n");
 		rte_errno = EINVAL;
@@ -872,6 +876,7 @@ rte_eal_init(int argc, char **argv)
 		}
 	}
 
+	//各总线扫描自身设备（用于发现设备）
 	if (rte_bus_scan()) {
 		rte_eal_init_alert("Cannot scan the buses for devices\n");
 		rte_errno = ENODEV;

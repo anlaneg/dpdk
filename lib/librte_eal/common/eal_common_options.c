@@ -268,6 +268,7 @@ eal_plugins_init(void)
 	struct shared_driver *solib = NULL;
 	struct stat sb;
 
+	//如果default_solib_dir不为空，且为目录时，装载目录下so
 	if (*default_solib_dir != '\0' && stat(default_solib_dir, &sb) == 0 &&
 				S_ISDIR(sb.st_mode))
 		eal_plugin_add(default_solib_dir);
@@ -1073,6 +1074,7 @@ eal_parse_common_option(int opt, const char *optarg,
 	switch (opt) {
 	/* blacklist */
 	case 'b':
+		//黑名单
 		if (w_used)
 			goto bw_used;
 		if (eal_option_device_add(RTE_DEVTYPE_BLACKLISTED_PCI,
@@ -1083,6 +1085,7 @@ eal_parse_common_option(int opt, const char *optarg,
 		break;
 	/* whitelist */
 	case 'w':
+		//白名单
 		if (b_used)
 			goto bw_used;
 		if (eal_option_device_add(RTE_DEVTYPE_WHITELISTED_PCI,
@@ -1093,6 +1096,7 @@ eal_parse_common_option(int opt, const char *optarg,
 		break;
 	/* coremask */
 	case 'c':
+		//使用哪些core
 		if (eal_parse_coremask(optarg) < 0) {
 			RTE_LOG(ERR, EAL, "invalid coremask\n");
 			return -1;

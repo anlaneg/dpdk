@@ -44,7 +44,7 @@ rte_eal_cpu_init(void)
 	unsigned lcore_id;
 	unsigned count = 0;
 	unsigned int socket_id, prev_socket_id;
-	int lcore_to_socket_id[RTE_MAX_LCORE];
+	int lcore_to_socket_id[RTE_MAX_LCORE];//每个core对应的socket-id
 
 	/*
 	 * Parse the maximum set of logical cores, detect the subset of running
@@ -59,6 +59,7 @@ rte_eal_cpu_init(void)
 		/* find socket first */
 		socket_id = eal_cpu_socket_id(lcore_id);
 		if (socket_id >= RTE_MAX_NUMA_NODES) {
+			//如果socket_id超出我们的宏假设，则报错
 #ifdef RTE_EAL_ALLOW_INV_SOCKET_ID
 			socket_id = 0;
 #else
@@ -101,9 +102,11 @@ rte_eal_cpu_init(void)
 	RTE_LOG(INFO, EAL, "Detected %u lcore(s)\n", config->lcore_count);
 
 	/* sort all socket id's in ascending order */
+	//对numa的记录，实现一次排序
 	qsort(lcore_to_socket_id, RTE_DIM(lcore_to_socket_id),
 			sizeof(lcore_to_socket_id[0]), socket_id_cmp);
 
+	//记录探测到的numa节点
 	prev_socket_id = -1;
 	config->numa_node_count = 0;
 	for (lcore_id = 0; lcore_id < RTE_MAX_LCORE; lcore_id++) {

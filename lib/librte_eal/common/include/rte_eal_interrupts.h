@@ -69,9 +69,12 @@ struct rte_intr_handle {
 	RTE_STD_C11
 	union {
 		int vfio_dev_fd;  /**< VFIO device file descriptor */
+		//配置用fd
 		int uio_cfg_fd;  /**< UIO cfg file desc for uio_pci_generic */
 	};
+	//借助uio,用于处理中断的fd(读取中断事件）
 	int fd;	 /**< interrupt event file descriptor */
+	//采用哪种中断处理类型，例如uio
 	enum rte_intr_handle_type type;  /**< handle type */
 	uint32_t max_intr;             /**< max interrupt requested */
 	uint32_t nb_efd;               /**< number of available efd(event fd) */
