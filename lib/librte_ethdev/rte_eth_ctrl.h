@@ -33,20 +33,20 @@ extern "C" {
  */
 #define RTE_ETH_FLOW_UNKNOWN             0
 #define RTE_ETH_FLOW_RAW                 1
-#define RTE_ETH_FLOW_IPV4                2
-#define RTE_ETH_FLOW_FRAG_IPV4           3
-#define RTE_ETH_FLOW_NONFRAG_IPV4_TCP    4
-#define RTE_ETH_FLOW_NONFRAG_IPV4_UDP    5
+#define RTE_ETH_FLOW_IPV4                2 //ipv4报文 (*)
+#define RTE_ETH_FLOW_FRAG_IPV4           3 //ipv4分片
+#define RTE_ETH_FLOW_NONFRAG_IPV4_TCP    4 //*
+#define RTE_ETH_FLOW_NONFRAG_IPV4_UDP    5 //*
 #define RTE_ETH_FLOW_NONFRAG_IPV4_SCTP   6
-#define RTE_ETH_FLOW_NONFRAG_IPV4_OTHER  7
-#define RTE_ETH_FLOW_IPV6                8
-#define RTE_ETH_FLOW_FRAG_IPV6           9
-#define RTE_ETH_FLOW_NONFRAG_IPV6_TCP   10
-#define RTE_ETH_FLOW_NONFRAG_IPV6_UDP   11
+#define RTE_ETH_FLOW_NONFRAG_IPV4_OTHER  7 //非分片其它4层协议
+#define RTE_ETH_FLOW_IPV6                8 //ipv6 (*)
+#define RTE_ETH_FLOW_FRAG_IPV6           9 //ipv6分片
+#define RTE_ETH_FLOW_NONFRAG_IPV6_TCP   10 //(*)
+#define RTE_ETH_FLOW_NONFRAG_IPV6_UDP   11 //(*)
 #define RTE_ETH_FLOW_NONFRAG_IPV6_SCTP  12
-#define RTE_ETH_FLOW_NONFRAG_IPV6_OTHER 13
+#define RTE_ETH_FLOW_NONFRAG_IPV6_OTHER 13 //非ipv6其它协议
 #define RTE_ETH_FLOW_L2_PAYLOAD         14
-#define RTE_ETH_FLOW_IPV6_EX            15
+#define RTE_ETH_FLOW_IPV6_EX            15 //ipv6扩展
 #define RTE_ETH_FLOW_IPV6_TCP_EX        16
 #define RTE_ETH_FLOW_IPV6_UDP_EX        17
 #define RTE_ETH_FLOW_PORT               18
