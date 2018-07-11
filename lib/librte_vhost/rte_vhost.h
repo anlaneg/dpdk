@@ -110,7 +110,9 @@ struct rte_vhost_vring {
  * Device and vring operations.
  */
 struct vhost_device_ops {
+	//设备新建通知
 	int (*new_device)(int vid);		/**< Add device. */
+	//设备销毁通知
 	void (*destroy_device)(int vid);	/**< Remove device. */
 
 	int (*vring_state_changed)(int vid, uint16_t queue_id, int enable);	/**< triggered when a vring is enabled or disabled */
@@ -123,7 +125,9 @@ struct vhost_device_ops {
 	 */
 	int (*features_changed)(int vid, uint64_t features);//功能发生变更时生效
 
+	//连接新建通知
 	int (*new_connection)(int vid);
+	//连接稍毁通知
 	void (*destroy_connection)(int vid);
 
 	void *reserved[2]; /**< Reserved for future extension */

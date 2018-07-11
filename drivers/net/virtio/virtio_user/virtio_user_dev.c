@@ -118,6 +118,7 @@ virtio_user_start_device(struct virtio_user_dev *dev)
 		goto error;
 
 	/* Do not check return as already done in init, or reset in stop */
+	//要求对端设置owner
 	dev->ops->send_request(dev, VHOST_USER_SET_OWNER, NULL);
 
 	/* Step 0: tell vhost to create queues */
