@@ -609,6 +609,7 @@ vhost_vring_call(struct virtio_net *dev, struct vhost_virtqueue *vq)
 		if (vhost_need_event(vhost_used_event(vq), new, old)
 			&& (vq->callfd >= 0)) {
 			vq->signalled_used = vq->last_used_idx;
+			//通过callfd知会对端
 			eventfd_write(vq->callfd, (eventfd_t) 1);
 		}
 	} else {
