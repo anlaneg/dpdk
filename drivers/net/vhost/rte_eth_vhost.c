@@ -27,7 +27,6 @@ static int vhost_logtype;
 //如果它是收，则qid*VIRTIO_QNUM + VIRTIO_RXQ
 //如果它是发，则qid*VIRTIO_QNUM + VIRTIO_TXO
 //这样向上就封装成无论收或者发都有一个0号队列（并各自计数）
-
 enum {VIRTIO_RXQ, VIRTIO_TXQ, VIRTIO_QNUM};
 
 #define ETH_VHOST_IFACE_ARG		"iface"
@@ -37,6 +36,7 @@ enum {VIRTIO_RXQ, VIRTIO_TXQ, VIRTIO_QNUM};
 #define ETH_VHOST_IOMMU_SUPPORT		"iommu-support"
 #define VHOST_MAX_PKT_BURST 32
 
+//vhost驱动支持的参数
 static const char *valid_arguments[] = {
 	ETH_VHOST_IFACE_ARG,
 	ETH_VHOST_QUEUES_ARG,
@@ -97,8 +97,8 @@ struct vhost_queue {
 struct pmd_internal {
 	rte_atomic32_t dev_attached;
 	char *dev_name;
-	char *iface_name;
-	uint16_t max_queues;
+	char *iface_name;//接口名称
+	uint16_t max_queues;//队列数
 	int vid;
 	rte_atomic32_t started;
 	uint8_t vlan_strip;
@@ -990,6 +990,7 @@ eth_dev_close(struct rte_eth_dev *dev)
 
 	eth_dev_stop(dev);
 
+	//socket关闭
 	rte_vhost_driver_unregister(internal->iface_name);
 
 	list = find_internal_resource(internal->iface_name);
@@ -1001,10 +1002,12 @@ eth_dev_close(struct rte_eth_dev *dev)
 	pthread_mutex_unlock(&internal_list_lock);
 	rte_free(list);
 
+	//释放rx队列
 	if (dev->data->rx_queues)
 		for (i = 0; i < dev->data->nb_rx_queues; i++)
 			rte_free(dev->data->rx_queues[i]);
 
+	//释放tx队列
 	if (dev->data->tx_queues)
 		for (i = 0; i < dev->data->nb_tx_queues; i++)
 			rte_free(dev->data->tx_queues[i]);
@@ -1189,6 +1192,7 @@ eth_rx_queue_count(struct rte_eth_dev *dev, uint16_t rx_queue_id)
 	return rte_vhost_rx_queue_count(vq->vid, vq->virtqueue_id);
 }
 
+//vhost操作集
 static const struct eth_dev_ops ops = {
 	.dev_start = eth_dev_start,
 	.dev_stop = eth_dev_stop,
@@ -1234,10 +1238,12 @@ eth_dev_vhost_create(struct rte_vdev_device *dev, char *iface_name,
 		goto error;
 
 	/* reserve an ethdev entry */
+	//申请eth_dev
 	eth_dev = rte_eth_vdev_allocate(dev, sizeof(*internal));
 	if (eth_dev == NULL)
 		goto error;
 
+	//设置默认的mac地址
 	eth_addr = rte_zmalloc_socket(name, sizeof(*eth_addr), 0, numa_node);
 	if (eth_addr == NULL)
 		goto error;
@@ -1291,7 +1297,7 @@ eth_dev_vhost_create(struct rte_vdev_device *dev, char *iface_name,
 	if (rte_vhost_driver_register(iface_name, flags))
 		goto error;
 
-	//注册vhost socket处理函数
+	//注册vhost socket的注册通知回调
 	if (rte_vhost_driver_callback_register(iface_name, &vhost_ops) < 0) {
 		VHOST_LOG(ERR, "Can't register callbacks\n");
 		goto error;
@@ -1352,7 +1358,7 @@ open_int(const char *key __rte_unused, const char *value, void *extra_args)
 	return 0;
 }
 
-//vdev 驱动探测
+//vhost驱动探测设备dev
 static int
 rte_pmd_vhost_probe(struct rte_vdev_device *dev)
 {
@@ -1382,6 +1388,7 @@ rte_pmd_vhost_probe(struct rte_vdev_device *dev)
 		return 0;
 	}
 
+	//vhost目前仅支持valid_arguments参数，如果遇到其它参数，报错
 	kvlist = rte_kvargs_parse(rte_vdev_device_args(dev), valid_arguments);
 	if (kvlist == NULL)
 		return -1;
@@ -1422,8 +1429,9 @@ rte_pmd_vhost_probe(struct rte_vdev_device *dev)
 			flags |= RTE_VHOST_USER_CLIENT;
 	}
 
-	//取zero-copy参数
+	//zero-copy参数仅容许配置一次
 	if (rte_kvargs_count(kvlist, ETH_VHOST_DEQUEUE_ZERO_COPY) == 1) {
+		//用open-int,将参数转为整数，存入dequeue_zero_copy
 		ret = rte_kvargs_process(kvlist, ETH_VHOST_DEQUEUE_ZERO_COPY,
 					 &open_int, &dequeue_zero_copy);
 		if (ret < 0)
@@ -1434,6 +1442,7 @@ rte_pmd_vhost_probe(struct rte_vdev_device *dev)
 			flags |= RTE_VHOST_USER_DEQUEUE_ZERO_COPY;
 	}
 
+	//iommu-support参数仅容许配置一次
 	if (rte_kvargs_count(kvlist, ETH_VHOST_IOMMU_SUPPORT) == 1) {
 		ret = rte_kvargs_process(kvlist, ETH_VHOST_IOMMU_SUPPORT,
 					 &open_int, &iommu_support);
@@ -1444,11 +1453,11 @@ rte_pmd_vhost_probe(struct rte_vdev_device *dev)
 			flags |= RTE_VHOST_USER_IOMMU_SUPPORT;
 	}
 
-	//设置numa_node
+	//设置numa_node(如果any,则取当前core对应socket)
 	if (dev->device.numa_node == SOCKET_ID_ANY)
 		dev->device.numa_node = rte_socket_id();
 
-	//创建vhost设备
+	//创建vhost设备(iface_name为接口名称，queues为队列数，flag为（客户端，出队0copy,iommu支持）
 	eth_dev_vhost_create(dev, iface_name, queues, dev->device.numa_node,
 		flags);
 
@@ -1457,6 +1466,7 @@ out_free:
 	return ret;
 }
 
+//移除设备dev
 static int
 rte_pmd_vhost_remove(struct rte_vdev_device *dev)
 {
@@ -1467,10 +1477,12 @@ rte_pmd_vhost_remove(struct rte_vdev_device *dev)
 	VHOST_LOG(INFO, "Un-Initializing pmd_vhost for %s\n", name);
 
 	/* find an ethdev entry */
+	//找名称为$name的eth_dev
 	eth_dev = rte_eth_dev_allocated(name);
 	if (eth_dev == NULL)
 		return -ENODEV;
 
+	//停止设备
 	eth_dev_close(eth_dev);
 
 	rte_free(vring_states[eth_dev->data->port_id]);
@@ -1484,7 +1496,7 @@ rte_pmd_vhost_remove(struct rte_vdev_device *dev)
 //vhost驱动
 static struct rte_vdev_driver pmd_vhost_drv = {
 	.probe = rte_pmd_vhost_probe,
-	.remove = rte_pmd_vhost_remove,
+	.remove = rte_pmd_vhost_remove,//移除设备时调用
 };
 
 //注册vhost驱动

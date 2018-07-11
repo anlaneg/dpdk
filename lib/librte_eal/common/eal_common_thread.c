@@ -167,15 +167,18 @@ static void *rte_thread_init(void *arg)
 	void *(*start_routine)(void *) = params->start_routine;
 	void *routine_arg = params->arg;
 
+	//等待barrier
 	ret = pthread_barrier_wait(&params->configured);
 	if (ret == PTHREAD_BARRIER_SERIAL_THREAD) {
 		pthread_barrier_destroy(&params->configured);
 		free(params);
 	}
 
+	//执行回调
 	return start_routine(routine_arg);
 }
 
+//创建线程，并配置cpu亲昵性
 __rte_experimental int
 rte_ctrl_thread_create(pthread_t *thread, const char *name,
 		const pthread_attr_t *attr,
@@ -193,6 +196,7 @@ rte_ctrl_thread_create(pthread_t *thread, const char *name,
 	params->start_routine = start_routine;
 	params->arg = arg;
 
+	//初始化thread barrier,等待数为1+1
 	pthread_barrier_init(&params->configured, NULL, 2);
 
 	ret = pthread_create(thread, attr, rte_thread_init, (void *)params);
@@ -201,12 +205,14 @@ rte_ctrl_thread_create(pthread_t *thread, const char *name,
 		return ret;
 	}
 
+	//修改线程名称
 	if (name != NULL) {
 		ret = rte_thread_setname(*thread, name);
 		if (ret < 0)
 			goto fail;
 	}
 
+	//优先用所有unuse core
 	cpu_found = 0;
 	CPU_ZERO(&cpuset);
 	for (lcore_id = 0; lcore_id < RTE_MAX_LCORE; lcore_id++) {
@@ -218,12 +224,15 @@ rte_ctrl_thread_create(pthread_t *thread, const char *name,
 	}
 	/* if no detected cpu is off, use master core */
 	if (!cpu_found)
+		//无off的cpu,用master core
 		CPU_SET(rte_get_master_lcore(), &cpuset);
 
+	//设置线程亲昵性
 	ret = pthread_setaffinity_np(*thread, sizeof(cpuset), &cpuset);
 	if (ret < 0)
 		goto fail;
 
+	//知会线程开始跑
 	ret = pthread_barrier_wait(&params->configured);
 	if (ret == PTHREAD_BARRIER_SERIAL_THREAD) {
 		pthread_barrier_destroy(&params->configured);

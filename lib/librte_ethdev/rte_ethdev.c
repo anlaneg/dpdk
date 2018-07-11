@@ -207,6 +207,7 @@ rte_eth_dev_shared_data_prepare(void)
 	rte_spinlock_lock(&rte_eth_shared_data_lock);
 
 	if (rte_eth_dev_shared_data == NULL) {
+		//如果rte_eth_dev_shared_data未初始化，则初始化
 		if (rte_eal_process_type() == RTE_PROC_PRIMARY) {
 			/* Allocate port data and ownership shared memory. */
 			mz = rte_memzone_reserve(MZ_RTE_ETH_DEV_DATA,
@@ -250,6 +251,7 @@ _rte_eth_dev_allocated(const char *name)
 	return NULL;
 }
 
+//查找$name名称对应的eth_dev是否存在
 struct rte_eth_dev *
 rte_eth_dev_allocated(const char *name)
 {
@@ -295,6 +297,7 @@ eth_dev_get(uint16_t port_id)
 	return eth_dev;
 }
 
+//创建名称为name的eth_dev
 struct rte_eth_dev *
 rte_eth_dev_allocate(const char *name)
 {
@@ -365,6 +368,7 @@ rte_eth_dev_attach_secondary(const char *name)
 	return eth_dev;
 }
 
+//释放eth_dev设备
 int
 rte_eth_dev_release_port(struct rte_eth_dev *eth_dev)
 {
@@ -373,6 +377,7 @@ rte_eth_dev_release_port(struct rte_eth_dev *eth_dev)
 
 	rte_eth_dev_shared_data_prepare();
 
+	//触发ETH_EVENT_DESTROY事件
 	_rte_eth_dev_callback_process(eth_dev, RTE_ETH_EVENT_DESTROY, NULL);
 
 	rte_spinlock_lock(&rte_eth_dev_shared_data->ownership_lock);
@@ -3536,6 +3541,7 @@ rte_eth_dev_probing_finish(struct rte_eth_dev *dev)
 	if (dev == NULL)
 		return;
 
+	//触发设备new事件
 	_rte_eth_dev_callback_process(dev, RTE_ETH_EVENT_NEW, NULL);
 
 	dev->state = RTE_ETH_DEV_ATTACHED;

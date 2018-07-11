@@ -66,6 +66,7 @@ struct rte_vdev_driver {
 	TAILQ_ENTRY(rte_vdev_driver) next; /**< Next in list. */
 	struct rte_driver driver;      /**< Inherited general driver. */
 	rte_vdev_probe_t *probe;       /**< Virtual device probe function. */
+	//设备被移除时调用
 	rte_vdev_remove_t *remove;     /**< Virtual device remove function. */
 };
 

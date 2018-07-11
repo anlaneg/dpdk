@@ -741,6 +741,7 @@ virtio_dev_rx_queue_intr_disable(struct rte_eth_dev *dev, uint16_t queue_id)
 /*
  * dev_ops for virtio, bare necessities for basic operation
  */
+//virtio操作集
 static const struct eth_dev_ops virtio_eth_dev_ops = {
 	.dev_configure           = virtio_dev_configure,
 	.dev_start               = virtio_dev_start,
@@ -1338,6 +1339,7 @@ set_rxtx_funcs(struct rte_eth_dev *eth_dev)
 	} else {
 		PMD_INIT_LOG(INFO, "virtio: using standard Tx path on port %u",
 			eth_dev->data->port_id);
+		//设置virtio设备的发包函数
 		eth_dev->tx_pkt_burst = virtio_xmit_pkts;
 	}
 }
@@ -1741,11 +1743,12 @@ vdpa_mode_selected(struct rte_devargs *devargs)
 		return 0;
 
 	if (!rte_kvargs_count(kvlist, key))
-		goto exit;
+		goto exit;//无'vdpa'直接返回0
 
 	/* vdpa mode selected when there's a key-value pair: vdpa=1 */
 	if (rte_kvargs_process(kvlist, key,
 				vdpa_check_handler, NULL) < 0) {
+		//无vdpa=1,直接返回0
 		goto exit;
 	}
 	ret = 1;
@@ -1790,6 +1793,7 @@ rte_virtio_pmd_init(void)
 		return;
 	}
 
+	//注册virtio pci驱动
 	rte_pci_register(&rte_virtio_pmd);
 }
 

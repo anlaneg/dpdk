@@ -181,6 +181,7 @@ init_vring_queue(struct virtio_net *dev, uint32_t vring_idx)
 {
 	struct vhost_virtqueue *vq;
 
+	//数量超限
 	if (vring_idx >= VHOST_MAX_VRING) {
 		RTE_LOG(ERR, VHOST_CONFIG,
 				"Failed not init vring, out of bound (%d)\n",
@@ -221,6 +222,7 @@ reset_vring_queue(struct virtio_net *dev, uint32_t vring_idx)
 	vq->callfd = callfd;
 }
 
+//申请编号为vring_idx的virtqueue
 int
 alloc_vring_queue(struct virtio_net *dev, uint32_t vring_idx)
 {
@@ -238,7 +240,7 @@ alloc_vring_queue(struct virtio_net *dev, uint32_t vring_idx)
 	init_vring_queue(dev, vring_idx);
 	rte_spinlock_init(&vq->access_lock);
 
-	dev->nr_vring += 1;
+	dev->nr_vring += 1;//设备vring数量增加
 
 	return 0;
 }

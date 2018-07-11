@@ -577,8 +577,8 @@ struct rte_eth_dev_data {
 
 	void **rx_queues; /**< Array of pointers to RX queues. */
 	void **tx_queues; /**< Array of pointers to TX queues. */
-	uint16_t nb_rx_queues; /**< Number of RX queues. */
-	uint16_t nb_tx_queues; /**< Number of TX queues. */
+	uint16_t nb_rx_queues; /**< Number of RX queues. */ //收队列数
+	uint16_t nb_tx_queues; /**< Number of TX queues. */ //发队列数
 
 	struct rte_eth_dev_sriov sriov;    /**< SRIOV data */
 

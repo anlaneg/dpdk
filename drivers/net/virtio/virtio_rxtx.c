@@ -979,6 +979,7 @@ virtio_recv_mergeable_pkts(void *rx_queue,
 	return nb_rx;
 }
 
+//virtio设备发包函数
 uint16_t
 virtio_xmit_pkts(void *tx_queue, struct rte_mbuf **tx_pkts, uint16_t nb_pkts)
 {
@@ -1003,10 +1004,12 @@ virtio_xmit_pkts(void *tx_queue, struct rte_mbuf **tx_pkts, uint16_t nb_pkts)
 		virtio_xmit_cleanup(vq, nb_used);
 
 	for (nb_tx = 0; nb_tx < nb_pkts; nb_tx++) {
+		//取出要发送的报文txm
 		struct rte_mbuf *txm = tx_pkts[nb_tx];
 		int can_push = 0, use_indirect = 0, slots, need;
 
 		/* Do VLAN tag insertion */
+		//如果需要做vlan offloads，则软件加入vlan
 		if (unlikely(txm->ol_flags & PKT_TX_VLAN_PKT)) {
 			error = rte_vlan_insert(&txm);
 			if (unlikely(error)) {

@@ -53,6 +53,7 @@
  * @return
  *	A pointer to a rte_eth_dev or NULL if allocation failed.
  */
+//为vdev申请eth_dev
 static inline struct rte_eth_dev *
 rte_eth_vdev_allocate(struct rte_vdev_device *dev, size_t private_data_size)
 {

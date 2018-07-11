@@ -55,7 +55,7 @@ rte_bus_register(struct rte_bus *bus)
 	RTE_VERIFY(bus->probe);
 	RTE_VERIFY(bus->find_device);
 	/* Buses supporting driver plug also require unplug. */
-	RTE_VERIFY(!bus->plug || bus->unplug);
+	RTE_VERIFY(!bus->plug || bus->unplug);//必须要有plug
 
 	TAILQ_INSERT_TAIL(&rte_bus_list, bus, next);
 	RTE_LOG(DEBUG, EAL, "Registered [%s] bus.\n", bus->name);
@@ -150,6 +150,7 @@ rte_bus_dump(FILE *f)
 	}
 }
 
+//遍历bus,针对每一个bus调用cmp函数，查找匹配的bus
 struct rte_bus *
 rte_bus_find(const struct rte_bus *start, rte_bus_cmp_t cmp,
 	     const void *data)
@@ -205,6 +206,7 @@ rte_bus_find_by_name(const char *busname)
 	return rte_bus_find(NULL, cmp_bus_name, (const void *)busname);
 }
 
+//检查bus是否认识此_name
 static int
 bus_can_parse(const struct rte_bus *bus, const void *_name)
 {
@@ -213,6 +215,7 @@ bus_can_parse(const struct rte_bus *bus, const void *_name)
 	return !(bus->parse && bus->parse(name, NULL) == 0);
 }
 
+//查找可解析给定名称设备的bus
 struct rte_bus *
 rte_bus_find_by_device_name(const char *str)
 {

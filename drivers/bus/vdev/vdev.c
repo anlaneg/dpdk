@@ -65,6 +65,7 @@ rte_vdev_register(struct rte_vdev_driver *driver)
 }
 
 /* unregister a driver */
+//驱动解注册
 void
 rte_vdev_unregister(struct rte_vdev_driver *driver)
 {
@@ -118,6 +119,7 @@ rte_vdev_remove_custom_scan(rte_vdev_scan_callback callback, void *user_arg)
 	return 0;
 }
 
+//通过名称匹配来完成驱动匹配，返回可匹配的驱动名称
 static int
 vdev_parse(const char *name, void *addr)
 {
@@ -148,14 +150,16 @@ vdev_probe_all_drivers(struct rte_vdev_device *dev)
 	struct rte_vdev_driver *driver;
 	int ret;
 
-	//取出driver名称
+	//取出device名称
 	name = rte_vdev_device_name(dev);
 
 	VDEV_LOG(DEBUG, "Search driver %s to probe device %s", name,
 		rte_vdev_device_name(dev));
 
+	//查找此设备对应的驱动，如果失配，返回-1
 	if (vdev_parse(name, &driver))
 		return -1;
+	//设备找到对应的驱动，执行驱动probe
 	dev->device.driver = &driver->driver;
 	ret = driver->probe(dev);
 	if (ret)
@@ -288,11 +292,13 @@ vdev_remove_driver(struct rte_vdev_device *dev)
 	const char *name = rte_vdev_device_name(dev);
 	const struct rte_vdev_driver *driver;
 
+	//此设备还未绑定驱动，报错
 	if (!dev->device.driver) {
 		VDEV_LOG(DEBUG, "no driver attach to device %s", name);
 		return 1;
 	}
 
+	//调用驱动的remove函数完成移除
 	driver = container_of(dev->device.driver, const struct rte_vdev_driver,
 		driver);
 	return driver->remove(dev);
@@ -310,17 +316,21 @@ rte_vdev_uninit(const char *name)
 
 	rte_spinlock_recursive_lock(&vdev_device_list_lock);
 
+	//通过名称找到dev
 	dev = find_vdev(name);
 	if (!dev) {
 		ret = -ENOENT;
 		goto unlock;
 	}
 
+	//处理具体设备移除
 	ret = vdev_remove_driver(dev);
 	if (ret)
 		goto unlock;
 
+	//自device_list中移除设备
 	TAILQ_REMOVE(&vdev_device_list, dev, next);
+	//移除设备参数
 	devargs = dev->device.devargs;
 	rte_devargs_remove(devargs->bus->name, devargs->name);
 	free(dev);
@@ -403,7 +413,7 @@ vdev_action(const struct rte_mp_msg *mp_msg, const void *peer)
 	return 0;
 }
 
-//vdev扫描
+//vdev扫描,用于发现devargs_list中指明的属于vdev bus的设备
 static int
 vdev_scan(void)
 {
@@ -457,7 +467,7 @@ vdev_scan(void)
 	/* for virtual devices we scan the devargs_list populated via cmdline */
 	RTE_EAL_DEVARGS_FOREACH("vdev", devargs) {
 
-		//创建名称为drv_name的虚拟设备
+		//创建vdev,完成vdev bus扫描
 		dev = calloc(1, sizeof(*dev));
 		if (!dev)
 			return -1;
@@ -465,6 +475,7 @@ vdev_scan(void)
 		rte_spinlock_recursive_lock(&vdev_device_list_lock);
 
 		if (find_vdev(devargs->name)) {
+			//已存在同名的vdev，跳过此device
 			rte_spinlock_recursive_unlock(&vdev_device_list_lock);
 			free(dev);
 			continue;
@@ -474,7 +485,7 @@ vdev_scan(void)
 		dev->device.numa_node = SOCKET_ID_ANY;
 		dev->device.name = devargs->name;
 
-		//挂接设备
+		//挂接vdev设备到vdev_device_list
 		TAILQ_INSERT_TAIL(&vdev_device_list, dev, next);
 
 		rte_spinlock_recursive_unlock(&vdev_device_list_lock);
@@ -483,6 +494,7 @@ vdev_scan(void)
 	return 0;
 }
 
+//为所有的vdev设备探测驱动
 static int
 vdev_probe(void)
 {
@@ -490,13 +502,14 @@ vdev_probe(void)
 	int ret = 0;
 
 	/* call the init function for each virtual device */
+	//遍历所有的vdev设备
 	TAILQ_FOREACH(dev, &vdev_device_list, next) {
 		/* we don't use the vdev lock here, as it's only used in DPDK
 		 * initialization; and we don't want to hold such a lock when
 		 * we call each driver probe.
 		 */
 
-		//已识别驱动
+		//如果其已绑定驱动，则跳过
 		if (dev->device.driver)
 			continue;
 
@@ -541,21 +554,24 @@ vdev_plug(struct rte_device *dev)
 	return vdev_probe_all_drivers(RTE_DEV_TO_VDEV(dev));
 }
 
+//移除设备
 static int
 vdev_unplug(struct rte_device *dev)
 {
+	//移除设备dev->name
 	return rte_vdev_uninit(dev->name);
 }
 
 static struct rte_bus rte_vdev_bus = {
-	.scan = vdev_scan,
-	.probe = vdev_probe,
+	.scan = vdev_scan,//vdev设备发现
+	.probe = vdev_probe,//为所有vdev探测驱动，如果发现可匹配的驱动，则调用driver probe
 	.find_device = vdev_find_device,
 	.plug = vdev_plug,
-	.unplug = vdev_unplug,
-	.parse = vdev_parse,
+	.unplug = vdev_unplug,//设备移除
+	.parse = vdev_parse,//查找设备对应的驱动
 };
 
+//注册rte_vdev_bus
 RTE_REGISTER_BUS(vdev, rte_vdev_bus);
 
 RTE_INIT(vdev_init_log)

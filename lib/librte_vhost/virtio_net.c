@@ -1146,7 +1146,6 @@ restore_mbuf(struct rte_mbuf *m)
 //通过出队，我们可以拿到描述符索引（desc_indexes)，然后取出描述符
 //(描述符，指出报文存放的首地址，报文的长度，标记位，报文过长时会被分片的下一片）
 //再由描述符定位到实际的报文
-
 uint16_t
 rte_vhost_dequeue_burst(int vid, uint16_t queue_id,
 	struct rte_mempool *mbuf_pool, struct rte_mbuf **pkts, uint16_t count)

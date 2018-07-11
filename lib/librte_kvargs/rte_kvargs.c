@@ -82,7 +82,7 @@ is_valid_key(const char * const valid[], const char *key_match)
  * Determine whether all keys are valid or not by looking
  * into a list of valid keys.
  */
-//检查kvlist是否包含有无法的keys,如果有，返回-1,否则近回0
+//检查kvlist是否包含有非法的keys,如果有，返回-1,否则近回0
 static int
 check_for_valid_keys(struct rte_kvargs *kvlist,
 		const char * const valid[])
@@ -94,7 +94,7 @@ check_for_valid_keys(struct rte_kvargs *kvlist,
 		pair = &kvlist->pairs[i];
 		ret = is_valid_key(valid, pair->key);
 		if (!ret) {
-			//我们看到了一个假的参数，报错
+			//我们看到了一个未知的参数，报错
 			RTE_LOG(ERR, PMD,
 				"Error parsing device, invalid key <%s>\n",
 				pair->key);
@@ -184,7 +184,7 @@ rte_kvargs_parse(const char *args, const char * const valid_keys[])
 		return NULL;
 	}
 
-	//如果指定了valid_keys，则检查kvlist中的key是否包含valid_keys
+	//如果指定了valid_keys，则检查kvlist中的key是否包含于valid_keys
 	//如果不包含在valid_keys中，则释放kvlist,返回NULL
 	if (valid_keys != NULL && check_for_valid_keys(kvlist, valid_keys) < 0) {
 		rte_kvargs_free(kvlist);

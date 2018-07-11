@@ -4094,6 +4094,7 @@ static inline int rte_eth_tx_descriptor_status(uint16_t port_id,
  *   the transmit ring. The return value can be less than the value of the
  *   *tx_pkts* parameter when the transmit ring is full or has been filled up.
  */
+//dpdk发包函数
 static inline uint16_t
 rte_eth_tx_burst(uint16_t port_id, uint16_t queue_id,
 		 struct rte_mbuf **tx_pkts, uint16_t nb_pkts)
@@ -4122,6 +4123,7 @@ rte_eth_tx_burst(uint16_t port_id, uint16_t queue_id,
 	}
 #endif
 
+	//调用dev的发包函数对设备的指定队列$queue_id发送nb_pkts个包
 	return (*dev->tx_pkt_burst)(dev->data->tx_queues[queue_id], tx_pkts, nb_pkts);
 }
 

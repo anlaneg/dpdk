@@ -85,9 +85,11 @@ rte_devargs_parse(struct rte_devargs *da, const char *format, ...)
 	/* Retrieve eventual bus info */
 	do {
 		devname = dev;
+		//查找名称为dev的bus
 		bus = rte_bus_find(bus, bus_name_cmp, dev);
 		if (bus == NULL)
 			break;
+		//查找此设备是否可以被bus解析，如果可以退出
 		devname = dev + strlen(bus->name) + 1;
 		if (rte_bus_find_by_device_name(devname) == bus)
 			break;
@@ -240,6 +242,7 @@ rte_devargs_next(const char *busname, const struct rte_devargs *start)
 	else
 		da = TAILQ_FIRST(&devargs_list);
 	while (da != NULL) {
+		//如果busname与da->bus的name相同，则返回此设备信息
 		if (busname == NULL ||
 		    (strcmp(busname, da->bus->name) == 0))
 			return da;

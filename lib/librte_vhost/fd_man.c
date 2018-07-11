@@ -309,9 +309,11 @@ fdset_event_dispatch(void *arg)
 			if (rcb && pfd->revents & (POLLIN | FDPOLLERR))
 				//调用读回调
 				rcb(fd, dat, &remove1);
+
 			//如果关心写事件，且有写事件或者出错，则调用写回调
 			if (wcb && pfd->revents & (POLLOUT | FDPOLLERR))
 				wcb(fd, dat, &remove2);
+
 			pfdentry->busy = 0;
 			/*
 			 * fdset_del needs to check busy flag.
@@ -367,12 +369,14 @@ fdset_pipe_init(struct fdset *fdset)
 {
 	int ret;
 
+	//制作管道
 	if (pipe(fdset->u.pipefd) < 0) {
 		RTE_LOG(ERR, VHOST_FDMAN,
 			"failed to create pipe for vhost fdset\n");
 		return -1;
 	}
 
+	//自fd中读（读内容丢）
 	ret = fdset_add(fdset, fdset->u.readfd,
 			fdset_pipe_read_cb, NULL, NULL);
 

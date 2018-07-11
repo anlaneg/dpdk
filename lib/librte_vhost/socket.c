@@ -569,6 +569,7 @@ vhost_user_start_client(struct vhost_user_socket *vsocket)
 	reconn->fd = fd;
 	reconn->vsocket = vsocket;
 	pthread_mutex_lock(&reconn_list.mutex);
+	//加入到重连链表
 	TAILQ_INSERT_TAIL(&reconn_list.head, reconn, next);
 	pthread_mutex_unlock(&reconn_list.mutex);
 
@@ -909,11 +910,12 @@ rte_vhost_driver_register(const char *path, uint64_t flags)
 	vsocket->features           = VIRTIO_NET_SUPPORTED_FEATURES;
 
 	if (!(flags & RTE_VHOST_USER_IOMMU_SUPPORT)) {
+		//如果未开启iommu支持时，取掉对应标记位
 		vsocket->supported_features &= ~(1ULL << VIRTIO_F_IOMMU_PLATFORM);
 		vsocket->features &= ~(1ULL << VIRTIO_F_IOMMU_PLATFORM);
 	}
 
-	//指明为vhost user client
+	//是否指明为vhost user client
 	if ((flags & RTE_VHOST_USER_CLIENT) != 0) {
 		vsocket->reconnect = !(flags & RTE_VHOST_USER_NO_RECONNECT);
 		if (vsocket->reconnect && reconn_tid == 0) {

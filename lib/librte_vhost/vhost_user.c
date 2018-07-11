@@ -1456,10 +1456,11 @@ vhost_user_check_and_alloc_queue_pair(struct virtio_net *dev, VhostUserMsg *msg)
 	if (dev->virtqueue[vring_idx])
 		return 0;
 
-	//申请队列
+	//否则创建队列
 	return alloc_vring_queue(dev, vring_idx);
 }
 
+//对所有queue进行加锁
 static void
 vhost_user_lock_all_queue_pairs(struct virtio_net *dev)
 {
@@ -1602,22 +1603,27 @@ vhost_user_msg_handler(int vid, int fd)
 
 	//按请求处理消息
 	switch (msg.request.master) {
-	case VHOST_USER_GET_FEATURES://获取功能
+	case VHOST_USER_GET_FEATURES:
+		//获取功能
 		msg.payload.u64 = vhost_user_get_features(dev);
 		msg.size = sizeof(msg.payload.u64);
-		send_vhost_reply(fd, &msg);//响应消息
+		send_vhost_reply(fd, &msg);
+		//响应消息
 		break;
-	case VHOST_USER_SET_FEATURES://设置功能
+	case VHOST_USER_SET_FEATURES:
+		//设置功能
 		ret = vhost_user_set_features(dev, msg.payload.u64);
 		if (ret)
 			return -1;
 		break;
 
-	case VHOST_USER_GET_PROTOCOL_FEATURES://获取协议功能
+	case VHOST_USER_GET_PROTOCOL_FEATURES:
+		//获取协议功能
 		vhost_user_get_protocol_features(dev, &msg);
 		send_vhost_reply(fd, &msg);
 		break;
-	case VHOST_USER_SET_PROTOCOL_FEATURES://设置协议功能
+	case VHOST_USER_SET_PROTOCOL_FEATURES:
+		//设置协议功能
 		vhost_user_set_protocol_features(dev, msg.payload.u64);
 		break;
 
@@ -1628,19 +1634,22 @@ vhost_user_msg_handler(int vid, int fd)
 		vhost_user_reset_owner(dev);
 		break;
 
-	case VHOST_USER_SET_MEM_TABLE://设置内存表
+	case VHOST_USER_SET_MEM_TABLE:
+		//设置内存表
 
 		ret = vhost_user_set_mem_table(&dev, &msg);
 		break;
 
-	case VHOST_USER_SET_LOG_BASE://map的log内存（未看到使用）
+	case VHOST_USER_SET_LOG_BASE:
+		//map的log内存（未看到使用）
 		vhost_user_set_log_base(dev, &msg);
 
 		/* it needs a reply */
 		msg.size = sizeof(msg.payload.u64);
 		send_vhost_reply(fd, &msg);
 		break;
-	case VHOST_USER_SET_LOG_FD://关闭fd
+	case VHOST_USER_SET_LOG_FD:
+		//关闭fd
 		close(msg.fds[0]);
 		RTE_LOG(INFO, VHOST_CONFIG, "not implemented.\n");
 		break;

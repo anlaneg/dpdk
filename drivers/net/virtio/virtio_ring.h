@@ -94,19 +94,21 @@ struct vring {
 #define vring_used_event(vr)  ((vr)->avail->ring[(vr)->num])
 #define vring_avail_event(vr) (*(uint16_t *)&(vr)->used->ring[(vr)->num])
 
+//计算vring内存size
 static inline size_t
 vring_size(unsigned int num, unsigned long align)
 {
 	size_t size;
 
-	size = num * sizeof(struct vring_desc);
-	size += sizeof(struct vring_avail) + (num * sizeof(uint16_t));
+	size = num * sizeof(struct vring_desc);//num个vring_desc
+	size += sizeof(struct vring_avail) + (num * sizeof(uint16_t));//avail+number个数组成员
 	size = RTE_ALIGN_CEIL(size, align);
 	size += sizeof(struct vring_used) +
-		(num * sizeof(struct vring_used_elem));
+		(num * sizeof(struct vring_used_elem));//used+number个数据成员
 	return size;
 }
 
+//初始化vring
 static inline void
 vring_init(struct vring *vr, unsigned int num, uint8_t *p,
 	unsigned long align)

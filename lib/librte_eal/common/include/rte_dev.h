@@ -157,8 +157,8 @@ struct rte_driver {
  * A structure describing a generic device.
  */
 struct rte_device {
-	TAILQ_ENTRY(rte_device) next; /**< Next device */
-	const char *name;             /**< Device name */
+	TAILQ_ENTRY(rte_device) next; /**< Next device */ //用于将设备串连起来，例如一条bus一串设备
+	const char *name;             /**< Device name */ //设备名称
 	const struct rte_driver *driver;/**< Associated driver */ //采用哪个驱动
 	int numa_node;                /**< NUMA node connection */ //属于那个numa
 	struct rte_devargs *devargs;  /**< Device user arguments */ //用户为此设备提供的参数
