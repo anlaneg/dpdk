@@ -787,6 +787,7 @@ out:
 	return error;
 }
 
+//向virtio_net发送报文
 static __rte_always_inline uint32_t
 virtio_dev_rx_split(struct virtio_net *dev, struct vhost_virtqueue *vq,
 	struct rte_mbuf **pkts, uint32_t count)
@@ -956,6 +957,7 @@ rte_vhost_enqueue_burst(int vid, uint16_t queue_id,
 		return 0;
 	}
 
+	//向virtio_net设备的queue_id队列发送count个报文
 	return virtio_dev_rx(dev, queue_id, pkts, count);
 }
 

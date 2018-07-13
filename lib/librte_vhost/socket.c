@@ -58,13 +58,13 @@ struct vhost_user_socket {
 	 */
 	int vdpa_dev_id;
 
-	struct vhost_device_ops const *notify_ops;//操作集
+	struct vhost_device_ops const *notify_ops;//通知操作集
 };
 
 struct vhost_user_connection {
-	struct vhost_user_socket *vsocket;
-	int connfd;
-	int vid;
+	struct vhost_user_socket *vsocket;//连接对应的vsocket
+	int connfd;//连接的fd
+	int vid;//vhost设备id号
 
 	TAILQ_ENTRY(vhost_user_connection) next;
 };
@@ -85,6 +85,7 @@ static void vhost_user_read_cb(int fd, void *dat, int *remove);
 static int create_unix_socket(struct vhost_user_socket *vsocket);
 static int vhost_user_start_client(struct vhost_user_socket *vsocket);
 
+//全局变量，用于维护所有vhost_user的控制fd
 static struct vhost_user vhost_user = {
 	.fdset = {
 		.fd = { [0 ... MAX_FDS - 1] = {-1, NULL, NULL, NULL, 0} },
@@ -248,13 +249,17 @@ vhost_user_add_connection(int fd, struct vhost_user_socket *vsocket)
 	conn->connfd = fd;
 	conn->vsocket = vsocket;
 	conn->vid = vid;
-	ret = fdset_add(&vhost_user.fdset, fd, vhost_user_read_cb,//注册读取（用于处理控制消息）
+
+	//将与server间连接的fd注册到fdset中，如果有read事件发生，则调用vhost_user_read_cb
+	//此read方法，主要用于处理控制消息
+	ret = fdset_add(&vhost_user.fdset, fd, vhost_user_read_cb,
 			NULL, conn);
 	if (ret < 0) {
 		RTE_LOG(ERR, VHOST_CONFIG,
 			"failed to add fd %d into vhost server fdset\n",
 			fd);
 
+		//发起连接销毁通知
 		if (vsocket->notify_ops->destroy_connection)
 			vsocket->notify_ops->destroy_connection(conn->vid);
 
@@ -265,6 +270,7 @@ vhost_user_add_connection(int fd, struct vhost_user_socket *vsocket)
 	TAILQ_INSERT_TAIL(&vsocket->conn_list, conn, next);
 	pthread_mutex_unlock(&vsocket->conn_mutex);
 
+	//这个通知发起，但对端只是read,并不处理
 	fdset_pipe_notify(&vhost_user.fdset);
 	return;
 
@@ -274,7 +280,8 @@ err:
 }
 
 /* call back when there is new vhost-user connection from client  */
-//vhost_user 服务端读取函数，监听新连接
+//vhost_user 服务端读取函数，监听新连接，当接入新连接时，仅仅是注册fd的read事件
+//与client模式处理方式相同（即dpdk仅仅总是协商的非发起方）
 static void
 vhost_user_server_new_connection(int fd, void *dat, int *remove __rte_unused)
 {
@@ -290,6 +297,7 @@ vhost_user_server_new_connection(int fd, void *dat, int *remove __rte_unused)
 }
 
 //vhost_user客户端读取处理(控制消息处理）
+//从这里可以看出，一旦连接上server,server就会向对端通知消息
 static void
 vhost_user_read_cb(int connfd, void *dat, int *remove)
 {
@@ -300,6 +308,7 @@ vhost_user_read_cb(int connfd, void *dat, int *remove)
 	//读取并处理控制消息
 	ret = vhost_user_msg_handler(conn->vid, connfd);
 	if (ret < 0) {
+		//处理控制消息失败后，重新连接
 		close(connfd);
 		*remove = 1;
 		vhost_destroy_device(conn->vid);
@@ -540,7 +549,7 @@ vhost_user_start_client(struct vhost_user_socket *vsocket)
 	ret = vhost_user_connect_nonblock(fd, (struct sockaddr *)&vsocket->un,
 					  sizeof(vsocket->un));
 	if (ret == 0) {
-		//连接成功
+		//连接成功，将此fd加入到fdset中，以便开始协商
 		vhost_user_add_connection(fd, vsocket);
 		return 0;
 	}

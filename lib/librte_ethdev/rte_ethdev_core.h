@@ -536,9 +536,9 @@ struct rte_eth_rxtx_callback {
  * process, while the actual configuration data for the device is shared.
  */
 struct rte_eth_dev {
-	//收报文
+	//收报文函数
 	eth_rx_burst_t rx_pkt_burst; /**< Pointer to PMD receive function. */
-	//发报文
+	//发报文函数
 	eth_tx_burst_t tx_pkt_burst; /**< Pointer to PMD transmit function. */
 	eth_tx_prep_t tx_pkt_prepare; /**< Pointer to PMD transmit prepare function. */
 	struct rte_eth_dev_data *data;  /**< Pointer to device data */

@@ -342,6 +342,7 @@ fdset_event_dispatch(void *arg)
 	return NULL;
 }
 
+//自fd中读取内容，（读取的数据将被丢弃），默认回调
 static void
 fdset_pipe_read_cb(int readfd, void *dat __rte_unused,
 		   int *remove __rte_unused)
@@ -392,6 +393,7 @@ fdset_pipe_init(struct fdset *fdset)
 	return 0;
 }
 
+//向writefd中写入1
 void
 fdset_pipe_notify(struct fdset *fdset)
 {

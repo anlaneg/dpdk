@@ -1304,7 +1304,7 @@ eth_dev_vhost_create(struct rte_vdev_device *dev, char *iface_name,
 		goto error;
 	}
 
-	//监听socket做服务器，或者连接到服务器
+	//监听socket（服务器），或者连接到服务器（client端）
 	if (rte_vhost_driver_start(iface_name) < 0) {
 		VHOST_LOG(ERR, "Failed to start driver for %s\n",
 			iface_name);
@@ -1496,7 +1496,7 @@ rte_pmd_vhost_remove(struct rte_vdev_device *dev)
 
 //vhost驱动
 static struct rte_vdev_driver pmd_vhost_drv = {
-	.probe = rte_pmd_vhost_probe,
+	.probe = rte_pmd_vhost_probe,//驱动探测设备时调用
 	.remove = rte_pmd_vhost_remove,//移除设备时调用
 };
 
@@ -1507,7 +1507,10 @@ RTE_PMD_REGISTER_PARAM_STRING(net_vhost,
 	"iface=<ifc> "
 	"queues=<int>");
 
-RTE_INIT(vhost_init_log)
+//注册vhost log模块
+RTE_INIT(vhost_init_log);
+static void
+vhost_init_log(void)
 {
 	vhost_logtype = rte_log_register("pmd.net.vhost");
 	if (vhost_logtype >= 0)

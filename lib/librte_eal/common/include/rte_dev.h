@@ -255,6 +255,7 @@ __attribute__((used)) = RTE_STR(name)
 static const char DRV_EXP_TAG(name, pci_tbl_export)[] __attribute__((used)) = \
 RTE_STR(table)
 
+//定义驱动参数数组
 #define RTE_PMD_REGISTER_PARAM_STRING(name, str) \
 static const char DRV_EXP_TAG(name, param_string_export)[] \
 __attribute__((used)) = str

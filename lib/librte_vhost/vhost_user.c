@@ -1594,12 +1594,13 @@ vhost_user_msg_handler(int vid, int fd)
 	int unlock_required = 0;
 	uint32_t skip_master = 0;
 
+	//获得virtio_net
 	dev = get_device(vid);
 	if (dev == NULL)
 		return -1;
 
 	if (!dev->notify_ops) {
-		//如果未对ops赋值，则通过dev->ifname查找并赋值
+		//如果未对ops赋值，则通过dev->ifname查找vsocket的通知操作集，并返回
 		dev->notify_ops = vhost_driver_callback_get(dev->ifname);
 		if (!dev->notify_ops) {
 			RTE_LOG(ERR, VHOST_CONFIG,
@@ -1691,30 +1692,31 @@ vhost_user_msg_handler(int vid, int fd)
 	//按请求处理消息
 	switch (msg.request.master) {
 	case VHOST_USER_GET_FEATURES:
-		//获取功能
+		//获取本端支持功能
 		msg.payload.u64 = vhost_user_get_features(dev);
 		msg.size = sizeof(msg.payload.u64);
-		send_vhost_reply(fd, &msg);
-		//响应消息
+		send_vhost_reply(fd, &msg);//响应本端支持的功能
+
 		break;
 	case VHOST_USER_SET_FEATURES:
-		//设置功能
+		//设置本端功能
 		ret = vhost_user_set_features(dev, msg.payload.u64);
 		if (ret)
-			return -1;
+			return -1;//消息处理失败，会导致关闭连接
 		break;
 
 	case VHOST_USER_GET_PROTOCOL_FEATURES:
-		//获取协议功能
+		//获取本端协议功能
 		vhost_user_get_protocol_features(dev, &msg);
 		send_vhost_reply(fd, &msg);
 		break;
 	case VHOST_USER_SET_PROTOCOL_FEATURES:
-		//设置协议功能
+		//设置本端协议功能
 		vhost_user_set_protocol_features(dev, msg.payload.u64);
 		break;
 
 	case VHOST_USER_SET_OWNER:
+		//设置owner,实现为空
 		vhost_user_set_owner();
 		break;
 	case VHOST_USER_RESET_OWNER:
@@ -1723,7 +1725,6 @@ vhost_user_msg_handler(int vid, int fd)
 
 	case VHOST_USER_SET_MEM_TABLE:
 		//设置内存表
-
 		ret = vhost_user_set_mem_table(&dev, &msg);
 		break;
 
