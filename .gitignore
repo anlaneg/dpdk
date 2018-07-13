@@ -17,3 +17,6 @@ GRTAGS
 tags
 TAGS
 .pydevproject
+build/
+x86_64-native-linuxapp-gcc/
+
