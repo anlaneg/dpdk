@@ -2,10 +2,50 @@
  * Copyright(c) 2018 Chelsio Communications.
  * All rights reserved.
  */
-
+#include <rte_net.h>
 #include "common.h"
+#include "t4_tcb.h"
 #include "t4_regs.h"
 #include "cxgbe_filter.h"
+#include "clip_tbl.h"
+
+/**
+ * Initialize Hash Filters
+ */
+int init_hash_filter(struct adapter *adap)
+{
+	unsigned int n_user_filters;
+	unsigned int user_filter_perc;
+	int ret;
+	u32 params[7], val[7];
+
+#define FW_PARAM_DEV(param) \
+	(V_FW_PARAMS_MNEM(FW_PARAMS_MNEM_DEV) | \
+	V_FW_PARAMS_PARAM_X(FW_PARAMS_PARAM_DEV_##param))
+
+#define FW_PARAM_PFVF(param) \
+	(V_FW_PARAMS_MNEM(FW_PARAMS_MNEM_PFVF) | \
+	V_FW_PARAMS_PARAM_X(FW_PARAMS_PARAM_PFVF_##param) |  \
+	V_FW_PARAMS_PARAM_Y(0) | \
+	V_FW_PARAMS_PARAM_Z(0))
+
+	params[0] = FW_PARAM_DEV(NTID);
+	ret = t4_query_params(adap, adap->mbox, adap->pf, 0, 1,
+			      params, val);
+	if (ret < 0)
+		return ret;
+	adap->tids.ntids = val[0];
+	adap->tids.natids = min(adap->tids.ntids / 2, MAX_ATIDS);
+
+	user_filter_perc = 100;
+	n_user_filters = mult_frac(adap->tids.nftids,
+				   user_filter_perc,
+				   100);
+
+	adap->tids.nftids = n_user_filters;
+	adap->params.hash_filter = 1;
+	return 0;
+}
 
 /**
  * Validate if the requested filter specification can be set by checking
@@ -25,11 +65,28 @@ int validate_filter(struct adapter *adapter, struct ch_filter_specification *fs)
 #define U(_mask, _field) \
 	(!(fconf & (_mask)) && S(_field))
 
-	if (U(F_ETHERTYPE, ethtype) || U(F_PROTOCOL, proto))
+	if (U(F_PORT, iport) || U(F_ETHERTYPE, ethtype) || U(F_PROTOCOL, proto))
 		return -EOPNOTSUPP;
 
 #undef S
 #undef U
+
+	/*
+	 * If the user is requesting that the filter action loop
+	 * matching packets back out one of our ports, make sure that
+	 * the egress port is in range.
+	 */
+	if (fs->action == FILTER_SWITCH &&
+	    fs->eport >= adapter->params.nports)
+		return -ERANGE;
+
+	/*
+	 * Don't allow various trivially obvious bogus out-of-range
+	 * values ...
+	 */
+	if (fs->val.iport >= adapter->params.nports)
+		return -ERANGE;
+
 	return 0;
 }
 
@@ -78,6 +135,64 @@ int writable_filter(struct filter_entry *f)
 }
 
 /**
+ * Send CPL_SET_TCB_FIELD message
+ */
+static void set_tcb_field(struct adapter *adapter, unsigned int ftid,
+			  u16 word, u64 mask, u64 val, int no_reply)
+{
+	struct rte_mbuf *mbuf;
+	struct cpl_set_tcb_field *req;
+	struct sge_ctrl_txq *ctrlq;
+
+	ctrlq = &adapter->sge.ctrlq[0];
+	mbuf = rte_pktmbuf_alloc(ctrlq->mb_pool);
+	WARN_ON(!mbuf);
+
+	mbuf->data_len = sizeof(*req);
+	mbuf->pkt_len = mbuf->data_len;
+
+	req = rte_pktmbuf_mtod(mbuf, struct cpl_set_tcb_field *);
+	memset(req, 0, sizeof(*req));
+	INIT_TP_WR_MIT_CPL(req, CPL_SET_TCB_FIELD, ftid);
+	req->reply_ctrl = cpu_to_be16(V_REPLY_CHAN(0) |
+				      V_QUEUENO(adapter->sge.fw_evtq.abs_id) |
+				      V_NO_REPLY(no_reply));
+	req->word_cookie = cpu_to_be16(V_WORD(word) | V_COOKIE(ftid));
+	req->mask = cpu_to_be64(mask);
+	req->val = cpu_to_be64(val);
+
+	t4_mgmt_tx(ctrlq, mbuf);
+}
+
+/**
+ * Build a CPL_SET_TCB_FIELD message as payload of a ULP_TX_PKT command.
+ */
+static inline void mk_set_tcb_field_ulp(struct filter_entry *f,
+					struct cpl_set_tcb_field *req,
+					unsigned int word,
+					u64 mask, u64 val, u8 cookie,
+					int no_reply)
+{
+	struct ulp_txpkt *txpkt = (struct ulp_txpkt *)req;
+	struct ulptx_idata *sc = (struct ulptx_idata *)(txpkt + 1);
+
+	txpkt->cmd_dest = cpu_to_be32(V_ULPTX_CMD(ULP_TX_PKT) |
+				      V_ULP_TXPKT_DEST(0));
+	txpkt->len = cpu_to_be32(DIV_ROUND_UP(sizeof(*req), 16));
+	sc->cmd_more = cpu_to_be32(V_ULPTX_CMD(ULP_TX_SC_IMM));
+	sc->len = cpu_to_be32(sizeof(*req) - sizeof(struct work_request_hdr));
+	OPCODE_TID(req) = cpu_to_be32(MK_OPCODE_TID(CPL_SET_TCB_FIELD, f->tid));
+	req->reply_ctrl = cpu_to_be16(V_NO_REPLY(no_reply) | V_REPLY_CHAN(0) |
+				      V_QUEUENO(0));
+	req->word_cookie = cpu_to_be16(V_WORD(word) | V_COOKIE(cookie));
+	req->mask = cpu_to_be64(mask);
+	req->val = cpu_to_be64(val);
+	sc = (struct ulptx_idata *)(req + 1);
+	sc->cmd_more = cpu_to_be32(V_ULPTX_CMD(ULP_TX_SC_NOOP));
+	sc->len = cpu_to_be32(0);
+}
+
+/**
  * Check if entry already filled.
  */
 bool is_filter_set(struct tid_info *t, int fidx, int family)
@@ -121,11 +236,351 @@ int cxgbe_alloc_ftid(struct adapter *adap, unsigned int family)
 }
 
 /**
+ * Construct hash filter ntuple.
+ */
+static u64 hash_filter_ntuple(const struct filter_entry *f)
+{
+	struct adapter *adap = ethdev2adap(f->dev);
+	struct tp_params *tp = &adap->params.tp;
+	u64 ntuple = 0;
+	u16 tcp_proto = IPPROTO_TCP; /* TCP Protocol Number */
+
+	if (tp->port_shift >= 0)
+		ntuple |= (u64)f->fs.mask.iport << tp->port_shift;
+
+	if (tp->protocol_shift >= 0) {
+		if (!f->fs.val.proto)
+			ntuple |= (u64)tcp_proto << tp->protocol_shift;
+		else
+			ntuple |= (u64)f->fs.val.proto << tp->protocol_shift;
+	}
+
+	if (tp->ethertype_shift >= 0 && f->fs.mask.ethtype)
+		ntuple |= (u64)(f->fs.val.ethtype) << tp->ethertype_shift;
+
+	if (ntuple != tp->hash_filter_mask)
+		return 0;
+
+	return ntuple;
+}
+
+/**
+ * Build a CPL_ABORT_REQ message as payload of a ULP_TX_PKT command.
+ */
+static void mk_abort_req_ulp(struct cpl_abort_req *abort_req,
+			     unsigned int tid)
+{
+	struct ulp_txpkt *txpkt = (struct ulp_txpkt *)abort_req;
+	struct ulptx_idata *sc = (struct ulptx_idata *)(txpkt + 1);
+
+	txpkt->cmd_dest = cpu_to_be32(V_ULPTX_CMD(ULP_TX_PKT) |
+				      V_ULP_TXPKT_DEST(0));
+	txpkt->len = cpu_to_be32(DIV_ROUND_UP(sizeof(*abort_req), 16));
+	sc->cmd_more = cpu_to_be32(V_ULPTX_CMD(ULP_TX_SC_IMM));
+	sc->len = cpu_to_be32(sizeof(*abort_req) -
+			      sizeof(struct work_request_hdr));
+	OPCODE_TID(abort_req) = cpu_to_be32(MK_OPCODE_TID(CPL_ABORT_REQ, tid));
+	abort_req->rsvd0 = cpu_to_be32(0);
+	abort_req->rsvd1 = 0;
+	abort_req->cmd = CPL_ABORT_NO_RST;
+	sc = (struct ulptx_idata *)(abort_req + 1);
+	sc->cmd_more = cpu_to_be32(V_ULPTX_CMD(ULP_TX_SC_NOOP));
+	sc->len = cpu_to_be32(0);
+}
+
+/**
+ * Build a CPL_ABORT_RPL message as payload of a ULP_TX_PKT command.
+ */
+static void mk_abort_rpl_ulp(struct cpl_abort_rpl *abort_rpl,
+			     unsigned int tid)
+{
+	struct ulp_txpkt *txpkt = (struct ulp_txpkt *)abort_rpl;
+	struct ulptx_idata *sc = (struct ulptx_idata *)(txpkt + 1);
+
+	txpkt->cmd_dest = cpu_to_be32(V_ULPTX_CMD(ULP_TX_PKT) |
+				      V_ULP_TXPKT_DEST(0));
+	txpkt->len = cpu_to_be32(DIV_ROUND_UP(sizeof(*abort_rpl), 16));
+	sc->cmd_more = cpu_to_be32(V_ULPTX_CMD(ULP_TX_SC_IMM));
+	sc->len = cpu_to_be32(sizeof(*abort_rpl) -
+			      sizeof(struct work_request_hdr));
+	OPCODE_TID(abort_rpl) = cpu_to_be32(MK_OPCODE_TID(CPL_ABORT_RPL, tid));
+	abort_rpl->rsvd0 = cpu_to_be32(0);
+	abort_rpl->rsvd1 = 0;
+	abort_rpl->cmd = CPL_ABORT_NO_RST;
+	sc = (struct ulptx_idata *)(abort_rpl + 1);
+	sc->cmd_more = cpu_to_be32(V_ULPTX_CMD(ULP_TX_SC_NOOP));
+	sc->len = cpu_to_be32(0);
+}
+
+/**
+ * Delete the specified hash filter.
+ */
+static int cxgbe_del_hash_filter(struct rte_eth_dev *dev,
+				 unsigned int filter_id,
+				 struct filter_ctx *ctx)
+{
+	struct adapter *adapter = ethdev2adap(dev);
+	struct tid_info *t = &adapter->tids;
+	struct filter_entry *f;
+	struct sge_ctrl_txq *ctrlq;
+	unsigned int port_id = ethdev2pinfo(dev)->port_id;
+	int ret;
+
+	if (filter_id > adapter->tids.ntids)
+		return -E2BIG;
+
+	f = lookup_tid(t, filter_id);
+	if (!f) {
+		dev_err(adapter, "%s: no filter entry for filter_id = %d\n",
+			__func__, filter_id);
+		return -EINVAL;
+	}
+
+	ret = writable_filter(f);
+	if (ret)
+		return ret;
+
+	if (f->valid) {
+		unsigned int wrlen;
+		struct rte_mbuf *mbuf;
+		struct work_request_hdr *wr;
+		struct ulptx_idata *aligner;
+		struct cpl_set_tcb_field *req;
+		struct cpl_abort_req *abort_req;
+		struct cpl_abort_rpl *abort_rpl;
+
+		f->ctx = ctx;
+		f->pending = 1;
+
+		wrlen = cxgbe_roundup(sizeof(*wr) +
+				      (sizeof(*req) + sizeof(*aligner)) +
+				      sizeof(*abort_req) + sizeof(*abort_rpl),
+				      16);
+
+		ctrlq = &adapter->sge.ctrlq[port_id];
+		mbuf = rte_pktmbuf_alloc(ctrlq->mb_pool);
+		if (!mbuf) {
+			dev_err(adapter, "%s: could not allocate skb ..\n",
+				__func__);
+			goto out_err;
+		}
+
+		mbuf->data_len = wrlen;
+		mbuf->pkt_len = mbuf->data_len;
+
+		req = rte_pktmbuf_mtod(mbuf, struct cpl_set_tcb_field *);
+		INIT_ULPTX_WR(req, wrlen, 0, 0);
+		wr = (struct work_request_hdr *)req;
+		wr++;
+		req = (struct cpl_set_tcb_field *)wr;
+		mk_set_tcb_field_ulp(f, req, W_TCB_RSS_INFO,
+				V_TCB_RSS_INFO(M_TCB_RSS_INFO),
+				V_TCB_RSS_INFO(adapter->sge.fw_evtq.abs_id),
+				0, 1);
+		aligner = (struct ulptx_idata *)(req + 1);
+		abort_req = (struct cpl_abort_req *)(aligner + 1);
+		mk_abort_req_ulp(abort_req, f->tid);
+		abort_rpl = (struct cpl_abort_rpl *)(abort_req + 1);
+		mk_abort_rpl_ulp(abort_rpl, f->tid);
+		t4_mgmt_tx(ctrlq, mbuf);
+	}
+	return 0;
+
+out_err:
+	return -ENOMEM;
+}
+
+/**
+ * Build a ACT_OPEN_REQ6 message for setting IPv6 hash filter.
+ */
+static void mk_act_open_req6(struct filter_entry *f, struct rte_mbuf *mbuf,
+			     unsigned int qid_filterid, struct adapter *adap)
+{
+	struct cpl_t6_act_open_req6 *req = NULL;
+	u64 local_lo, local_hi, peer_lo, peer_hi;
+	u32 *lip = (u32 *)f->fs.val.lip;
+	u32 *fip = (u32 *)f->fs.val.fip;
+
+	switch (CHELSIO_CHIP_VERSION(adap->params.chip)) {
+	case CHELSIO_T6:
+		req = rte_pktmbuf_mtod(mbuf, struct cpl_t6_act_open_req6 *);
+
+		INIT_TP_WR(req, 0);
+		break;
+	default:
+		dev_err(adap, "%s: unsupported chip type!\n", __func__);
+		return;
+	}
+
+	local_hi = ((u64)lip[1]) << 32 | lip[0];
+	local_lo = ((u64)lip[3]) << 32 | lip[2];
+	peer_hi = ((u64)fip[1]) << 32 | fip[0];
+	peer_lo = ((u64)fip[3]) << 32 | fip[2];
+
+	OPCODE_TID(req) = cpu_to_be32(MK_OPCODE_TID(CPL_ACT_OPEN_REQ6,
+						    qid_filterid));
+	req->local_port = cpu_to_be16(f->fs.val.lport);
+	req->peer_port = cpu_to_be16(f->fs.val.fport);
+	req->local_ip_hi = local_hi;
+	req->local_ip_lo = local_lo;
+	req->peer_ip_hi = peer_hi;
+	req->peer_ip_lo = peer_lo;
+	req->opt0 = cpu_to_be64(V_DELACK(f->fs.hitcnts) |
+				V_SMAC_SEL((cxgbe_port_viid(f->dev) & 0x7F)
+					   << 1) |
+				V_TX_CHAN(f->fs.eport) |
+				V_ULP_MODE(ULP_MODE_NONE) |
+				F_TCAM_BYPASS | F_NON_OFFLOAD);
+	req->params = cpu_to_be64(V_FILTER_TUPLE(hash_filter_ntuple(f)));
+	req->opt2 = cpu_to_be32(F_RSS_QUEUE_VALID |
+			    V_RSS_QUEUE(f->fs.iq) |
+			    F_T5_OPT_2_VALID |
+			    F_RX_CHANNEL |
+			    V_CONG_CNTRL((f->fs.action == FILTER_DROP) |
+					 (f->fs.dirsteer << 1)) |
+			    V_CCTRL_ECN(f->fs.action == FILTER_SWITCH));
+}
+
+/**
+ * Build a ACT_OPEN_REQ message for setting IPv4 hash filter.
+ */
+static void mk_act_open_req(struct filter_entry *f, struct rte_mbuf *mbuf,
+			    unsigned int qid_filterid, struct adapter *adap)
+{
+	struct cpl_t6_act_open_req *req = NULL;
+
+	switch (CHELSIO_CHIP_VERSION(adap->params.chip)) {
+	case CHELSIO_T6:
+		req = rte_pktmbuf_mtod(mbuf, struct cpl_t6_act_open_req *);
+
+		INIT_TP_WR(req, 0);
+		break;
+	default:
+		dev_err(adap, "%s: unsupported chip type!\n", __func__);
+		return;
+	}
+
+	OPCODE_TID(req) = cpu_to_be32(MK_OPCODE_TID(CPL_ACT_OPEN_REQ,
+						    qid_filterid));
+	req->local_port = cpu_to_be16(f->fs.val.lport);
+	req->peer_port = cpu_to_be16(f->fs.val.fport);
+	req->local_ip = f->fs.val.lip[0] | f->fs.val.lip[1] << 8 |
+			f->fs.val.lip[2] << 16 | f->fs.val.lip[3] << 24;
+	req->peer_ip = f->fs.val.fip[0] | f->fs.val.fip[1] << 8 |
+			f->fs.val.fip[2] << 16 | f->fs.val.fip[3] << 24;
+	req->opt0 = cpu_to_be64(V_DELACK(f->fs.hitcnts) |
+				V_SMAC_SEL((cxgbe_port_viid(f->dev) & 0x7F)
+					   << 1) |
+				V_TX_CHAN(f->fs.eport) |
+				V_ULP_MODE(ULP_MODE_NONE) |
+				F_TCAM_BYPASS | F_NON_OFFLOAD);
+	req->params = cpu_to_be64(V_FILTER_TUPLE(hash_filter_ntuple(f)));
+	req->opt2 = cpu_to_be32(F_RSS_QUEUE_VALID |
+			    V_RSS_QUEUE(f->fs.iq) |
+			    F_T5_OPT_2_VALID |
+			    F_RX_CHANNEL |
+			    V_CONG_CNTRL((f->fs.action == FILTER_DROP) |
+					 (f->fs.dirsteer << 1)) |
+			    V_CCTRL_ECN(f->fs.action == FILTER_SWITCH));
+}
+
+/**
+ * Set the specified hash filter.
+ */
+static int cxgbe_set_hash_filter(struct rte_eth_dev *dev,
+				 struct ch_filter_specification *fs,
+				 struct filter_ctx *ctx)
+{
+	struct port_info *pi = ethdev2pinfo(dev);
+	struct adapter *adapter = pi->adapter;
+	struct tid_info *t = &adapter->tids;
+	struct filter_entry *f;
+	struct rte_mbuf *mbuf;
+	struct sge_ctrl_txq *ctrlq;
+	unsigned int iq;
+	int atid, size;
+	int ret = 0;
+
+	ret = validate_filter(adapter, fs);
+	if (ret)
+		return ret;
+
+	iq = get_filter_steerq(dev, fs);
+
+	ctrlq = &adapter->sge.ctrlq[pi->port_id];
+
+	f = t4_os_alloc(sizeof(*f));
+	if (!f)
+		goto out_err;
+
+	f->fs = *fs;
+	f->ctx = ctx;
+	f->dev = dev;
+	f->fs.iq = iq;
+
+	atid = cxgbe_alloc_atid(t, f);
+	if (atid < 0)
+		goto out_err;
+
+	if (f->fs.type) {
+		/* IPv6 hash filter */
+		f->clipt = cxgbe_clip_alloc(f->dev, (u32 *)&f->fs.val.lip);
+		if (!f->clipt)
+			goto free_atid;
+
+		size = sizeof(struct cpl_t6_act_open_req6);
+		mbuf = rte_pktmbuf_alloc(ctrlq->mb_pool);
+		if (!mbuf) {
+			ret = -ENOMEM;
+			goto free_clip;
+		}
+
+		mbuf->data_len = size;
+		mbuf->pkt_len = mbuf->data_len;
+
+		mk_act_open_req6(f, mbuf,
+				 ((adapter->sge.fw_evtq.abs_id << 14) | atid),
+				 adapter);
+	} else {
+		/* IPv4 hash filter */
+		size = sizeof(struct cpl_t6_act_open_req);
+		mbuf = rte_pktmbuf_alloc(ctrlq->mb_pool);
+		if (!mbuf) {
+			ret = -ENOMEM;
+			goto free_atid;
+		}
+
+		mbuf->data_len = size;
+		mbuf->pkt_len = mbuf->data_len;
+
+		mk_act_open_req(f, mbuf,
+				((adapter->sge.fw_evtq.abs_id << 14) | atid),
+				adapter);
+	}
+
+	f->pending = 1;
+	t4_mgmt_tx(ctrlq, mbuf);
+	return 0;
+
+free_clip:
+	cxgbe_clip_release(f->dev, f->clipt);
+free_atid:
+	cxgbe_free_atid(t, atid);
+
+out_err:
+	t4_os_free(f);
+	return ret;
+}
+
+/**
  * Clear a filter and release any of its resources that we own.  This also
  * clears the filter's "pending" status.
  */
 void clear_filter(struct filter_entry *f)
 {
+	if (f->clipt)
+		cxgbe_clip_release(f->dev, f->clipt);
+
 	/*
 	 * The zeroing of the filter rule below clears the filter valid,
 	 * pending, locked flags etc. so it's all we need for
@@ -224,7 +679,9 @@ int set_filter_wr(struct rte_eth_dev *dev, unsigned int fidx)
 	fwr->del_filter_to_l2tix =
 		cpu_to_be32(V_FW_FILTER_WR_DROP(f->fs.action == FILTER_DROP) |
 			    V_FW_FILTER_WR_DIRSTEER(f->fs.dirsteer) |
+			    V_FW_FILTER_WR_LPBK(f->fs.action == FILTER_SWITCH) |
 			    V_FW_FILTER_WR_HITCNTS(f->fs.hitcnts) |
+			    V_FW_FILTER_WR_TXCHAN(f->fs.eport) |
 			    V_FW_FILTER_WR_PRIO(f->fs.prio));
 	fwr->ethtype = cpu_to_be16(f->fs.val.ethtype);
 	fwr->ethtypem = cpu_to_be16(f->fs.mask.ethtype);
@@ -233,6 +690,9 @@ int set_filter_wr(struct rte_eth_dev *dev, unsigned int fidx)
 		cpu_to_be16(V_FW_FILTER_WR_RX_CHAN(0) |
 			    V_FW_FILTER_WR_RX_RPL_IQ(adapter->sge.fw_evtq.abs_id
 						     ));
+	fwr->maci_to_matchtypem =
+		cpu_to_be32(V_FW_FILTER_WR_PORT(f->fs.val.iport) |
+			    V_FW_FILTER_WR_PORTM(f->fs.mask.iport));
 	fwr->ptcl = f->fs.val.proto;
 	fwr->ptclm = f->fs.mask.proto;
 	rte_memcpy(fwr->lip, f->fs.val.lip, sizeof(fwr->lip));
@@ -311,16 +771,33 @@ int cxgbe_del_filter(struct rte_eth_dev *dev, unsigned int filter_id,
 	struct port_info *pi = (struct port_info *)(dev->data->dev_private);
 	struct adapter *adapter = pi->adapter;
 	struct filter_entry *f;
+	unsigned int chip_ver;
 	int ret;
+
+	if (is_hashfilter(adapter) && fs->cap)
+		return cxgbe_del_hash_filter(dev, filter_id, ctx);
 
 	if (filter_id >= adapter->tids.nftids)
 		return -ERANGE;
+
+	chip_ver = CHELSIO_CHIP_VERSION(adapter->params.chip);
 
 	ret = is_filter_set(&adapter->tids, filter_id, fs->type);
 	if (!ret) {
 		dev_warn(adap, "%s: could not find filter entry: %u\n",
 			 __func__, filter_id);
 		return -EINVAL;
+	}
+
+	/*
+	 * Ensure filter id is aligned on the 2 slot boundary for T6,
+	 * and 4 slot boundary for cards below T6.
+	 */
+	if (fs->type) {
+		if (chip_ver < CHELSIO_T6)
+			filter_id &= ~(0x3);
+		else
+			filter_id &= ~(0x1);
 	}
 
 	f = &adapter->tids.ftid_tab[filter_id];
@@ -365,10 +842,17 @@ int cxgbe_set_filter(struct rte_eth_dev *dev, unsigned int filter_id,
 	struct adapter *adapter = pi->adapter;
 	unsigned int fidx, iq, fid_bit = 0;
 	struct filter_entry *f;
+	unsigned int chip_ver;
+	uint8_t bitoff[16] = {0};
 	int ret;
+
+	if (is_hashfilter(adapter) && fs->cap)
+		return cxgbe_set_hash_filter(dev, fs, ctx);
 
 	if (filter_id >= adapter->tids.nftids)
 		return -ERANGE;
+
+	chip_ver = CHELSIO_CHIP_VERSION(adapter->params.chip);
 
 	ret = validate_filter(adapter, fs);
 	if (ret)
@@ -388,38 +872,61 @@ int cxgbe_set_filter(struct rte_eth_dev *dev, unsigned int filter_id,
 	iq = get_filter_steerq(dev, fs);
 
 	/*
-	 * IPv6 filters occupy four slots and must be aligned on
-	 * four-slot boundaries.  IPv4 filters only occupy a single
-	 * slot and have no alignment requirements but writing a new
-	 * IPv4 filter into the middle of an existing IPv6 filter
-	 * requires clearing the old IPv6 filter.
+	 * IPv6 filters occupy four slots and must be aligned on four-slot
+	 * boundaries for T5. On T6, IPv6 filters occupy two-slots and
+	 * must be aligned on two-slot boundaries.
+	 *
+	 * IPv4 filters only occupy a single slot and have no alignment
+	 * requirements but writing a new IPv4 filter into the middle
+	 * of an existing IPv6 filter requires clearing the old IPv6
+	 * filter.
 	 */
 	if (fs->type == FILTER_TYPE_IPV4) { /* IPv4 */
 		/*
-		 * If our IPv4 filter isn't being written to a
-		 * multiple of four filter index and there's an IPv6
-		 * filter at the multiple of 4 base slot, then we need
+		 * For T6, If our IPv4 filter isn't being written to a
+		 * multiple of two filter index and there's an IPv6
+		 * filter at the multiple of 2 base slot, then we need
 		 * to delete that IPv6 filter ...
+		 * For adapters below T6, IPv6 filter occupies 4 entries.
 		 */
-		fidx = filter_id & ~0x3;
+		if (chip_ver < CHELSIO_T6)
+			fidx = filter_id & ~0x3;
+		else
+			fidx = filter_id & ~0x1;
+
 		if (fidx != filter_id && adapter->tids.ftid_tab[fidx].fs.type) {
 			f = &adapter->tids.ftid_tab[fidx];
 			if (f->valid)
 				return -EBUSY;
 		}
 	} else { /* IPv6 */
-		/*
-		 * Ensure that the IPv6 filter is aligned on a
-		 * multiple of 4 boundary.
-		 */
-		if (filter_id & 0x3)
-			return -EINVAL;
+		unsigned int max_filter_id;
+
+		if (chip_ver < CHELSIO_T6) {
+			/*
+			 * Ensure that the IPv6 filter is aligned on a
+			 * multiple of 4 boundary.
+			 */
+			if (filter_id & 0x3)
+				return -EINVAL;
+
+			max_filter_id = filter_id + 4;
+		} else {
+			/*
+			 * For T6, CLIP being enabled, IPv6 filter would occupy
+			 * 2 entries.
+			 */
+			if (filter_id & 0x1)
+				return -EINVAL;
+
+			max_filter_id = filter_id + 2;
+		}
 
 		/*
 		 * Check all except the base overlapping IPv4 filter
 		 * slots.
 		 */
-		for (fidx = filter_id + 1; fidx < filter_id + 4; fidx++) {
+		for (fidx = filter_id + 1; fidx < max_filter_id; fidx++) {
 			f = &adapter->tids.ftid_tab[fidx];
 			if (f->valid)
 				return -EBUSY;
@@ -454,6 +961,16 @@ int cxgbe_set_filter(struct rte_eth_dev *dev, unsigned int filter_id,
 	}
 
 	/*
+	 * Allocate a clip table entry only if we have non-zero IPv6 address
+	 */
+	if (chip_ver > CHELSIO_T5 && fs->type &&
+	    memcmp(fs->val.lip, bitoff, sizeof(bitoff))) {
+		f->clipt = cxgbe_clip_alloc(f->dev, (u32 *)&f->fs.val.lip);
+		if (!f->clipt)
+			goto free_tid;
+	}
+
+	/*
 	 * Convert the filter specification into our internal format.
 	 * We copy the PF/VF specification into the Outer VLAN field
 	 * here so the rest of the code -- including the interface to
@@ -472,13 +989,82 @@ int cxgbe_set_filter(struct rte_eth_dev *dev, unsigned int filter_id,
 	ret = set_filter_wr(dev, filter_id);
 	if (ret) {
 		fid_bit = f->tid - adapter->tids.ftid_base;
-		cxgbe_clear_ftid(&adapter->tids, fid_bit,
-				 fs->type ? FILTER_TYPE_IPV6 :
-					    FILTER_TYPE_IPV4);
-		clear_filter(f);
+		goto free_tid;
 	}
 
 	return ret;
+
+free_tid:
+	cxgbe_clear_ftid(&adapter->tids, fid_bit,
+			 fs->type ? FILTER_TYPE_IPV6 :
+				    FILTER_TYPE_IPV4);
+	clear_filter(f);
+	return ret;
+}
+
+/**
+ * Handle a Hash filter write reply.
+ */
+void hash_filter_rpl(struct adapter *adap, const struct cpl_act_open_rpl *rpl)
+{
+	struct tid_info *t = &adap->tids;
+	struct filter_entry *f;
+	struct filter_ctx *ctx = NULL;
+	unsigned int tid = GET_TID(rpl);
+	unsigned int ftid = G_TID_TID(G_AOPEN_ATID
+				      (be32_to_cpu(rpl->atid_status)));
+	unsigned int status  = G_AOPEN_STATUS(be32_to_cpu(rpl->atid_status));
+
+	f = lookup_atid(t, ftid);
+	if (!f) {
+		dev_warn(adap, "%s: could not find filter entry: %d\n",
+			 __func__, ftid);
+		return;
+	}
+
+	ctx = f->ctx;
+	f->ctx = NULL;
+
+	switch (status) {
+	case CPL_ERR_NONE: {
+		f->tid = tid;
+		f->pending = 0;  /* asynchronous setup completed */
+		f->valid = 1;
+
+		cxgbe_insert_tid(t, f, f->tid, 0);
+		cxgbe_free_atid(t, ftid);
+		if (ctx) {
+			ctx->tid = f->tid;
+			ctx->result = 0;
+		}
+		if (f->fs.hitcnts)
+			set_tcb_field(adap, tid,
+				      W_TCB_TIMESTAMP,
+				      V_TCB_TIMESTAMP(M_TCB_TIMESTAMP) |
+				      V_TCB_T_RTT_TS_RECENT_AGE
+					      (M_TCB_T_RTT_TS_RECENT_AGE),
+				      V_TCB_TIMESTAMP(0ULL) |
+				      V_TCB_T_RTT_TS_RECENT_AGE(0ULL),
+				      1);
+		break;
+	}
+	default:
+		dev_warn(adap, "%s: filter creation failed with status = %u\n",
+			 __func__, status);
+
+		if (ctx) {
+			if (status == CPL_ERR_TCAM_FULL)
+				ctx->result = -EAGAIN;
+			else
+				ctx->result = -EINVAL;
+		}
+
+		cxgbe_free_atid(t, ftid);
+		t4_os_free(f);
+	}
+
+	if (ctx)
+		t4_complete(&ctx->completion);
 }
 
 /**
@@ -550,22 +1136,44 @@ void filter_rpl(struct adapter *adap, const struct cpl_set_tcb_rpl *rpl)
  * Retrieve the packet count for the specified filter.
  */
 int cxgbe_get_filter_count(struct adapter *adapter, unsigned int fidx,
-			   u64 *c, bool get_byte)
+			   u64 *c, int hash, bool get_byte)
 {
 	struct filter_entry *f;
 	unsigned int tcb_base, tcbaddr;
 	int ret;
 
 	tcb_base = t4_read_reg(adapter, A_TP_CMM_TCB_BASE);
-	if (fidx >= adapter->tids.nftids)
-		return -ERANGE;
+	if (is_hashfilter(adapter) && hash) {
+		if (fidx < adapter->tids.ntids) {
+			f = adapter->tids.tid_tab[fidx];
+			if (!f)
+				return -EINVAL;
+
+			if (is_t5(adapter->params.chip)) {
+				*c = 0;
+				return 0;
+			}
+			tcbaddr = tcb_base + (fidx * TCB_SIZE);
+			goto get_count;
+		} else {
+			return -ERANGE;
+		}
+	} else {
+		if (fidx >= adapter->tids.nftids)
+			return -ERANGE;
+
+		f = &adapter->tids.ftid_tab[fidx];
+		if (!f->valid)
+			return -EINVAL;
+
+		tcbaddr = tcb_base + f->tid * TCB_SIZE;
+	}
 
 	f = &adapter->tids.ftid_tab[fidx];
 	if (!f->valid)
 		return -EINVAL;
 
-	tcbaddr = tcb_base + f->tid * TCB_SIZE;
-
+get_count:
 	if (is_t5(adapter->params.chip) || is_t6(adapter->params.chip)) {
 		/*
 		 * For T5, the Filter Packet Hit Count is maintained as a
@@ -606,4 +1214,39 @@ int cxgbe_get_filter_count(struct adapter *adapter, unsigned int fidx,
 		}
 	}
 	return 0;
+}
+
+/**
+ * Handle a Hash filter delete reply.
+ */
+void hash_del_filter_rpl(struct adapter *adap,
+			 const struct cpl_abort_rpl_rss *rpl)
+{
+	struct tid_info *t = &adap->tids;
+	struct filter_entry *f;
+	struct filter_ctx *ctx = NULL;
+	unsigned int tid = GET_TID(rpl);
+
+	f = lookup_tid(t, tid);
+	if (!f) {
+		dev_warn(adap, "%s: could not find filter entry: %u\n",
+			 __func__, tid);
+		return;
+	}
+
+	ctx = f->ctx;
+	f->ctx = NULL;
+
+	f->valid = 0;
+
+	if (f->clipt)
+		cxgbe_clip_release(f->dev, f->clipt);
+
+	cxgbe_remove_tid(t, 0, tid, 0);
+	t4_os_free(f);
+
+	if (ctx) {
+		ctx->result = 0;
+		t4_complete(&ctx->completion);
+	}
 }

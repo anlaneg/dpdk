@@ -1089,7 +1089,8 @@ eth_dev_info(struct rte_eth_dev *dev,
 
 	dev_info->tx_offload_capa = DEV_TX_OFFLOAD_MULTI_SEGS |
 				DEV_TX_OFFLOAD_VLAN_INSERT;
-	dev_info->rx_offload_capa = DEV_RX_OFFLOAD_VLAN_STRIP;
+	dev_info->rx_offload_capa = DEV_RX_OFFLOAD_VLAN_STRIP |
+				    DEV_RX_OFFLOAD_CRC_STRIP;
 }
 
 static int
@@ -1506,9 +1507,7 @@ RTE_PMD_REGISTER_PARAM_STRING(net_vhost,
 	"iface=<ifc> "
 	"queues=<int>");
 
-RTE_INIT(vhost_init_log);
-static void
-vhost_init_log(void)
+RTE_INIT(vhost_init_log)
 {
 	vhost_logtype = rte_log_register("pmd.net.vhost");
 	if (vhost_logtype >= 0)

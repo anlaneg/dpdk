@@ -46,6 +46,28 @@ New Features
   Flow API support has been added to CXGBE Poll Mode Driver to offload
   flows to Chelsio T5/T6 NICs.
 
+* **Added ixgbe preferred Rx/Tx parameters.**
+
+  Rather than applications providing explicit Rx and Tx parameters such as
+  queue and burst sizes, they can request that the EAL instead uses preferred
+  values provided by the PMD, falling back to defaults within the EAL if the
+  PMD does not provide any. The provision of such tuned values now includes
+  the ixgbe PMD.
+
+* **Added descriptor status check support for fm10k.**
+
+  ``rte_eth_rx_descritpr_status`` and ``rte_eth_tx_descriptor_status``
+  are supported by fm10K.
+
+* **Updated the enic driver.**
+
+  * Add support for mbuf fast free offload.
+  * Add low cycle count Tx handler for no-offload Tx (except mbuf fast free).
+  * Add low cycle count Rx handler for non-scattered Rx.
+  * Minor performance improvements to scattered Rx handler.
+  * Add handlers to add/delete VxLAN port number.
+  * Add devarg to specify ingress VLAN rewrite mode.
+
 
 API Changes
 -----------
@@ -59,6 +81,53 @@ API Changes
    This section is a comment. Do not overwrite or remove it.
    Also, make sure to start the actual text at the margin.
    =========================================================
+
+* cryptodev: In struct ``struct rte_cryptodev_info``, field ``rte_pci_device *pci_dev``
+  has been replaced with field ``struct rte_device *device``.
+  Value 0 is accepted in ``sym.max_nb_sessions``, meaning that a device
+  supports an unlimited number of sessions.
+  Two new fields of type ``uint16_t`` have been added:
+  ``min_mbuf_headroom_req`` and ``min_mbuf_tailroom_req``.
+  These parameters specify the recommended headroom and tailroom for mbufs
+  to be processed by the PMD.
+
+* cryptodev: Following functions were deprecated and are removed in 18.08:
+
+  - ``rte_cryptodev_queue_pair_start``
+  - ``rte_cryptodev_queue_pair_stop``
+  - ``rte_cryptodev_queue_pair_attach_sym_session``
+  - ``rte_cryptodev_queue_pair_detach_sym_session``
+
+* cryptodev: Following functions were deprecated and are replaced by
+  other functions in 18.08:
+
+  - ``rte_cryptodev_get_header_session_size`` is replaced with
+    ``rte_cryptodev_sym_get_header_session_size``
+  - ``rte_cryptodev_get_private_session_size`` is replaced with
+    ``rte_cryptodev_sym_get_private_session_size``
+
+* cryptodev: Feature flag ``RTE_CRYPTODEV_FF_MBUF_SCATTER_GATHER`` is
+  replaced with the following more explicit flags:
+  - ``RTE_CRYPTODEV_FF_IN_PLACE_SGL``
+  - ``RTE_CRYPTODEV_FF_OOP_SGL_IN_SGL_OUT``
+  - ``RTE_CRYPTODEV_FF_OOP_SGL_IN_LB_OUT``
+  - ``RTE_CRYPTODEV_FF_OOP_LB_IN_SGL_OUT``
+  - ``RTE_CRYPTODEV_FF_OOP_LB_IN_LB_OUT``
+
+* cryptodev: Renamed cryptodev experimental APIs:
+
+  Used user_data instead of private_data in following APIs to avoid confusion
+  with the existing session parameter ``sess_private_data[]`` and related APIs.
+  ``rte_cryptodev_sym_session_set_private_data()`` changed to
+  ``rte_cryptodev_sym_session_set_user_data()``
+  ``rte_cryptodev_sym_session_get_private_data()`` changed to
+  ``rte_cryptodev_sym_session_get_user_data()``
+
+* compressdev: Feature flag ``RTE_COMP_FF_MBUF_SCATTER_GATHER`` is
+  replaced with the following more explicit flags:
+  - ``RTE_COMP_FF_OOP_SGL_IN_SGL_OUT``
+  - ``RTE_COMP_FF_OOP_SGL_IN_LB_OUT``
+  - ``RTE_COMP_FF_OOP_LB_IN_SGL_OUT``
 
 
 ABI Changes
@@ -118,7 +187,7 @@ The libraries prepended with a plus sign were incremented in this version.
      librte_cmdline.so.2
      librte_common_octeontx.so.1
      librte_compressdev.so.1
-     librte_cryptodev.so.4
+   + librte_cryptodev.so.5
      librte_distributor.so.1
      librte_eal.so.7
      librte_ethdev.so.9

@@ -314,9 +314,11 @@ mrvl_dev_configure(struct rte_eth_dev *dev)
 		return -EINVAL;
 	}
 
-	if (!(dev->data->dev_conf.rxmode.offloads & DEV_RX_OFFLOAD_CRC_STRIP)) {
-		MRVL_LOG(INFO,
-			"L2 CRC stripping is always enabled in hw");
+	/* KEEP_CRC offload flag is not supported by PMD
+	 * can remove the below block when DEV_RX_OFFLOAD_CRC_STRIP removed
+	 */
+	if (rte_eth_dev_must_keep_crc(dev->data->dev_conf.rxmode.offloads)) {
+		MRVL_LOG(INFO, "L2 CRC stripping is always enabled in hw");
 		dev->data->dev_conf.rxmode.offloads |= DEV_RX_OFFLOAD_CRC_STRIP;
 	}
 
@@ -2751,9 +2753,7 @@ static struct rte_vdev_driver pmd_mrvl_drv = {
 RTE_PMD_REGISTER_VDEV(net_mvpp2, pmd_mrvl_drv);
 RTE_PMD_REGISTER_ALIAS(net_mvpp2, eth_mvpp2);
 
-RTE_INIT(mrvl_init_log);
-static void
-mrvl_init_log(void)
+RTE_INIT(mrvl_init_log)
 {
 	mrvl_logtype = rte_log_register("pmd.net.mvpp2");
 	if (mrvl_logtype >= 0)

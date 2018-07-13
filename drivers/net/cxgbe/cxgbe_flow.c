@@ -48,6 +48,81 @@ cxgbe_validate_item(const struct rte_flow_item *i, struct rte_flow_error *e)
 	return 0;
 }
 
+static void
+cxgbe_fill_filter_region(struct adapter *adap,
+			 struct ch_filter_specification *fs)
+{
+	struct tp_params *tp = &adap->params.tp;
+	u64 hash_filter_mask = tp->hash_filter_mask;
+	u64 ntuple_mask = 0;
+
+	fs->cap = 0;
+
+	if (!is_hashfilter(adap))
+		return;
+
+	if (fs->type) {
+		uint8_t biton[16] = {0xff, 0xff, 0xff, 0xff,
+				     0xff, 0xff, 0xff, 0xff,
+				     0xff, 0xff, 0xff, 0xff,
+				     0xff, 0xff, 0xff, 0xff};
+		uint8_t bitoff[16] = {0};
+
+		if (!memcmp(fs->val.lip, bitoff, sizeof(bitoff)) ||
+		    !memcmp(fs->val.fip, bitoff, sizeof(bitoff)) ||
+		    memcmp(fs->mask.lip, biton, sizeof(biton)) ||
+		    memcmp(fs->mask.fip, biton, sizeof(biton)))
+			return;
+	} else {
+		uint32_t biton  = 0xffffffff;
+		uint32_t bitoff = 0x0U;
+
+		if (!memcmp(fs->val.lip, &bitoff, sizeof(bitoff)) ||
+		    !memcmp(fs->val.fip, &bitoff, sizeof(bitoff)) ||
+		    memcmp(fs->mask.lip, &biton, sizeof(biton)) ||
+		    memcmp(fs->mask.fip, &biton, sizeof(biton)))
+			return;
+	}
+
+	if (!fs->val.lport || fs->mask.lport != 0xffff)
+		return;
+	if (!fs->val.fport || fs->mask.fport != 0xffff)
+		return;
+
+	if (tp->protocol_shift >= 0)
+		ntuple_mask |= (u64)fs->mask.proto << tp->protocol_shift;
+	if (tp->ethertype_shift >= 0)
+		ntuple_mask |= (u64)fs->mask.ethtype << tp->ethertype_shift;
+	if (tp->port_shift >= 0)
+		ntuple_mask |= (u64)fs->mask.iport << tp->port_shift;
+
+	if (ntuple_mask != hash_filter_mask)
+		return;
+
+	fs->cap = 1;	/* use hash region */
+}
+
+static int
+ch_rte_parsetype_port(const void *dmask, const struct rte_flow_item *item,
+		      struct ch_filter_specification *fs,
+		      struct rte_flow_error *e)
+{
+	const struct rte_flow_item_phy_port *val = item->spec;
+	const struct rte_flow_item_phy_port *umask = item->mask;
+	const struct rte_flow_item_phy_port *mask;
+
+	mask = umask ? umask : (const struct rte_flow_item_phy_port *)dmask;
+
+	if (val->index > 0x7)
+		return rte_flow_error_set(e, EINVAL, RTE_FLOW_ERROR_TYPE_ITEM,
+					  item,
+					  "port index upto 0x7 is supported");
+
+	CXGBE_FILL_FS(val->index, mask->index, iport);
+
+	return 0;
+}
+
 static int
 ch_rte_parsetype_udp(const void *dmask, const struct rte_flow_item *item,
 		     struct ch_filter_specification *fs,
@@ -222,6 +297,8 @@ cxgbe_validate_fidxonadd(struct ch_filter_specification *fs,
 static int
 cxgbe_verify_fidx(struct rte_flow *flow, unsigned int fidx, uint8_t del)
 {
+	if (flow->fs.cap)
+		return 0; /* Hash filters */
 	return del ? cxgbe_validate_fidxondel(flow->f, fidx) :
 		cxgbe_validate_fidxonadd(&flow->fs,
 					 ethdev2adap(flow->dev), fidx);
@@ -250,6 +327,28 @@ static int cxgbe_get_fidx(struct rte_flow *flow, unsigned int *fidx)
 }
 
 static int
+ch_rte_parse_atype_switch(const struct rte_flow_action *a,
+			  struct ch_filter_specification *fs,
+			  struct rte_flow_error *e)
+{
+	const struct rte_flow_action_phy_port *port;
+
+	switch (a->type) {
+	case RTE_FLOW_ACTION_TYPE_PHY_PORT:
+		port = (const struct rte_flow_action_phy_port *)a->conf;
+		fs->eport = port->index;
+		break;
+	default:
+		/* We are not supposed to come here */
+		return rte_flow_error_set(e, EINVAL,
+					  RTE_FLOW_ERROR_TYPE_ACTION, a,
+					  "Action not supported");
+	}
+
+	return 0;
+}
+
+static int
 cxgbe_rtef_parse_actions(struct rte_flow *flow,
 			 const struct rte_flow_action action[],
 			 struct rte_flow_error *e)
@@ -258,6 +357,7 @@ cxgbe_rtef_parse_actions(struct rte_flow *flow,
 	const struct rte_flow_action_queue *q;
 	const struct rte_flow_action *a;
 	char abit = 0;
+	int ret;
 
 	for (a = action; a->type != RTE_FLOW_ACTION_TYPE_END; a++) {
 		switch (a->type) {
@@ -291,6 +391,19 @@ cxgbe_rtef_parse_actions(struct rte_flow *flow,
 		case RTE_FLOW_ACTION_TYPE_COUNT:
 			fs->hitcnts = 1;
 			break;
+		case RTE_FLOW_ACTION_TYPE_PHY_PORT:
+			/* We allow multiple switch actions, but switch is
+			 * not compatible with either queue or drop
+			 */
+			if (abit++ && fs->action != FILTER_SWITCH)
+				return rte_flow_error_set(e, EINVAL,
+						RTE_FLOW_ERROR_TYPE_ACTION, a,
+						"overlapping action specified");
+			ret = ch_rte_parse_atype_switch(a, fs, e);
+			if (ret)
+				return ret;
+			fs->action = FILTER_SWITCH;
+			break;
 		default:
 			/* Not supported action : return error */
 			return rte_flow_error_set(e, ENOTSUP,
@@ -303,6 +416,13 @@ cxgbe_rtef_parse_actions(struct rte_flow *flow,
 }
 
 struct chrte_fparse parseitem[] = {
+		[RTE_FLOW_ITEM_TYPE_PHY_PORT] = {
+		.fptr = ch_rte_parsetype_port,
+		.dmask = &(const struct rte_flow_item_phy_port){
+			.index = 0x7,
+		}
+	},
+
 	[RTE_FLOW_ITEM_TYPE_IPV4] = {
 		.fptr  = ch_rte_parsetype_ipv4,
 		.dmask = &rte_flow_item_ipv4_mask,
@@ -329,6 +449,7 @@ cxgbe_rtef_parse_items(struct rte_flow *flow,
 		       const struct rte_flow_item items[],
 		       struct rte_flow_error *e)
 {
+	struct adapter *adap = ethdev2adap(flow->dev);
 	const struct rte_flow_item *i;
 	char repeat[ARRAY_SIZE(parseitem)] = {0};
 
@@ -369,6 +490,8 @@ cxgbe_rtef_parse_items(struct rte_flow *flow,
 		}
 	}
 
+	cxgbe_fill_filter_region(adap, &flow->fs);
+
 	return 0;
 }
 
@@ -395,6 +518,7 @@ static int __cxgbe_flow_create(struct rte_eth_dev *dev, struct rte_flow *flow)
 {
 	struct ch_filter_specification *fs = &flow->fs;
 	struct adapter *adap = ethdev2adap(dev);
+	struct tid_info *t = &adap->tids;
 	struct filter_ctx ctx;
 	unsigned int fidx;
 	int err;
@@ -427,8 +551,13 @@ static int __cxgbe_flow_create(struct rte_eth_dev *dev, struct rte_flow *flow)
 		return ctx.result;
 	}
 
-	flow->fidx = fidx;
-	flow->f = &adap->tids.ftid_tab[fidx];
+	if (fs->cap) { /* to destroy the filter */
+		flow->fidx = ctx.tid;
+		flow->f = lookup_tid(t, ctx.tid);
+	} else {
+		flow->fidx = fidx;
+		flow->f = &adap->tids.ftid_tab[fidx];
+	}
 
 	return 0;
 }
@@ -528,13 +657,14 @@ static int __cxgbe_flow_query(struct rte_flow *flow, u64 *count,
 			      u64 *byte_count)
 {
 	struct adapter *adap = ethdev2adap(flow->dev);
+	struct ch_filter_specification fs = flow->f->fs;
 	unsigned int fidx = flow->fidx;
 	int ret = 0;
 
-	ret = cxgbe_get_filter_count(adap, fidx, count, 0);
+	ret = cxgbe_get_filter_count(adap, fidx, count, fs.cap, 0);
 	if (ret)
 		return ret;
-	return cxgbe_get_filter_count(adap, fidx, byte_count, 1);
+	return cxgbe_get_filter_count(adap, fidx, byte_count, fs.cap, 1);
 }
 
 static int
@@ -666,6 +796,19 @@ static int cxgbe_flow_flush(struct rte_eth_dev *dev, struct rte_flow_error *e)
 				goto out;
 		}
 	}
+
+	if (is_hashfilter(adap) && adap->tids.tid_tab) {
+		struct filter_entry *f;
+
+		for (i = adap->tids.hash_base; i <= adap->tids.ntids; i++) {
+			f = (struct filter_entry *)adap->tids.tid_tab[i];
+
+			ret = cxgbe_check_n_destroy(f, dev, e);
+			if (ret < 0)
+				goto out;
+		}
+	}
+
 out:
 	return ret >= 0 ? 0 : ret;
 }

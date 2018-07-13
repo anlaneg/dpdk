@@ -2,11 +2,11 @@
  * Copyright(c) 2018 Intel Corporation
  */
 
+#include <rte_string_fns.h>
+
 #include "qat_device.h"
 #include "adf_transport_access_macros.h"
 #include "qat_sym_pmd.h"
-#include "qat_asym_pmd.h"
-#include "qat_comp_pmd.h"
 
 /* Hardware device information per generation */
 __extension__
@@ -118,7 +118,7 @@ qat_pci_device_allocate(struct rte_pci_device *pci_dev)
 
 	qat_dev = qat_pci_get_dev(qat_dev_id);
 	memset(qat_dev, 0, sizeof(*qat_dev));
-	snprintf(qat_dev->name, QAT_DEV_NAME_MAX_LEN, "%s", name);
+	strlcpy(qat_dev->name, name, QAT_DEV_NAME_MAX_LEN);
 	qat_dev->qat_dev_id = qat_dev_id;
 	qat_dev->pci_dev = pci_dev;
 	switch (qat_dev->pci_dev->id.device_id) {
@@ -238,5 +238,42 @@ static struct rte_pci_driver rte_qat_pmd = {
 	.probe = qat_pci_probe,
 	.remove = qat_pci_remove
 };
+
+__attribute__((weak)) int
+qat_sym_dev_create(struct qat_pci_device *qat_pci_dev __rte_unused)
+{
+	return 0;
+}
+
+__attribute__((weak)) int
+qat_asym_dev_create(struct qat_pci_device *qat_pci_dev __rte_unused)
+{
+	return 0;
+}
+
+__attribute__((weak)) int
+qat_sym_dev_destroy(struct qat_pci_device *qat_pci_dev __rte_unused)
+{
+	return 0;
+}
+
+__attribute__((weak)) int
+qat_asym_dev_destroy(struct qat_pci_device *qat_pci_dev __rte_unused)
+{
+	return 0;
+}
+
+__attribute__((weak)) int
+qat_comp_dev_create(struct qat_pci_device *qat_pci_dev __rte_unused)
+{
+	return 0;
+}
+
+__attribute__((weak)) int
+qat_comp_dev_destroy(struct qat_pci_device *qat_pci_dev __rte_unused)
+{
+	return 0;
+}
+
 RTE_PMD_REGISTER_PCI(QAT_PCI_NAME, rte_qat_pmd);
 RTE_PMD_REGISTER_PCI_TABLE(QAT_PCI_NAME, pci_id_qat_map);

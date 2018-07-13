@@ -159,9 +159,8 @@ struct fwd_engine * fwd_engines[] = {
 	&tx_only_engine,
 	&csum_fwd_engine,
 	&icmp_echo_engine,
-#if defined RTE_LIBRTE_PMD_SOFTNIC && defined RTE_LIBRTE_SCHED
-	&softnic_tm_engine,
-	&softnic_tm_bypass_engine,
+#if defined RTE_LIBRTE_PMD_SOFTNIC
+	&softnic_fwd_engine,
 #endif
 #ifdef RTE_LIBRTE_IEEE1588
 	&ieee1588_fwd_engine,
@@ -341,7 +340,6 @@ lcoreid_t latencystats_lcore_id = -1;
 struct rte_eth_rxmode rx_mode = {
 	.max_rx_pkt_len = ETHER_MAX_LEN, /**< Default maximum frame length. */
 	.offloads = DEV_RX_OFFLOAD_CRC_STRIP,
-	.ignore_offload_bitfield = 1,
 };
 
 struct rte_eth_txmode tx_mode = {
@@ -353,7 +351,7 @@ struct rte_fdir_conf fdir_conf = {
 	.pballoc = RTE_FDIR_PBALLOC_64K,
 	.status = RTE_FDIR_REPORT_STATUS,
 	.mask = {
-		.vlan_tci_mask = 0x0,
+		.vlan_tci_mask = 0xFFEF,
 		.ipv4_mask     = {
 			.src_ip = 0xFFFFFFFF,
 			.dst_ip = 0xFFFFFFFF,
@@ -799,7 +797,7 @@ init_config(void)
 	init_port_config();
 
 	gso_types = DEV_TX_OFFLOAD_TCP_TSO | DEV_TX_OFFLOAD_VXLAN_TNL_TSO |
-		DEV_TX_OFFLOAD_GRE_TNL_TSO;
+		DEV_TX_OFFLOAD_GRE_TNL_TSO | DEV_TX_OFFLOAD_UDP_TSO;
 	/*
 	 * Records which Mbuf pool to use by each logical core, if needed.
 	 */
@@ -839,6 +837,19 @@ init_config(void)
 					"rte_gro_ctx_create() failed\n");
 		}
 	}
+
+#if defined RTE_LIBRTE_PMD_SOFTNIC
+	if (strcmp(cur_fwd_eng->fwd_mode_name, "softnic") == 0) {
+		RTE_ETH_FOREACH_DEV(pid) {
+			port = &ports[pid];
+			const char *driver = port->dev_info.driver_name;
+
+			if (strcmp(driver, "net_softnic") == 0)
+				port->softport.fwd_lcore_arg = fwd_lcores;
+		}
+	}
+#endif
+
 }
 
 
@@ -1673,8 +1684,6 @@ start_port(portid_t pid)
 			port->need_reconfig_queues = 0;
 			/* setup tx queues */
 			for (qi = 0; qi < nb_txq; qi++) {
-				port->tx_conf[qi].txq_flags =
-					ETH_TXQ_FLAGS_IGNORE;
 				if ((numa_support) &&
 					(txring_numa[pi] != NUMA_NO_CONFIG))
 					diag = rte_eth_tx_queue_setup(pi, qi,
@@ -2422,17 +2431,6 @@ init_port_config(void)
 		    (rte_eth_devices[pid].data->dev_flags &
 		     RTE_ETH_DEV_INTR_RMV))
 			port->dev_conf.intr_conf.rmv = 1;
-
-#if defined RTE_LIBRTE_PMD_SOFTNIC && defined RTE_LIBRTE_SCHED
-		/* Detect softnic port */
-		if (!strcmp(port->dev_info.driver_name, "net_softnic")) {
-			port->softnic_enable = 1;
-			memset(&port->softport, 0, sizeof(struct softnic_port));
-
-			if (!strcmp(cur_fwd_eng->fwd_mode_name, "tm"))
-				port->softport.tm_flag = 1;
-		}
-#endif
 	}
 }
 

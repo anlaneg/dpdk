@@ -277,6 +277,7 @@ Core Libraries
 
 Memory pool
 M: Olivier Matz <olivier.matz@6wind.com>
+M: Andrew Rybchenko <arybchenko@solarflare.com>
 F: lib/librte_mempool/
 F: drivers/mempool/Makefile
 F: drivers/mempool/ring/
@@ -300,6 +301,8 @@ F: test/test/test_mbuf.c
 
 Ethernet API
 M: Thomas Monjalon <thomas@monjalon.net>
+M: Ferruh Yigit <ferruh.yigit@intel.com>
+M: Andrew Rybchenko <arybchenko@solarflare.com>
 T: git://dpdk.org/next/dpdk-next-net
 F: lib/librte_ethdev/
 F: devtools/test-null.sh
@@ -578,15 +581,15 @@ F: doc/guides/nics/mvpp2.rst
 F: doc/guides/nics/features/mvpp2.ini
 
 Mellanox mlx4
-M: Adrien Mazarguil <adrien.mazarguil@6wind.com>
+M: Matan Azrad <matan@mellanox.com>
+M: Shahaf Shuler <shahafs@mellanox.com>
 T: git://dpdk.org/next/dpdk-next-net-mlx
 F: drivers/net/mlx4/
 F: doc/guides/nics/mlx4.rst
 F: doc/guides/nics/features/mlx4.ini
 
 Mellanox mlx5
-M: Adrien Mazarguil <adrien.mazarguil@6wind.com>
-M: Nelio Laranjeiro <nelio.laranjeiro@6wind.com>
+M: Shahaf Shuler <shahafs@mellanox.com>
 M: Yongseok Koh <yskoh@mellanox.com>
 T: git://dpdk.org/next/dpdk-next-net-mlx
 F: drivers/net/mlx5/
@@ -775,6 +778,7 @@ M: John Griffin <john.griffin@intel.com>
 M: Fiona Trahe <fiona.trahe@intel.com>
 M: Deepak Kumar Jain <deepak.k.jain@intel.com>
 F: drivers/crypto/qat/
+F: drivers/common/qat/
 F: doc/guides/cryptodevs/qat.rst
 F: doc/guides/cryptodevs/features/qat.ini
 

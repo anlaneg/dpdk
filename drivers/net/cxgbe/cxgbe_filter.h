@@ -86,6 +86,7 @@ struct ch_filter_specification {
 	 * matching that doesn't exist as a (value, mask) tuple.
 	 */
 	uint32_t type:1;	/* 0 => IPv4, 1 => IPv6 */
+	uint32_t cap:1;		/* 0 => LE-TCAM, 1 => Hash */
 
 	/*
 	 * Packet dispatch information.  Ingress packets which match the
@@ -97,6 +98,8 @@ struct ch_filter_specification {
 	uint32_t dirsteer:1;	/* 0 => RSS, 1 => steer to iq */
 	uint32_t iq:10;		/* ingress queue */
 
+	uint32_t eport:2;	/* egress port to switch packet out */
+
 	/* Filter rule value/mask pairs. */
 	struct ch_filter_tuple val;
 	struct ch_filter_tuple mask;
@@ -104,7 +107,8 @@ struct ch_filter_specification {
 
 enum {
 	FILTER_PASS = 0,	/* default */
-	FILTER_DROP
+	FILTER_DROP,
+	FILTER_SWITCH
 };
 
 enum filter_type {
@@ -140,6 +144,7 @@ struct filter_entry {
 	u32 locked:1;               /* filter is administratively locked */
 	u32 pending:1;              /* filter action is pending FW reply */
 	struct filter_ctx *ctx;     /* caller's completion hook */
+	struct clip_entry *clipt;   /* CLIP Table entry for IPv6 */
 	struct rte_eth_dev *dev;    /* Port's rte eth device */
 	void *private;              /* For use by apps using filter_entry */
 
@@ -220,7 +225,11 @@ int cxgbe_del_filter(struct rte_eth_dev *dev, unsigned int filter_id,
 		     struct ch_filter_specification *fs,
 		     struct filter_ctx *ctx);
 int cxgbe_alloc_ftid(struct adapter *adap, unsigned int family);
+int init_hash_filter(struct adapter *adap);
+void hash_filter_rpl(struct adapter *adap, const struct cpl_act_open_rpl *rpl);
+void hash_del_filter_rpl(struct adapter *adap,
+			 const struct cpl_abort_rpl_rss *rpl);
 int validate_filter(struct adapter *adap, struct ch_filter_specification *fs);
 int cxgbe_get_filter_count(struct adapter *adapter, unsigned int fidx,
-			   u64 *c, bool get_byte);
+			   u64 *c, int hash, bool get_byte);
 #endif /* _CXGBE_FILTER_H_ */

@@ -55,6 +55,8 @@ enum fw_memtype {
 
 enum fw_wr_opcodes {
 	FW_FILTER_WR		= 0x02,
+	FW_ULPTX_WR		= 0x04,
+	FW_TP_WR		= 0x05,
 	FW_ETH_TX_PKT_WR	= 0x08,
 	FW_ETH_TX_PKTS_WR	= 0x09,
 	FW_ETH_TX_PKT_VM_WR	= 0x11,
@@ -77,6 +79,11 @@ struct fw_wr_hdr {
 #define V_FW_WR_OP(x)		((x) << S_FW_WR_OP)
 #define G_FW_WR_OP(x)		(((x) >> S_FW_WR_OP) & M_FW_WR_OP)
 
+/* atomic flag (hi) - firmware encapsulates CPLs in CPL_BARRIER
+ */
+#define S_FW_WR_ATOMIC		23
+#define V_FW_WR_ATOMIC(x)	((x) << S_FW_WR_ATOMIC)
+
 /* work request immediate data length (hi)
  */
 #define S_FW_WR_IMMDLEN	0
@@ -92,6 +99,11 @@ struct fw_wr_hdr {
 #define V_FW_WR_EQUEQ(x)	((x) << S_FW_WR_EQUEQ)
 #define G_FW_WR_EQUEQ(x)	(((x) >> S_FW_WR_EQUEQ) & M_FW_WR_EQUEQ)
 #define F_FW_WR_EQUEQ		V_FW_WR_EQUEQ(1U)
+
+/* flow context identifier (lo)
+ */
+#define S_FW_WR_FLOWID		8
+#define V_FW_WR_FLOWID(x)	((x) << S_FW_WR_FLOWID)
 
 /* length in units of 16-bytes (lo)
  */
@@ -333,6 +345,7 @@ enum fw_cmd_opcodes {
 	FW_RSS_IND_TBL_CMD             = 0x20,
 	FW_RSS_GLB_CONFIG_CMD	       = 0x22,
 	FW_RSS_VI_CONFIG_CMD           = 0x23,
+	FW_CLIP_CMD                    = 0x28,
 	FW_DEBUG_CMD                   = 0x81,
 };
 
@@ -648,6 +661,8 @@ enum fw_params_param_dev {
  * physical and virtual function parameters
  */
 enum fw_params_param_pfvf {
+	FW_PARAMS_PARAM_PFVF_CLIP_START = 0x03,
+	FW_PARAMS_PARAM_PFVF_CLIP_END = 0x04,
 	FW_PARAMS_PARAM_PFVF_FILTER_START = 0x05,
 	FW_PARAMS_PARAM_PFVF_FILTER_END = 0x06,
 	FW_PARAMS_PARAM_PFVF_CPLFW4MSG_ENCAP = 0x31,
@@ -729,6 +744,12 @@ struct fw_pfvf_cmd {
 	__be32 r4;
 };
 
+#define S_FW_PFVF_CMD_PFN		8
+#define V_FW_PFVF_CMD_PFN(x)		((x) << S_FW_PFVF_CMD_PFN)
+
+#define S_FW_PFVF_CMD_VFN		0
+#define V_FW_PFVF_CMD_VFN(x)		((x) << S_FW_PFVF_CMD_VFN)
+
 #define S_FW_PFVF_CMD_NIQFLINT          20
 #define M_FW_PFVF_CMD_NIQFLINT          0xfff
 #define G_FW_PFVF_CMD_NIQFLINT(x)       \
@@ -786,6 +807,11 @@ struct fw_pfvf_cmd {
  */
 enum fw_iq_type {
 	FW_IQ_TYPE_FL_INT_CAP,
+};
+
+enum fw_iq_iqtype {
+	FW_IQ_IQTYPE_NIC = 1,
+	FW_IQ_IQTYPE_OFLD,
 };
 
 struct fw_iq_cmd {
@@ -920,6 +946,9 @@ struct fw_iq_cmd {
 #define G_FW_IQ_CMD_IQFLINTCONGEN(x)	\
 	(((x) >> S_FW_IQ_CMD_IQFLINTCONGEN) & M_FW_IQ_CMD_IQFLINTCONGEN)
 #define F_FW_IQ_CMD_IQFLINTCONGEN	V_FW_IQ_CMD_IQFLINTCONGEN(1U)
+
+#define S_FW_IQ_CMD_IQTYPE	24
+#define V_FW_IQ_CMD_IQTYPE(x)	((x) << S_FW_IQ_CMD_IQTYPE)
 
 #define S_FW_IQ_CMD_FL0CNGCHMAP		20
 #define M_FW_IQ_CMD_FL0CNGCHMAP		0xf
@@ -2166,6 +2195,22 @@ struct fw_rss_vi_config_cmd {
 #define G_FW_RSS_VI_CONFIG_CMD_UDPEN(x)	\
 	(((x) >> S_FW_RSS_VI_CONFIG_CMD_UDPEN) & M_FW_RSS_VI_CONFIG_CMD_UDPEN)
 #define F_FW_RSS_VI_CONFIG_CMD_UDPEN	V_FW_RSS_VI_CONFIG_CMD_UDPEN(1U)
+
+struct fw_clip_cmd {
+	__be32 op_to_write;
+	__be32 alloc_to_len16;
+	__be64 ip_hi;
+	__be64 ip_lo;
+	__be32 r4[2];
+};
+
+#define S_FW_CLIP_CMD_ALLOC		31
+#define V_FW_CLIP_CMD_ALLOC(x)		((x) << S_FW_CLIP_CMD_ALLOC)
+#define F_FW_CLIP_CMD_ALLOC		V_FW_CLIP_CMD_ALLOC(1U)
+
+#define S_FW_CLIP_CMD_FREE		30
+#define V_FW_CLIP_CMD_FREE(x)		((x) << S_FW_CLIP_CMD_FREE)
+#define F_FW_CLIP_CMD_FREE		V_FW_CLIP_CMD_FREE(1U)
 
 /******************************************************************************
  *   D E B U G   C O M M A N D s

@@ -72,9 +72,9 @@ static void qat_sym_dev_info_get(struct rte_cryptodev *dev,
 			qat_qps_per_service(sym_hw_qps, QAT_SERVICE_SYMMETRIC);
 		info->feature_flags = dev->feature_flags;
 		info->capabilities = internals->qat_dev_capabilities;
-		info->sym.max_nb_sessions = QAT_SYM_PMD_MAX_NB_SESSIONS;
 		info->driver_id = cryptodev_qat_driver_id;
-		info->pci_dev = RTE_DEV_TO_PCI(dev->device);
+		/* No limit of number of sessions */
+		info->sym.max_nb_sessions = 0;
 	}
 }
 
@@ -202,14 +202,12 @@ static struct rte_cryptodev_ops crypto_qat_ops = {
 		.stats_reset		= qat_sym_stats_reset,
 		.queue_pair_setup	= qat_sym_qp_setup,
 		.queue_pair_release	= qat_sym_qp_release,
-		.queue_pair_start	= NULL,
-		.queue_pair_stop	= NULL,
 		.queue_pair_count	= NULL,
 
 		/* Crypto related operations */
-		.session_get_size	= qat_sym_session_get_private_size,
-		.session_configure	= qat_sym_session_configure,
-		.session_clear		= qat_sym_session_clear
+		.sym_session_get_size	= qat_sym_session_get_private_size,
+		.sym_session_configure	= qat_sym_session_configure,
+		.sym_session_clear	= qat_sym_session_clear
 };
 
 static uint16_t
@@ -244,8 +242,7 @@ qat_sym_dev_create(struct qat_pci_device *qat_pci_dev)
 	struct rte_cryptodev_pmd_init_params init_params = {
 			.name = "",
 			.socket_id = qat_pci_dev->pci_dev->device.numa_node,
-			.private_data_size = sizeof(struct qat_sym_dev_private),
-			.max_nb_sessions = QAT_SYM_PMD_MAX_NB_SESSIONS
+			.private_data_size = sizeof(struct qat_sym_dev_private)
 	};
 	char name[RTE_CRYPTODEV_NAME_MAX_LEN];
 	struct rte_cryptodev *cryptodev;
@@ -277,7 +274,11 @@ qat_sym_dev_create(struct qat_pci_device *qat_pci_dev)
 	cryptodev->feature_flags = RTE_CRYPTODEV_FF_SYMMETRIC_CRYPTO |
 			RTE_CRYPTODEV_FF_HW_ACCELERATED |
 			RTE_CRYPTODEV_FF_SYM_OPERATION_CHAINING |
-			RTE_CRYPTODEV_FF_MBUF_SCATTER_GATHER;
+			RTE_CRYPTODEV_FF_IN_PLACE_SGL |
+			RTE_CRYPTODEV_FF_OOP_SGL_IN_SGL_OUT |
+			RTE_CRYPTODEV_FF_OOP_SGL_IN_LB_OUT |
+			RTE_CRYPTODEV_FF_OOP_LB_IN_SGL_OUT |
+			RTE_CRYPTODEV_FF_OOP_LB_IN_LB_OUT;
 
 	internals = cryptodev->data->dev_private;
 	internals->qat_dev = qat_pci_dev;

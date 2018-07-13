@@ -90,9 +90,8 @@ void rte_vdev_unregister(struct rte_vdev_driver *driver);
 
 //vdev注册
 #define RTE_PMD_REGISTER_VDEV(nm, vdrv)\
-RTE_INIT(vdrvinitfn_ ##vdrv);\
 static const char *vdrvinit_ ## nm ## _alias;\
-static void vdrvinitfn_ ##vdrv(void)\
+RTE_INIT(vdrvinitfn_ ##vdrv)\
 {\
 	(vdrv).driver.name = RTE_STR(nm);\
 	(vdrv).driver.alias = vdrvinit_ ## nm ## _alias;\

@@ -7,6 +7,7 @@
 
 #include <rte_cryptodev_pmd.h>
 
+#ifdef BUILD_QAT_SYM
 #include <openssl/evp.h>
 
 #include "qat_common.h"
@@ -142,7 +143,7 @@ qat_sym_process_response(void **op, uint8_t *resp)
 		rx_op->status = RTE_CRYPTO_OP_STATUS_AUTH_FAILED;
 	} else {
 		struct qat_sym_session *sess = (struct qat_sym_session *)
-						get_session_private_data(
+						get_sym_session_private_data(
 						rx_op->sym->session,
 						cryptodev_qat_driver_id);
 
@@ -153,4 +154,11 @@ qat_sym_process_response(void **op, uint8_t *resp)
 	}
 	*op = (void *)rx_op;
 }
+#else
+
+static inline void
+qat_sym_process_response(void **op __rte_unused, uint8_t *resp __rte_unused)
+{
+}
+#endif
 #endif /* _QAT_SYM_H_ */

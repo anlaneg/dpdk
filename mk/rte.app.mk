@@ -31,15 +31,19 @@ _LDLIBS-y += -L$(RTE_SDK_BIN)/lib
 # Order is important: from higher level to lower level
 #
 _LDLIBS-$(CONFIG_RTE_LIBRTE_FLOW_CLASSIFY)  += -lrte_flow_classify
+_LDLIBS-$(CONFIG_RTE_LIBRTE_PIPELINE)       += --whole-archive
 _LDLIBS-$(CONFIG_RTE_LIBRTE_PIPELINE)       += -lrte_pipeline
+_LDLIBS-$(CONFIG_RTE_LIBRTE_PIPELINE)       += --no-whole-archive
+_LDLIBS-$(CONFIG_RTE_LIBRTE_TABLE)          += --whole-archive
 _LDLIBS-$(CONFIG_RTE_LIBRTE_TABLE)          += -lrte_table
+_LDLIBS-$(CONFIG_RTE_LIBRTE_TABLE)          += --no-whole-archive
+_LDLIBS-$(CONFIG_RTE_LIBRTE_PORT)           += --whole-archive
 _LDLIBS-$(CONFIG_RTE_LIBRTE_PORT)           += -lrte_port
+_LDLIBS-$(CONFIG_RTE_LIBRTE_PORT)           += --no-whole-archive
 
 _LDLIBS-$(CONFIG_RTE_LIBRTE_PDUMP)          += -lrte_pdump
 _LDLIBS-$(CONFIG_RTE_LIBRTE_DISTRIBUTOR)    += -lrte_distributor
 _LDLIBS-$(CONFIG_RTE_LIBRTE_IP_FRAG)        += -lrte_ip_frag
-_LDLIBS-$(CONFIG_RTE_LIBRTE_GRO)            += -lrte_gro
-_LDLIBS-$(CONFIG_RTE_LIBRTE_GSO)            += -lrte_gso
 _LDLIBS-$(CONFIG_RTE_LIBRTE_METER)          += -lrte_meter
 _LDLIBS-$(CONFIG_RTE_LIBRTE_LPM)            += -lrte_lpm
 # librte_acl needs --whole-archive because of weak functions
@@ -61,6 +65,8 @@ endif
 _LDLIBS-y += --whole-archive
 
 _LDLIBS-$(CONFIG_RTE_LIBRTE_CFGFILE)        += -lrte_cfgfile
+_LDLIBS-$(CONFIG_RTE_LIBRTE_GRO)            += -lrte_gro
+_LDLIBS-$(CONFIG_RTE_LIBRTE_GSO)            += -lrte_gso
 _LDLIBS-$(CONFIG_RTE_LIBRTE_HASH)           += -lrte_hash
 _LDLIBS-$(CONFIG_RTE_LIBRTE_MEMBER)         += -lrte_member
 _LDLIBS-$(CONFIG_RTE_LIBRTE_VHOST)          += -lrte_vhost

@@ -58,25 +58,6 @@ Deprecation Notices
   experimental API ``rte_pktmbuf_attach_extbuf()`` is used. Removal of the macro
   is to fix this semantic inconsistency.
 
-* ethdev: a new Tx and Rx offload API was introduced on 17.11.
-  In the new API, offloads are divided into per-port and per-queue offloads.
-  Offloads are disabled by default and enabled per application request.
-
-  In later releases the old offloading API will be deprecated, which will include:
-  - removal of ``ETH_TXQ_FLAGS_NO*`` flags.
-  - removal of ``txq_flags`` field from ``rte_eth_txconf`` struct.
-  - removal of the offloads bit-field from ``rte_eth_rxmode`` struct.
-
-* ethdev: A new offloading flag ``DEV_RX_OFFLOAD_KEEP_CRC`` will be added in v18.08,
-  This will replace the usage of not setting ``DEV_RX_OFFLOAD_CRC_STRIP`` flag
-  and will be implemented in PMDs accordingly.
-  In v18.08 both ``DEV_RX_OFFLOAD_KEEP_CRC`` and ``DEV_RX_OFFLOAD_CRC_STRIP`` flags
-  will be available, usage will be:
-  ``CRC_STRIP``: Strip CRC from packet
-  ``KEEP_CRC``: Keep CRC in packet
-  Both ``CRC_STRIP`` & ``KEEP_CRC``: Invalid
-  No flag: Keep CRC in packet
-
 * ethdev: In v18.11 ``DEV_RX_OFFLOAD_CRC_STRIP`` offload flag will be removed, default
   behavior without any flag will be changed to CRC strip.
   To keep CRC ``DEV_RX_OFFLOAD_KEEP_CRC`` flag is required.
@@ -97,28 +78,3 @@ Deprecation Notices
   - ``rte_pdump_set_socket_dir`` will be removed;
   - The parameter, ``path``, of ``rte_pdump_init`` will be removed;
   - The enum ``rte_pdump_socktype`` will be removed.
-
-* cryptodev: The following changes will be made in the library
-  for 18.08:
-
-  - Removal of ``sym`` structure in ``rte_cryptodev_info`` structure,
-    containing fields not relevant anymore since the session mempool
-    is not internal in the crypto device anymore.
-  - Replacement of ``pci_dev`` field with the more generic ``rte_device``
-    structure.
-  - Functions ``rte_cryptodev_queue_pair_attach_sym_session()`` and
-    ``rte_cryptodev_queue_pair_dettach_sym_session()`` will be deprecated from
-    18.05 and removed in 18.08, as there are no drivers doing anything useful
-    with them.
-  - Functions ``rte_cryptodev_queue_pair_start()`` and
-    ``rte_cryptodev_queue_pair_stop()`` will be deprecated from 18.05
-    and removed in 18.08, as there are no drivers doing anything useful
-    with them.
-  - Some feature flags such as ``RTE_CRYPTODEV_FF_MBUF_SCATTER_GATHER`` are ambiguous,
-    so some will be replaced by more explicit flags.
-  - Function ``rte_cryptodev_get_header_session_size()`` will be deprecated
-    in 18.05, and it gets replaced with ``rte_cryptodev_sym_get_header_session_size()``.
-    It will be removed in 18.08.
-  - Function ``rte_cryptodev_get_private_session_size()`` will be deprecated
-    in 18.05, and it gets replaced with ``rte_cryptodev_sym_get_private_session_size()``.
-    It will be removed in 18.08.

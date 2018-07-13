@@ -414,8 +414,10 @@ nfp_net_configure(struct rte_eth_dev *dev)
 		return -EINVAL;
 	}
 
-	/* Checking RX offloads */
-	if (!(rxmode->offloads & DEV_RX_OFFLOAD_CRC_STRIP))
+	/* KEEP_CRC offload flag is not supported by PMD
+	 * can remove the below block when DEV_RX_OFFLOAD_CRC_STRIP removed
+	 */
+	if (rte_eth_dev_must_keep_crc(rxmode->offloads))
 		PMD_INIT_LOG(INFO, "HW does strip CRC. No configurable!");
 
 	return 0;
@@ -1169,7 +1171,8 @@ nfp_net_infos_get(struct rte_eth_dev *dev, struct rte_eth_dev_info *dev_info)
 					     DEV_RX_OFFLOAD_UDP_CKSUM |
 					     DEV_RX_OFFLOAD_TCP_CKSUM;
 
-	dev_info->rx_offload_capa |= DEV_RX_OFFLOAD_JUMBO_FRAME;
+	dev_info->rx_offload_capa |= DEV_RX_OFFLOAD_JUMBO_FRAME |
+				     DEV_RX_OFFLOAD_KEEP_CRC;
 
 	if (hw->cap & NFP_NET_CFG_CTRL_TXVLAN)
 		dev_info->tx_offload_capa = DEV_TX_OFFLOAD_VLAN_INSERT;
@@ -1439,9 +1442,9 @@ nfp_net_dev_mtu_set(struct rte_eth_dev *dev, uint16_t mtu)
 
 	/* switch to jumbo mode if needed */
 	if ((uint32_t)mtu > ETHER_MAX_LEN)
-		dev->data->dev_conf.rxmode.jumbo_frame = 1;
+		dev->data->dev_conf.rxmode.offloads |= DEV_RX_OFFLOAD_JUMBO_FRAME;
 	else
-		dev->data->dev_conf.rxmode.jumbo_frame = 0;
+		dev->data->dev_conf.rxmode.offloads &= ~DEV_RX_OFFLOAD_JUMBO_FRAME;
 
 	/* update max frame size */
 	dev->data->dev_conf.rxmode.max_rx_pkt_len = (uint32_t)mtu;
@@ -3159,9 +3162,9 @@ static int nfp_pf_pci_probe(struct rte_pci_driver *pci_drv __rte_unused,
 	 * use a lock file if UIO is being used.
 	 */
 	if (dev->kdrv == RTE_KDRV_VFIO)
-		cpp = nfp_cpp_from_device_name(dev->device.name, 0);
+		cpp = nfp_cpp_from_device_name(dev, 0);
 	else
-		cpp = nfp_cpp_from_device_name(dev->device.name, 1);
+		cpp = nfp_cpp_from_device_name(dev, 1);
 
 	if (!cpp) {
 		PMD_DRV_LOG(ERR, "A CPP handle can not be obtained");
@@ -3310,9 +3313,7 @@ RTE_PMD_REGISTER_PCI_TABLE(net_nfp_vf, pci_id_nfp_vf_net_map);
 RTE_PMD_REGISTER_KMOD_DEP(net_nfp_pf, "* igb_uio | uio_pci_generic | vfio");
 RTE_PMD_REGISTER_KMOD_DEP(net_nfp_vf, "* igb_uio | uio_pci_generic | vfio");
 
-RTE_INIT(nfp_init_log);
-static void
-nfp_init_log(void)
+RTE_INIT(nfp_init_log)
 {
 	nfp_logtype_init = rte_log_register("pmd.net.nfp.init");
 	if (nfp_logtype_init >= 0)

@@ -1052,7 +1052,7 @@ static int ena_start(struct rte_eth_dev *dev)
 		return rc;
 
 	if (adapter->rte_dev->data->dev_conf.rxmode.mq_mode &
-	    ETH_MQ_RX_RSS_FLAG) {
+	    ETH_MQ_RX_RSS_FLAG && adapter->rte_dev->data->nb_rx_queues > 0) {
 		rc = ena_rss_init_default(adapter);
 		if (rc)
 			return rc;
@@ -2210,7 +2210,8 @@ static int eth_ena_pci_remove(struct rte_pci_device *pci_dev)
 
 static struct rte_pci_driver rte_ena_pmd = {
 	.id_table = pci_id_ena_map,
-	.drv_flags = RTE_PCI_DRV_NEED_MAPPING | RTE_PCI_DRV_INTR_LSC,
+	.drv_flags = RTE_PCI_DRV_NEED_MAPPING | RTE_PCI_DRV_INTR_LSC |
+		     RTE_PCI_DRV_WC_ACTIVATE,
 	.probe = eth_ena_pci_probe,
 	.remove = eth_ena_pci_remove,
 };
@@ -2219,9 +2220,7 @@ RTE_PMD_REGISTER_PCI(net_ena, rte_ena_pmd);
 RTE_PMD_REGISTER_PCI_TABLE(net_ena, pci_id_ena_map);
 RTE_PMD_REGISTER_KMOD_DEP(net_ena, "* igb_uio | uio_pci_generic | vfio-pci");
 
-RTE_INIT(ena_init_log);
-static void
-ena_init_log(void)
+RTE_INIT(ena_init_log)
 {
 	ena_logtype_init = rte_log_register("pmd.net.ena.init");
 	if (ena_logtype_init >= 0)

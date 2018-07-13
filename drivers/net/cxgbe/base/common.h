@@ -156,6 +156,9 @@ struct tp_params {
 	int vnic_shift;
 	int port_shift;
 	int protocol_shift;
+	int ethertype_shift;
+
+	u64 hash_filter_mask;
 };
 
 struct vpd_params {
@@ -208,6 +211,14 @@ struct rss_params {
 };
 
 /*
+ * Maximum resources provisioned for a PCI PF.
+ */
+struct pf_resources {
+	unsigned int neq;      /* N egress Qs */
+	unsigned int niqflint; /* N ingress Qs/w free list(s) & intr */
+};
+
+/*
  * Maximum resources provisioned for a PCI VF.
  */
 struct vf_resources {
@@ -230,6 +241,7 @@ struct adapter_params {
 	struct pci_params pci;
 	struct devlog_params devlog;
 	struct rss_params rss;
+	struct pf_resources pfres;
 	struct vf_resources vfres;
 	enum pcie_memwin drv_memwin;
 
@@ -250,6 +262,8 @@ struct adapter_params {
 
 	unsigned char nports;             /* # of ethernet ports */
 	unsigned char portvec;
+
+	unsigned char hash_filter;
 
 	enum chip_type chip;              /* chip code */
 	struct arch_specific_params arch; /* chip specific params */
@@ -313,6 +327,11 @@ static inline int is_pf4(struct adapter *adap)
 
 #define for_each_port(adapter, iter) \
 	for (iter = 0; iter < (adapter)->params.nports; ++iter)
+
+static inline int is_hashfilter(const struct adapter *adap)
+{
+	return adap->params.hash_filter;
+}
 
 void t4_read_mtu_tbl(struct adapter *adap, u16 *mtus, u8 *mtu_log);
 void t4_tp_wr_bits_indirect(struct adapter *adap, unsigned int addr,
@@ -456,6 +475,7 @@ void t4_write_indirect(struct adapter *adap, unsigned int addr_reg,
 		       unsigned int nregs, unsigned int start_idx);
 
 int t4_get_vpd_params(struct adapter *adapter, struct vpd_params *p);
+int t4_get_pfres(struct adapter *adapter);
 int t4_read_flash(struct adapter *adapter, unsigned int addr,
 		  unsigned int nwords, u32 *data, int byte_oriented);
 int t4_flash_cfg_addr(struct adapter *adapter);

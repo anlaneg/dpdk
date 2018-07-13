@@ -799,8 +799,11 @@
 #define A_MPS_STAT_RX_BG_3_LB_TRUNC_FRAME_L 0x96b8
 #define A_MPS_STAT_RX_BG_3_LB_TRUNC_FRAME_H 0x96bc
 
+#define A_MPS_VF_STAT_TX_VF_BCAST_BYTES_L 0x80
 #define A_MPS_VF_STAT_TX_VF_BCAST_FRAMES_L 0x88
+#define A_MPS_VF_STAT_TX_VF_MCAST_BYTES_L 0x90
 #define A_MPS_VF_STAT_TX_VF_MCAST_FRAMES_L 0x98
+#define A_MPS_VF_STAT_TX_VF_UCAST_BYTES_L 0xa0
 #define A_MPS_VF_STAT_TX_VF_UCAST_FRAMES_L 0xa8
 #define A_MPS_VF_STAT_TX_VF_DROP_FRAMES_L 0xb0
 #define A_MPS_VF_STAT_RX_VF_BCAST_FRAMES_L 0xd0
@@ -937,3 +940,15 @@
 #define M_REV    0xfU
 #define V_REV(x) ((x) << S_REV)
 #define G_REV(x) (((x) >> S_REV) & M_REV)
+
+/* registers for module LE */
+#define A_LE_DB_CONFIG 0x19c04
+
+#define S_HASHEN    20
+#define V_HASHEN(x) ((x) << S_HASHEN)
+#define F_HASHEN    V_HASHEN(1U)
+
+#define A_LE_DB_TID_HASHBASE 0x19df8
+
+#define LE_3_DB_HASH_MASK_GEN_IPV4_T6_A 0x19eac
+#define LE_4_DB_HASH_MASK_GEN_IPV4_T6_A 0x19eb0

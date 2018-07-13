@@ -244,7 +244,7 @@ vhost_user_set_features(struct virtio_net *dev, uint64_t features)
 
 			dev->virtqueue[dev->nr_vring] = NULL;
 			cleanup_vq(vq, 1);
-			free_vq(vq);
+			free_vq(dev, vq);
 		}
 	}
 
@@ -293,14 +293,27 @@ vhost_user_set_vring_num(struct virtio_net *dev,
 		TAILQ_INIT(&vq->zmbuf_list);
 	}
 
-	//按消息创建shadow_used_ring
-	vq->shadow_used_ring = rte_malloc(NULL,
+	if (vq_is_packed(dev)) {
+		vq->shadow_used_packed = rte_malloc(NULL,
+				vq->size *
+				sizeof(struct vring_used_elem_packed),
+				RTE_CACHE_LINE_SIZE);
+		if (!vq->shadow_used_packed) {
+			RTE_LOG(ERR, VHOST_CONFIG,
+					"failed to allocate memory for shadow used ring.\n");
+			return -1;
+		}
+
+	} else {
+		//按消息创建shadow_used_ring
+		vq->shadow_used_split = rte_malloc(NULL,
 				vq->size * sizeof(struct vring_used_elem),
 				RTE_CACHE_LINE_SIZE);
-	if (!vq->shadow_used_ring) {
-		RTE_LOG(ERR, VHOST_CONFIG,
-			"failed to allocate memory for shadow used ring.\n");
-		return -1;
+		if (!vq->shadow_used_split) {
+			RTE_LOG(ERR, VHOST_CONFIG,
+					"failed to allocate memory for shadow used ring.\n");
+			return -1;
+		}
 	}
 
 	//按消息创建batch_copy_elems
@@ -328,7 +341,8 @@ numa_realloc(struct virtio_net *dev, int index)
 	struct virtio_net *old_dev;
 	struct vhost_virtqueue *old_vq, *vq;
 	struct zcopy_mbuf *new_zmbuf;
-	struct vring_used_elem *new_shadow_used_ring;
+	struct vring_used_elem *new_shadow_used_split;
+	struct vring_used_elem_packed *new_shadow_used_packed;
 	struct batch_copy_elem *new_batch_copy_elems;
 	int ret;
 
@@ -363,13 +377,26 @@ numa_realloc(struct virtio_net *dev, int index)
 			vq->zmbufs = new_zmbuf;
 		}
 
-		new_shadow_used_ring = rte_malloc_socket(NULL,
-			vq->size * sizeof(struct vring_used_elem),
-			RTE_CACHE_LINE_SIZE,
-			newnode);
-		if (new_shadow_used_ring) {
-			rte_free(vq->shadow_used_ring);
-			vq->shadow_used_ring = new_shadow_used_ring;
+		if (vq_is_packed(dev)) {
+			new_shadow_used_packed = rte_malloc_socket(NULL,
+					vq->size *
+					sizeof(struct vring_used_elem_packed),
+					RTE_CACHE_LINE_SIZE,
+					newnode);
+			if (new_shadow_used_packed) {
+				rte_free(vq->shadow_used_packed);
+				vq->shadow_used_packed = new_shadow_used_packed;
+			}
+		} else {
+			new_shadow_used_split = rte_malloc_socket(NULL,
+					vq->size *
+					sizeof(struct vring_used_elem),
+					RTE_CACHE_LINE_SIZE,
+					newnode);
+			if (new_shadow_used_split) {
+				rte_free(vq->shadow_used_split);
+				vq->shadow_used_split = new_shadow_used_split;
+			}
 		}
 
 		new_batch_copy_elems = rte_malloc_socket(NULL,
@@ -482,6 +509,51 @@ translate_ring_addresses(struct virtio_net *dev, int vq_index)
 	struct vhost_virtqueue *vq = dev->virtqueue[vq_index];
 	struct vhost_vring_addr *addr = &vq->ring_addrs;
 	uint64_t len;
+
+	if (vq_is_packed(dev)) {
+		len = sizeof(struct vring_packed_desc) * vq->size;
+		vq->desc_packed = (struct vring_packed_desc *)(uintptr_t)
+			ring_addr_to_vva(dev, vq, addr->desc_user_addr, &len);
+		vq->log_guest_addr = 0;
+		if (vq->desc_packed == NULL ||
+				len != sizeof(struct vring_packed_desc) *
+				vq->size) {
+			RTE_LOG(DEBUG, VHOST_CONFIG,
+				"(%d) failed to map desc_packed ring.\n",
+				dev->vid);
+			return dev;
+		}
+
+		dev = numa_realloc(dev, vq_index);
+		vq = dev->virtqueue[vq_index];
+		addr = &vq->ring_addrs;
+
+		len = sizeof(struct vring_packed_desc_event);
+		vq->driver_event = (struct vring_packed_desc_event *)
+					(uintptr_t)ring_addr_to_vva(dev,
+					vq, addr->avail_user_addr, &len);
+		if (vq->driver_event == NULL ||
+				len != sizeof(struct vring_packed_desc_event)) {
+			RTE_LOG(DEBUG, VHOST_CONFIG,
+				"(%d) failed to find driver area address.\n",
+				dev->vid);
+			return dev;
+		}
+
+		len = sizeof(struct vring_packed_desc_event);
+		vq->device_event = (struct vring_packed_desc_event *)
+					(uintptr_t)ring_addr_to_vva(dev,
+					vq, addr->used_user_addr, &len);
+		if (vq->device_event == NULL ||
+				len != sizeof(struct vring_packed_desc_event)) {
+			RTE_LOG(DEBUG, VHOST_CONFIG,
+				"(%d) failed to find device area address.\n",
+				dev->vid);
+			return dev;
+		}
+
+		return dev;
+	}
 
 	/* The addresses are converted from QEMU virtual to Vhost virtual. */
 	if (vq->desc && vq->avail && vq->used)
@@ -898,10 +970,20 @@ err_mmap:
 	return -1;
 }
 
-static int
-vq_is_ready(struct vhost_virtqueue *vq)
+static bool
+vq_is_ready(struct virtio_net *dev, struct vhost_virtqueue *vq)
 {
-	return vq && vq->desc && vq->avail && vq->used &&
+	bool rings_ok;
+
+	if (!vq)
+		return false;
+
+	if (vq_is_packed(dev))
+		rings_ok = !!vq->desc_packed;
+	else
+		rings_ok = vq->desc && vq->avail && vq->used;
+
+	return rings_ok &&
 	       vq->kickfd != VIRTIO_UNINITIALIZED_EVENTFD &&
 	       vq->callfd != VIRTIO_UNINITIALIZED_EVENTFD;
 }
@@ -919,7 +1001,7 @@ virtio_is_ready(struct virtio_net *dev)
 	for (i = 0; i < dev->nr_vring; i++) {
 		vq = dev->virtqueue[i];
 
-		if (!vq_is_ready(vq))
+		if (!vq_is_ready(dev, vq))
 			return 0;
 	}
 
@@ -1040,8 +1122,13 @@ vhost_user_get_vring_base(struct virtio_net *dev,
 
 	if (dev->dequeue_zero_copy)
 		free_zmbufs(vq);
-	rte_free(vq->shadow_used_ring);
-	vq->shadow_used_ring = NULL;
+	if (vq_is_packed(dev)) {
+		rte_free(vq->shadow_used_packed);
+		vq->shadow_used_packed = NULL;
+	} else {
+		rte_free(vq->shadow_used_split);
+		vq->shadow_used_split = NULL;
+	}
 
 	rte_free(vq->batch_copy_elems);
 	vq->batch_copy_elems = NULL;
@@ -1888,6 +1975,8 @@ int vhost_user_host_notifier_ctrl(int vid, bool enable)
 		return -ENOTSUP;
 
 	vdpa_dev = rte_vdpa_get_device(did);
+	if (!vdpa_dev)
+		return -ENODEV;
 
 	RTE_FUNC_PTR_OR_ERR_RET(vdpa_dev->ops->get_vfio_device_fd, -ENOTSUP);
 	RTE_FUNC_PTR_OR_ERR_RET(vdpa_dev->ops->get_notify_area, -ENOTSUP);

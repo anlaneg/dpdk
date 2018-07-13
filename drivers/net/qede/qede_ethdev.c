@@ -339,6 +339,24 @@ static void qede_interrupt_action(struct ecore_hwfn *p_hwfn)
 }
 
 static void
+qede_interrupt_handler_intx(void *param)
+{
+	struct rte_eth_dev *eth_dev = (struct rte_eth_dev *)param;
+	struct qede_dev *qdev = eth_dev->data->dev_private;
+	struct ecore_dev *edev = &qdev->edev;
+	u64 status;
+
+	/* Check if our device actually raised an interrupt */
+	status = ecore_int_igu_read_sisr_reg(ECORE_LEADING_HWFN(edev));
+	if (status & 0x1) {
+		qede_interrupt_action(ECORE_LEADING_HWFN(edev));
+
+		if (rte_intr_enable(eth_dev->intr_handle))
+			DP_ERR(edev, "rte_intr_enable failed\n");
+	}
+}
+
+static void
 qede_interrupt_handler(void *param)
 {
 	struct rte_eth_dev *eth_dev = (struct rte_eth_dev *)param;
@@ -957,7 +975,11 @@ qede_mac_addr_add(struct rte_eth_dev *eth_dev, struct ether_addr *mac_addr,
 	struct ecore_filter_ucast ucast;
 	int re;
 
+	if (!is_valid_assigned_ether_addr(mac_addr))
+		return -EINVAL;
+
 	qede_set_ucast_cmn_params(&ucast);
+	ucast.opcode = ECORE_FILTER_ADD;
 	ucast.type = ECORE_FILTER_MAC;
 	ether_addr_copy(mac_addr, (struct ether_addr *)&ucast.mac);
 	re = (int)qede_mac_int_ops(eth_dev, &ucast, 1);
@@ -978,6 +1000,9 @@ qede_mac_addr_remove(struct rte_eth_dev *eth_dev, uint32_t index)
 		       index, qdev->dev_info.num_mac_filters);
 		return;
 	}
+
+	if (!is_valid_assigned_ether_addr(&eth_dev->data->mac_addrs[index]))
+		return;
 
 	qede_set_ucast_cmn_params(&ucast);
 	ucast.opcode = ECORE_FILTER_REMOVE;
@@ -1002,8 +1027,9 @@ qede_mac_addr_set(struct rte_eth_dev *eth_dev, struct ether_addr *mac_addr)
 		return -EPERM;
 	}
 
-	qede_mac_addr_add(eth_dev, mac_addr, 0, 0);
-	return 0;
+	qede_mac_addr_remove(eth_dev, 0);
+
+	return qede_mac_addr_add(eth_dev, mac_addr, 0, 0);
 }
 
 static void qede_config_accept_any_vlan(struct qede_dev *qdev, bool flg)
@@ -1329,9 +1355,6 @@ static void qede_dev_stop(struct rte_eth_dev *eth_dev)
 	/* Disable traffic */
 	ecore_hw_stop_fastpath(edev); /* TBD - loop */
 
-	if (IS_PF(edev))
-		qede_mac_addr_remove(eth_dev, 0);
-
 	DP_INFO(edev, "Device is stopped\n");
 }
 
@@ -1471,8 +1494,7 @@ static int qede_dev_configure(struct rte_eth_dev *eth_dev)
 
 	/* Enable VLAN offloads by default */
 	ret = qede_vlan_offload_set(eth_dev, ETH_VLAN_STRIP_MASK  |
-					     ETH_VLAN_FILTER_MASK |
-					     ETH_VLAN_EXTEND_MASK);
+					     ETH_VLAN_FILTER_MASK);
 	if (ret)
 		return ret;
 
@@ -1532,6 +1554,7 @@ qede_dev_info_get(struct rte_eth_dev *eth_dev,
 				     DEV_RX_OFFLOAD_OUTER_IPV4_CKSUM |
 				     DEV_RX_OFFLOAD_TCP_LRO	|
 				     DEV_RX_OFFLOAD_CRC_STRIP	|
+				     DEV_RX_OFFLOAD_KEEP_CRC    |
 				     DEV_RX_OFFLOAD_SCATTER	|
 				     DEV_RX_OFFLOAD_JUMBO_FRAME |
 				     DEV_RX_OFFLOAD_VLAN_FILTER |
@@ -1546,7 +1569,6 @@ qede_dev_info_get(struct rte_eth_dev *eth_dev,
 				     DEV_TX_OFFLOAD_UDP_CKSUM	|
 				     DEV_TX_OFFLOAD_TCP_CKSUM	|
 				     DEV_TX_OFFLOAD_OUTER_IPV4_CKSUM |
-				     DEV_TX_OFFLOAD_QINQ_INSERT |
 				     DEV_TX_OFFLOAD_MULTI_SEGS  |
 				     DEV_TX_OFFLOAD_TCP_TSO	|
 				     DEV_TX_OFFLOAD_VXLAN_TNL_TSO |
@@ -1560,11 +1582,7 @@ qede_dev_info_get(struct rte_eth_dev *eth_dev,
 	dev_info->default_rxconf = (struct rte_eth_rxconf) {
 		/* Packets are always dropped if no descriptors are available */
 		.rx_drop_en = 1,
-		/* The below RX offloads are always enabled */
-		.offloads = (DEV_RX_OFFLOAD_CRC_STRIP  |
-			     DEV_RX_OFFLOAD_IPV4_CKSUM |
-			     DEV_RX_OFFLOAD_TCP_CKSUM  |
-			     DEV_RX_OFFLOAD_UDP_CKSUM),
+		.offloads = 0,
 	};
 
 	memset(&link, 0, sizeof(struct qed_link_output));
@@ -2070,8 +2088,6 @@ int qede_update_mtu(struct rte_eth_dev *eth_dev, uint16_t mtu)
 					goto err;
 
 				/* Restore config lost due to vport stop */
-				qede_mac_addr_set(eth_dev, &qdev->primary_mac);
-
 				if (eth_dev->data->promiscuous)
 					qede_promiscuous_enable(eth_dev);
 				else
@@ -2500,9 +2516,6 @@ static int qede_set_mtu(struct rte_eth_dev *dev, uint16_t mtu)
 		dev->data->dev_started = 0;
 		qede_dev_stop(dev);
 		restart = true;
-	} else {
-		if (IS_PF(edev))
-			qede_mac_addr_remove(dev, 0);
 	}
 	rte_delay_ms(1000);
 	qdev->mtu = mtu;
@@ -2524,9 +2537,9 @@ static int qede_set_mtu(struct rte_eth_dev *dev, uint16_t mtu)
 		}
 	}
 	if (max_rx_pkt_len > ETHER_MAX_LEN)
-		dev->data->dev_conf.rxmode.jumbo_frame = 1;
+		dev->data->dev_conf.rxmode.offloads |= DEV_RX_OFFLOAD_JUMBO_FRAME;
 	else
-		dev->data->dev_conf.rxmode.jumbo_frame = 0;
+		dev->data->dev_conf.rxmode.offloads &= ~DEV_RX_OFFLOAD_JUMBO_FRAME;
 
 	if (!dev->data->dev_started && restart) {
 		qede_dev_start(dev);
@@ -3024,6 +3037,9 @@ static const struct eth_dev_ops qede_eth_vf_dev_ops = {
 	.mtu_set = qede_set_mtu,
 	.udp_tunnel_port_add = qede_udp_dst_port_add,
 	.udp_tunnel_port_del = qede_udp_dst_port_del,
+	.mac_addr_add = qede_mac_addr_add,
+	.mac_addr_remove = qede_mac_addr_remove,
+	.mac_addr_set = qede_mac_addr_set,
 };
 
 static void qede_update_pf_params(struct ecore_dev *edev)
@@ -3052,6 +3068,7 @@ static int qede_common_dev_init(struct rte_eth_dev *eth_dev, bool is_vf)
 	/* Fix up ecore debug level */
 	uint32_t dp_module = ~0 & ~ECORE_MSG_HW;
 	uint8_t dp_level = ECORE_LEVEL_VERBOSE;
+	uint32_t int_mode;
 	int rc;
 
 	/* Extract key data structures */
@@ -3096,8 +3113,22 @@ static int qede_common_dev_init(struct rte_eth_dev *eth_dev, bool is_vf)
 		return -ENODEV;
 	}
 	qede_update_pf_params(edev);
-	rte_intr_callback_register(&pci_dev->intr_handle,
-				   qede_interrupt_handler, (void *)eth_dev);
+
+	switch (pci_dev->intr_handle.type) {
+	case RTE_INTR_HANDLE_UIO_INTX:
+	case RTE_INTR_HANDLE_VFIO_LEGACY:
+		int_mode = ECORE_INT_MODE_INTA;
+		rte_intr_callback_register(&pci_dev->intr_handle,
+					   qede_interrupt_handler_intx,
+					   (void *)eth_dev);
+		break;
+	default:
+		int_mode = ECORE_INT_MODE_MSIX;
+		rte_intr_callback_register(&pci_dev->intr_handle,
+					   qede_interrupt_handler,
+					   (void *)eth_dev);
+	}
+
 	if (rte_intr_enable(&pci_dev->intr_handle)) {
 		DP_ERR(edev, "rte_intr_enable() failed\n");
 		return -ENODEV;
@@ -3105,7 +3136,8 @@ static int qede_common_dev_init(struct rte_eth_dev *eth_dev, bool is_vf)
 
 	/* Start the Slowpath-process */
 	memset(&params, 0, sizeof(struct qed_slowpath_params));
-	params.int_mode = ECORE_INT_MODE_MSIX;
+
+	params.int_mode = int_mode;
 	params.drv_major = QEDE_PMD_VERSION_MAJOR;
 	params.drv_minor = QEDE_PMD_VERSION_MINOR;
 	params.drv_rev = QEDE_PMD_VERSION_REVISION;
@@ -3188,7 +3220,7 @@ static int qede_common_dev_init(struct rte_eth_dev *eth_dev, bool is_vf)
 						ECORE_LEADING_HWFN(edev),
 						vf_mac,
 						&is_mac_forced);
-			if (is_mac_exist && is_mac_forced) {
+			if (is_mac_exist) {
 				DP_INFO(edev, "VF macaddr received from PF\n");
 				ether_addr_copy((struct ether_addr *)&vf_mac,
 						&eth_dev->data->mac_addrs[0]);
@@ -3396,9 +3428,7 @@ RTE_PMD_REGISTER_PCI(net_qede_vf, rte_qedevf_pmd);
 RTE_PMD_REGISTER_PCI_TABLE(net_qede_vf, pci_id_qedevf_map);
 RTE_PMD_REGISTER_KMOD_DEP(net_qede_vf, "* igb_uio | vfio-pci");
 
-RTE_INIT(qede_init_log);
-static void
-qede_init_log(void)
+RTE_INIT(qede_init_log)
 {
 	qede_logtype_init = rte_log_register("pmd.net.qede.init");
 	if (qede_logtype_init >= 0)

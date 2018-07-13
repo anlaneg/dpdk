@@ -166,19 +166,26 @@ rte_pci_probe_one_driver(struct rte_pci_driver *dr,
 	RTE_LOG(INFO, EAL, "  probe driver: %x:%x %s\n", dev->id.vendor_id,
 		dev->id.device_id, dr->driver.name);
 
+	/*
+	 * reference driver structure
+	 * This needs to be before rte_pci_map_device(), as it enables to use
+	 * driver flags for adjusting configuration.
+	 */
+	//为设备暂时赋上此驱动，进行probe(这段代码与kernel极其相似）
+	dev->driver = dr;
+	dev->device.driver = &dr->driver;
+
 	//如果driver要求mapping，则进行资源map(例如bnxt驱动就要求进行mapping)
 	//按理解，所有采用igb_uio方式绑定的均要走此函数
 	if (dr->drv_flags & RTE_PCI_DRV_NEED_MAPPING) {
 		/* map resources for devices that use igb_uio */
 		ret = rte_pci_map_device(dev);
-		if (ret != 0)
+		if (ret != 0) {
+			dev->driver = NULL;
+			dev->device.driver = NULL;
 			return ret;
+		}
 	}
-
-	//为设备暂时赋上此驱动，进行probe(这段代码与kernel极其相似）
-	/* reference driver structure */
-	dev->driver = dr;
-	dev->device.driver = &dr->driver;
 
 	/* call the driver probe() function */
 	//用此driver探测此设备

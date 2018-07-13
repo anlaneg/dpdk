@@ -2480,6 +2480,46 @@ int t4_get_core_clock(struct adapter *adapter, struct vpd_params *p)
 	return 0;
 }
 
+/**
+ * t4_get_pfres - retrieve VF resource limits
+ * @adapter: the adapter
+ *
+ * Retrieves configured resource limits and capabilities for a physical
+ * function.  The results are stored in @adapter->pfres.
+ */
+int t4_get_pfres(struct adapter *adapter)
+{
+	struct pf_resources *pfres = &adapter->params.pfres;
+	struct fw_pfvf_cmd cmd, rpl;
+	u32 word;
+	int v;
+
+	/*
+	 * Execute PFVF Read command to get VF resource limits; bail out early
+	 * with error on command failure.
+	 */
+	memset(&cmd, 0, sizeof(cmd));
+	cmd.op_to_vfn = cpu_to_be32(V_FW_CMD_OP(FW_PFVF_CMD) |
+				    F_FW_CMD_REQUEST |
+				    F_FW_CMD_READ |
+				    V_FW_PFVF_CMD_PFN(adapter->pf) |
+				    V_FW_PFVF_CMD_VFN(0));
+	cmd.retval_len16 = cpu_to_be32(FW_LEN16(cmd));
+	v = t4_wr_mbox(adapter, adapter->mbox, &cmd, sizeof(cmd), &rpl);
+	if (v != FW_SUCCESS)
+		return v;
+
+	/*
+	 * Extract PF resource limits and return success.
+	 */
+	word = be32_to_cpu(rpl.niqflint_niq);
+	pfres->niqflint = G_FW_PFVF_CMD_NIQFLINT(word);
+
+	word = be32_to_cpu(rpl.type_to_neq);
+	pfres->neq = G_FW_PFVF_CMD_NEQ(word);
+	return 0;
+}
+
 /* serial flash and firmware constants and flash config file constants */
 enum {
 	SF_ATTEMPTS = 10,             /* max retries for SF operations */
@@ -5032,6 +5072,8 @@ int t4_init_tp_params(struct adapter *adap)
 	adap->params.tp.port_shift = t4_filter_field_shift(adap, F_PORT);
 	adap->params.tp.protocol_shift = t4_filter_field_shift(adap,
 							       F_PROTOCOL);
+	adap->params.tp.ethertype_shift = t4_filter_field_shift(adap,
+								F_ETHERTYPE);
 
 	/*
 	 * If TP_INGRESS_CONFIG.VNID == 0, then TP_VLAN_PRI_MAP.VNIC_ID
@@ -5039,6 +5081,11 @@ int t4_init_tp_params(struct adapter *adap)
 	 */
 	if ((adap->params.tp.ingress_config & F_VNIC) == 0)
 		adap->params.tp.vnic_shift = -1;
+
+	v = t4_read_reg(adap, LE_3_DB_HASH_MASK_GEN_IPV4_T6_A);
+	adap->params.tp.hash_filter_mask = v;
+	v = t4_read_reg(adap, LE_4_DB_HASH_MASK_GEN_IPV4_T6_A);
+	adap->params.tp.hash_filter_mask |= ((u64)v << 32);
 
 	return 0;
 }

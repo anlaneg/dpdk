@@ -69,6 +69,9 @@
 #ifdef RTE_LIBRTE_I40E_PMD
 #include <rte_pmd_i40e.h>
 #endif
+#ifdef RTE_LIBRTE_PMD_SOFTNIC
+#include <rte_eth_softnic.h>
+#endif
 #ifdef RTE_LIBRTE_BNXT_PMD
 #include <rte_pmd_bnxt.h>
 #endif
@@ -2058,11 +2061,21 @@ cmd_config_rss_parsed(void *parsed_result,
 	rss_conf.rss_key = NULL;
 	/* Update global configuration for RSS types. */
 	RTE_ETH_FOREACH_DEV(i) {
-		if (use_default) {
-			rte_eth_dev_info_get(i, &dev_info);
+		struct rte_eth_rss_conf local_rss_conf;
+
+		rte_eth_dev_info_get(i, &dev_info);
+		if (use_default)
 			rss_conf.rss_hf = dev_info.flow_type_rss_offloads;
+
+		local_rss_conf = rss_conf;
+		local_rss_conf.rss_hf = rss_conf.rss_hf &
+			dev_info.flow_type_rss_offloads;
+		if (local_rss_conf.rss_hf != rss_conf.rss_hf) {
+			printf("Port %u modified RSS hash function based on hardware support,"
+				"requested:%#"PRIx64" configured:%#"PRIx64"\n",
+				i, rss_conf.rss_hf, local_rss_conf.rss_hf);
 		}
-		diag = rte_eth_dev_rss_hash_update(i, &rss_conf);
+		diag = rte_eth_dev_rss_hash_update(i, &local_rss_conf);
 		if (diag < 0) {
 			all_updated = 0;
 			printf("Configuration of RSS hash at ethernet port %d "
@@ -4792,8 +4805,9 @@ cmd_gso_show_parsed(void *parsed_result,
 		if (gso_ports[res->cmd_pid].enable) {
 			printf("Max GSO'd packet size: %uB\n"
 					"Supported GSO types: TCP/IPv4, "
-					"VxLAN with inner TCP/IPv4 packet, "
-					"GRE with inner TCP/IPv4  packet\n",
+					"UDP/IPv4, VxLAN with inner "
+					"TCP/IPv4 packet, GRE with inner "
+					"TCP/IPv4 packet\n",
 					gso_max_segment_size);
 		} else
 			printf("GSO is not enabled on Port %u\n", res->cmd_pid);
@@ -14806,20 +14820,14 @@ static void cmd_set_port_tm_hierarchy_default_parsed(void *parsed_result,
 
 	p = &ports[port_id];
 
-	/* Port tm flag */
-	if (p->softport.tm_flag == 0) {
-		printf("  tm not enabled on port %u (error)\n", port_id);
-		return;
-	}
-
 	/* Forward mode: tm */
-	if (strcmp(cur_fwd_config.fwd_eng->fwd_mode_name, "tm")) {
-		printf("  tm mode not enabled(error)\n");
+	if (strcmp(cur_fwd_config.fwd_eng->fwd_mode_name, "softnic")) {
+		printf("  softnicfwd mode not enabled(error)\n");
 		return;
 	}
 
 	/* Set the default tm hierarchy */
-	p->softport.tm.default_hierarchy_enable = 1;
+	p->softport.default_tm_hierarchy_enable = 1;
 }
 
 cmdline_parse_inst_t cmd_set_port_tm_hierarchy_default = {
@@ -17545,15 +17553,50 @@ cmdline_read_from_file(const char *filename)
 void
 prompt(void)
 {
+	int status;
+
 	/* initialize non-constant commands */
 	cmd_set_fwd_mode_init();
 	cmd_set_fwd_retry_mode_init();
 
+#if defined RTE_LIBRTE_PMD_SOFTNIC
+	portid_t softnic_portid, pid;
+	uint8_t softnic_enable = 0;
+
+	if (strcmp(cur_fwd_eng->fwd_mode_name, "softnic") == 0) {
+		RTE_ETH_FOREACH_DEV(pid) {
+			struct rte_port *port = &ports[pid];
+			const char *driver = port->dev_info.driver_name;
+
+			if (strcmp(driver, "net_softnic") == 0) {
+				softnic_portid = pid;
+				softnic_enable = 1;
+				break;
+			}
+		}
+	}
+#endif
+
 	testpmd_cl = cmdline_stdin_new(main_ctx, "testpmd> ");
 	if (testpmd_cl == NULL)
 		return;
-	cmdline_interact(testpmd_cl);
-	cmdline_stdin_exit(testpmd_cl);
+
+	for (;;) {
+		status = cmdline_poll(testpmd_cl);
+		if (status < 0)
+			rte_panic("CLI poll error (%" PRId32 ")\n", status);
+		else if (status == RDLINE_EXITED) {
+			cmdline_stdin_exit(testpmd_cl);
+			rte_exit(0, "\n");
+		}
+
+#if defined RTE_LIBRTE_PMD_SOFTNIC
+
+	if ((softnic_enable == 1) &&
+		(strcmp(cur_fwd_eng->fwd_mode_name, "softnic") == 0))
+		rte_pmd_softnic_manage(softnic_portid);
+#endif
+	}
 }
 
 void

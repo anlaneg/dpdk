@@ -547,7 +547,8 @@ openssl_pmd_info_get(struct rte_cryptodev *dev,
 		dev_info->feature_flags = dev->feature_flags;
 		dev_info->capabilities = openssl_pmd_capabilities;
 		dev_info->max_nb_queue_pairs = internals->max_nb_qpairs;
-		dev_info->sym.max_nb_sessions = internals->max_nb_sessions;
+		/* No limit of number of sessions */
+		dev_info->sym.max_nb_sessions = 0;
 	}
 }
 
@@ -588,14 +589,14 @@ openssl_pmd_qp_create_processed_ops_ring(struct openssl_qp *qp,
 	r = rte_ring_lookup(qp->name);
 	if (r) {
 		if (rte_ring_get_size(r) >= ring_size) {
-			OPENSSL_LOG_INFO(
-				"Reusing existing ring %s for processed ops",
+			OPENSSL_LOG(INFO,
+					"Reusing existing ring %s for processed ops",
 				 qp->name);
 			return r;
 		}
 
-		OPENSSL_LOG_ERR(
-			"Unable to reuse existing ring %s for processed ops",
+		OPENSSL_LOG(ERR,
+				"Unable to reuse existing ring %s for processed ops",
 			 qp->name);
 		return NULL;
 	}
@@ -647,22 +648,6 @@ qp_setup_cleanup:
 	return -1;
 }
 
-/** Start queue pair */
-static int
-openssl_pmd_qp_start(__rte_unused struct rte_cryptodev *dev,
-		__rte_unused uint16_t queue_pair_id)
-{
-	return -ENOTSUP;
-}
-
-/** Stop queue pair */
-static int
-openssl_pmd_qp_stop(__rte_unused struct rte_cryptodev *dev,
-		__rte_unused uint16_t queue_pair_id)
-{
-	return -ENOTSUP;
-}
-
 /** Return the number of allocated queue pairs */
 static uint32_t
 openssl_pmd_qp_count(struct rte_cryptodev *dev)
@@ -672,14 +657,14 @@ openssl_pmd_qp_count(struct rte_cryptodev *dev)
 
 /** Returns the size of the session structure */
 static unsigned
-openssl_pmd_session_get_size(struct rte_cryptodev *dev __rte_unused)
+openssl_pmd_sym_session_get_size(struct rte_cryptodev *dev __rte_unused)
 {
 	return sizeof(struct openssl_session);
 }
 
 /** Configure the session from a crypto xform chain */
 static int
-openssl_pmd_session_configure(struct rte_cryptodev *dev __rte_unused,
+openssl_pmd_sym_session_configure(struct rte_cryptodev *dev __rte_unused,
 		struct rte_crypto_sym_xform *xform,
 		struct rte_cryptodev_sym_session *sess,
 		struct rte_mempool *mempool)
@@ -688,26 +673,26 @@ openssl_pmd_session_configure(struct rte_cryptodev *dev __rte_unused,
 	int ret;
 
 	if (unlikely(sess == NULL)) {
-		OPENSSL_LOG_ERR("invalid session struct");
+		OPENSSL_LOG(ERR, "invalid session struct");
 		return -EINVAL;
 	}
 
 	if (rte_mempool_get(mempool, &sess_private_data)) {
-		CDEV_LOG_ERR(
+		OPENSSL_LOG(ERR,
 			"Couldn't get object from session mempool");
 		return -ENOMEM;
 	}
 
 	ret = openssl_set_session_parameters(sess_private_data, xform);
 	if (ret != 0) {
-		OPENSSL_LOG_ERR("failed configure session parameters");
+		OPENSSL_LOG(ERR, "failed configure session parameters");
 
 		/* Return session to mempool */
 		rte_mempool_put(mempool, sess_private_data);
 		return ret;
 	}
 
-	set_session_private_data(sess, dev->driver_id,
+	set_sym_session_private_data(sess, dev->driver_id,
 			sess_private_data);
 
 	return 0;
@@ -716,18 +701,18 @@ openssl_pmd_session_configure(struct rte_cryptodev *dev __rte_unused,
 
 /** Clear the memory of session so it doesn't leave key material behind */
 static void
-openssl_pmd_session_clear(struct rte_cryptodev *dev,
+openssl_pmd_sym_session_clear(struct rte_cryptodev *dev,
 		struct rte_cryptodev_sym_session *sess)
 {
 	uint8_t index = dev->driver_id;
-	void *sess_priv = get_session_private_data(sess, index);
+	void *sess_priv = get_sym_session_private_data(sess, index);
 
 	/* Zero out the whole structure */
 	if (sess_priv) {
 		openssl_reset_session(sess_priv);
 		memset(sess_priv, 0, sizeof(struct openssl_session));
 		struct rte_mempool *sess_mp = rte_mempool_from_obj(sess_priv);
-		set_session_private_data(sess, index, NULL);
+		set_sym_session_private_data(sess, index, NULL);
 		rte_mempool_put(sess_mp, sess_priv);
 	}
 }
@@ -745,13 +730,11 @@ struct rte_cryptodev_ops openssl_pmd_ops = {
 
 		.queue_pair_setup	= openssl_pmd_qp_setup,
 		.queue_pair_release	= openssl_pmd_qp_release,
-		.queue_pair_start	= openssl_pmd_qp_start,
-		.queue_pair_stop	= openssl_pmd_qp_stop,
 		.queue_pair_count	= openssl_pmd_qp_count,
 
-		.session_get_size	= openssl_pmd_session_get_size,
-		.session_configure	= openssl_pmd_session_configure,
-		.session_clear		= openssl_pmd_session_clear
+		.sym_session_get_size	= openssl_pmd_sym_session_get_size,
+		.sym_session_configure	= openssl_pmd_sym_session_configure,
+		.sym_session_clear	= openssl_pmd_sym_session_clear
 };
 
 struct rte_cryptodev_ops *rte_openssl_pmd_ops = &openssl_pmd_ops;
