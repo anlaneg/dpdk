@@ -41,6 +41,10 @@ struct internal_config {
 	volatile unsigned vmware_tsc_map; /**< true to use VMware TSC mapping
 										* instead of native TSC */
 	volatile unsigned no_shconf;      /**< true if there is no shared config */
+	volatile unsigned in_memory;
+	/**< true if DPDK should operate entirely in-memory and not create any
+	 * shared files or runtime data.
+	 */
 	//通过参数create-uio-dev指定
 	volatile unsigned create_uio_dev; /**< true to create /dev/uioX devices */
 	//多进程处理模式
@@ -49,6 +53,8 @@ struct internal_config {
 	volatile unsigned force_sockets;
 	//每个numa上的内存大小
 	volatile uint64_t socket_mem[RTE_MAX_NUMA_NODES]; /**< amount of memory per socket */
+	volatile unsigned force_socket_limits;
+	volatile uint64_t socket_limit[RTE_MAX_NUMA_NODES]; /**< limit amount of memory per socket */
 	uintptr_t base_virtaddr;          /**< base address to try and reserve memory from */
 	volatile unsigned legacy_mem;
 	/**< true to enable legacy memory behavior (no dynamic allocation,

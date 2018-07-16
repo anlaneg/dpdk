@@ -31,6 +31,10 @@ void *
 malloc_heap_alloc(const char *type, size_t size, int socket, unsigned int flags,
 		size_t align, size_t bound, bool contig);
 
+void *
+malloc_heap_alloc_biggest(const char *type, int socket, unsigned int flags,
+		size_t align, bool contig);
+
 int
 malloc_heap_free(struct malloc_elem *elem);
 

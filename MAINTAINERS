@@ -124,6 +124,7 @@ M: Neil Horman <nhorman@tuxdriver.com>
 F: lib/librte_compat/
 F: doc/guides/rel_notes/deprecation.rst
 F: devtools/validate-abi.sh
+F: devtools/check-symbol-change.sh
 F: buildtools/check-experimental-syms.sh
 
 Driver information
@@ -177,6 +178,7 @@ F: lib/librte_eal/linuxapp/eal/eal_mem*
 F: lib/librte_eal/bsdapp/eal/eal_mem*
 F: doc/guides/prog_guide/env_abstraction_layer.rst
 F: test/test/test_func_reentrancy.c
+F: test/test/test_fbarray.c
 F: test/test/test_malloc.c
 F: test/test/test_memory.c
 F: test/test/test_memzone.c
@@ -426,6 +428,10 @@ F: drivers/bus/pci/
 VDEV bus driver
 F: drivers/bus/vdev/
 
+VMBUS bus driver
+M: Stephen Hemminger <sthemmin@microsoft.com>
+F: drivers/bus/vmbus/
+
 
 Networking Drivers
 ------------------
@@ -601,6 +607,14 @@ M: Matan Azrad <matan@mellanox.com>
 F: drivers/net/vdev_netvsc/
 F: doc/guides/nics/vdev_netvsc.rst
 F: doc/guides/nics/features/vdev_netvsc.ini
+
+Microsoft Hyper-V netvsc - EXPERIMENTAL
+M: Stephen Hemminger <sthemmin@microsoft.com>
+M: K. Y. Srinivasan <kys@microsoft.com>
+M: Haiyang Zhang <haiyangz@microsoft.com>
+F: drivers/net/netvsc/
+F: doc/guides/nics/netvsc.rst
+F: doc/guides/nics/features/netvsc.ini
 
 Netcope szedata2
 M: Matej Vido <vido@cesnet.cz>

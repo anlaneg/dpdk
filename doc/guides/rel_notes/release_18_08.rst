@@ -41,6 +41,12 @@ New Features
      Also, make sure to start the actual text at the margin.
      =========================================================
 
+* **Added support for Hyper-V netvsc PMD.**
+
+  The new ``netvsc`` poll mode driver provides native support for
+  networking on Hyper-V. See the :doc:`../nics/netvsc` NIC driver guide
+  for more details on this new driver.
+
 * **Added Flow API support for CXGBE PMD.**
 
   Flow API support has been added to CXGBE Poll Mode Driver to offload
@@ -82,6 +88,15 @@ API Changes
    Also, make sure to start the actual text at the margin.
    =========================================================
 
+* Path to runtime config file has changed. The new path is determined as
+  follows:
+
+  - If DPDK is running as root, ``/var/run/dpdk/<prefix>/config``
+  - If DPDK is not running as root:
+
+    * If ``$XDG_RUNTIME_DIR`` is set, ``${XDG_RUNTIME_DIR}/dpdk/<prefix>/config``
+    * Otherwise, ``/tmp/dpdk/<prefix>/config``
+
 * cryptodev: In struct ``struct rte_cryptodev_info``, field ``rte_pci_device *pci_dev``
   has been replaced with field ``struct rte_device *device``.
   Value 0 is accepted in ``sym.max_nb_sessions``, meaning that a device
@@ -108,6 +123,7 @@ API Changes
 
 * cryptodev: Feature flag ``RTE_CRYPTODEV_FF_MBUF_SCATTER_GATHER`` is
   replaced with the following more explicit flags:
+
   - ``RTE_CRYPTODEV_FF_IN_PLACE_SGL``
   - ``RTE_CRYPTODEV_FF_OOP_SGL_IN_SGL_OUT``
   - ``RTE_CRYPTODEV_FF_OOP_SGL_IN_LB_OUT``
@@ -118,13 +134,15 @@ API Changes
 
   Used user_data instead of private_data in following APIs to avoid confusion
   with the existing session parameter ``sess_private_data[]`` and related APIs.
-  ``rte_cryptodev_sym_session_set_private_data()`` changed to
-  ``rte_cryptodev_sym_session_set_user_data()``
-  ``rte_cryptodev_sym_session_get_private_data()`` changed to
-  ``rte_cryptodev_sym_session_get_user_data()``
+
+  - ``rte_cryptodev_sym_session_set_private_data()`` changed to
+    ``rte_cryptodev_sym_session_set_user_data()``
+  - ``rte_cryptodev_sym_session_get_private_data()`` changed to
+    ``rte_cryptodev_sym_session_get_user_data()``
 
 * compressdev: Feature flag ``RTE_COMP_FF_MBUF_SCATTER_GATHER`` is
   replaced with the following more explicit flags:
+
   - ``RTE_COMP_FF_OOP_SGL_IN_SGL_OUT``
   - ``RTE_COMP_FF_OOP_SGL_IN_LB_OUT``
   - ``RTE_COMP_FF_OOP_LB_IN_SGL_OUT``
@@ -183,6 +201,7 @@ The libraries prepended with a plus sign were incremented in this version.
      librte_bus_fslmc.so.1
      librte_bus_pci.so.1
      librte_bus_vdev.so.1
+   + librte_bus_vmbus.so.1
      librte_cfgfile.so.2
      librte_cmdline.so.2
      librte_common_octeontx.so.1

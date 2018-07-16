@@ -7,7 +7,10 @@ include $(RTE_SDK)/mk/rte.vars.mk
 
 #在rte.vars.mk中我们载入.config文件得到配置变量，通过这些配置变量我们知道那个目录需要被编译
 DIRS-y += librte_compat
+DIRS-$(CONFIG_RTE_LIBRTE_KVARGS) += librte_kvargs
+DEPDIRS-librte_kvargs := librte_compat
 DIRS-$(CONFIG_RTE_LIBRTE_EAL) += librte_eal
+DEPDIRS-librte_eal := librte_kvargs
 DIRS-$(CONFIG_RTE_LIBRTE_PCI) += librte_pci
 #指出librte_pci依赖于librte_eal
 DEPDIRS-librte_pci := librte_eal
@@ -80,8 +83,6 @@ DEPDIRS-librte_flow_classify :=  librte_net librte_table librte_acl
 DIRS-$(CONFIG_RTE_LIBRTE_SCHED) += librte_sched
 DEPDIRS-librte_sched := librte_eal librte_mempool librte_mbuf librte_net
 DEPDIRS-librte_sched += librte_timer
-DIRS-$(CONFIG_RTE_LIBRTE_KVARGS) += librte_kvargs
-DEPDIRS-librte_kvargs := librte_eal
 DIRS-$(CONFIG_RTE_LIBRTE_DISTRIBUTOR) += librte_distributor
 DEPDIRS-librte_distributor := librte_eal librte_mbuf librte_ethdev
 DIRS-$(CONFIG_RTE_LIBRTE_PORT) += librte_port

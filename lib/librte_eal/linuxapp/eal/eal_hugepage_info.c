@@ -18,6 +18,8 @@
 #include <sys/queue.h>
 #include <sys/stat.h>
 
+#include <linux/mman.h> /* for hugetlb-related flags */
+
 #include <rte_memory.h>
 #include <rte_eal.h>
 #include <rte_launch.h>
@@ -330,11 +332,49 @@ compare_hpi(const void *a, const void *b)
 	return hpi_b->hugepage_sz - hpi_a->hugepage_sz;
 }
 
+static void
+calc_num_pages(struct hugepage_info *hpi, struct dirent *dirent)
+{
+	uint64_t total_pages = 0;
+	unsigned int i;
+
+	/*
+	 * first, try to put all hugepages into relevant sockets, but
+	 * if first attempts fails, fall back to collecting all pages
+	 * in one socket and sorting them later
+	 */
+	total_pages = 0;
+	/* we also don't want to do this for legacy init */
+	if (!internal_config.legacy_mem)
+		for (i = 0; i < rte_socket_count(); i++) {
+			int socket = rte_socket_id_by_idx(i);
+			unsigned int num_pages =
+					get_num_hugepages_on_node(
+						dirent->d_name, socket);
+			hpi->num_pages[socket] = num_pages;
+			total_pages += num_pages;
+		}
+	/*
+	 * we failed to sort memory from the get go, so fall
+	 * back to old way
+	 */
+	if (total_pages == 0) {
+		hpi->num_pages[0] = get_num_hugepages(dirent->d_name);
+
+#ifndef RTE_ARCH_64
+		/* for 32-bit systems, limit number of hugepages to
+		 * 1GB per page size */
+		hpi->num_pages[0] = RTE_MIN(hpi->num_pages[0],
+				RTE_PGSIZE_1G / hpi->hugepage_sz);
+#endif
+	}
+}
+
 static int
 hugepage_info_init(void)
 {	const char dirent_start_text[] = "hugepages-";
 	const size_t dirent_start_len = sizeof(dirent_start_text) - 1;
-	unsigned int i, total_pages, num_sizes = 0;
+	unsigned int i, num_sizes = 0;
 	DIR *dir;
 	struct dirent *dirent;
 
@@ -386,6 +426,22 @@ drwxr-xr-x 2 root root 0 1月  16 15:15 hugepages-2048kB
 					"%" PRIu64 " reserved, but no mounted "
 					"hugetlbfs found for that size\n",
 					num_pages, hpi->hugepage_sz);
+			/* if we have kernel support for reserving hugepages
+			 * through mmap, and we're in in-memory mode, treat this
+			 * page size as valid. we cannot be in legacy mode at
+			 * this point because we've checked this earlier in the
+			 * init process.
+			 */
+#ifdef MAP_HUGE_SHIFT
+			if (internal_config.in_memory) {
+				RTE_LOG(DEBUG, EAL, "In-memory mode enabled, "
+					"hugepages of size %" PRIu64 " bytes "
+					"will be allocated anonymously\n",
+					hpi->hugepage_sz);
+				calc_num_pages(hpi, dirent);
+				num_sizes++;
+			}
+#endif
 			continue;
 		}
 
@@ -404,37 +460,7 @@ drwxr-xr-x 2 root root 0 1月  16 15:15 hugepages-2048kB
 		if (clear_hugedir(hpi->hugedir) == -1)
 			break;
 
-		/*
-		 * first, try to put all hugepages into relevant sockets, but
-		 * if first attempts fails, fall back to collecting all pages
-		 * in one socket and sorting them later
-		 */
-		total_pages = 0;
-		/* we also don't want to do this for legacy init */
-		if (!internal_config.legacy_mem)
-			for (i = 0; i < rte_socket_count(); i++) {
-				int socket = rte_socket_id_by_idx(i);
-				unsigned int num_pages =
-						get_num_hugepages_on_node(
-							dirent->d_name, socket);
-				hpi->num_pages[socket] = num_pages;
-				total_pages += num_pages;
-			}
-		/*
-		 * we failed to sort memory from the get go, so fall
-		 * back to old way
-		 */
-		if (total_pages == 0)
-			//获取此目录空闲的页大小（注意仅填充到socket 0)
-			hpi->num_pages[0] = get_num_hugepages(dirent->d_name);
-
-#ifndef RTE_ARCH_64
-		/* for 32-bit systems, limit number of hugepages to
-		 * 1GB per page size */
-		//32位系统，最多占用1G内存
-		hpi->num_pages[0] = RTE_MIN(hpi->num_pages[0],
-					    RTE_PGSIZE_1G / hpi->hugepage_sz);
-#endif
+		calc_num_pages(hpi, dirent);
 
 		num_sizes++;
 	}
@@ -460,8 +486,7 @@ drwxr-xr-x 2 root root 0 1月  16 15:15 hugepages-2048kB
 
 		for (j = 0; j < RTE_MAX_NUMA_NODES; j++)
 			num_pages += hpi->num_pages[j];
-		if (strnlen(hpi->hugedir, sizeof(hpi->hugedir)) != 0 &&
-				num_pages > 0)
+		if (num_pages > 0)
 			return 0;
 	}
 
@@ -482,6 +507,10 @@ eal_hugepage_info_init(void)
 
 	if (hugepage_info_init() < 0)
 		return -1;
+
+	/* for no shared files mode, we're done */
+	if (internal_config.no_shconf)
+		return 0;
 
 	hpi = &internal_config.hugepage_info[0];
 

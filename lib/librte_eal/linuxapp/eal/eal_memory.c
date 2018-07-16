@@ -67,7 +67,7 @@ static bool phys_addrs_available = true;//默认是可以使用物理地址的
 static void
 test_phys_addrs_available(void)
 {
-	uint64_t tmp;
+	uint64_t tmp = 0;
 	phys_addr_t physaddr;
 
 	//如果不使用大页，则物理地址无效
@@ -531,7 +531,18 @@ static void *
 create_shared_memory(const char *filename, const size_t mem_size)
 {
 	void *retval;
-	int fd = open(filename, O_CREAT | O_RDWR, 0666);
+	int fd;
+
+	/* if no shared files mode is used, create anonymous memory instead */
+	if (internal_config.no_shconf) {
+		retval = mmap(NULL, mem_size, PROT_READ | PROT_WRITE,
+				MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+		if (retval == MAP_FAILED)
+			return NULL;
+		return retval;
+	}
+
+	fd = open(filename, O_CREAT | O_RDWR, 0666);
 	if (fd < 0)
 		return NULL;
 	if (ftruncate(fd, mem_size) < 0) {
@@ -1087,8 +1098,7 @@ get_socket_mem_size(int socket)
 
 	for (i = 0; i < internal_config.num_hugepage_sizes; i++){
 		struct hugepage_info *hpi = &internal_config.hugepage_info[i];
-		if (strnlen(hpi->hugedir, sizeof(hpi->hugedir)) != 0)
-			size += hpi->hugepage_sz * hpi->num_pages[socket];
+		size += hpi->hugepage_sz * hpi->num_pages[socket];
 	}
 
 	return size;
@@ -1648,6 +1658,15 @@ hugepage_count_walk(const struct rte_memseg_list *msl, void *arg)
 }
 
 static int
+limits_callback(int socket_id, size_t cur_limit, size_t new_len)
+{
+	RTE_SET_USED(socket_id);
+	RTE_SET_USED(cur_limit);
+	RTE_SET_USED(new_len);
+	return -1;
+}
+
+static int
 eal_hugepage_init(void)
 {
 	struct hugepage_info used_hp[MAX_HUGEPAGE_SIZES];
@@ -1728,6 +1747,18 @@ eal_hugepage_init(void)
 				ms->flags |= RTE_MEMSEG_FLAG_DO_NOT_FREE;
 			}
 			free(pages);
+		}
+	}
+	/* if socket limits were specified, set them */
+	if (internal_config.force_socket_limits) {
+		unsigned int i;
+		for (i = 0; i < RTE_MAX_NUMA_NODES; i++) {
+			uint64_t limit = internal_config.socket_limit[i];
+			if (limit == 0)
+				continue;
+			if (rte_mem_alloc_validator_register("socket-limit",
+					limits_callback, i, limit))
+				RTE_LOG(ERR, EAL, "Failed to register socket limits validator callback\n");
 		}
 	}
 	return 0;
