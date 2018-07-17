@@ -701,6 +701,7 @@ ifcvf_pci_probe(struct rte_pci_driver *pci_drv __rte_unused,
 		~(1ULL << VIRTIO_F_IOMMU_PLATFORM)) |
 		(1ULL << VHOST_USER_F_PROTOCOL_FEATURES);
 
+	//设置pci地址
 	internal->dev_addr.pci_addr = pci_dev->addr;
 	internal->dev_addr.type = PCI_ADDR;
 	list->internal = internal;
@@ -709,6 +710,7 @@ ifcvf_pci_probe(struct rte_pci_driver *pci_drv __rte_unused,
 	TAILQ_INSERT_TAIL(&internal_list, list, next);
 	pthread_mutex_unlock(&internal_list_lock);
 
+	//注册vdpa设备
 	internal->did = rte_vdpa_register_device(&internal->dev_addr,
 				&ifcvf_ops);
 	if (internal->did < 0)
@@ -764,7 +766,7 @@ ifcvf_pci_remove(struct rte_pci_device *pci_dev)
  */
 static const struct rte_pci_id pci_id_ifcvf_map[] = {
 	{ .class_id = RTE_CLASS_ANY_ID,
-	  .vendor_id = IFCVF_VENDOR_ID,
+	  .vendor_id = IFCVF_VENDOR_ID,//virtio的vendor
 	  .device_id = IFCVF_DEVICE_ID,
 	  .subsystem_vendor_id = IFCVF_SUBSYS_VENDOR_ID,
 	  .subsystem_device_id = IFCVF_SUBSYS_DEVICE_ID,
@@ -774,6 +776,7 @@ static const struct rte_pci_id pci_id_ifcvf_map[] = {
 	},
 };
 
+//注册ifcvf_vdpa驱动
 static struct rte_pci_driver rte_ifcvf_vdpa = {
 	.id_table = pci_id_ifcvf_map,
 	.drv_flags = 0,

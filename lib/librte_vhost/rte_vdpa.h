@@ -63,8 +63,8 @@ struct rte_vdpa_dev_ops {
 };
 
 struct rte_vdpa_device {
-	struct rte_vdpa_dev_addr addr;
-	struct rte_vdpa_dev_ops *ops;
+	struct rte_vdpa_dev_addr addr;//设备pci地址
+	struct rte_vdpa_dev_ops *ops;//设备操作集
 } __rte_cache_aligned;
 
 /* Register a vdpa device, return did if successful, -1 on failure */

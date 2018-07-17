@@ -112,6 +112,7 @@ virtio_user_delayed_handler(void *param)
 	}
 }
 
+//virtio user配置读取
 static void
 virtio_user_read_dev_config(struct virtio_hw *hw, size_t offset,
 		     void *dst, int length)
@@ -119,6 +120,7 @@ virtio_user_read_dev_config(struct virtio_hw *hw, size_t offset,
 	int i;
 	struct virtio_user_dev *dev = virtio_user_get_dev(hw);
 
+	//检查是否在读取mac地址
 	if (offset == offsetof(struct virtio_net_config, mac) &&
 	    length == ETHER_ADDR_LEN) {
 		for (i = 0; i < ETHER_ADDR_LEN; ++i)
@@ -126,10 +128,12 @@ virtio_user_read_dev_config(struct virtio_hw *hw, size_t offset,
 		return;
 	}
 
+	//检查是否读取status
 	if (offset == offsetof(struct virtio_net_config, status)) {
 		char buf[128];
 
 		if (dev->vhostfd >= 0) {
+			//client端
 			int r;
 			int flags;
 
@@ -141,6 +145,7 @@ virtio_user_read_dev_config(struct virtio_hw *hw, size_t offset,
 			}
 			r = recv(dev->vhostfd, buf, 128, MSG_PEEK);
 			if (r == 0 || (r < 0 && errno != EAGAIN)) {
+				//与对端无法连接，置为down状态
 				dev->status &= (~VIRTIO_NET_S_LINK_UP);
 				PMD_DRV_LOG(ERR, "virtio-user port %u is down",
 					    hw->port_id);
@@ -161,6 +166,7 @@ virtio_user_read_dev_config(struct virtio_hw *hw, size_t offset,
 				return;
 			}
 		} else if (dev->is_server) {
+			//server端
 			dev->status &= (~VIRTIO_NET_S_LINK_UP);
 			if (virtio_user_server_reconnect(dev) >= 0)
 				dev->status |= VIRTIO_NET_S_LINK_UP;
@@ -169,10 +175,12 @@ virtio_user_read_dev_config(struct virtio_hw *hw, size_t offset,
 		*(uint16_t *)dst = dev->status;
 	}
 
+	//读取max_virtqueue_pairs配置
 	if (offset == offsetof(struct virtio_net_config, max_virtqueue_pairs))
 		*(uint16_t *)dst = dev->max_queue_pairs;
 }
 
+//写mac地址
 static void
 virtio_user_write_dev_config(struct virtio_hw *hw, size_t offset,
 		      const void *src, int length)
@@ -180,6 +188,7 @@ virtio_user_write_dev_config(struct virtio_hw *hw, size_t offset,
 	int i;
 	struct virtio_user_dev *dev = virtio_user_get_dev(hw);
 
+	//写配置mac地址
 	if ((offset == offsetof(struct virtio_net_config, mac)) &&
 	    (length == ETHER_ADDR_LEN))
 		for (i = 0; i < ETHER_ADDR_LEN; ++i)
@@ -323,13 +332,16 @@ virtio_user_notify_queue(struct virtio_hw *hw, struct virtqueue *vq)
 		return;
 	}
 
+	//触发事件
 	if (write(dev->kickfds[vq->vq_queue_index], &buf, sizeof(buf)) < 0)
 		PMD_DRV_LOG(ERR, "failed to kick backend: %s",
 			    strerror(errno));
 }
 
 const struct virtio_pci_ops virtio_user_ops = {
+	//读配置
 	.read_dev_cfg	= virtio_user_read_dev_config,
+	//写配置
 	.write_dev_cfg	= virtio_user_write_dev_config,
 	.reset		= virtio_user_reset,
 	.get_status	= virtio_user_get_status,
@@ -483,7 +495,7 @@ virtio_user_pmd_probe(struct rte_vdev_device *dev)
 		goto end;
 	}
 
-	//填充path
+	//取参数并填充path
 	if (rte_kvargs_count(kvlist, VIRTIO_USER_ARG_PATH) == 1) {
 		if (rte_kvargs_process(kvlist, VIRTIO_USER_ARG_PATH,
 				       &get_string_arg, &path) < 0) {
@@ -515,7 +527,7 @@ virtio_user_pmd_probe(struct rte_vdev_device *dev)
 		}
 	}
 
-	//填充mac_addr
+	//取参数配置的mac_addr
 	if (rte_kvargs_count(kvlist, VIRTIO_USER_ARG_MAC) == 1) {
 		if (rte_kvargs_process(kvlist, VIRTIO_USER_ARG_MAC,
 				       &get_string_arg, &mac_addr) < 0) {
@@ -545,6 +557,7 @@ virtio_user_pmd_probe(struct rte_vdev_device *dev)
 		}
 	}
 
+	//填充server mode
 	if (rte_kvargs_count(kvlist, VIRTIO_USER_ARG_SERVER_MODE) == 1) {
 		if (rte_kvargs_process(kvlist, VIRTIO_USER_ARG_SERVER_MODE,
 				       &get_integer_arg, &server_mode) < 0) {
@@ -579,6 +592,7 @@ virtio_user_pmd_probe(struct rte_vdev_device *dev)
 		goto end;
 	}
 
+	//取参数merge_rxbuf
 	if (rte_kvargs_count(kvlist, VIRTIO_USER_ARG_MRG_RXBUF) == 1) {
 		if (rte_kvargs_process(kvlist, VIRTIO_USER_ARG_MRG_RXBUF,
 				       &get_integer_arg, &mrg_rxbuf) < 0) {
@@ -588,6 +602,7 @@ virtio_user_pmd_probe(struct rte_vdev_device *dev)
 		}
 	}
 
+	//取参数in_order
 	if (rte_kvargs_count(kvlist, VIRTIO_USER_ARG_IN_ORDER) == 1) {
 		if (rte_kvargs_process(kvlist, VIRTIO_USER_ARG_IN_ORDER,
 				       &get_integer_arg, &in_order) < 0) {
@@ -614,6 +629,7 @@ virtio_user_pmd_probe(struct rte_vdev_device *dev)
 			vu_dev->is_server = true;
 		else
 			vu_dev->is_server = false;
+
 		if (virtio_user_dev_init(hw->virtio_user_dev, path, queues, cq,
 				 queue_size, mac_addr, &ifname, mrg_rxbuf,
 				 in_order) < 0) {

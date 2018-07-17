@@ -259,12 +259,14 @@ vhost_user_set_features(struct virtio_net *dev, uint64_t features)
 /*
  * The virtio device sends us the size of the descriptor ring.
  */
+//执行vring number的设置
 static int
 vhost_user_set_vring_num(struct virtio_net *dev,
 			 VhostUserMsg *msg)
 {
 	struct vhost_virtqueue *vq = dev->virtqueue[msg->payload.state.index];
 
+	//设置ring数目
 	vq->size = msg->payload.state.num;
 
 	/* VIRTIO 1.0, 2.4 Virtqueues says:
@@ -485,6 +487,9 @@ qva_to_vva(struct virtio_net *dev, uint64_t qva, uint64_t *len)
  * else it is a QEMU virtual address.
  */
 //将ra地址转换为host的虚拟地址
+//vq 对应虚队列
+//ra ring地址起始位置
+//size ra地址范围大小
 static uint64_t
 ring_addr_to_vva(struct virtio_net *dev, struct vhost_virtqueue *vq,
 		uint64_t ra, uint64_t *size)
@@ -492,9 +497,11 @@ ring_addr_to_vva(struct virtio_net *dev, struct vhost_virtqueue *vq,
 	if (dev->features & (1ULL << VIRTIO_F_IOMMU_PLATFORM)) {
 		uint64_t vva;
 
+		//在cache中查找
 		vva = vhost_user_iotlb_cache_find(vq, ra,
 					size, VHOST_ACCESS_RW);
 		if (!vva)
+			//cache中未命中，发送消息向对端请求
 			vhost_user_iotlb_miss(dev, ra, VHOST_ACCESS_RW);
 
 		return vva;
@@ -506,6 +513,7 @@ ring_addr_to_vva(struct virtio_net *dev, struct vhost_virtqueue *vq,
 static struct virtio_net *
 translate_ring_addresses(struct virtio_net *dev, int vq_index)
 {
+	//取对应虚队列
 	struct vhost_virtqueue *vq = dev->virtqueue[vq_index];
 	struct vhost_vring_addr *addr = &vq->ring_addrs;
 	uint64_t len;
@@ -559,6 +567,7 @@ translate_ring_addresses(struct virtio_net *dev, int vq_index)
 	if (vq->desc && vq->avail && vq->used)
 		return dev;
 
+	//转换desc的地址（转换为本端的虚拟地址）
 	len = sizeof(struct vring_desc) * vq->size;
 	vq->desc = (struct vring_desc *)(uintptr_t)ring_addr_to_vva(dev,
 			vq, addr->desc_user_addr, &len);
@@ -573,6 +582,7 @@ translate_ring_addresses(struct virtio_net *dev, int vq_index)
 	vq = dev->virtqueue[vq_index];
 	addr = &vq->ring_addrs;
 
+	//转换avail的地址
 	len = sizeof(struct vring_avail) + sizeof(uint16_t) * vq->size;
 	vq->avail = (struct vring_avail *)(uintptr_t)ring_addr_to_vva(dev,
 			vq, addr->avail_user_addr, &len);
@@ -585,6 +595,7 @@ translate_ring_addresses(struct virtio_net *dev, int vq_index)
 		return dev;
 	}
 
+	//转换used地址
 	len = sizeof(struct vring_used) +
 		sizeof(struct vring_used_elem) * vq->size;
 	vq->used = (struct vring_used *)(uintptr_t)ring_addr_to_vva(dev,
@@ -624,6 +635,7 @@ translate_ring_addresses(struct virtio_net *dev, int vq_index)
  * The virtio device sends us the desc, used and avail ring addresses.
  * This function then converts these to our address space.
  */
+//设置virtio设备的ring地址
 static int
 vhost_user_set_vring_addr(struct virtio_net **pdev, VhostUserMsg *msg)
 {
@@ -641,6 +653,7 @@ vhost_user_set_vring_addr(struct virtio_net **pdev, VhostUserMsg *msg)
 	 * Rings addresses should not be interpreted as long as the ring is not
 	 * started and enabled
 	 */
+	//设置设备的ring地址
 	memcpy(&vq->ring_addrs, addr, sizeof(*addr));
 
 	vring_invalidate(dev, vq);
@@ -1395,6 +1408,7 @@ vhost_user_iotlb_msg(struct virtio_net **pdev, struct VhostUserMsg *msg)
 
 	switch (imsg->type) {
 	case VHOST_IOTLB_UPDATE:
+		//tlb 更新
 		len = imsg->size;
 		vva = qva_to_vva(dev, imsg->uaddr, &len);
 		if (!vva)
@@ -1403,6 +1417,7 @@ vhost_user_iotlb_msg(struct virtio_net **pdev, struct VhostUserMsg *msg)
 		for (i = 0; i < dev->nr_vring; i++) {
 			struct vhost_virtqueue *vq = dev->virtqueue[i];
 
+			//加入tlb cache
 			vhost_user_iotlb_cache_insert(vq, imsg->iova, vva,
 					len, imsg->perm);
 
@@ -1411,6 +1426,7 @@ vhost_user_iotlb_msg(struct virtio_net **pdev, struct VhostUserMsg *msg)
 		}
 		break;
 	case VHOST_IOTLB_INVALIDATE:
+		//tlb cache移除
 		for (i = 0; i < dev->nr_vring; i++) {
 			struct vhost_virtqueue *vq = dev->virtqueue[i];
 
@@ -1743,9 +1759,11 @@ vhost_user_msg_handler(int vid, int fd)
 		break;
 
 	case VHOST_USER_SET_VRING_NUM:
+		//设置ring number
 		vhost_user_set_vring_num(dev, &msg);
 		break;
 	case VHOST_USER_SET_VRING_ADDR:
+		//设置ring地址
 		vhost_user_set_vring_addr(&dev, &msg);
 		break;
 	case VHOST_USER_SET_VRING_BASE:
@@ -1793,7 +1811,7 @@ vhost_user_msg_handler(int vid, int fd)
 		ret = vhost_user_set_req_fd(dev, &msg);
 		break;
 
-	case VHOST_USER_IOTLB_MSG:
+	case VHOST_USER_IOTLB_MSG://tlb消息更新及移除
 		ret = vhost_user_iotlb_msg(&dev, &msg);
 		break;
 

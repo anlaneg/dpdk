@@ -53,6 +53,7 @@ struct vhost_iotlb_entry {
 static void
 vhost_user_iotlb_cache_random_evict(struct vhost_virtqueue *vq);
 
+//移除掉pending的tlb
 static void
 vhost_user_iotlb_pending_remove_all(struct vhost_virtqueue *vq)
 {
@@ -68,6 +69,7 @@ vhost_user_iotlb_pending_remove_all(struct vhost_virtqueue *vq)
 	rte_rwlock_write_unlock(&vq->iotlb_pending_lock);
 }
 
+//是否pending miss?
 bool
 vhost_user_iotlb_pending_miss(struct vhost_virtqueue *vq, uint64_t iova,
 				uint8_t perm)
@@ -89,6 +91,7 @@ vhost_user_iotlb_pending_miss(struct vhost_virtqueue *vq, uint64_t iova,
 	return found;
 }
 
+//向pending插入tlb
 void
 vhost_user_iotlb_pending_insert(struct vhost_virtqueue *vq,
 				uint64_t iova, uint8_t perm)
@@ -102,6 +105,7 @@ vhost_user_iotlb_pending_insert(struct vhost_virtqueue *vq,
 		if (!TAILQ_EMPTY(&vq->iotlb_pending_list))
 			vhost_user_iotlb_pending_remove_all(vq);
 		else
+			//空间不够，驱逐
 			vhost_user_iotlb_cache_random_evict(vq);
 		ret = rte_mempool_get(vq->iotlb_pool, (void **)&node);
 		if (ret) {
@@ -142,6 +146,7 @@ vhost_user_iotlb_pending_remove(struct vhost_virtqueue *vq,
 	rte_rwlock_write_unlock(&vq->iotlb_pending_lock);
 }
 
+//移除掉所有cache
 static void
 vhost_user_iotlb_cache_remove_all(struct vhost_virtqueue *vq)
 {
@@ -159,6 +164,7 @@ vhost_user_iotlb_cache_remove_all(struct vhost_virtqueue *vq)
 	rte_rwlock_write_unlock(&vq->iotlb_lock);
 }
 
+//cache随机驱逐
 static void
 vhost_user_iotlb_cache_random_evict(struct vhost_virtqueue *vq)
 {
@@ -182,6 +188,7 @@ vhost_user_iotlb_cache_random_evict(struct vhost_virtqueue *vq)
 	rte_rwlock_write_unlock(&vq->iotlb_lock);
 }
 
+//插入tlb cache
 void
 vhost_user_iotlb_cache_insert(struct vhost_virtqueue *vq, uint64_t iova,
 				uint64_t uaddr, uint64_t size, uint8_t perm)
@@ -191,11 +198,13 @@ vhost_user_iotlb_cache_insert(struct vhost_virtqueue *vq, uint64_t iova,
 
 	ret = rte_mempool_get(vq->iotlb_pool, (void **)&new_node);
 	if (ret) {
+		//获取节点失败，清理后再获取节点
 		RTE_LOG(DEBUG, VHOST_CONFIG, "IOTLB pool empty, clear entries\n");
 		if (!TAILQ_EMPTY(&vq->iotlb_list))
 			vhost_user_iotlb_cache_random_evict(vq);
 		else
 			vhost_user_iotlb_pending_remove_all(vq);
+		//再次获取节点
 		ret = rte_mempool_get(vq->iotlb_pool, (void **)&new_node);
 		if (ret) {
 			RTE_LOG(ERR, VHOST_CONFIG, "IOTLB pool still empty, failure\n");
@@ -203,6 +212,7 @@ vhost_user_iotlb_cache_insert(struct vhost_virtqueue *vq, uint64_t iova,
 		}
 	}
 
+	//设置tlb缓存
 	new_node->iova = iova;
 	new_node->uaddr = uaddr;
 	new_node->size = size;
@@ -216,15 +226,18 @@ vhost_user_iotlb_cache_insert(struct vhost_virtqueue *vq, uint64_t iova,
 		 * So if iova already in list, assume identical.
 		 */
 		if (node->iova == new_node->iova) {
+			//已存在，归还new_node
 			rte_mempool_put(vq->iotlb_pool, new_node);
 			goto unlock;
 		} else if (node->iova > new_node->iova) {
+			//加入到tlb中
 			TAILQ_INSERT_BEFORE(node, new_node, next);
 			vq->iotlb_cache_nr++;
 			goto unlock;
 		}
 	}
 
+	//未找到，直接加入
 	TAILQ_INSERT_TAIL(&vq->iotlb_list, new_node, next);
 	vq->iotlb_cache_nr++;
 
@@ -235,6 +248,7 @@ unlock:
 
 }
 
+//cache段移除
 void
 vhost_user_iotlb_cache_remove(struct vhost_virtqueue *vq,
 					uint64_t iova, uint64_t size)
@@ -252,6 +266,7 @@ vhost_user_iotlb_cache_remove(struct vhost_virtqueue *vq,
 			break;
 
 		if (iova < node->iova + node->size) {
+			//找到node，并移除
 			TAILQ_REMOVE(&vq->iotlb_list, node, next);
 			rte_mempool_put(vq->iotlb_pool, node);
 			vq->iotlb_cache_nr--;
@@ -261,6 +276,7 @@ vhost_user_iotlb_cache_remove(struct vhost_virtqueue *vq,
 	rte_rwlock_write_unlock(&vq->iotlb_lock);
 }
 
+//cache查找
 uint64_t
 vhost_user_iotlb_cache_find(struct vhost_virtqueue *vq, uint64_t iova,
 						uint64_t *size, uint8_t perm)
@@ -271,14 +287,16 @@ vhost_user_iotlb_cache_find(struct vhost_virtqueue *vq, uint64_t iova,
 	if (unlikely(!*size))
 		goto out;
 
+	//遍历iotlb
 	TAILQ_FOREACH(node, &vq->iotlb_list, next) {
 		/* List sorted by iova */
 		if (unlikely(iova < node->iova))
-			break;
+			break;//iova不存在cache中
 
 		if (iova >= node->iova + node->size)
-			continue;
+			continue;//iova不在此段内
 
+		//在此段内，但perm不相等
 		if (unlikely((perm & node->perm) != perm)) {
 			vva = 0;
 			break;
@@ -303,6 +321,7 @@ out:
 	return vva;
 }
 
+//tlb池创建
 int
 vhost_user_iotlb_init(struct virtio_net *dev, int vq_index)
 {
@@ -330,14 +349,17 @@ vhost_user_iotlb_init(struct virtio_net *dev, int vq_index)
 	TAILQ_INIT(&vq->iotlb_list);
 	TAILQ_INIT(&vq->iotlb_pending_list);
 
+	//找对应iotlb池
 	snprintf(pool_name, sizeof(pool_name), "iotlb_cache_%d_%d",
 			dev->vid, vq_index);
 
 	/* If already created, free it and recreate */
+	//如果有旧的，则移除后重新创建
 	vq->iotlb_pool = rte_mempool_lookup(pool_name);
 	if (vq->iotlb_pool)
 		rte_mempool_free(vq->iotlb_pool);
 
+	//创建iotlb_pool
 	vq->iotlb_pool = rte_mempool_create(pool_name,
 			IOTLB_CACHE_SIZE, sizeof(struct vhost_iotlb_entry), 0,
 			0, 0, NULL, NULL, NULL, socket,

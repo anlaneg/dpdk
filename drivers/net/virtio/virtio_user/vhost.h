@@ -80,6 +80,7 @@ struct virtio_user_dev;
 
 struct virtio_user_backend_ops {
 	int (*setup)(struct virtio_user_dev *dev);
+	//向对端发送消息的回调
 	int (*send_request)(struct virtio_user_dev *dev,
 			    enum vhost_user_request req,
 			    void *arg);

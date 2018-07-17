@@ -13,8 +13,11 @@
 
 struct virtio_user_dev {
 	/* for vhost_user backend */
+	//client端时连接的fd
 	int		vhostfd;
+	//server端时监听的fd
 	int		listenfd;   /* listening fd */
+	//是否server模式
 	bool		is_server;  /* server or client mode */
 
 	/* for vhost_kernel backend */
@@ -26,9 +29,9 @@ struct virtio_user_dev {
 	int		callfds[VIRTIO_MAX_VIRTQUEUES];
 	int		kickfds[VIRTIO_MAX_VIRTQUEUES];
 	int		mac_specified;//是否指定了mac地址
-	uint32_t	max_queue_pairs;
-	uint32_t	queue_pairs;
-	uint32_t	queue_size;
+	uint32_t	max_queue_pairs;//最大队列数
+	uint32_t	queue_pairs;//生效队列数
+	uint32_t	queue_size;//队列大小
 	uint64_t	features; /* the negotiated features with driver,
 				   * and will be sync with device
 				   */

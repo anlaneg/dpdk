@@ -14,9 +14,11 @@
 #include "rte_vdpa.h"
 #include "vhost.h"
 
+//记录vdpa设备
 static struct rte_vdpa_device *vdpa_devices[MAX_VHOST_DEVICE];
 static uint32_t vdpa_device_num;
 
+//比对两个vdap设备地址是否相等
 static bool
 is_same_vdpa_device(struct rte_vdpa_dev_addr *a,
 		struct rte_vdpa_dev_addr *b)
@@ -41,6 +43,7 @@ is_same_vdpa_device(struct rte_vdpa_dev_addr *a,
 	return ret;
 }
 
+//vdpa设备注册
 int
 rte_vdpa_register_device(struct rte_vdpa_dev_addr *addr,
 		struct rte_vdpa_dev_ops *ops)
@@ -50,19 +53,21 @@ rte_vdpa_register_device(struct rte_vdpa_dev_addr *addr,
 	int i;
 
 	if (vdpa_device_num >= MAX_VHOST_DEVICE)
-		return -1;
+		return -1;//超限
 
 	for (i = 0; i < MAX_VHOST_DEVICE; i++) {
 		dev = vdpa_devices[i];
 		if (dev && is_same_vdpa_device(&dev->addr, addr))
-			return -1;
+			return -1;//设备已注册
 	}
 
+	//找空闲节点
 	for (i = 0; i < MAX_VHOST_DEVICE; i++) {
 		if (vdpa_devices[i] == NULL)
 			break;
 	}
 
+	//设置vdap设备
 	sprintf(device_name, "vdpa-dev-%d", i);
 	dev = rte_zmalloc(device_name, sizeof(struct rte_vdpa_device),
 			RTE_CACHE_LINE_SIZE);
@@ -77,6 +82,7 @@ rte_vdpa_register_device(struct rte_vdpa_dev_addr *addr,
 	return i;
 }
 
+//vdpa设备解注册
 int
 rte_vdpa_unregister_device(int did)
 {
@@ -90,6 +96,7 @@ rte_vdpa_unregister_device(int did)
 	return did;
 }
 
+//通过vdap设备地址查找vdpa设备
 int
 rte_vdpa_find_device_id(struct rte_vdpa_dev_addr *addr)
 {
@@ -105,6 +112,7 @@ rte_vdpa_find_device_id(struct rte_vdpa_dev_addr *addr)
 	return -1;
 }
 
+//获取vdpa设备
 struct rte_vdpa_device *
 rte_vdpa_get_device(int did)
 {

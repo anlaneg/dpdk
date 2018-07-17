@@ -709,6 +709,7 @@ rte_pci_get_iommu_class(void)
 }
 
 /* Read PCI config space. */
+//pci配置空间读取
 int rte_pci_read_config(const struct rte_pci_device *device,
 		void *buf, size_t len, off_t offset)
 {
@@ -717,12 +718,14 @@ int rte_pci_read_config(const struct rte_pci_device *device,
 	switch (intr_handle->type) {
 	case RTE_INTR_HANDLE_UIO:
 	case RTE_INTR_HANDLE_UIO_INTX:
+		//uio方式
 		return pci_uio_read_config(intr_handle, buf, len, offset);
 
 #ifdef VFIO_PRESENT
 	case RTE_INTR_HANDLE_VFIO_MSIX:
 	case RTE_INTR_HANDLE_VFIO_MSI:
 	case RTE_INTR_HANDLE_VFIO_LEGACY:
+		//vfio方式
 		return pci_vfio_read_config(intr_handle, buf, len, offset);
 #endif
 	default:

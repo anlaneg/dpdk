@@ -28,6 +28,7 @@
 
 typedef struct rte_pci_device PCI_DEV;
 
+//自pci配置空间读取一个字节
 #define PCI_READ_CONFIG_BYTE(dev, val, where) \
 	rte_pci_read_config(dev, val, 1, where)
 
