@@ -77,26 +77,36 @@ struct virtnet_ctl;
 #define VIRTIO_MAX_INDIRECT ((int) (PAGE_SIZE / 16))
 
 /* The feature bitmap for virtio net */
+//Device handles packets with partial checksum. This “checksum offload” is a
+//common feature on modern network cards.(设备支持checksum)
 #define VIRTIO_NET_F_CSUM	0	/* Host handles pkts w/ partial csum */
+//Driver handles packets with partial checksum.(驱动支持checksum)
 #define VIRTIO_NET_F_GUEST_CSUM	1	/* Guest handles pkts w/ partial csum */
 #define VIRTIO_NET_F_MTU	3	/* Initial MTU advice. */
+//设备已设置mac地址（此标记存在时设备mac有效）
 #define VIRTIO_NET_F_MAC	5	/* Host has given MAC address. */
+//驱动处理TSO,EnC,UFO
 #define VIRTIO_NET_F_GUEST_TSO4	7	/* Guest can handle TSOv4 in. */
 #define VIRTIO_NET_F_GUEST_TSO6	8	/* Guest can handle TSOv6 in. */
 #define VIRTIO_NET_F_GUEST_ECN	9	/* Guest can handle TSO[6] w/ ECN in. */
 #define VIRTIO_NET_F_GUEST_UFO	10	/* Guest can handle UFO in. */
+//设备处理TSO，ECN，UFO
 #define VIRTIO_NET_F_HOST_TSO4	11	/* Host can handle TSOv4 in. */
 #define VIRTIO_NET_F_HOST_TSO6	12	/* Host can handle TSOv6 in. */
 #define VIRTIO_NET_F_HOST_ECN	13	/* Host can handle TSO[6] w/ ECN in. */
 #define VIRTIO_NET_F_HOST_UFO	14	/* Host can handle UFO in. */
+
 #define VIRTIO_NET_F_MRG_RXBUF	15	/* Host can merge receive buffers. */
 #define VIRTIO_NET_F_STATUS	16	/* virtio_net_config.status available */
+//是否存在控制虚队列队列
 #define VIRTIO_NET_F_CTRL_VQ	17	/* Control channel available */
 #define VIRTIO_NET_F_CTRL_RX	18	/* Control channel RX mode support */
 #define VIRTIO_NET_F_CTRL_VLAN	19	/* Control channel VLAN filtering */
 #define VIRTIO_NET_F_CTRL_RX_EXTRA 20	/* Extra RX mode control support */
+//驱动可以发送免费报文
 #define VIRTIO_NET_F_GUEST_ANNOUNCE 21	/* Guest can announce device on the
 					 * network */
+//有此标记时，virtio_net支持多队列，否则仅支持单队列
 #define VIRTIO_NET_F_MQ		22	/* Device supports Receive Flow
 					 * Steering */
 #define VIRTIO_NET_F_CTRL_MAC_ADDR 23	/* Set MAC address */
@@ -286,9 +296,27 @@ extern struct virtio_hw_internal virtio_hw_internal[RTE_MAX_ETHPORTS];
  */
 struct virtio_net_config {
 	/* The config defining mac address (if VIRTIO_NET_F_MAC) */
+	/**
+	 * A driver SHOULD negotiate VIRTIO_NET_F_MAC if the device offers it. If the driver negotiates the VIRTIO_-
+NET_F_MAC feature, the driver MUST set the physical address of the NIC to mac. Otherwise, it SHOULD
+use a locally-administered MAC address (see IEEE 802, “9.2 48-bit universal LAN MAC addresses”).
+     mac地址配置
+	 */
 	uint8_t    mac[ETHER_ADDR_LEN];
 	/* See VIRTIO_NET_F_STATUS and VIRTIO_NET_S_* above */
+	//status only exists if VIRTIO_NET_F_STATUS is
+	//set. Two read-only bits (for the driver) are currently defined for the status field: VIRTIO_NET_S_LINK_UP
+	//and VIRTIO_NET_S_ANNOUNCE.
+	//当前仅两个状态，由virtio_net_f_status来指明有效性
 	uint16_t   status;
+	/*
+	 * max_virtqueue_pairs only exists if VIRTIO_NET_F_MQ is set. This
+field specifies the maximum number of each of transmit and receive virtqueues (receiveq1. . .receiveqN and
+transmitq1. . .transmitqN respectively) that can be configured once VIRTIO_NET_F_MQ is negotiated.
+The device MUST set max_virtqueue_pairs to between 1 and 0x8000 inclusive, if it offers VIRTIO_NET_-
+F_MQ.
+      最大虚队列对
+	 */
 	uint16_t   max_virtqueue_pairs;
 	uint16_t   mtu;
 } __attribute__((packed));

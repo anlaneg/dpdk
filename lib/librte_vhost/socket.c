@@ -757,6 +757,7 @@ unlock_exit:
 	return ret;
 }
 
+//获取当前vsocket上生效的协议功能
 int
 rte_vhost_driver_get_protocol_features(const char *path,
 		uint64_t *protocol_features)
@@ -770,6 +771,7 @@ rte_vhost_driver_get_protocol_features(const char *path,
 	pthread_mutex_lock(&vhost_user.mutex);
 	vsocket = find_vhost_user_socket(path);
 	if (!vsocket) {
+		//无对应的socket，报错
 		RTE_LOG(ERR, VHOST_CONFIG,
 			"socket file %s is not registered yet.\n", path);
 		ret = -1;
@@ -792,6 +794,7 @@ rte_vhost_driver_get_protocol_features(const char *path,
 		goto unlock_exit;
 	}
 
+	//与得到的vdpa_dev协议取与，得到共同支持的
 	*protocol_features = VHOST_USER_PROTOCOL_FEATURES
 		& vdpa_protocol_features;
 
@@ -833,6 +836,7 @@ rte_vhost_driver_get_queue_num(const char *path, uint32_t *queue_num)
 		goto unlock_exit;
 	}
 
+	//默认最大支持0x80个队列
 	*queue_num = RTE_MIN((uint32_t)VHOST_MAX_QUEUE_PAIRS, vdpa_queue_num);
 
 unlock_exit:

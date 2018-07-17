@@ -819,21 +819,30 @@ virtio_rx_offload(struct rte_mbuf *m, struct virtio_net_hdr *hdr)
 	int l4_supported = 0;
 
 	/* nothing to do */
+	/*如virtio spec所言：
+	 * The driver can send a completely checksummed packet. In this case,
+	 * flags will be zero, and gso_type will be VIRTIO_NET_HDR_GSO_NONE
+	 * checksum是正确的，无需处理
+	 */
 	if (hdr->flags == 0 && hdr->gso_type == VIRTIO_NET_HDR_GSO_NONE)
-		return 0;
+		return 0;//由于下面的rte_net_get_ptype函数非常差，最好自此处返回
 
 	m->ol_flags |= PKT_RX_IP_CKSUM_UNKNOWN;
 
+	//解析报文协议类型
 	ptype = rte_net_get_ptype(m, &hdr_lens, RTE_PTYPE_ALL_MASK);
 	m->packet_type = ptype;
+	//当前支持对TCP,UDP，SCTP做checksum
 	if ((ptype & RTE_PTYPE_L4_MASK) == RTE_PTYPE_L4_TCP ||
 	    (ptype & RTE_PTYPE_L4_MASK) == RTE_PTYPE_L4_UDP ||
 	    (ptype & RTE_PTYPE_L4_MASK) == RTE_PTYPE_L4_SCTP)
 		l4_supported = 1;
 
 	if (hdr->flags & VIRTIO_NET_HDR_F_NEEDS_CSUM) {
+		//需要做checksum
 		hdrlen = hdr_lens.l2_len + hdr_lens.l3_len + hdr_lens.l4_len;
 		if (hdr->csum_start <= hdrlen && l4_supported) {
+			//底层设备支持做checksum,直接打上offload标记
 			m->ol_flags |= PKT_RX_L4_CKSUM_NONE;
 		} else {
 			/* Unknown proto or tunnel, do sw cksum. We can assume
@@ -842,6 +851,7 @@ virtio_rx_offload(struct rte_mbuf *m, struct virtio_net_hdr *hdr)
 			 * In case of SCTP, this will be wrong since it's a CRC
 			 * but there's nothing we can do.
 			 */
+			//采用软件计算并设置checksum
 			uint16_t csum = 0, off;
 
 			rte_raw_cksum_mbuf(m, hdr->csum_start,
@@ -863,6 +873,7 @@ virtio_rx_offload(struct rte_mbuf *m, struct virtio_net_hdr *hdr)
 		/* Check unsupported modes */
 		if ((hdr->gso_type & VIRTIO_NET_HDR_GSO_ECN) ||
 		    (hdr->gso_size == 0)) {
+			//当前不支持是示拥塞，且也没有协商，认为参数错误
 			return -EINVAL;
 		}
 
@@ -871,6 +882,7 @@ virtio_rx_offload(struct rte_mbuf *m, struct virtio_net_hdr *hdr)
 		switch (hdr->gso_type & ~VIRTIO_NET_HDR_GSO_ECN) {
 			case VIRTIO_NET_HDR_GSO_TCPV4:
 			case VIRTIO_NET_HDR_GSO_TCPV6:
+				//指明tso_segsz有效
 				m->ol_flags |= PKT_RX_LRO | \
 					PKT_RX_L4_CKSUM_NONE;
 				break;
@@ -913,6 +925,7 @@ virtio_recv_pkts(void *rx_queue, struct rte_mbuf **rx_pkts, uint16_t nb_pkts)
 	if (likely(num > DESC_PER_CACHELINE))
 		num = num - ((vq->vq_used_cons_idx + num) % DESC_PER_CACHELINE);
 
+	//自vq中收队num个报文
 	num = virtqueue_dequeue_burst_rx(vq, rcv_pkts, len, num);
 	PMD_RX_LOG(DEBUG, "used:%d dequeue:%d", nb_used, num);
 
@@ -940,11 +953,12 @@ virtio_recv_pkts(void *rx_queue, struct rte_mbuf **rx_pkts, uint16_t nb_pkts)
 		rxm->pkt_len = (uint32_t)(len[i] - hdr_size);
 		rxm->data_len = (uint16_t)(len[i] - hdr_size);
 
+		//定位到virtio_net_hdr
 		hdr = (struct virtio_net_hdr *)((char *)rxm->buf_addr +
 			RTE_PKTMBUF_HEADROOM - hdr_size);
 
 		if (hw->vlan_strip)
-			rte_vlan_strip(rxm);
+			rte_vlan_strip(rxm);//剥掉vlan头
 
 		if (hw->has_rx_offload && virtio_rx_offload(rxm, hdr) < 0) {
 			virtio_discard_rxbuf(vq, rxm);
@@ -954,6 +968,7 @@ virtio_recv_pkts(void *rx_queue, struct rte_mbuf **rx_pkts, uint16_t nb_pkts)
 
 		virtio_rx_stats_updated(rxvq, rxm);
 
+		//设置收到的报文
 		rx_pkts[nb_rx++] = rxm;
 	}
 
@@ -1219,6 +1234,7 @@ virtio_recv_mergeable_pkts(void *rx_queue,
 		if (nb_rx == nb_pkts)
 			break;
 
+		//自队列中出一个报文
 		num = virtqueue_dequeue_burst_rx(vq, rcv_pkts, len, 1);
 		if (num != 1)
 			continue;
@@ -1230,6 +1246,7 @@ virtio_recv_mergeable_pkts(void *rx_queue,
 
 		rxm = rcv_pkts[0];
 
+		//报文长度校验
 		if (unlikely(len[0] < hdr_size + ETHER_HDR_LEN)) {
 			PMD_RX_LOG(ERR, "Packet drop");
 			nb_enqueued++;
@@ -1238,6 +1255,7 @@ virtio_recv_mergeable_pkts(void *rx_queue,
 			continue;
 		}
 
+		//取virtio_net_hdr_mrg_rxbuf结构头
 		header = (struct virtio_net_hdr_mrg_rxbuf *)((char *)rxm->buf_addr +
 			RTE_PKTMBUF_HEADROOM - hdr_size);
 		seg_num = header->num_buffers;
@@ -1245,17 +1263,18 @@ virtio_recv_mergeable_pkts(void *rx_queue,
 		if (seg_num == 0)
 			seg_num = 1;
 
-		rxm->data_off = RTE_PKTMBUF_HEADROOM;
-		rxm->nb_segs = seg_num;
+		rxm->data_off = RTE_PKTMBUF_HEADROOM;//指向data
+		rxm->nb_segs = seg_num;//有多少片数
 		rxm->ol_flags = 0;
 		rxm->vlan_tci = 0;
 		rxm->pkt_len = (uint32_t)(len[0] - hdr_size);
 		rxm->data_len = (uint16_t)(len[0] - hdr_size);
 
 		rxm->port = rxvq->port_id;
-		rx_pkts[nb_rx] = rxm;
+		rx_pkts[nb_rx] = rxm;//设置收到的报文
 		prev = rxm;
 
+		//gro处理
 		if (hw->has_rx_offload &&
 				virtio_rx_offload(rxm, &header->hdr) < 0) {
 			virtio_discard_rxbuf(vq, rxm);
@@ -1263,7 +1282,7 @@ virtio_recv_mergeable_pkts(void *rx_queue,
 			continue;
 		}
 
-		seg_res = seg_num - 1;
+		seg_s = seg_num - 1;
 
 		while (seg_res != 0) {
 			/*
@@ -1272,12 +1291,14 @@ virtio_recv_mergeable_pkts(void *rx_queue,
 			uint16_t  rcv_cnt =
 				RTE_MIN(seg_res, RTE_DIM(rcv_pkts));
 			if (likely(VIRTQUEUE_NUSED(vq) >= rcv_cnt)) {
+				//收取剩余的packets
 				uint32_t rx_num =
 					virtqueue_dequeue_burst_rx(vq,
 					rcv_pkts, len, rcv_cnt);
 				i += rx_num;
 				rcv_cnt = rx_num;
 			} else {
+				//数据有误，没有期待数量的报文，丢弃
 				PMD_RX_LOG(ERR,
 					   "No enough segments for packet.");
 				nb_enqueued++;
@@ -1288,6 +1309,7 @@ virtio_recv_mergeable_pkts(void *rx_queue,
 
 			extra_idx = 0;
 
+			//填充收取的报文
 			while (extra_idx < rcv_cnt) {
 				rxm = rcv_pkts[extra_idx];
 
@@ -1305,17 +1327,20 @@ virtio_recv_mergeable_pkts(void *rx_queue,
 			seg_res -= rcv_cnt;
 		}
 
+		//vlan strip处理
 		if (hw->vlan_strip)
 			rte_vlan_strip(rx_pkts[nb_rx]);
 
 		VIRTIO_DUMP_PACKET(rx_pkts[nb_rx],
 			rx_pkts[nb_rx]->data_len);
 
+		//统计计数
 		rxvq->stats.bytes += rx_pkts[nb_rx]->pkt_len;
 		virtio_update_packet_stats(&rxvq->stats, rx_pkts[nb_rx]);
 		nb_rx++;
 	}
 
+	//收包数统计
 	rxvq->stats.packets += nb_rx;
 
 	/* Allocate new mbuf for the used descriptor */
@@ -1323,11 +1348,13 @@ virtio_recv_mergeable_pkts(void *rx_queue,
 	while (likely(!virtqueue_full(vq))) {
 		new_mbuf = rte_mbuf_raw_alloc(rxvq->mpool);
 		if (unlikely(new_mbuf == NULL)) {
+			//申请mbuf失败
 			struct rte_eth_dev *dev
 				= &rte_eth_devices[rxvq->port_id];
 			dev->data->rx_mbuf_alloc_failed++;
 			break;
 		}
+		//申请新的mbuf填充进ring,因为我们刚刚拿走了相应的mbuf
 		error = virtqueue_enqueue_recv_refill(vq, new_mbuf);
 		if (unlikely(error)) {
 			rte_pktmbuf_free(new_mbuf);
@@ -1336,6 +1363,7 @@ virtio_recv_mergeable_pkts(void *rx_queue,
 		nb_enqueued++;
 	}
 
+	//通知对端
 	if (likely(nb_enqueued)) {
 		vq_update_avail_idx(vq);
 

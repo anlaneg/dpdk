@@ -163,6 +163,7 @@ vhost_user_get_features(struct virtio_net *dev)
 /*
  * The queue number that we support are requested.
  */
+//返回设备支持的队列数
 static uint32_t
 vhost_user_get_queue_num(struct virtio_net *dev)
 {
@@ -1174,6 +1175,7 @@ vhost_user_get_protocol_features(struct virtio_net *dev,
 {
 	uint64_t features, protocol_features;
 
+	//获取dev对应的功能及协议功能
 	rte_vhost_driver_get_features(dev->ifname, &features);
 	rte_vhost_driver_get_protocol_features(dev->ifname, &protocol_features);
 
@@ -1699,7 +1701,7 @@ vhost_user_msg_handler(int vid, int fd)
 
 		break;
 	case VHOST_USER_SET_FEATURES:
-		//设置本端功能
+		//设置协商好的功能
 		ret = vhost_user_set_features(dev, msg.payload.u64);
 		if (ret)
 			return -1;//消息处理失败，会导致关闭连接
@@ -1773,6 +1775,7 @@ vhost_user_msg_handler(int vid, int fd)
 		break;
 
 	case VHOST_USER_GET_QUEUE_NUM:
+		//获取本端支持的最大队列数
 		msg.payload.u64 = (uint64_t)vhost_user_get_queue_num(dev);
 		msg.size = sizeof(msg.payload.u64);
 		send_vhost_reply(fd, &msg);
@@ -1790,6 +1793,7 @@ vhost_user_msg_handler(int vid, int fd)
 		break;
 
 	case VHOST_USER_SET_SLAVE_REQ_FD:
+		//接受对端发送过来的pipe的一端
 		ret = vhost_user_set_req_fd(dev, &msg);
 		break;
 

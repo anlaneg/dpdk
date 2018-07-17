@@ -1334,6 +1334,7 @@ set_rxtx_funcs(struct rte_eth_dev *eth_dev)
 	} else {
 		PMD_INIT_LOG(INFO, "virtio: using standard Rx path on port %u",
 			eth_dev->data->port_id);
+		//如果virtio_net_f_mrg_rxbuf未被协商，则默认一个包占一个buf
 		eth_dev->rx_pkt_burst = &virtio_recv_pkts;
 	}
 
@@ -1499,6 +1500,11 @@ virtio_init_device(struct rte_eth_dev *eth_dev, uint64_t req_features)
 			offsetof(struct virtio_net_config, mac),
 			&config->mac, sizeof(config->mac));
 
+		/**
+		 * If the VIRTIO_NET_F_STATUS feature bit is negotiated, the link status comes from the bottom bit of
+		   status. Otherwise, the driver assumes it’s active.
+		   如果有status,则读取status,否则假设为0
+		 */
 		if (vtpci_with_feature(hw, VIRTIO_NET_F_STATUS)) {
 			vtpci_read_dev_config(hw,
 				offsetof(struct virtio_net_config, status),
@@ -1509,6 +1515,8 @@ virtio_init_device(struct rte_eth_dev *eth_dev, uint64_t req_features)
 			config->status = 0;
 		}
 
+		//如果有virtio_net_f_mq标记，则自配置中读取max_virtqueueu_pairs
+		//否则直接将其设置为1
 		if (vtpci_with_feature(hw, VIRTIO_NET_F_MQ)) {
 			vtpci_read_dev_config(hw,
 				offsetof(struct virtio_net_config, max_virtqueue_pairs),

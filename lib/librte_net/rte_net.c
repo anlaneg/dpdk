@@ -123,6 +123,7 @@ ptype_inner_l4(uint8_t proto)
 }
 
 /* get the tunnel packet type if any, update proto and off. */
+//隧道类型解析
 static uint32_t
 ptype_tunnel(uint16_t *proto, const struct rte_mbuf *m,
 	uint32_t *off)
@@ -224,13 +225,14 @@ rte_net_skip_ip6_ext(uint16_t proto, const struct rte_mbuf *m, uint32_t *off,
 }
 
 /* parse mbuf data to get packet type */
+//解析报文获取报文的类型
 uint32_t rte_net_get_ptype(const struct rte_mbuf *m,
 	struct rte_net_hdr_lens *hdr_lens, uint32_t layers)
 {
 	struct rte_net_hdr_lens local_hdr_lens;
 	const struct ether_hdr *eh;
 	struct ether_hdr eh_copy;
-	uint32_t pkt_type = RTE_PTYPE_L2_ETHER;
+	uint32_t pkt_type = RTE_PTYPE_L2_ETHER;//以太包
 	uint32_t off = 0;
 	uint16_t proto;
 	int ret;
@@ -238,6 +240,7 @@ uint32_t rte_net_get_ptype(const struct rte_mbuf *m,
 	if (hdr_lens == NULL)
 		hdr_lens = &local_hdr_lens;
 
+	//定位到以太头
 	eh = rte_pktmbuf_read(m, off, sizeof(*eh), &eh_copy);
 	if (unlikely(eh == NULL))
 		return 0;
@@ -245,35 +248,39 @@ uint32_t rte_net_get_ptype(const struct rte_mbuf *m,
 	off = sizeof(*eh);
 	hdr_lens->l2_len = off;
 
+	//不关注二层，直接返回0
 	if ((layers & RTE_PTYPE_L2_MASK) == 0)
 		return 0;
 
+	//以太头协议指明负载为ipv4
 	if (proto == rte_cpu_to_be_16(ETHER_TYPE_IPv4))
 		goto l3; /* fast path if packet is IPv4 */
 
+	//以太头协议指明负载为vlan
 	if (proto == rte_cpu_to_be_16(ETHER_TYPE_VLAN)) {
 		const struct vlan_hdr *vh;
 		struct vlan_hdr vh_copy;
 
-		pkt_type = RTE_PTYPE_L2_ETHER_VLAN;
+		pkt_type = RTE_PTYPE_L2_ETHER_VLAN;//vlan包
 		vh = rte_pktmbuf_read(m, off, sizeof(*vh), &vh_copy);
 		if (unlikely(vh == NULL))
 			return pkt_type;
 		off += sizeof(*vh);
 		hdr_lens->l2_len += sizeof(*vh);
-		proto = vh->eth_proto;
+		proto = vh->eth_proto;//解vlan负载
 	} else if (proto == rte_cpu_to_be_16(ETHER_TYPE_QINQ)) {
+		//以太负载指明双vlan
 		const struct vlan_hdr *vh;
 		struct vlan_hdr vh_copy;
 
-		pkt_type = RTE_PTYPE_L2_ETHER_QINQ;
+		pkt_type = RTE_PTYPE_L2_ETHER_QINQ;//双q包
 		vh = rte_pktmbuf_read(m, off + sizeof(*vh), sizeof(*vh),
 			&vh_copy);
 		if (unlikely(vh == NULL))
 			return pkt_type;
-		off += 2 * sizeof(*vh);
+		off += 2 * sizeof(*vh);//跳过两个vlan头
 		hdr_lens->l2_len += 2 * sizeof(*vh);
-		proto = vh->eth_proto;
+		proto = vh->eth_proto;//解双vlan负载
 	}
 
  l3:
@@ -302,7 +309,7 @@ uint32_t rte_net_get_ptype(const struct rte_mbuf *m,
 			return pkt_type;
 		}
 		proto = ip4h->next_proto_id;
-		pkt_type |= ptype_l4(proto);
+		pkt_type |= ptype_l4(proto);//ipv4 l4层协议
 	} else if (proto == rte_cpu_to_be_16(ETHER_TYPE_IPv6)) {
 		const struct ipv6_hdr *ip6h;
 		struct ipv6_hdr ip6h_copy;
@@ -312,7 +319,7 @@ uint32_t rte_net_get_ptype(const struct rte_mbuf *m,
 		if (unlikely(ip6h == NULL))
 			return pkt_type;
 
-		proto = ip6h->proto;
+		proto = ip6h->proto;//ipv6 l4层协议
 		hdr_lens->l3_len = sizeof(*ip6h);
 		off += hdr_lens->l3_len;
 		pkt_type |= ptype_l3_ip6(proto);
@@ -348,12 +355,14 @@ uint32_t rte_net_get_ptype(const struct rte_mbuf *m,
 		if (unlikely(th == NULL))
 			return pkt_type & (RTE_PTYPE_L2_MASK |
 				RTE_PTYPE_L3_MASK);
-		hdr_lens->l4_len = (th->data_off & 0xf0) >> 2;
+		hdr_lens->l4_len = (th->data_off & 0xf0) >> 2;//4层头长度
 		return pkt_type;
 	} else if ((pkt_type & RTE_PTYPE_L4_MASK) == RTE_PTYPE_L4_SCTP) {
+		//l4层负载为sctp
 		hdr_lens->l4_len = sizeof(struct sctp_hdr);
 		return pkt_type;
 	} else {
+		//隧道协议解析
 		uint32_t prev_off = off;
 
 		hdr_lens->l4_len = 0;
@@ -373,6 +382,7 @@ uint32_t rte_net_get_ptype(const struct rte_mbuf *m,
 
 	hdr_lens->inner_l2_len = 0;
 	if (proto == rte_cpu_to_be_16(ETHER_TYPE_TEB)) {
+		//负载为以太包
 		eh = rte_pktmbuf_read(m, off, sizeof(*eh), &eh_copy);
 		if (unlikely(eh == NULL))
 			return pkt_type;
@@ -383,6 +393,7 @@ uint32_t rte_net_get_ptype(const struct rte_mbuf *m,
 	}
 
 	if (proto == rte_cpu_to_be_16(ETHER_TYPE_VLAN)) {
+		//负载为vlan
 		const struct vlan_hdr *vh;
 		struct vlan_hdr vh_copy;
 
@@ -395,6 +406,7 @@ uint32_t rte_net_get_ptype(const struct rte_mbuf *m,
 		hdr_lens->inner_l2_len += sizeof(*vh);
 		proto = vh->eth_proto;
 	} else if (proto == rte_cpu_to_be_16(ETHER_TYPE_QINQ)) {
+		//负载为双q
 		const struct vlan_hdr *vh;
 		struct vlan_hdr vh_copy;
 
@@ -412,6 +424,7 @@ uint32_t rte_net_get_ptype(const struct rte_mbuf *m,
 	if ((layers & RTE_PTYPE_INNER_L3_MASK) == 0)
 		return pkt_type;
 
+	//隧道内层解析
 	if (proto == rte_cpu_to_be_16(ETHER_TYPE_IPv4)) {
 		const struct ipv4_hdr *ip4h;
 		struct ipv4_hdr ip4h_copy;

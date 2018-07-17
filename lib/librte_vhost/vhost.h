@@ -161,6 +161,7 @@ struct vhost_virtqueue {
  #define VIRTIO_NET_F_GUEST_ANNOUNCE 21
 #endif
 
+//如果无此标记位，则virtio-net仅支持单队列
 #ifndef VIRTIO_NET_F_MQ
  #define VIRTIO_NET_F_MQ		22
 #endif

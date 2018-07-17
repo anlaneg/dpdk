@@ -234,6 +234,7 @@ struct virtio_net_hdr {
  */
 struct virtio_net_hdr_mrg_rxbuf {
 	struct   virtio_net_hdr hdr;
+	//指出有多少个buffer可以合并
 	uint16_t num_buffers; /**< Number of merged rx buffers */
 };
 
