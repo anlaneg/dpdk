@@ -1448,6 +1448,7 @@ rte_mempool_list_dump(FILE *f)
 }
 
 /* search a mempool from its name */
+//查询mempool
 struct rte_mempool *
 rte_mempool_lookup(const char *name)
 {

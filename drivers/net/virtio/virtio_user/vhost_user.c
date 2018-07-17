@@ -270,6 +270,7 @@ const char * const vhost_msg_strings[] = {
 	[VHOST_USER_SET_VRING_ENABLE] = "VHOST_SET_VRING_ENABLE",
 };
 
+//发送请求
 static int
 vhost_user_sock(struct virtio_user_dev *dev,
 		enum vhost_user_request req,
@@ -290,15 +291,18 @@ vhost_user_sock(struct virtio_user_dev *dev,
 	if (dev->is_server && vhostfd < 0)
 		return -1;
 
+	//要发送的请求
 	msg.request = req;
 	msg.flags = VHOST_USER_VERSION;
 	msg.size = 0;
 
 	switch (req) {
+	//取对端功能
 	case VHOST_USER_GET_FEATURES:
 		need_reply = 1;
 		break;
 
+	//设置功能，log base
 	case VHOST_USER_SET_FEATURES:
 	case VHOST_USER_SET_LOG_BASE:
 		msg.payload.u64 = *((__u64 *)arg);
@@ -357,6 +361,7 @@ vhost_user_sock(struct virtio_user_dev *dev,
 		return -1;
 	}
 
+	//向对端发送消息
 	len = VHOST_USER_HDR_SIZE + msg.size;
 	if (vhost_user_write(vhostfd, &msg, len, fds, fd_num) < 0) {
 		PMD_DRV_LOG(ERR, "%s failed: %s",
@@ -369,6 +374,7 @@ vhost_user_sock(struct virtio_user_dev *dev,
 			close(fds[i]);
 
 	if (need_reply) {
+		//读取对端的响应
 		if (vhost_user_read(vhostfd, &msg) < 0) {
 			PMD_DRV_LOG(ERR, "Received msg failed: %s",
 				    strerror(errno));
@@ -500,6 +506,7 @@ vhost_user_enable_queue_pair(struct virtio_user_dev *dev,
 	return 0;
 }
 
+//vhost user后端ops
 struct virtio_user_backend_ops ops_user = {
 	.setup = vhost_user_setup,
 	.send_request = vhost_user_sock,

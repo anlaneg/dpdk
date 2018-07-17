@@ -42,8 +42,10 @@ __vhost_iova_to_vva(struct virtio_net *dev, struct vhost_virtqueue *vq,
 	if (tmp_size == *size)
 		return vva;
 
+	//未找到，设置pending miss
 	iova += tmp_size;
 
+	//查询是否已在pending链上，尝试获取了
 	if (!vhost_user_iotlb_pending_miss(vq, iova, perm)) {
 		/*
 		 * iotlb_lock is read-locked for a full burst,
@@ -56,6 +58,7 @@ __vhost_iova_to_vva(struct virtio_net *dev, struct vhost_virtqueue *vq,
 
 		vhost_user_iotlb_pending_insert(vq, iova, perm);
 		if (vhost_user_iotlb_miss(dev, iova, perm)) {
+			//向对端请求
 			RTE_LOG(ERR, VHOST_CONFIG,
 				"IOTLB miss req failed for IOVA 0x%" PRIx64 "\n",
 				iova);
@@ -65,6 +68,7 @@ __vhost_iova_to_vva(struct virtio_net *dev, struct vhost_virtqueue *vq,
 		vhost_user_iotlb_rd_lock(vq);
 	}
 
+	//已加入pending,直接返回
 	return 0;
 }
 

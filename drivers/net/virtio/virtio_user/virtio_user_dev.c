@@ -215,13 +215,14 @@ virtio_user_dev_init_notify(struct virtio_user_dev *dev)
 		if (i >= dev->max_queue_pairs * 2) {
 			dev->kickfds[i] = -1;
 			dev->callfds[i] = -1;
-			continue;
+			continue;//i过大时，置为-1
 		}
 
 		/* May use invalid flag, but some backend uses kickfd and
 		 * callfd as criteria to judge if dev is alive. so finally we
 		 * use real event_fd.
 		 */
+		//创建事件fd
 		callfd = eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
 		if (callfd < 0) {
 			PMD_DRV_LOG(ERR, "callfd error, %s", strerror(errno));
@@ -319,6 +320,7 @@ virtio_user_dev_setup(struct virtio_user_dev *dev)
 	dev->tapfds = NULL;
 
 	if (dev->is_server) {
+		//server端
 		if (access(dev->path, F_OK) == 0 &&
 		    !is_vhost_user_by_type(dev->path)) {
 			PMD_DRV_LOG(ERR, "Server mode doesn't support vhost-kernel!");
@@ -326,6 +328,7 @@ virtio_user_dev_setup(struct virtio_user_dev *dev)
 		}
 		dev->ops = &ops_user;
 	} else {
+		//client端
 		if (is_vhost_user_by_type(dev->path)) {
 			dev->ops = &ops_user;
 		} else {
@@ -407,6 +410,7 @@ virtio_user_dev_init(struct virtio_user_dev *dev, char *path, int queues,
 	}
 
 	if (!dev->is_server) {
+		//client模式时，设置owner
 		if (dev->ops->send_request(dev, VHOST_USER_SET_OWNER,
 					   NULL) < 0) {
 			PMD_INIT_LOG(ERR, "set_owner fails: %s",
@@ -414,6 +418,7 @@ virtio_user_dev_init(struct virtio_user_dev *dev, char *path, int queues,
 			return -1;
 		}
 
+		//获取对端功能
 		if (dev->ops->send_request(dev, VHOST_USER_GET_FEATURES,
 					   &dev->device_features) < 0) {
 			PMD_INIT_LOG(ERR, "get_features failed: %s",

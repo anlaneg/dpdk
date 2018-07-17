@@ -46,9 +46,9 @@ struct vring_avail {
 /* id is a 16bit index. uint32_t is used here for ids for padding reasons. */
 struct vring_used_elem {
 	/* Index of start of used descriptor chain. */
-	uint32_t id;
+	uint32_t id;//记录描述符索引
 	/* Total length of the descriptor chain which was written to. */
-	uint32_t len;
+	uint32_t len;//buffer的长度
 };
 
 struct vring_used {

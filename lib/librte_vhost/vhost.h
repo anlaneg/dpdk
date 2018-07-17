@@ -138,7 +138,7 @@ struct vhost_virtqueue {
 		struct vring_used_elem_packed *shadow_used_packed;
 	};
 	uint16_t                shadow_used_idx;
-	struct vhost_vring_addr ring_addrs;
+	struct vhost_vring_addr ring_addrs;//设备的ring地址
 
 	struct batch_copy_elem	*batch_copy_elems;
 	uint16_t		batch_copy_nb_elems;
@@ -148,11 +148,12 @@ struct vhost_virtqueue {
 	struct log_cache_entry log_cache[VHOST_LOG_CACHE_NR];
 	uint16_t log_cache_nb_elem;
 
+	//tlb相关
 	rte_rwlock_t	iotlb_lock;
 	rte_rwlock_t	iotlb_pending_lock;
 	struct rte_mempool *iotlb_pool;
 	TAILQ_HEAD(, vhost_iotlb_entry) iotlb_list;
-	int				iotlb_cache_nr;
+	int				iotlb_cache_nr;//tlb缓冲数目
 	TAILQ_HEAD(, vhost_iotlb_entry) iotlb_pending_list;
 } __rte_cache_aligned;
 

@@ -788,6 +788,8 @@ out:
 }
 
 //向virtio_net发送报文
+//pkts要发送的报文
+//count要发送的报文数
 static __rte_always_inline uint32_t
 virtio_dev_rx_split(struct virtio_net *dev, struct vhost_virtqueue *vq,
 	struct rte_mbuf **pkts, uint32_t count)
@@ -800,7 +802,9 @@ virtio_dev_rx_split(struct virtio_net *dev, struct vhost_virtqueue *vq,
 	rte_prefetch0(&vq->avail->ring[vq->last_avail_idx & (vq->size - 1)]);
 	avail_head = *((volatile uint16_t *)&vq->avail->idx);
 
+	//要发送的报文
 	for (pkt_idx = 0; pkt_idx < count; pkt_idx++) {
+		//加头后的pkt_len
 		uint32_t pkt_len = pkts[pkt_idx]->pkt_len + dev->vhost_hlen;
 		uint16_t nr_vec = 0;
 
@@ -941,6 +945,7 @@ out_access_unlock:
 	return count;
 }
 
+//报文入队
 uint16_t
 rte_vhost_enqueue_burst(int vid, uint16_t queue_id,
 	struct rte_mbuf **pkts, uint16_t count)
