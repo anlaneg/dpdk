@@ -79,9 +79,9 @@ struct rte_vhost_mem_region {
 	uint64_t guest_phys_addr;//对端进程物理机址
 	uint64_t guest_user_addr;//对端进程虚拟地址起始地址
 	uint64_t host_user_addr; //本端进程虚拟地址起始地址（由mmap_addr加偏移量获得）
-	uint64_t size;//多大的内存
+	uint64_t size;//可访问的内存大小
 	void	 *mmap_addr;//mmap返回的起始地址（本端进程虚拟地址）
-	uint64_t mmap_size;//mmap映射的内存大小
+	uint64_t mmap_size;//mmap映射的实际内存大小（>= size)
 	int fd;//映射自哪个文件
 };
 

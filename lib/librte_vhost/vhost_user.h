@@ -62,14 +62,14 @@ typedef enum VhostUserSlaveRequest {
 } VhostUserSlaveRequest;
 
 typedef struct VhostUserMemoryRegion {
-	uint64_t guest_phys_addr;
-	uint64_t memory_size;
-	uint64_t userspace_addr;
-	uint64_t mmap_offset;
+	uint64_t guest_phys_addr;//vm的物理地址
+	uint64_t memory_size;//内存大小
+	uint64_t userspace_addr;//vm中对应的虚拟机址
+	uint64_t mmap_offset;//针对fd memory map时的偏移量
 } VhostUserMemoryRegion;
 
 typedef struct VhostUserMemory {
-	uint32_t nregions;
+	uint32_t nregions;//region数
 	uint32_t padding;
 	VhostUserMemoryRegion regions[VHOST_MEMORY_MAX_NREGIONS];
 } VhostUserMemory;
@@ -113,7 +113,7 @@ typedef struct VhostUserMsg {
 	union {
 		uint32_t master; /* a VhostUserRequest value */
 		uint32_t slave;  /* a VhostUserSlaveRequest value*/
-	} request;
+	} request;//请求类型
 
 #define VHOST_USER_VERSION_MASK     0x3
 #define VHOST_USER_REPLY_MASK       (0x1 << 2)
@@ -125,14 +125,14 @@ typedef struct VhostUserMsg {
 #define VHOST_USER_VRING_NOFD_MASK  (0x1<<8)
 		uint64_t u64;
 		struct vhost_vring_state state;
-		struct vhost_vring_addr addr;
-		VhostUserMemory memory;
+		struct vhost_vring_addr addr;//ring地址信息
+		VhostUserMemory memory;//内存表信息
 		VhostUserLog    log;
-		struct vhost_iotlb_msg iotlb;
+		struct vhost_iotlb_msg iotlb;//iotlb信息
 		VhostUserCryptoSessionParam crypto_session;
 		VhostUserVringArea area;
 	} payload;
-	int fds[VHOST_MEMORY_MAX_NREGIONS];
+	int fds[VHOST_MEMORY_MAX_NREGIONS];//对端传送过来的fd
 } __attribute((packed)) VhostUserMsg;
 
 //即VhostUserMsg的头部(payload之前占用的字节）

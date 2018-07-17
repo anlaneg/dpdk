@@ -118,6 +118,7 @@ read_fd_message(int sockfd, char *buf, int buflen, int *fds, int fd_num)
 	msgh.msg_control = control;
 	msgh.msg_controllen = sizeof(control);
 
+	//自socket fd中读取消息
 	ret = recvmsg(sockfd, &msgh, 0);
 	if (ret <= 0) {
 		RTE_LOG(ERR, VHOST_CONFIG, "recvmsg failed\n");
@@ -142,6 +143,7 @@ read_fd_message(int sockfd, char *buf, int buflen, int *fds, int fd_num)
 	}
 
 	/* Clear out unused file descriptors */
+	//通过将fds中不足got_fds的元素置为－1来表明数组长度
 	while (got_fds < fd_num)
 		fds[got_fds++] = -1;
 

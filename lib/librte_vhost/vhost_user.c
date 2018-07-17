@@ -467,11 +467,15 @@ qva_to_vva(struct virtio_net *dev, uint64_t qva, uint64_t *len)
 
 		if (qva >= r->guest_user_addr &&
 		    qva <  r->guest_user_addr + r->size) {
+			//qemu虚拟地址在此region范围内
 
+			//更新qva指向的地址有效长度
 			if (unlikely(*len > r->guest_user_addr + r->size - qva))
 				*len = r->guest_user_addr + r->size - qva;
 
-		    //如果qva在此范围以内，转换为本端地址
+		    //如果qva在此范围以内，转换为本端地址（转换方法：
+			//qemu虚拟地址减去此region中的qemu的起始地址，获得相对于起始地址的偏移量
+			//然后加上本端此region虚地址的起始量，即完成转换）
 			return qva - r->guest_user_addr +
 			       r->host_user_addr;
 		}
@@ -511,11 +515,13 @@ ring_addr_to_vva(struct virtio_net *dev, struct vhost_virtqueue *vq,
 	return qva_to_vva(dev, ra, size);
 }
 
+//实现设备dev的第vq_index的地址转换
 static struct virtio_net *
 translate_ring_addresses(struct virtio_net *dev, int vq_index)
 {
 	//取对应虚队列
 	struct vhost_virtqueue *vq = dev->virtqueue[vq_index];
+	//取此虚对队对应的ring地址
 	struct vhost_vring_addr *addr = &vq->ring_addrs;
 	uint64_t len;
 
@@ -609,6 +615,7 @@ translate_ring_addresses(struct virtio_net *dev, int vq_index)
 		return dev;
 	}
 
+	//更新队列的指针
 	if (vq->last_used_idx != vq->used->idx) {
 		RTE_LOG(WARNING, VHOST_CONFIG,
 			"last_used_idx (%u) and vq->used->idx (%u) mismatches; "
@@ -783,6 +790,7 @@ dump_guest_pages(struct virtio_net *dev)
 #define dump_guest_pages(dev)
 #endif
 
+//检查是否有必要更新memory
 static bool
 vhost_memory_changed(struct VhostUserMemory *new,
 		     struct rte_vhost_memory *old)
@@ -790,8 +798,10 @@ vhost_memory_changed(struct VhostUserMemory *new,
 	uint32_t i;
 
 	if (new->nregions != old->nregions)
-		return true;
+		return true;//region不同，可更新
 
+	//相同region时，如果guest_phys_addr,memory_size,userspace_addr不同，则需要更新
+	//否则完全相同，则没必要更新
 	for (i = 0; i < new->nregions; ++i) {
 		VhostUserMemoryRegion *new_r = &new->regions[i];
 		struct rte_vhost_mem_region *old_r = &old->regions[i];
@@ -821,23 +831,26 @@ vhost_user_set_mem_table(struct virtio_net **pdev, struct VhostUserMsg *pmsg)
 	int populate;
 	int fd;
 
+	//region数不能过大
 	if (memory.nregions > VHOST_MEMORY_MAX_NREGIONS) {
 		RTE_LOG(ERR, VHOST_CONFIG,
 			"too many memory regions (%u)\n", memory.nregions);
 		return -1;
 	}
 
+	//如果之前已设置过，则进行更新
 	if (dev->mem && !vhost_memory_changed(&memory, dev->mem)) {
 		RTE_LOG(INFO, VHOST_CONFIG,
 			"(%d) memory regions not changed\n", dev->vid);
 
+		//没必要更新region,关闭传递过来的fd(之前已有了）
 		for (i = 0; i < memory.nregions; i++)
 			close(pmsg->fds[i]);
 
 		return 0;
 	}
 
-	//如果已有内存，刚将原有的释放
+	//如果需要更新，则将原有的释放
 	if (dev->mem) {
 		free_mem_region(dev);
 		rte_free(dev->mem);
@@ -858,7 +871,7 @@ vhost_user_set_mem_table(struct virtio_net **pdev, struct VhostUserMsg *pmsg)
 		}
 	}
 
-	//按要求申请可包含nregions块的内存
+	//按要求申请可包含nregions块的内存（含一个rte_vhost_memory头）
 	dev->mem = rte_zmalloc("vhost-mem-table", sizeof(struct rte_vhost_memory) +
 		sizeof(struct rte_vhost_mem_region) * memory.nregions, 0);
 	if (dev->mem == NULL) {
@@ -883,6 +896,7 @@ vhost_user_set_mem_table(struct virtio_net **pdev, struct VhostUserMsg *pmsg)
 		mmap_offset = memory.regions[i].mmap_offset;
 
 		/* Check for memory_size + mmap_offset overflow */
+		//检查加之后是否会绕圈
 		if (mmap_offset >= -reg->size) {
 			RTE_LOG(ERR, VHOST_CONFIG,
 				"mmap_offset (%#"PRIx64") and memory_size "
@@ -891,6 +905,8 @@ vhost_user_set_mem_table(struct virtio_net **pdev, struct VhostUserMsg *pmsg)
 			goto err_mmap;
 		}
 
+		//由于有效内存自mmap_offset开始，而memory指定的大小为reg->size,故有mmap_size的内存
+		//需要memory map
 		mmap_size = reg->size + mmap_offset;
 
 		/* mmap() without flag of MAP_ANONYMOUS, should be called
@@ -911,6 +927,7 @@ vhost_user_set_mem_table(struct virtio_net **pdev, struct VhostUserMsg *pmsg)
 		//将mmap_size按alignment对齐
 		mmap_size = RTE_ALIGN_CEIL(mmap_size, alignment);
 
+		//如果支持0 copy,则要求预填充
 		populate = (dev->dequeue_zero_copy) ? MAP_POPULATE : 0;
 		//map fd对应的那一段内存
 		mmap_addr = mmap(NULL, mmap_size, PROT_READ | PROT_WRITE,
@@ -922,8 +939,8 @@ vhost_user_set_mem_table(struct virtio_net **pdev, struct VhostUserMsg *pmsg)
 			goto err_mmap;
 		}
 
-		reg->mmap_addr = mmap_addr;//map后地址
-		reg->mmap_size = mmap_size;//map的大小
+		reg->mmap_addr = mmap_addr;//map后地址（即本端的虚拟地址，用于释放）
+		reg->mmap_size = mmap_size;//map的大小（实际mmap的内存大小）
 		reg->host_user_addr = (uint64_t)(uintptr_t)mmap_addr +
 				      mmap_offset;//本进程map的开始地址
 
@@ -957,14 +974,17 @@ vhost_user_set_mem_table(struct virtio_net **pdev, struct VhostUserMsg *pmsg)
 	for (i = 0; i < dev->nr_vring; i++) {
 		struct vhost_virtqueue *vq = dev->virtqueue[i];
 
+		//如果vq已设置，则重新执行地址转换
 		if (vq->desc || vq->avail || vq->used) {
 			/*
 			 * If the memory table got updated, the ring addresses
 			 * need to be translated again as virtual addresses have
 			 * changed.
 			 */
+			//先使vq中字段无效
 			vring_invalidate(dev, vq);
 
+			//更新vq中的字段
 			dev = translate_ring_addresses(dev, i);
 			if (!dev)
 				return -1;
@@ -1108,6 +1128,7 @@ vhost_user_get_vring_base(struct virtio_net *dev,
 	struct vhost_virtqueue *vq = dev->virtqueue[msg->payload.state.index];
 
 	/* We have to stop the queue (virtio) if it is running. */
+	//必须先停止dev
 	vhost_destroy_device_notify(dev);
 
 	dev->flags &= ~VIRTIO_DEV_READY;
@@ -1527,6 +1548,7 @@ send_vhost_slave_message(struct virtio_net *dev, struct VhostUserMsg *msg,
 /*
  * Allocate a queue pair if it hasn't been allocated yet
  */
+//依据不同的消息类型，校验vring_idx是否正确，如果vring_idx指定的queue不存在，则创建
 static int
 vhost_user_check_and_alloc_queue_pair(struct virtio_net *dev, VhostUserMsg *msg)
 {
@@ -1631,6 +1653,7 @@ vhost_user_msg_handler(int vid, int fd)
 	//读取vhost消息
 	ret = read_vhost_message(fd, &msg);
 	if (ret <= 0 || msg.request.master >= VHOST_USER_MAX) {
+		//读取失败或者发送的请求不认识，或者对端关闭，返回失败
 		if (ret < 0)
 			RTE_LOG(ERR, VHOST_CONFIG,
 				"vhost read message failed\n");
@@ -1667,6 +1690,7 @@ vhost_user_msg_handler(int vid, int fd)
 	 * inactive, so it is safe. Otherwise taking the access_lock
 	 * would cause a dead lock.
 	 */
+	//对所有队列加锁
 	switch (msg.request.master) {
 	case VHOST_USER_SET_FEATURES:
 	case VHOST_USER_SET_PROTOCOL_FEATURES:
@@ -1710,7 +1734,7 @@ vhost_user_msg_handler(int vid, int fd)
 	//按请求处理消息
 	switch (msg.request.master) {
 	case VHOST_USER_GET_FEATURES:
-		//获取本端支持功能
+		//获取本端支持功能，并响应对端
 		msg.payload.u64 = vhost_user_get_features(dev);
 		msg.size = sizeof(msg.payload.u64);
 		send_vhost_reply(fd, &msg);//响应本端支持的功能
@@ -1724,7 +1748,7 @@ vhost_user_msg_handler(int vid, int fd)
 		break;
 
 	case VHOST_USER_GET_PROTOCOL_FEATURES:
-		//获取本端协议功能
+		//获取本端协议功能，并响应
 		vhost_user_get_protocol_features(dev, &msg);
 		send_vhost_reply(fd, &msg);
 		break;
@@ -1742,7 +1766,7 @@ vhost_user_msg_handler(int vid, int fd)
 		break;
 
 	case VHOST_USER_SET_MEM_TABLE:
-		//设置内存表
+		//设置内存表（知道内存表，可以实现两端的地址转换）
 		ret = vhost_user_set_mem_table(&dev, &msg);
 		break;
 
@@ -1755,7 +1779,7 @@ vhost_user_msg_handler(int vid, int fd)
 		send_vhost_reply(fd, &msg);
 		break;
 	case VHOST_USER_SET_LOG_FD:
-		//关闭fd
+		//关闭fd（未使用log)
 		close(msg.fds[0]);
 		RTE_LOG(INFO, VHOST_CONFIG, "not implemented.\n");
 		break;
@@ -1769,10 +1793,12 @@ vhost_user_msg_handler(int vid, int fd)
 		vhost_user_set_vring_addr(&dev, &msg);
 		break;
 	case VHOST_USER_SET_VRING_BASE:
+		//设置ring的读写指针位置
 		vhost_user_set_vring_base(dev, &msg);
 		break;
 
 	case VHOST_USER_GET_VRING_BASE:
+		//获取ring的读写指针位置
 		vhost_user_get_vring_base(dev, &msg);
 		msg.size = sizeof(msg.payload.state);
 		send_vhost_reply(fd, &msg);
