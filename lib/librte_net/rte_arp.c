@@ -7,6 +7,7 @@
 #include <rte_arp.h>
 
 #define RARP_PKT_SIZE	64
+//构造反向地址解析协议rarp报文
 struct rte_mbuf * __rte_experimental
 rte_net_make_rarp_packet(struct rte_mempool *mpool,
 		const struct ether_addr *mac)
@@ -29,9 +30,9 @@ rte_net_make_rarp_packet(struct rte_mempool *mpool,
 	}
 
 	/* Ethernet header. */
-	memset(eth_hdr->d_addr.addr_bytes, 0xff, ETHER_ADDR_LEN);
+	memset(eth_hdr->d_addr.addr_bytes, 0xff, ETHER_ADDR_LEN);//设置广播mac
 	ether_addr_copy(mac, &eth_hdr->s_addr);
-	eth_hdr->ether_type = htons(ETHER_TYPE_RARP);
+	eth_hdr->ether_type = htons(ETHER_TYPE_RARP);//协议号为rarp协议
 
 	/* RARP header. */
 	rarp = (struct arp_hdr *)(eth_hdr + 1);
@@ -39,12 +40,12 @@ rte_net_make_rarp_packet(struct rte_mempool *mpool,
 	rarp->arp_pro = htons(ETHER_TYPE_IPv4);
 	rarp->arp_hln = ETHER_ADDR_LEN;
 	rarp->arp_pln = 4;
-	rarp->arp_op  = htons(ARP_OP_REVREQUEST);
+	rarp->arp_op  = htons(ARP_OP_REVREQUEST);//指明进行反向请求
 
 	ether_addr_copy(mac, &rarp->arp_data.arp_sha);
-	ether_addr_copy(mac, &rarp->arp_data.arp_tha);
+	ether_addr_copy(mac, &rarp->arp_data.arp_tha);//设置目的方mac地址
 	memset(&rarp->arp_data.arp_sip, 0x00, 4);
-	memset(&rarp->arp_data.arp_tip, 0x00, 4);
+	memset(&rarp->arp_data.arp_tip, 0x00, 4);//填充0号ip
 
 	return mbuf;
 }

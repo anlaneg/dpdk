@@ -28,16 +28,17 @@
 /* VirtIO ring descriptors: 16 bytes.
  * These can chain together via "next". */
 struct vring_desc {
-	uint64_t addr;  /*  Address (guest-physical). */
-	uint32_t len;   /* Length. */
+	uint64_t addr;  /*  Address (guest-physical). */ //guest的物理地址，指向对应的描述符
+	uint32_t len;   /* Length. */ //数据长度
+	//描述符的标记位，看virtio 1.0 spec 2.4.5节
 	uint16_t flags; /* The flags as indicated above. */
-	uint16_t next;  /* We chain unused descriptors via this. */
+	uint16_t next;  /* We chain unused descriptors via this. */ //split情况下用于实现大包数传输时用
 };
 
 struct vring_avail {
 	uint16_t flags;
-	uint16_t idx;
-	uint16_t ring[0];
+	uint16_t idx;//队列中目前有效位置（即可存放或可读取的极限位置）
+	uint16_t ring[0];//ring，记录有效的描述符索引号
 };
 
 /* id is a 16bit index. uint32_t is used here for ids for padding reasons. */

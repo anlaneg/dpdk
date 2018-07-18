@@ -297,7 +297,8 @@ virtio_enqueue_offload(struct rte_mbuf *m_buf, struct virtio_net_hdr *net_hdr)
 	}
 }
 
-//将数据搬迁到描述符中
+//将数据指针填充到到buf_vec中，vec_idx用于记录有多少个vector被占用
+//由于数据在物理内存上可能是不连续的，故会占用多个buf_vec
 static __rte_always_inline int
 map_one_desc(struct virtio_net *dev, struct vhost_virtqueue *vq,
 		struct buf_vector *buf_vec, uint16_t *vec_idx,
@@ -305,6 +306,7 @@ map_one_desc(struct virtio_net *dev, struct vhost_virtqueue *vq,
 {
 	uint16_t vec_id = *vec_idx;
 
+	//desc_iova指向的内存物理上可能是不连续的
 	while (desc_len) {
 		uint64_t desc_addr;
 		uint64_t desc_chunck_len = desc_len;
@@ -312,6 +314,7 @@ map_one_desc(struct virtio_net *dev, struct vhost_virtqueue *vq,
 		if (unlikely(vec_id >= BUF_VECTOR_MAX))
 			return -1;
 
+		//取描述符中buffer的虚拟地址
 		desc_addr = vhost_iova_to_vva(dev, vq,
 				desc_iova,
 				&desc_chunck_len,
@@ -321,7 +324,7 @@ map_one_desc(struct virtio_net *dev, struct vhost_virtqueue *vq,
 
 		buf_vec[vec_id].buf_iova = desc_iova;
 		buf_vec[vec_id].buf_addr = desc_addr;
-		buf_vec[vec_id].buf_len  = desc_chunck_len;
+		buf_vec[vec_id].buf_len  = desc_chunck_len;//buffer长度
 
 		desc_len -= desc_chunck_len;
 		desc_iova += desc_chunck_len;
@@ -332,12 +335,18 @@ map_one_desc(struct virtio_net *dev, struct vhost_virtqueue *vq,
 	return 0;
 }
 
+//将avail_idex描述符指出的数据地址填充到出参buf_vec中
+//出参nr_vec用于指出buf_vec中占用的数量
+//出参desc_chain_head为首个描述符索引
+//出参desc_chain_len为描述符链的buffer长度
+//perm为io地址转换时的权限位
 static __rte_always_inline int
 fill_vec_buf_split(struct virtio_net *dev, struct vhost_virtqueue *vq,
 			 uint32_t avail_idx, uint16_t *vec_idx,
 			 struct buf_vector *buf_vec, uint16_t *desc_chain_head,
 			 uint16_t *desc_chain_len, uint8_t perm)
 {
+	//取出有效索引位下记录的有效描述符索引
 	uint16_t idx = vq->avail->ring[avail_idx & (vq->size - 1)];
 	uint16_t vec_id = *vec_idx;
 	uint32_t len    = 0;
@@ -347,6 +356,7 @@ fill_vec_buf_split(struct virtio_net *dev, struct vhost_virtqueue *vq,
 
 	*desc_chain_head = idx;
 
+	//如果此描述符是the buffer contains a list of buffer descriptors
 	if (vq->desc[idx].flags & VRING_DESC_F_INDIRECT) {
 		dlen = vq->desc[idx].len;
 		descs = (struct vring_desc *)(uintptr_t)
@@ -354,13 +364,15 @@ fill_vec_buf_split(struct virtio_net *dev, struct vhost_virtqueue *vq,
 						&dlen,
 						VHOST_ACCESS_RO);
 		if (unlikely(!descs))
-			return -1;
+			return -1;//描述地址为空，失败
 
 		if (unlikely(dlen < vq->desc[idx].len)) {
 			/*
 			 * The indirect desc table is not contiguous
 			 * in process VA space, we have to copy it.
 			 */
+			//dlen小于vq->desc[idx].len,说明存放描述符的内存物理上不连续
+			//申请一段连续内存把描述符 copy出来
 			idesc = alloc_copy_ind_table(dev, vq,
 					vq->desc[idx].addr, vq->desc[idx].len);
 			if (unlikely(!idesc))
@@ -380,6 +392,7 @@ fill_vec_buf_split(struct virtio_net *dev, struct vhost_virtqueue *vq,
 
 		len += descs[idx].len;
 
+		//转换descs[idx]中指向的内存到buf_vec中（转换为本端虚拟地址）
 		if (unlikely(map_one_desc(dev, vq, buf_vec, &vec_id,
 						descs[idx].addr, descs[idx].len,
 						perm))) {
@@ -387,17 +400,19 @@ fill_vec_buf_split(struct virtio_net *dev, struct vhost_virtqueue *vq,
 			return -1;
 		}
 
+		//检查此描述符是否有next
 		if ((descs[idx].flags & VRING_DESC_F_NEXT) == 0)
 			break;
 
+		//有next，取下一个描述符索引，继续转换进buf_vec中
 		idx = descs[idx].next;
 	}
 
-	*desc_chain_len = len;
-	*vec_idx = vec_id;
+	*desc_chain_len = len;//buffer的长度
+	*vec_idx = vec_id;//占用了多少个数据段
 
 	if (unlikely(!!idesc))
-		free_ind_table(idesc);
+		free_ind_table(idesc);//如果有申请idesc，则释放它
 
 	return 0;
 }
@@ -476,6 +491,7 @@ fill_vec_buf_packed_indirect(struct virtio_net *dev,
 		return -1;
 
 	if (unlikely(dlen < desc->len)) {
+		//不连续，需要copy
 		/*
 		 * The indirect desc table is not contiguous
 		 * in process VA space, we have to copy it.
@@ -487,12 +503,14 @@ fill_vec_buf_packed_indirect(struct virtio_net *dev,
 		descs = idescs;
 	}
 
+	//取出对应的一组描述符
 	nr_descs =  desc->len / sizeof(struct vring_packed_desc);
 	if (unlikely(nr_descs >= vq->size)) {
 		free_ind_table(idescs);
 		return -1;
 	}
 
+	//与split不同，这组描述符是数组形式，遍历并直接copy
 	for (i = 0; i < nr_descs; i++) {
 		if (unlikely(vec_id >= BUF_VECTOR_MAX)) {
 			free_ind_table(idescs);
@@ -513,6 +531,8 @@ fill_vec_buf_packed_indirect(struct virtio_net *dev,
 	return 0;
 }
 
+//处理avail_idx指定的描述符，将其转换为buf_vec进行保存（实现qemu地址向dpdk虚地址的转换）
+//desc_count用于表示有多少描述符被使用
 static __rte_always_inline int
 fill_vec_buf_packed(struct virtio_net *dev, struct vhost_virtqueue *vq,
 				uint16_t avail_idx, uint16_t *desc_count,
@@ -533,11 +553,12 @@ fill_vec_buf_packed(struct virtio_net *dev, struct vhost_virtqueue *vq,
 
 	while (1) {
 		if (unlikely(vec_id >= BUF_VECTOR_MAX))
-			return -1;
+			return -1;//超出vector限制，报错
 
 		*desc_count += 1;
 		*buf_id = descs[avail_idx].id;
 
+		//处理packed形式的indirect描述符形式（报文过大时占用多个描述符）
 		if (descs[avail_idx].flags & VRING_DESC_F_INDIRECT) {
 			if (unlikely(fill_vec_buf_packed_indirect(dev, vq,
 							&descs[avail_idx],
@@ -547,6 +568,7 @@ fill_vec_buf_packed(struct virtio_net *dev, struct vhost_virtqueue *vq,
 		} else {
 			*len += descs[avail_idx].len;
 
+			//填充buf_vec
 			if (unlikely(map_one_desc(dev, vq, buf_vec, &vec_id,
 							descs[avail_idx].addr,
 							descs[avail_idx].len,
@@ -554,9 +576,11 @@ fill_vec_buf_packed(struct virtio_net *dev, struct vhost_virtqueue *vq,
 				return -1;
 		}
 
+		//此描述符对应的报文结束
 		if ((descs[avail_idx].flags & VRING_DESC_F_NEXT) == 0)
 			break;
 
+		//切换到下一个idx
 		if (++avail_idx >= vq->size) {
 			avail_idx -= vq->size;
 			wrap_counter ^= 1;
@@ -787,7 +811,7 @@ out:
 	return error;
 }
 
-//向virtio_net发送报文
+//向virtio_net收包处理（vhost设备的发包处理）
 //pkts要发送的报文
 //count要发送的报文数
 static __rte_always_inline uint32_t
@@ -824,6 +848,7 @@ virtio_dev_rx_split(struct virtio_net *dev, struct vhost_virtqueue *vq,
 			dev->vid, vq->last_avail_idx,
 			vq->last_avail_idx + num_buffers);
 
+		//将mbuf的内容copy到描述符
 		if (copy_mbuf_to_desc(dev, vq, pkts[pkt_idx],
 						buf_vec, nr_vec,
 						num_buffers) < 0) {
@@ -906,6 +931,7 @@ virtio_dev_rx(struct virtio_net *dev, uint16_t queue_id,
 	struct vhost_virtqueue *vq;
 
 	VHOST_LOG_DEBUG(VHOST_DATA, "(%d) %s\n", dev->vid, __func__);
+	//队列合法性检查，不能是收队列，不能超过合法队列数目
 	if (unlikely(!is_valid_virt_queue_idx(queue_id, 0, dev->nr_vring))) {
 		RTE_LOG(ERR, VHOST_DATA, "(%d) %s: invalid virtqueue idx %d.\n",
 			dev->vid, __func__, queue_id);
@@ -916,12 +942,14 @@ virtio_dev_rx(struct virtio_net *dev, uint16_t queue_id,
 
 	rte_spinlock_lock(&vq->access_lock);
 
+	//队列未使能不处理
 	if (unlikely(vq->enabled == 0))
 		goto out_access_unlock;
 
 	if (dev->features & (1ULL << VIRTIO_F_IOMMU_PLATFORM))
 		vhost_user_iotlb_rd_lock(vq);
 
+	//队列目前还不能访问，尝试对队列进行地址转换
 	if (unlikely(vq->access_ok == 0))
 		if (unlikely(vring_translate(dev, vq) < 0))
 			goto out;
@@ -930,6 +958,7 @@ virtio_dev_rx(struct virtio_net *dev, uint16_t queue_id,
 	if (count == 0)
 		goto out;
 
+	//报文发送(virtio设备收包处理）
 	if (vq_is_packed(dev))
 		count = virtio_dev_rx_packed(dev, vq, pkts, count);
 	else
@@ -945,16 +974,18 @@ out_access_unlock:
 	return count;
 }
 
-//报文入队
+//vhost实现报文发送
 uint16_t
 rte_vhost_enqueue_burst(int vid, uint16_t queue_id,
 	struct rte_mbuf **pkts, uint16_t count)
 {
+	//获取对应的virtio设备
 	struct virtio_net *dev = get_device(vid);
 
 	if (!dev)
 		return 0;
 
+	//如果禁用了内建的virtio_net，则直接返回
 	if (unlikely(!(dev->flags & VIRTIO_DEV_BUILTIN_VIRTIO_NET))) {
 		RTE_LOG(ERR, VHOST_DATA,
 			"(%d) %s: built-in vhost net backend is disabled.\n",
@@ -1026,6 +1057,7 @@ parse_ethernet(struct rte_mbuf *m, uint16_t *l4_proto, void **l4_hdr)
 	}
 }
 
+//解析报文，填充mbuf的
 static __rte_always_inline void
 vhost_dequeue_offload(struct virtio_net_hdr *hdr, struct rte_mbuf *m)
 {
@@ -1040,7 +1072,7 @@ vhost_dequeue_offload(struct virtio_net_hdr *hdr, struct rte_mbuf *m)
 	//解析4层协议，解析4层头
 	parse_ethernet(m, &l4_proto, &l4_hdr);
 	if (hdr->flags == VIRTIO_NET_HDR_F_NEEDS_CSUM) {
-		//checksum flags处理
+		//checksum flags处理，打上相关标记位，交给？？？处理
 		if (hdr->csum_start == (m->l2_len + m->l3_len)) {
 			switch (hdr->csum_offset) {
 			case (offsetof(struct tcp_hdr, cksum)):
@@ -1121,9 +1153,11 @@ copy_desc_to_mbuf(struct virtio_net *dev, struct vhost_virtqueue *vq,
 	if (likely(nr_vec > 1))
 		rte_prefetch0((void *)(uintptr_t)buf_vec[1].buf_addr);
 
-	//如果有offload，则预取virtio_net_hdr
 	if (virtio_net_with_host_offload(dev)) {
+		//需要在virtio_net这一层做offload
 		if (unlikely(buf_len < sizeof(struct virtio_net_hdr))) {
+			//首个desc长度不足，读取virtio_net_hdr到tmp_hdr
+			//并使hdr指向它，这里的copy目的仅仅用于分析。virtio_net_hdr头部仍然会copy进mbuf
 			uint64_t len;
 			uint64_t remain = sizeof(struct virtio_net_hdr);
 			uint64_t src;
@@ -1147,6 +1181,7 @@ copy_desc_to_mbuf(struct virtio_net *dev, struct vhost_virtqueue *vq,
 
 			hdr = &tmp_hdr;
 		} else {
+			//长度足够，使hdr直接指向它
 			hdr = (struct virtio_net_hdr *)((uintptr_t)buf_addr);
 			rte_prefetch0(hdr);
 		}
@@ -1158,17 +1193,19 @@ copy_desc_to_mbuf(struct virtio_net *dev, struct vhost_virtqueue *vq,
 	 * for storing the data.
 	 */
 	//如上面所言，通常virtio驱动会至少使用2个desc buffer来做传输
-	//检查其是否有next标记
+	//1个存储描述信息头部，一个存储报文内容
 	if (unlikely(buf_len < dev->vhost_hlen)) {
+		//当前描述符中buffer的长度不足dev的描述信息头部长度
 		buf_offset = dev->vhost_hlen - buf_len;
-		vec_idx++;
+		vec_idx++;//切到下一个描述符
 		buf_addr = buf_vec[vec_idx].buf_addr;
 		buf_iova = buf_vec[vec_idx].buf_iova;
 		buf_len = buf_vec[vec_idx].buf_len;
-		buf_avail  = buf_len - buf_offset;
+		buf_avail  = buf_len - buf_offset;//更新有效长度（减少）
 	} else if (buf_len == dev->vhost_hlen) {
+		//当前描述符中的buffer长度恰等于dev的描述信息头部长度
 		if (unlikely(++vec_idx >= nr_vec))
-			goto out;
+			goto out;//错误情况
 		buf_addr = buf_vec[vec_idx].buf_addr;
 		buf_iova = buf_vec[vec_idx].buf_iova;
 		buf_len = buf_vec[vec_idx].buf_len;
@@ -1180,20 +1217,24 @@ copy_desc_to_mbuf(struct virtio_net *dev, struct vhost_virtqueue *vq,
 		buf_avail = buf_vec[vec_idx].buf_len - dev->vhost_hlen;
 	}
 
+	//预取报文内容
 	rte_prefetch0((void *)(uintptr_t)
 			(buf_addr + buf_offset));
 
+	//print报文内容
 	PRINT_PACKET(dev,
 			(uintptr_t)(buf_addr + buf_offset),
 			(uint32_t)buf_avail, 0);
 
 	mbuf_offset = 0;
-	mbuf_avail  = m->buf_len - RTE_PKTMBUF_HEADROOM;
+	mbuf_avail  = m->buf_len - RTE_PKTMBUF_HEADROOM;//mbuf可存储的空间
+
+	//将描述符中指出的数据copy到mbuf中（如果支持zero copy,则直接指向数据即可）
 	while (1) {
 		uint64_t hpa;
 
 		//mbuf有一个自已的长度，对方送过来的报文有一个自已的长度
-		//如果要把对方的报文放入mbuf，那个copy的长度只能是两者中最小的一个。
+		//如果要把对方的报文放入mbuf，那么copy的长度只能是两者中最小的一个。
 		cpy_len = RTE_MIN(buf_avail, mbuf_avail);
 
 		/*
@@ -1220,6 +1261,7 @@ copy_desc_to_mbuf(struct virtio_net *dev, struct vhost_virtqueue *vq,
 			if (likely(cpy_len > MAX_BATCH_LEN ||
 				   vq->batch_copy_nb_elems >= vq->size ||
 				   (hdr && cur == m))) {
+				//直接将buf_addr指向的内存copy到mbuf中
 				rte_memcpy(rte_pktmbuf_mtod_offset(cur, void *,
 								   mbuf_offset),
 					   (void *)((uintptr_t)(buf_addr +
@@ -1250,6 +1292,7 @@ copy_desc_to_mbuf(struct virtio_net *dev, struct vhost_virtqueue *vq,
 				//这个desc没有指明有下一个，处理结束，退出循环
 				break;
 
+			//此时buf_vec下的buffer长度不如mbuf的长度大，故需要切换buf_vec,mbuf不用切换
 			buf_addr = buf_vec[vec_idx].buf_addr;
 			buf_iova = buf_vec[vec_idx].buf_iova;
 			buf_len = buf_vec[vec_idx].buf_len;
@@ -1300,6 +1343,7 @@ copy_desc_to_mbuf(struct virtio_net *dev, struct vhost_virtqueue *vq,
 	m->pkt_len    += mbuf_offset;
 
 	if (hdr)
+		//处理offload
 		vhost_dequeue_offload(hdr, m);
 
 out:
@@ -1369,7 +1413,8 @@ restore_mbuf(struct rte_mbuf *m)
 //给定队列id后，首先检查队列中是否有内容，队列里存放的是描述符索引
 //通过出队，我们可以拿到描述符索引（desc_indexes)，然后取出描述符
 //(描述符，指出报文存放的首地址，报文的长度，标记位，报文过长时会被分片的下一片）
-//再由描述符定位到实际的报文
+//再由描述符定位到实际的报文，然后copy或者0 copy构建mbuf
+//通知代码未理解
 static __rte_always_inline uint16_t
 virtio_dev_tx_split(struct virtio_net *dev, struct vhost_virtqueue *vq,
 	struct rte_mempool *mbuf_pool, struct rte_mbuf **pkts, uint16_t count)
@@ -1412,8 +1457,10 @@ virtio_dev_tx_split(struct virtio_net *dev, struct vhost_virtqueue *vq,
 
 	VHOST_LOG_DEBUG(VHOST_DATA, "(%d) %s\n", dev->vid, __func__);
 
+	//将count更新为实际本次可收取的数目
 	count = RTE_MIN(count, MAX_PKT_BURST);
 	count = RTE_MIN(count, free_entries);
+
 	VHOST_LOG_DEBUG(VHOST_DATA, "(%d) about to dequeue %u buffers\n",
 			dev->vid, count);
 
@@ -1423,6 +1470,9 @@ virtio_dev_tx_split(struct virtio_net *dev, struct vhost_virtqueue *vq,
 		uint16_t nr_vec = 0;
 		int err;
 
+		//将vq->last_avail_idx+i描述符指出的数据地址填充到buf_vec中
+		//nr_vec用于指出buf_vec中占用的数量
+		//head_idx为首个描述符索引
 		if (unlikely(fill_vec_buf_split(dev, vq,
 						vq->last_avail_idx + i,
 						&nr_vec, buf_vec,
@@ -1430,12 +1480,12 @@ virtio_dev_tx_split(struct virtio_net *dev, struct vhost_virtqueue *vq,
 						VHOST_ACCESS_RO) < 0))
 			break;
 
-		//将读取到的索引存入vq->used->ring中
 		if (likely(dev->dequeue_zero_copy == 0))
 			update_shadow_used_ring_split(vq, head_idx, 0);
 
 		rte_prefetch0((void *)(uintptr_t)buf_vec[0].buf_addr);
 
+		//申请mbuf
 		pkts[i] = rte_pktmbuf_alloc(mbuf_pool);
 		if (unlikely(pkts[i] == NULL)) {
 			RTE_LOG(ERR, VHOST_DATA,
@@ -1443,6 +1493,7 @@ virtio_dev_tx_split(struct virtio_net *dev, struct vhost_virtqueue *vq,
 			break;
 		}
 
+		//将描述符中指定的内容copy到mbuf
 		err = copy_desc_to_mbuf(dev, vq, buf_vec, nr_vec, pkts[i],
 				mbuf_pool);
 		if (unlikely(err)) {
@@ -1473,9 +1524,12 @@ virtio_dev_tx_split(struct virtio_net *dev, struct vhost_virtqueue *vq,
 			TAILQ_INSERT_TAIL(&vq->zmbuf_list, zmbuf, next);
 		}
 	}
+	//增加读指针位置
 	vq->last_avail_idx += i;
 
 	if (likely(dev->dequeue_zero_copy == 0)) {
+
+		//做未完成的功能（实现mbuf数据批量copy)
 		do_data_copy_dequeue(vq);
 		if (unlikely(i < count))
 			vq->shadow_used_idx = i;
@@ -1521,6 +1575,7 @@ virtio_dev_tx_packed(struct virtio_net *dev, struct vhost_virtqueue *vq,
 
 	VHOST_LOG_DEBUG(VHOST_DATA, "(%d) %s\n", dev->vid, __func__);
 
+	//更新收包数
 	count = RTE_MIN(count, MAX_PKT_BURST);
 	VHOST_LOG_DEBUG(VHOST_DATA, "(%d) about to dequeue %u buffers\n",
 			dev->vid, count);
@@ -1531,6 +1586,7 @@ virtio_dev_tx_packed(struct virtio_net *dev, struct vhost_virtqueue *vq,
 		uint16_t desc_count, nr_vec = 0;
 		int err;
 
+		//在内部会增加avail_idx,desc_count返回有多少描述符被使用
 		if (unlikely(fill_vec_buf_packed(dev, vq,
 						vq->last_avail_idx, &desc_count,
 						buf_vec, &nr_vec,
@@ -1602,6 +1658,8 @@ virtio_dev_tx_packed(struct virtio_net *dev, struct vhost_virtqueue *vq,
 	return i;
 }
 
+//自队列queue_id中出队count个报文，将出队的报文存储在pkts中，由于出队会导致ring中无mbuf可填充，故需要
+//在出队后，自mbuf_pool中申请mbuf填充进队列
 uint16_t
 rte_vhost_dequeue_burst(int vid, uint16_t queue_id,
 	struct rte_mempool *mbuf_pool, struct rte_mbuf **pkts, uint16_t count)
@@ -1610,10 +1668,11 @@ rte_vhost_dequeue_burst(int vid, uint16_t queue_id,
 	struct rte_mbuf *rarp_mbuf = NULL;
 	struct vhost_virtqueue *vq;
 
-	dev = get_device(vid);
+	dev = get_device(vid);//取对应的virtio_net设备
 	if (!dev)
 		return 0;
 
+	//内建的virtio_net被禁用，此函数不能工作
 	if (unlikely(!(dev->flags & VIRTIO_DEV_BUILTIN_VIRTIO_NET))) {
 		RTE_LOG(ERR, VHOST_DATA,
 			"(%d) %s: built-in vhost net backend is disabled.\n",
@@ -1621,6 +1680,7 @@ rte_vhost_dequeue_burst(int vid, uint16_t queue_id,
 		return 0;
 	}
 
+	//队列id有效性检查，队列不能是tx队列
 	if (unlikely(!is_valid_virt_queue_idx(queue_id, 1, dev->nr_vring))) {
 		RTE_LOG(ERR, VHOST_DATA, "(%d) %s: invalid virtqueue idx %d.\n",
 			dev->vid, __func__, queue_id);
@@ -1629,15 +1689,19 @@ rte_vhost_dequeue_burst(int vid, uint16_t queue_id,
 
 	vq = dev->virtqueue[queue_id];
 
+	//如果拿不到访问锁，则退出
 	if (unlikely(rte_spinlock_trylock(&vq->access_lock) == 0))
 		return 0;
 
+	//对列未使能，不处理
 	if (unlikely(vq->enabled == 0))
 		goto out_access_unlock;
 
+	//iotlb读加锁
 	if (dev->features & (1ULL << VIRTIO_F_IOMMU_PLATFORM))
 		vhost_user_iotlb_rd_lock(vq);
 
+	//如果ring还未进行地址翻译，则尝试翻译，如果翻译失败，则退出
 	if (unlikely(vq->access_ok == 0))
 		if (unlikely(vring_translate(dev, vq) < 0))
 			goto out;
@@ -1646,6 +1710,7 @@ rte_vhost_dequeue_burst(int vid, uint16_t queue_id,
 	 * Construct a RARP broadcast packet, and inject it to the "pkts"
 	 * array, to looks like that guest actually send such packet.
 	 *
+	 * 构造一个rarp广播报文，并将其注入到pkts数组中，使之看起来是guest实际发送出来的报文一样
 	 * Check user_send_rarp() for more information.
 	 *
 	 * broadcast_rarp shares a cacheline in the virtio_net structure
@@ -1657,19 +1722,25 @@ rte_vhost_dequeue_burst(int vid, uint16_t queue_id,
 	 * and only performing cmpset if the read indicates it is likely to
 	 * be set.
 	 */
+	//如果需要广播rarp,则发送rarp(保证仅一个队列发送此rarp报文）
 	if (unlikely(rte_atomic16_read(&dev->broadcast_rarp) &&
 			rte_atomic16_cmpset((volatile uint16_t *)
 				&dev->broadcast_rarp.cnt, 1, 0))) {
 
+		//构造反向arp请求(已知此dev的mac地址，请求此dev的ip地址）
 		rarp_mbuf = rte_net_make_rarp_packet(mbuf_pool, &dev->mac);
 		if (rarp_mbuf == NULL) {
 			RTE_LOG(ERR, VHOST_DATA,
 				"Failed to make RARP packet.\n");
 			return 0;
 		}
-		count -= 1;
+		count -= 1;//由于需要注入rarp,故count数必须减1（这里可以通过优先去掉memmove操作）
+		//但这种操作并不常见。
 	}
 
+	//这里提供供了两种tx方式，一种名为split,一种名为packet
+	//简单比对了两者的区别，发现仅仅在通知对端的方式上有差别
+	//另外packet情况下indirect方式下desc的存放方式与split也不相同
 	if (vq_is_packed(dev))
 		count = virtio_dev_tx_packed(dev, vq, mbuf_pool, pkts, count);
 	else
@@ -1688,7 +1759,7 @@ out_access_unlock:
 		 * learning table will get updated first.
 		 */
 		memmove(&pkts[1], pkts, count * sizeof(struct rte_mbuf *));
-		pkts[0] = rarp_mbuf;
+		pkts[0] = rarp_mbuf;//注入构造的rarp_mbuf(注入到pkts 0)
 		count += 1;
 	}
 

@@ -39,7 +39,7 @@ struct vring_desc {
 
 struct vring_avail {
 	uint16_t flags;
-	uint16_t idx;
+	uint16_t idx;//队列中目前有效位置（即可存放或可读取的极限位置）
 	uint16_t ring[0];
 };
 

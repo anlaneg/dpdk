@@ -467,6 +467,7 @@ vhost_set_builtin_virtio_net(int vid, bool enable)
 	if (enable)
 		dev->flags |= VIRTIO_DEV_BUILTIN_VIRTIO_NET;
 	else
+		//如果不支持内建的virtio_net，则清楚掉标记
 		dev->flags &= ~VIRTIO_DEV_BUILTIN_VIRTIO_NET;
 }
 

@@ -185,6 +185,7 @@ rte_vhost_gpa_to_vva(struct rte_vhost_memory *mem, uint64_t gpa)
  * @return
  *  the host virtual address on success, 0 on failure
  */
+//将qemu的物理地址转换为本端的虚拟地址
 static __rte_always_inline uint64_t
 rte_vhost_va_from_guest_pa(struct rte_vhost_memory *mem,
 						   uint64_t gpa, uint64_t *len)
@@ -196,10 +197,13 @@ rte_vhost_va_from_guest_pa(struct rte_vhost_memory *mem,
 		r = &mem->regions[i];
 		if (gpa >= r->guest_phys_addr &&
 		    gpa <  r->guest_phys_addr + r->size) {
+			//gpa在r的内存段内
 
+			//可读取的最大长度
 			if (unlikely(*len > r->guest_phys_addr + r->size - gpa))
 				*len = r->guest_phys_addr + r->size - gpa;
 
+			//转换后地址
 			return gpa - r->guest_phys_addr +
 			       r->host_user_addr;
 		}

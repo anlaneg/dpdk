@@ -43,9 +43,9 @@
  * from vring to do scatter RX.
  */
 struct buf_vector {
-	uint64_t buf_iova;
-	uint64_t buf_addr;
-	uint32_t buf_len;
+	uint64_t buf_iova;//buffer的对端地址
+	uint64_t buf_addr;//buffer的本端虚拟地址
+	uint32_t buf_len;//buffer长度
 	uint32_t desc_idx;
 };
 
@@ -93,7 +93,7 @@ struct vring_used_elem_packed {
 struct vhost_virtqueue {
 	union {
 		struct vring_desc	*desc;//存放描述信息
-		struct vring_packed_desc   *desc_packed;
+		struct vring_packed_desc   *desc_packed;//存放packet方式的描述符
 	};
 	union {
 		struct vring_avail	*avail;
@@ -115,14 +115,14 @@ struct vhost_virtqueue {
 
 	/* Backend value to determine if device should started/stopped */
 	int			backend;
-	int			enabled;
-	int			access_ok;
-	rte_spinlock_t		access_lock;//队列保护（防多线程写，读）
+	int			enabled;//指示此ring是否被使能（如未使能，则不能进行收发报文）
+	int			access_ok;//指示ring是否可访问
+	rte_spinlock_t		access_lock;//队列保护锁（防多线程写，读）
 
 	/* Used to notify the guest (trigger interrupt) */
 	int			callfd;
 	/* Currently unused as polling mode is enabled */
-	int			kickfd;
+	int			kickfd;//此queue对应的kick fd
 
 	/* Physical address of used ring, for logging */
 	uint64_t		log_guest_addr;
@@ -140,7 +140,7 @@ struct vhost_virtqueue {
 	uint16_t                shadow_used_idx;
 	struct vhost_vring_addr ring_addrs;//设备的ring地址
 
-	struct batch_copy_elem	*batch_copy_elems;
+	struct batch_copy_elem	*batch_copy_elems;//记录需要batch copy的元素（实现mbuf copy)
 	uint16_t		batch_copy_nb_elems;
 	bool			used_wrap_counter;
 	bool			avail_wrap_counter;
@@ -217,17 +217,23 @@ struct vhost_msg {
 #endif
 
 /* Declare packed ring related bits for older kernels */
+//virtio 1.0未定义此字段
 #ifndef VIRTIO_F_RING_PACKED
 
 #define VIRTIO_F_RING_PACKED 34
 
+/* This #define marks a buffer as continuing via the next field. */
 #define VRING_DESC_F_NEXT	1
+/*marks a buffer as device write-only (otherwise device read-only). */
 #define VRING_DESC_F_WRITE	2
+
+/*means the buffer contains a list of buffer descriptors. */
 #define VRING_DESC_F_INDIRECT	4
 
 #define VRING_DESC_F_AVAIL	(1ULL << 7)
 #define VRING_DESC_F_USED	(1ULL << 15)
 
+//packed方式描述符
 struct vring_packed_desc {
 	uint64_t addr;
 	uint32_t len;
@@ -344,7 +350,7 @@ struct virtio_net {
 	uint32_t		flags;
 	uint16_t		vhost_hlen;
 	/* to tell if we need broadcast rarp packet */
-	rte_atomic16_t		broadcast_rarp;//标记是否需要发送rarp报文
+	rte_atomic16_t		broadcast_rarp;//标记是否需要发送rarp报文（将由发包流程触发）
 	uint32_t		nr_vring;//队列数（收＋发）
 	int			dequeue_zero_copy;//是否入队是zero copy
 	struct vhost_virtqueue	*virtqueue[VHOST_MAX_QUEUE_PAIRS * 2];//设备的所有vhost队列（收＋发）
@@ -641,6 +647,7 @@ uint64_t __vhost_iova_to_vva(struct virtio_net *dev, struct vhost_virtqueue *vq,
 int vring_translate(struct virtio_net *dev, struct vhost_virtqueue *vq);
 void vring_invalidate(struct virtio_net *dev, struct vhost_virtqueue *vq);
 
+//将iova转为虚拟地址
 static __rte_always_inline uint64_t
 vhost_iova_to_vva(struct virtio_net *dev, struct vhost_virtqueue *vq,
 			uint64_t iova, uint64_t *len, uint8_t perm)
@@ -666,7 +673,6 @@ vhost_need_event(uint16_t event_idx, uint16_t new_idx, uint16_t old)
 	return (uint16_t)(new_idx - event_idx - 1) < (uint16_t)(new_idx - old);
 }
 
-//通过eventfd知会对端收包
 static __rte_always_inline void
 vhost_vring_call_split(struct virtio_net *dev, struct vhost_virtqueue *vq)
 {
@@ -692,7 +698,6 @@ vhost_vring_call_split(struct virtio_net *dev, struct vhost_virtqueue *vq)
 		/* Kick the guest if necessary. */
 		if (!(vq->avail->flags & VRING_AVAIL_F_NO_INTERRUPT)
 				&& (vq->callfd >= 0))
-			//触发收包通知
 			eventfd_write(vq->callfd, (eventfd_t)1);
 	}
 }

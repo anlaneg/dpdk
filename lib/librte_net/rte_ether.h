@@ -346,6 +346,7 @@ struct vxlan_gpe_hdr {
  *   - 0: Success
  *   - 1: not a vlan packet
  */
+//处理vlan strip操作
 static inline int rte_vlan_strip(struct rte_mbuf *m)
 {
 	struct ether_hdr *eh

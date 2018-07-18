@@ -3816,10 +3816,12 @@ rte_eth_rx_burst(uint16_t port_id, uint16_t queue_id,
 		return 0;
 	}
 #endif
+	//自队列queue_id处收取nb_pkts个报文，报文存储在rx_pkts数组内
 	nb_rx = (*dev->rx_pkt_burst)(dev->data->rx_queues[queue_id],
 				     rx_pkts, nb_pkts);
 
 #ifdef RTE_ETHDEV_RXTX_CALLBACKS
+	//如果存在收包回调，则逐个调用收包回调
 	if (unlikely(dev->post_rx_burst_cbs[queue_id] != NULL)) {
 		struct rte_eth_rxtx_callback *cb =
 				dev->post_rx_burst_cbs[queue_id];
@@ -3832,6 +3834,7 @@ rte_eth_rx_burst(uint16_t port_id, uint16_t queue_id,
 	}
 #endif
 
+	//返回收到的报文数
 	return nb_rx;
 }
 

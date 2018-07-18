@@ -1044,6 +1044,7 @@ virtio_is_ready(struct virtio_net *dev)
 	return 1;
 }
 
+//设置callfd
 static void
 vhost_user_set_vring_call(struct virtio_net *dev, struct VhostUserMsg *pmsg)
 {
@@ -1065,6 +1066,7 @@ vhost_user_set_vring_call(struct virtio_net *dev, struct VhostUserMsg *pmsg)
 	vq->callfd = file.fd;//设置通知用的fd
 }
 
+//更新kick fd
 static void
 vhost_user_set_vring_kick(struct virtio_net **pdev, struct VhostUserMsg *pmsg)
 {
@@ -1081,6 +1083,7 @@ vhost_user_set_vring_kick(struct virtio_net **pdev, struct VhostUserMsg *pmsg)
 		"vring kick idx:%d file:%d\n", file.index, file.fd);
 
 	/* Interpret ring addresses only when ring is started. */
+	//防止对应的virtqueue相指针未初始化
 	dev = translate_ring_addresses(dev, file.index);
 	if (!dev)
 		return;
@@ -1805,10 +1808,11 @@ vhost_user_msg_handler(int vid, int fd)
 		break;
 
 	case VHOST_USER_SET_VRING_KICK:
+		//设置此qemu对应的kick fd
 		vhost_user_set_vring_kick(&dev, &msg);
 		break;
-		//设置通知用的fd
 	case VHOST_USER_SET_VRING_CALL:
+		//设置call fd
 		vhost_user_set_vring_call(dev, &msg);
 		break;
 
@@ -1826,22 +1830,26 @@ vhost_user_msg_handler(int vid, int fd)
 		break;
 
 	case VHOST_USER_SET_VRING_ENABLE:
+		//使能指定队列
 		vhost_user_set_vring_enable(dev, &msg);
 		break;
-	case VHOST_USER_SEND_RARP://发送rarp
+	case VHOST_USER_SEND_RARP:
+		//响应对端要求的发送rarp
 		vhost_user_send_rarp(dev, &msg);
 		break;
 
-	case VHOST_USER_NET_SET_MTU://设置MTU
+	case VHOST_USER_NET_SET_MTU:
+		//设置dev的MTU
 		ret = vhost_user_net_set_mtu(dev, &msg);
 		break;
 
 	case VHOST_USER_SET_SLAVE_REQ_FD:
-		//接受对端发送过来的pipe的一端
+		//设置slave_req_fd
 		ret = vhost_user_set_req_fd(dev, &msg);
 		break;
 
-	case VHOST_USER_IOTLB_MSG://tlb消息更新及移除
+	case VHOST_USER_IOTLB_MSG:
+		//tlb消息更新及移除
 		ret = vhost_user_iotlb_msg(&dev, &msg);
 		break;
 

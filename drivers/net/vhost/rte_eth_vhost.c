@@ -84,13 +84,13 @@ struct vhost_stats {
 };
 
 struct vhost_queue {
-	int vid;
-	rte_atomic32_t allow_queuing;
-	rte_atomic32_t while_queuing;
+	int vid;//virtio_net设备编号
+	rte_atomic32_t allow_queuing;//此队列时否容许收发包
+	rte_atomic32_t while_queuing;//此标记被加上时，表示正在队列操作，不容许更改allow_queuing
 	struct pmd_internal *internal;
-	struct rte_mempool *mb_pool;//vq使用那个pool上的mbuf
+	struct rte_mempool *mb_pool;//vq使用那个pool上的mbuf（用于为ring补充mbuf)
 	uint16_t port;
-	uint16_t virtqueue_id;//虚队列编号
+	uint16_t virtqueue_id;//vhost_queue对应的virtqueue编号
 	struct vhost_stats stats;
 };
 
@@ -101,7 +101,7 @@ struct pmd_internal {
 	uint16_t max_queues;//队列数
 	int vid;
 	rte_atomic32_t started;
-	uint8_t vlan_strip;
+	uint8_t vlan_strip;//是否需要做vlan strip
 };
 
 struct internal_list {
@@ -378,20 +378,26 @@ eth_vhost_rx(void *q, struct rte_mbuf **bufs, uint16_t nb_bufs)
 	uint16_t i, nb_rx = 0;
 	uint16_t nb_receive = nb_bufs;
 
+	//此队列是否容许收包
 	if (unlikely(rte_atomic32_read(&r->allow_queuing) == 0))
 		return 0;
 
+	//指明当前正在进行队列操作
 	rte_atomic32_set(&r->while_queuing, 1);
 
+	//这个实现不怎么好，再检查并没什么太大的用处，如果在后面的while中发生呢？
+	//所以不如不加。
 	if (unlikely(rte_atomic32_read(&r->allow_queuing) == 0))
 		goto out;
 
 	/* Dequeue packets from guest TX queue */
+	//尽可能收取nb_receive个报文
 	while (nb_receive) {
 		uint16_t nb_pkts;
 		uint16_t num = (uint16_t)RTE_MIN(nb_receive,
 						 VHOST_MAX_PKT_BURST);
 
+		//实现报文收取
 		nb_pkts = rte_vhost_dequeue_burst(r->vid, r->virtqueue_id,
 						  r->mb_pool, &bufs[nb_rx],
 						  num);
@@ -399,9 +405,10 @@ eth_vhost_rx(void *q, struct rte_mbuf **bufs, uint16_t nb_bufs)
 		nb_rx += nb_pkts;
 		nb_receive -= nb_pkts;
 		if (nb_pkts < num)
-			break;
+			break;//队列中没有多余的包，跳出
 	}
 
+	//收包数计数
 	r->stats.pkts += nb_rx;
 
 	for (i = 0; likely(i < nb_rx); i++) {
@@ -411,12 +418,14 @@ eth_vhost_rx(void *q, struct rte_mbuf **bufs, uint16_t nb_bufs)
 		if (r->internal->vlan_strip)
 			rte_vlan_strip(bufs[i]);
 
+		//收包字节计数
 		r->stats.bytes += bufs[i]->pkt_len;
 	}
 
 	vhost_update_packet_xstats(r, bufs, nb_rx);
 
 out:
+	//指明非队列操作中
 	rte_atomic32_set(&r->while_queuing, 0);
 
 	return nb_rx;
@@ -430,9 +439,11 @@ eth_vhost_tx(void *q, struct rte_mbuf **bufs, uint16_t nb_bufs)
 	uint16_t i, nb_tx = 0;
 	uint16_t nb_send = 0;
 
+	//当前不容许对队列操作，返回
 	if (unlikely(rte_atomic32_read(&r->allow_queuing) == 0))
 		return 0;
 
+	//当前正在队列操作，不容许修改allow_queuing
 	rte_atomic32_set(&r->while_queuing, 1);
 
 	if (unlikely(rte_atomic32_read(&r->allow_queuing) == 0))
@@ -457,7 +468,7 @@ eth_vhost_tx(void *q, struct rte_mbuf **bufs, uint16_t nb_bufs)
 	}
 
 	/* Enqueue packets to guest RX queue */
-	//死循环发送，直接发送成功
+	//尽可能多的发送报文
 	while (nb_send) {
 		uint16_t nb_pkts;
 		uint16_t num = (uint16_t)RTE_MIN(nb_send,
@@ -469,12 +480,12 @@ eth_vhost_tx(void *q, struct rte_mbuf **bufs, uint16_t nb_bufs)
 		nb_tx += nb_pkts;
 		nb_send -= nb_pkts;
 		if (nb_pkts < num)
-			break;
+			break;//未完全发送出去，说明底层buffer可能不够，跳出
 	}
 
 	//统计处理
 	r->stats.pkts += nb_tx;
-	r->stats.missed_pkts += nb_bufs - nb_tx;
+	r->stats.missed_pkts += nb_bufs - nb_tx;//未发送出去的报文数
 
 	for (i = 0; likely(i < nb_tx); i++)
 		r->stats.bytes += bufs[i]->pkt_len;
@@ -488,6 +499,7 @@ eth_vhost_tx(void *q, struct rte_mbuf **bufs, uint16_t nb_bufs)
 	for (i = nb_tx; i < nb_bufs; i++)
 		vhost_count_multicast_broadcast(r, bufs[i]);
 
+	//释放未发送成功的报文
 	for (i = 0; likely(i < nb_tx); i++)
 		rte_pktmbuf_free(bufs[i]);
 out:
@@ -665,6 +677,7 @@ eth_vhost_install_intr(struct rte_eth_dev *dev)
 	return 0;
 }
 
+//变更队列状态（vhost是自协商的，而dpdk也有一组自已的start,stop管理方式，故需要这个的融合函数）
 static void
 update_queuing_status(struct rte_eth_dev *dev)
 {
@@ -678,13 +691,14 @@ update_queuing_status(struct rte_eth_dev *dev)
 
 	if (rte_atomic32_read(&internal->started) == 0 ||
 	    rte_atomic32_read(&internal->dev_attached) == 0)
-		allow_queuing = 0;
+		allow_queuing = 0;//设备未启动，不容许收包
 
 	/* Wait until rx/tx_pkt_burst stops accessing vhost device */
 	for (i = 0; i < dev->data->nb_rx_queues; i++) {
 		vq = dev->data->rx_queues[i];
 		if (vq == NULL)
 			continue;
+		//设置收队列的许可标记
 		rte_atomic32_set(&vq->allow_queuing, allow_queuing);
 		while (rte_atomic32_read(&vq->while_queuing))
 			rte_pause();
@@ -694,7 +708,9 @@ update_queuing_status(struct rte_eth_dev *dev)
 		vq = dev->data->tx_queues[i];
 		if (vq == NULL)
 			continue;
+		//设置发队列的许可标记
 		rte_atomic32_set(&vq->allow_queuing, allow_queuing);
+		//正在进行队列操作，等待变更生效
 		while (rte_atomic32_read(&vq->while_queuing))
 			rte_pause();
 	}
@@ -1289,7 +1305,7 @@ eth_dev_vhost_create(struct rte_vdev_device *dev, char *iface_name,
 
 	eth_dev->dev_ops = &ops;
 
-	//挂载收包，发包函数
+	//挂载vhost设备的收包，发包函数
 	/* finally assign rx and tx ops */
 	eth_dev->rx_pkt_burst = eth_vhost_rx;
 	eth_dev->tx_pkt_burst = eth_vhost_tx;

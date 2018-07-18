@@ -711,6 +711,7 @@ rte_vhost_driver_set_features(const char *path, uint64_t features)
 		/* Anyone setting feature bits is implementing their own vhost
 		 * device backend.
 		 */
+		//功能位被重置，设置不用使用内建的virtio_net
 		vsocket->use_builtin_virtio_net = false;
 	}
 	pthread_mutex_unlock(&vhost_user.mutex);
@@ -919,6 +920,7 @@ rte_vhost_driver_register(const char *path, uint64_t flags)
 	 * rte_vhost_driver_set_features(), which will overwrite following
 	 * two values.
 	 */
+	//默认使用内建的virtio_net
 	vsocket->use_builtin_virtio_net = true;
 	//标记支持的功能
 	vsocket->supported_features = VIRTIO_NET_SUPPORTED_FEATURES;
