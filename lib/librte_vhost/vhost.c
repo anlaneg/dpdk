@@ -123,6 +123,7 @@ free_device(struct virtio_net *dev)
 	rte_free(dev);
 }
 
+//实现vq->desc,vq->avali,vq->used地址翻译
 static int
 vring_translate_split(struct virtio_net *dev, struct vhost_virtqueue *vq)
 {
@@ -213,6 +214,7 @@ out:
 	return 0;
 }
 
+//将vring置为无效
 void
 vring_invalidate(struct virtio_net *dev, struct vhost_virtqueue *vq)
 {

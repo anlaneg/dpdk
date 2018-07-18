@@ -330,6 +330,7 @@ vhost_user_iotlb_init(struct virtio_net *dev, int vq_index)
 	int socket = 0;
 
 	if (vq->iotlb_pool) {
+		//初始化iotlb_pool
 		/*
 		 * The cache has already been initialized,
 		 * just drop all cached and pending entries.
@@ -349,7 +350,7 @@ vhost_user_iotlb_init(struct virtio_net *dev, int vq_index)
 	TAILQ_INIT(&vq->iotlb_list);
 	TAILQ_INIT(&vq->iotlb_pending_list);
 
-	//找对应iotlb池
+	//找对应的iotlb池
 	snprintf(pool_name, sizeof(pool_name), "iotlb_cache_%d_%d",
 			dev->vid, vq_index);
 

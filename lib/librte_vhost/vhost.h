@@ -357,7 +357,7 @@ struct virtio_net {
 #define IF_NAME_SZ (PATH_MAX > IFNAMSIZ ? PATH_MAX : IFNAMSIZ)
 	char			ifname[IF_NAME_SZ];//设备名称
 	uint64_t		log_size;//map的内存大小
-	uint64_t		log_base;//map的内存起始地址
+	uint64_t		log_base;//log map的内存起始地址
 	uint64_t		log_addr;//map的可用于log的起始地址
 	struct ether_addr	mac;
 	uint16_t		mtu;//设备的mtu
@@ -451,7 +451,7 @@ vhost_log_cache_sync(struct virtio_net *dev, struct vhost_virtqueue *vq)
 
 	if (likely(((dev->features & (1ULL << VHOST_F_LOG_ALL)) == 0) ||
 		   !dev->log_base))
-		return;
+		return;//不记录log或者没有log_base时直接返回
 
 	log_base = (unsigned long *)(uintptr_t)dev->log_base;
 

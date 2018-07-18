@@ -215,17 +215,20 @@ struct virtqueue {
 struct virtio_net_hdr {
 #define VIRTIO_NET_HDR_F_NEEDS_CSUM 1    /**< Use csum_start,csum_offset*/
 #define VIRTIO_NET_HDR_F_DATA_VALID 2    /**< Checksum is valid */
-	uint8_t flags;
+	uint8_t flags;//是否需要checksum,checksum是否有效
 #define VIRTIO_NET_HDR_GSO_NONE     0    /**< Not a GSO frame */
 #define VIRTIO_NET_HDR_GSO_TCPV4    1    /**< GSO frame, IPv4 TCP (TSO) */
 #define VIRTIO_NET_HDR_GSO_UDP      3    /**< GSO frame, IPv4 UDP (UFO) */
 #define VIRTIO_NET_HDR_GSO_TCPV6    4    /**< GSO frame, IPv6 TCP */
 #define VIRTIO_NET_HDR_GSO_ECN      0x80 /**< TCP has ECN set */
 	uint8_t gso_type;
+	//指向4层负载
 	uint16_t hdr_len;     /**< Ethernet + IP + tcp/udp hdrs */
 	uint16_t gso_size;    /**< Bytes to append to hdr_len per frame */ //gso的大小（例如tso segment)
-	uint16_t csum_start;  /**< Position to start checksumming from */ //用来计算checksum的起始位置
-	uint16_t csum_offset; /**< Offset after that to place checksum */ //checksum数据头部偏移（例如跳过tcp头，udp头，scp头）
+	//用来计算到协议字段的起始位置（csum_start＋csum_offset)即可指向checksum字段
+	uint16_t csum_start;  /**< Position to start checksumming from */
+	//到checksum字段需要跳过的偏移（例如跳过tcp checksum时，我们需要偏移过tcp部分开始16个字节，看tcphdr）
+	uint16_t csum_offset; /**< Offset after that to place checksum */
 };
 
 /**

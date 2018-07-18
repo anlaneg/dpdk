@@ -82,6 +82,7 @@ do_flush_shadow_used_ring_split(struct virtio_net *dev,
 			struct vhost_virtqueue *vq,
 			uint16_t to, uint16_t from, uint16_t size)
 {
+	//将shadow_used_split中的信息更新到used中
 	rte_memcpy(&vq->used->ring[to],
 			&vq->shadow_used_split[from],
 			size * sizeof(struct vring_used_elem));
@@ -121,6 +122,7 @@ flush_shadow_used_ring_split(struct virtio_net *dev, struct vhost_virtqueue *vq)
 		sizeof(vq->used->idx));
 }
 
+//记录哪些描述符已被使用完成
 static __rte_always_inline void
 update_shadow_used_ring_split(struct vhost_virtqueue *vq,
 			 uint16_t desc_idx, uint16_t len)
@@ -212,6 +214,7 @@ do_data_copy_enqueue(struct virtio_net *dev, struct vhost_virtqueue *vq)
 	vq->batch_copy_nb_elems = 0;
 }
 
+//实现batch信息的copy
 static inline void
 do_data_copy_dequeue(struct vhost_virtqueue *vq)
 {
@@ -246,6 +249,7 @@ virtio_enqueue_offload(struct rte_mbuf *m_buf, struct virtio_net_hdr *net_hdr)
 		net_hdr->flags = VIRTIO_NET_HDR_F_NEEDS_CSUM;
 		net_hdr->csum_start = m_buf->l2_len + m_buf->l3_len;
 
+		//记录到checksum字段的offset
 		switch (csum_l4) {
 		case PKT_TX_TCP_CKSUM:
 			net_hdr->csum_offset = (offsetof(struct tcp_hdr,
@@ -269,6 +273,7 @@ virtio_enqueue_offload(struct rte_mbuf *m_buf, struct virtio_net_hdr *net_hdr)
 
 	/* IP cksum verification cannot be bypassed, then calculate here */
 	if (m_buf->ol_flags & PKT_TX_IP_CKSUM) {
+		//如果mbuf中指明需要做checksum offload,则此处需要计算ip层checksum
 		struct ipv4_hdr *ipv4_hdr;
 
 		ipv4_hdr = rte_pktmbuf_mtod_offset(m_buf, struct ipv4_hdr *,
@@ -668,6 +673,7 @@ copy_mbuf_to_desc(struct virtio_net *dev, struct vhost_virtqueue *vq,
 	int error = 0;
 
 	if (unlikely(m == NULL)) {
+		//mbuf为空，报错
 		error = -1;
 		goto out;
 	}
@@ -677,9 +683,11 @@ copy_mbuf_to_desc(struct virtio_net *dev, struct vhost_virtqueue *vq,
 	buf_len = buf_vec[vec_idx].buf_len;
 
 	if (nr_vec > 1)
+		//vector数量为1时，没办法预取
 		rte_prefetch0((void *)(uintptr_t)buf_vec[1].buf_addr);
 
 	if (unlikely(buf_len < dev->vhost_hlen && nr_vec <= 1)) {
+		//空间不足以存在dev->vhost_hlen,报错
 		error = -1;
 		goto out;
 	}
@@ -687,6 +695,7 @@ copy_mbuf_to_desc(struct virtio_net *dev, struct vhost_virtqueue *vq,
 	hdr_mbuf = m;
 	hdr_addr = buf_addr;
 	if (unlikely(buf_len < dev->vhost_hlen))
+		//首个desc空间不足以存放dev->vhost_hlen时，使hdr指向临时空间
 		hdr = &tmp_hdr;
 	else
 		hdr = (struct virtio_net_hdr_mrg_rxbuf *)(uintptr_t)hdr_addr;
@@ -695,6 +704,8 @@ copy_mbuf_to_desc(struct virtio_net *dev, struct vhost_virtqueue *vq,
 		dev->vid, num_buffers);
 
 	if (unlikely(buf_len < dev->vhost_hlen)) {
+		//描述符的长度不足vhost_len,先跳过buf_vec[vec_idx](第一个描述符）
+		//后面再处理它
 		buf_offset = dev->vhost_hlen - buf_len;
 		vec_idx++;
 		buf_addr = buf_vec[vec_idx].buf_addr;
@@ -711,10 +722,11 @@ copy_mbuf_to_desc(struct virtio_net *dev, struct vhost_virtqueue *vq,
 	while (mbuf_avail != 0 || m->next != NULL) {
 		/* done with current buf, get the next one */
 		if (buf_avail == 0) {
+			//此时当前描述符空间已使用完，切换到下一个空间
 			vec_idx++;
 			if (unlikely(vec_idx >= nr_vec)) {
 				error = -1;
-				goto out;
+				goto out;//超限，报错
 			}
 
 			buf_addr = buf_vec[vec_idx].buf_addr;
@@ -731,6 +743,7 @@ copy_mbuf_to_desc(struct virtio_net *dev, struct vhost_virtqueue *vq,
 
 		/* done with current mbuf, get the next one */
 		if (mbuf_avail == 0) {
+			//此时mbuf中的空间已拷贝完成，切换下一个mbuf
 			m = m->next;
 
 			mbuf_offset = 0;
@@ -740,12 +753,14 @@ copy_mbuf_to_desc(struct virtio_net *dev, struct vhost_virtqueue *vq,
 		if (hdr_addr) {
 			virtio_enqueue_offload(hdr_mbuf, &hdr->hdr);
 			if (rxvq_is_mergeable(dev))
+				//如果启用mergeable,则设置num_buffers
 				ASSIGN_UNLESS_EQUAL(hdr->num_buffers,
 						num_buffers);
 
 			if (unlikely(hdr == &tmp_hdr)) {
+				//首段desc空间过小，不足以存放virtio_net_hdr_mrg_rxbuf
 				uint64_t len;
-				uint64_t remain = dev->vhost_hlen;
+				uint64_t remain = dev->vhost_hlen;//XXX 这块是个bug(如果remain使用dev->vhost_hlen,则必然copy超界）
 				uint64_t src = (uint64_t)(uintptr_t)hdr, dst;
 				uint64_t iova = buf_vec[0].buf_iova;
 				uint16_t hdr_vec_idx = 0;
@@ -782,14 +797,17 @@ copy_mbuf_to_desc(struct virtio_net *dev, struct vhost_virtqueue *vq,
 
 		if (likely(cpy_len > MAX_BATCH_LEN ||
 					vq->batch_copy_nb_elems >= vq->size)) {
+			//直接将mbuf内容copy到描述符指向的空间
 			rte_memcpy((void *)((uintptr_t)(buf_addr + buf_offset)),
 				rte_pktmbuf_mtod_offset(m, void *, mbuf_offset),
 				cpy_len);
+
 			vhost_log_cache_write(dev, vq, buf_iova + buf_offset,
 					cpy_len);
 			PRINT_PACKET(dev, (uintptr_t)(buf_addr + buf_offset),
 				cpy_len, 0);
 		} else {
+			//记录此次copy到batch_copy中
 			batch_copy[vq->batch_copy_nb_elems].dst =
 				(void *)((uintptr_t)(buf_addr + buf_offset));
 			batch_copy[vq->batch_copy_nb_elems].src =
@@ -832,6 +850,8 @@ virtio_dev_rx_split(struct virtio_net *dev, struct vhost_virtqueue *vq,
 		uint32_t pkt_len = pkts[pkt_idx]->pkt_len + dev->vhost_hlen;
 		uint16_t nr_vec = 0;
 
+		//预留足够的描述符，使用的描述符来源于avail,要存放pkt_len,出参num_buffers
+		//标明我们将占用多少个avail描述符（可能会是链式的），nr_vec标明我们使用多少个描述符
 		if (unlikely(reserve_avail_buf_split(dev, vq,
 						pkt_len, buf_vec, &num_buffers,
 						avail_head, &nr_vec) < 0)) {
@@ -848,7 +868,7 @@ virtio_dev_rx_split(struct virtio_net *dev, struct vhost_virtqueue *vq,
 			dev->vid, vq->last_avail_idx,
 			vq->last_avail_idx + num_buffers);
 
-		//将mbuf的内容copy到描述符
+		//将pkts[pkt_idx] mbuf的内容copy到描述符
 		if (copy_mbuf_to_desc(dev, vq, pkts[pkt_idx],
 						buf_vec, nr_vec,
 						num_buffers) < 0) {
@@ -859,6 +879,7 @@ virtio_dev_rx_split(struct virtio_net *dev, struct vhost_virtqueue *vq,
 		vq->last_avail_idx += num_buffers;
 	}
 
+	//完成batch copy
 	do_data_copy_enqueue(dev, vq);
 
 	if (likely(vq->shadow_used_idx)) {
@@ -1481,6 +1502,7 @@ virtio_dev_tx_split(struct virtio_net *dev, struct vhost_virtqueue *vq,
 			break;
 
 		if (likely(dev->dequeue_zero_copy == 0))
+			//记录head_idx已被使用
 			update_shadow_used_ring_split(vq, head_idx, 0);
 
 		rte_prefetch0((void *)(uintptr_t)buf_vec[0].buf_addr);

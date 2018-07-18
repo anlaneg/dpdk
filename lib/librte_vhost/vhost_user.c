@@ -308,7 +308,7 @@ vhost_user_set_vring_num(struct virtio_net *dev,
 		}
 
 	} else {
-		//按消息创建shadow_used_ring
+		//按消息创建shadow_used_ring，有vq->size个struct vring_used_elem
 		vq->shadow_used_split = rte_malloc(NULL,
 				vq->size * sizeof(struct vring_used_elem),
 				RTE_CACHE_LINE_SIZE);
