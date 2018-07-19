@@ -615,7 +615,7 @@ translate_ring_addresses(struct virtio_net *dev, int vq_index)
 		return dev;
 	}
 
-	//更新队列的指针
+	//????
 	if (vq->last_used_idx != vq->used->idx) {
 		RTE_LOG(WARNING, VHOST_CONFIG,
 			"last_used_idx (%u) and vq->used->idx (%u) mismatches; "
@@ -974,7 +974,7 @@ vhost_user_set_mem_table(struct virtio_net **pdev, struct VhostUserMsg *pmsg)
 	for (i = 0; i < dev->nr_vring; i++) {
 		struct vhost_virtqueue *vq = dev->virtqueue[i];
 
-		//如果vq已设置，则重新执行地址转换
+		//如果vq已设置，则先置成invalidate,再重新执行地址转换
 		if (vq->desc || vq->avail || vq->used) {
 			/*
 			 * If the memory table got updated, the ring addresses
@@ -1004,6 +1004,7 @@ err_mmap:
 	return -1;
 }
 
+//检查此vq是否已可以工作了
 static bool
 vq_is_ready(struct virtio_net *dev, struct vhost_virtqueue *vq)
 {
@@ -1031,7 +1032,7 @@ virtio_is_ready(struct virtio_net *dev)
 	if (dev->nr_vring == 0)
 		return 0;
 
-	//检查是否所有vr都ready了
+	//检查是否所有virtqueue都ready了
 	for (i = 0; i < dev->nr_vring; i++) {
 		vq = dev->virtqueue[i];
 
@@ -1401,9 +1402,11 @@ is_vring_iotlb_invalidate(struct vhost_virtqueue *vq,
 {
 	uint64_t istart, iend, vstart, vend;
 
+	//需要置无效的一段内存[istart,iend]
 	istart = imsg->iova;
 	iend = istart + imsg->size - 1;
 
+	//分别检查此段内存是否在desc,avail,used范围内
 	vstart = (uintptr_t)vq->desc;
 	vend = vstart + sizeof(struct vring_desc) * vq->size - 1;
 	if (vstart <= iend && istart <= vend)
@@ -1459,6 +1462,7 @@ vhost_user_iotlb_msg(struct virtio_net **pdev, struct VhostUserMsg *msg)
 			vhost_user_iotlb_cache_remove(vq, imsg->iova,
 					imsg->size);
 
+			//检查此消息是否会导致vq无效，如果是，置其无效
 			if (is_vring_iotlb_invalidate(vq, imsg))
 				vring_invalidate(dev, vq);
 		}
@@ -1881,6 +1885,7 @@ skip_to_reply:
 		send_vhost_reply(fd, &msg);
 	}
 
+	//如果设备已协商完成，可以工作，则触发new_device事件
 	if (!(dev->flags & VIRTIO_DEV_RUNNING) && virtio_is_ready(dev)) {
 		dev->flags |= VIRTIO_DEV_READY;
 
@@ -1901,6 +1906,7 @@ skip_to_reply:
 	if (vdpa_dev && virtio_is_ready(dev) &&
 			!(dev->flags & VIRTIO_DEV_VDPA_CONFIGURED) &&
 			msg.request.master == VHOST_USER_SET_VRING_ENABLE) {
+		//置vdap_dev　ready
 		if (vdpa_dev->ops->dev_conf)
 			vdpa_dev->ops->dev_conf(dev->vid);
 		dev->flags |= VIRTIO_DEV_VDPA_CONFIGURED;

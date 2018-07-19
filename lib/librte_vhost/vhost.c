@@ -129,6 +129,7 @@ vring_translate_split(struct virtio_net *dev, struct vhost_virtqueue *vq)
 {
 	uint64_t req_size, size;
 
+	//转换desc
 	req_size = sizeof(struct vring_desc) * vq->size;
 	size = req_size;
 	vq->desc = (struct vring_desc *)(uintptr_t)vhost_iova_to_vva(dev, vq,
@@ -137,6 +138,7 @@ vring_translate_split(struct virtio_net *dev, struct vhost_virtqueue *vq)
 	if (!vq->desc || size != req_size)
 		return -1;
 
+	//转换avail
 	req_size = sizeof(struct vring_avail);
 	req_size += sizeof(uint16_t) * vq->size;
 	if (dev->features & (1ULL << VIRTIO_RING_F_EVENT_IDX))
@@ -148,6 +150,7 @@ vring_translate_split(struct virtio_net *dev, struct vhost_virtqueue *vq)
 	if (!vq->avail || size != req_size)
 		return -1;
 
+	//转换used
 	req_size = sizeof(struct vring_used);
 	req_size += sizeof(struct vring_used_elem) * vq->size;
 	if (dev->features & (1ULL << VIRTIO_RING_F_EVENT_IDX))

@@ -105,7 +105,7 @@ struct vhost_virtqueue {
 	};
 	uint32_t		size;//队列大小（必须为2的N次方)
 
-	uint16_t		last_avail_idx;//队列上一次收取位置
+	uint16_t		last_avail_idx;//队列待收取位置
 	uint16_t		last_used_idx;//队列上一次发送位置
 	/* Last used index we notify to front end. */
 	uint16_t		signalled_used;

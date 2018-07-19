@@ -340,7 +340,7 @@ map_one_desc(struct virtio_net *dev, struct vhost_virtqueue *vq,
 	return 0;
 }
 
-//将avail_idex描述符指出的数据地址填充到出参buf_vec中
+//将avail_idex描述符指出的数据地址填充到出参buf_vec中（需要考虑地址转换，需要考虑物理地址不连续）
 //出参nr_vec用于指出buf_vec中占用的数量
 //出参desc_chain_head为首个描述符索引
 //出参desc_chain_len为描述符链的buffer长度
@@ -1431,11 +1431,12 @@ restore_mbuf(struct rte_mbuf *m)
 	}
 }
 
-//给定队列id后，首先检查队列中是否有内容，队列里存放的是描述符索引
-//通过出队，我们可以拿到描述符索引（desc_indexes)，然后取出描述符
-//(描述符，指出报文存放的首地址，报文的长度，标记位，报文过长时会被分片的下一片）
-//再由描述符定位到实际的报文，然后copy或者0 copy构建mbuf
-//通知代码未理解
+//自队列vq中收包，首先检查队列中是否entries，vq->avail->ring队列里存放的是描述符索引
+//通过vq->last_avail_idx指针，我们可以拿到首个描述符索引（desc_indexes)，然后通过
+//vq->desc数组取出报文描述符（vq->desc数组中每个elem表示一个报文，如果报文过大时，elem会被组织
+//成一个描述符list,并在链表头上标注VRING_DESC_F_INDIRECT）
+//再由描述符定位到实际的报文，然后copy或者zero copy构建mbuf
+//
 static __rte_always_inline uint16_t
 virtio_dev_tx_split(struct virtio_net *dev, struct vhost_virtqueue *vq,
 	struct rte_mempool *mbuf_pool, struct rte_mbuf **pkts, uint16_t count)
@@ -1444,6 +1445,7 @@ virtio_dev_tx_split(struct virtio_net *dev, struct vhost_virtqueue *vq,
 	uint16_t free_entries;
 
 	if (unlikely(dev->dequeue_zero_copy)) {
+		//zero copy代码未读
 		struct zcopy_mbuf *zmbuf, *next;
 		int nr_updated = 0;
 
@@ -1474,7 +1476,7 @@ virtio_dev_tx_split(struct virtio_net *dev, struct vhost_virtqueue *vq,
 	free_entries = *((volatile uint16_t *)&vq->avail->idx) -
 			vq->last_avail_idx;
 	if (free_entries == 0)
-		return 0;
+		return 0;//队列中无报文可收取
 
 	VHOST_LOG_DEBUG(VHOST_DATA, "(%d) %s\n", dev->vid, __func__);
 
@@ -1491,7 +1493,8 @@ virtio_dev_tx_split(struct virtio_net *dev, struct vhost_virtqueue *vq,
 		uint16_t nr_vec = 0;
 		int err;
 
-		//将vq->last_avail_idx+i描述符指出的数据地址填充到buf_vec中
+		//将vq->last_avail_idx+i描述符指向的buffer地址映射并填充到buf_vec中
+		//注意此此填充仅对应一个报文（但可以是巨帧，此时会有多个mbuf通过next指针串连）
 		//nr_vec用于指出buf_vec中占用的数量
 		//head_idx为首个描述符索引
 		if (unlikely(fill_vec_buf_split(dev, vq,
@@ -1502,7 +1505,7 @@ virtio_dev_tx_split(struct virtio_net *dev, struct vhost_virtqueue *vq,
 			break;
 
 		if (likely(dev->dequeue_zero_copy == 0))
-			//记录head_idx已被使用
+			//记录head_idx已被使用（注意：还没有使用完，还需要使用其对应的buffer)
 			update_shadow_used_ring_split(vq, head_idx, 0);
 
 		rte_prefetch0((void *)(uintptr_t)buf_vec[0].buf_addr);
@@ -1515,7 +1518,7 @@ virtio_dev_tx_split(struct virtio_net *dev, struct vhost_virtqueue *vq,
 			break;
 		}
 
-		//将描述符中指定的内容copy到mbuf
+		//自mbuf_pool中申请mbuf,并将描述符中指定的数据内容copy到mbuf
 		err = copy_desc_to_mbuf(dev, vq, buf_vec, nr_vec, pkts[i],
 				mbuf_pool);
 		if (unlikely(err)) {
@@ -1546,11 +1549,11 @@ virtio_dev_tx_split(struct virtio_net *dev, struct vhost_virtqueue *vq,
 			TAILQ_INSERT_TAIL(&vq->zmbuf_list, zmbuf, next);
 		}
 	}
-	//增加读指针位置
+
+	//切换到下一个报文的描述符
 	vq->last_avail_idx += i;
 
 	if (likely(dev->dequeue_zero_copy == 0)) {
-
 		//做未完成的功能（实现mbuf数据批量copy)
 		do_data_copy_dequeue(vq);
 		if (unlikely(i < count))
