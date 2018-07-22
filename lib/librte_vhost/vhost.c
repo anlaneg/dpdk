@@ -829,6 +829,7 @@ int rte_vhost_get_vring_base(int vid, uint16_t queue_id,
 	return 0;
 }
 
+//设置ring的有效位置
 int rte_vhost_set_vring_base(int vid, uint16_t queue_id,
 		uint16_t last_avail_idx, uint16_t last_used_idx)
 {
