@@ -69,6 +69,7 @@ static int eth_ring_logtype;
 	rte_log(RTE_LOG_ ## level, eth_ring_logtype, \
 		"%s(): " fmt "\n", __func__, ##args)
 
+//ring设备收包
 static uint16_t
 eth_ring_rx(void *q, struct rte_mbuf **bufs, uint16_t nb_bufs)
 {
@@ -83,6 +84,7 @@ eth_ring_rx(void *q, struct rte_mbuf **bufs, uint16_t nb_bufs)
 	return nb_rx;
 }
 
+//ring设备发包
 static uint16_t
 eth_ring_tx(void *q, struct rte_mbuf **bufs, uint16_t nb_bufs)
 {
