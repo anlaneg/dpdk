@@ -362,6 +362,7 @@ fill_vec_buf_split(struct virtio_net *dev, struct vhost_virtqueue *vq,
 	*desc_chain_head = idx;
 
 	//如果此描述符是the buffer contains a list of buffer descriptors
+	//则其addr中所指向的数据，仅仅是一个由dlen/sizeof(struct vring_desc)个desc组成的链表
 	if (vq->desc[idx].flags & VRING_DESC_F_INDIRECT) {
 		dlen = vq->desc[idx].len;
 		descs = (struct vring_desc *)(uintptr_t)

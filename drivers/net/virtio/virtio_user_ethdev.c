@@ -327,12 +327,13 @@ virtio_user_notify_queue(struct virtio_hw *hw, struct virtqueue *vq)
 	uint64_t buf = 1;
 	struct virtio_user_dev *dev = virtio_user_get_dev(hw);
 
+	//收到通知，且被通知的队列为控制队列，处理控制消息
 	if (hw->cvq && (hw->cvq->vq == vq)) {
 		virtio_user_handle_cq(dev, vq->vq_queue_index);
 		return;
 	}
 
-	//触发事件
+	//其它队列，则通过kickfds再次触发事件
 	if (write(dev->kickfds[vq->vq_queue_index], &buf, sizeof(buf)) < 0)
 		PMD_DRV_LOG(ERR, "failed to kick backend: %s",
 			    strerror(errno));
@@ -354,6 +355,7 @@ const struct virtio_pci_ops virtio_user_ops = {
 	.get_queue_num	= virtio_user_get_queue_num,
 	.setup_queue	= virtio_user_setup_queue,
 	.del_queue	= virtio_user_del_queue,
+	//通知指定队列（如果是控制队列，则会触发控制队列处理消息）
 	.notify_queue	= virtio_user_notify_queue,
 };
 

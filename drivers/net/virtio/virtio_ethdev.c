@@ -249,6 +249,7 @@ virtio_send_command(struct virtnet_ctl *cvq, struct virtio_pmd_ctrl *ctrl,
 	return result->status;
 }
 
+//给对端发送队列队set命令
 static int
 virtio_set_multiple_queues(struct rte_eth_dev *dev, uint16_t nb_queues)
 {

@@ -555,6 +555,7 @@ virtio_user_handle_mq(struct virtio_user_dev *dev, uint16_t q_pairs)
 	return ret;
 }
 
+//处理收到的控制消息（控制消息存放在desc的idx_hdr描述符下）
 static uint32_t
 virtio_user_handle_ctrl_msg(struct virtio_user_dev *dev, struct vring *vring,
 			    uint16_t idx_hdr)
@@ -579,6 +580,7 @@ virtio_user_handle_ctrl_msg(struct virtio_user_dev *dev, struct vring *vring,
 	n_descs++;
 
 	hdr = (void *)(uintptr_t)vring->desc[idx_hdr].addr;
+	//收到对端发送过来的队列队set命令
 	if (hdr->class == VIRTIO_NET_CTRL_MQ &&
 	    hdr->cmd == VIRTIO_NET_CTRL_MQ_VQ_PAIRS_SET) {
 		uint16_t queues;
@@ -593,6 +595,7 @@ virtio_user_handle_ctrl_msg(struct virtio_user_dev *dev, struct vring *vring,
 	return n_descs;
 }
 
+//处理设备dev的queue_idx号vring上的事件
 void
 virtio_user_handle_cq(struct virtio_user_dev *dev, uint16_t queue_idx)
 {
@@ -602,17 +605,23 @@ virtio_user_handle_cq(struct virtio_user_dev *dev, uint16_t queue_idx)
 	struct vring *vring = &dev->vrings[queue_idx];
 
 	/* Consume avail ring, using used ring idx as first one */
+	//如果used->idx与avail->idx不相等，则说明avail->idx中新增了数据
+	//读端维护used->idx,写端维护avail->idx
 	while (vring->used->idx != vring->avail->idx) {
+		//取出未读取的avail_idx及其对应的描述符索引（读端依赖used->idx)
 		avail_idx = (vring->used->idx) & (vring->num - 1);
 		desc_idx = vring->avail->ring[avail_idx];
 
+		//处理消息（并计算有多个描述符被消费）
 		n_descs = virtio_user_handle_ctrl_msg(dev, vring, desc_idx);
 
+		//更新used ring,标记avail_idx号描述符其包含的n_descs个描述符已被使用
 		/* Update used ring */
 		uep = &vring->used->ring[avail_idx];
 		uep->id = avail_idx;
 		uep->len = n_descs;
 
+		//更新已处理的idx
 		vring->used->idx++;
 	}
 }
