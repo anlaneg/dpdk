@@ -627,6 +627,7 @@ rte_eth_dev_get_name_by_port(uint16_t port_id, char *name)
 	return 0;
 }
 
+//通过名称查找port_id
 int
 rte_eth_dev_get_port_by_name(const char *name, uint16_t *port_id)
 {
@@ -3741,6 +3742,7 @@ rte_eth_add_rx_callback(uint16_t port_id, uint16_t queue_id,
 	return cb;
 }
 
+//注册收包回调fn到rte_eth_devices[port_id].post_rx_burst_cbs[queue_id]
 const struct rte_eth_rxtx_callback *
 rte_eth_add_first_rx_callback(uint16_t port_id, uint16_t queue_id,
 		rte_rx_callback_fn fn, void *user_param)

@@ -40,13 +40,14 @@ static pthread_mutex_t mp_mutex_action = PTHREAD_MUTEX_INITIALIZER;
 
 struct action_entry {
 	TAILQ_ENTRY(action_entry) next;
-	char action_name[RTE_MP_MAX_NAME_LEN];
-	rte_mp_t action;
+	char action_name[RTE_MP_MAX_NAME_LEN];//名称
+	rte_mp_t action;//动作
 };
 
 /** Double linked list of actions. */
 TAILQ_HEAD(action_entry_list, action_entry);
 
+//初始化action entry list,用于串连所有注册的action entry
 static struct action_entry_list action_entry_list =
 	TAILQ_HEAD_INITIALIZER(action_entry_list);
 
@@ -163,6 +164,7 @@ rte_eal_primary_proc_alive(const char *config_file_path)
 	return !!ret;
 }
 
+//通过名称查找对应的action_entry
 static struct action_entry *
 find_action_entry_by_name(const char *name)
 {
@@ -176,6 +178,7 @@ find_action_entry_by_name(const char *name)
 	return entry;
 }
 
+//action名称长度校验
 static int
 validate_action_name(const char *name)
 {
@@ -196,14 +199,17 @@ validate_action_name(const char *name)
 	return 0;
 }
 
+//注册指定名称的action entry
 int __rte_experimental
 rte_mp_action_register(const char *name, rte_mp_t action)
 {
 	struct action_entry *entry;
 
+	//校验action名称
 	if (validate_action_name(name))
 		return -1;
 
+	//初始化action entry
 	entry = malloc(sizeof(struct action_entry));
 	if (entry == NULL) {
 		rte_errno = ENOMEM;
@@ -214,31 +220,35 @@ rte_mp_action_register(const char *name, rte_mp_t action)
 
 	pthread_mutex_lock(&mp_mutex_action);
 	if (find_action_entry_by_name(name) != NULL) {
+		//检查对应的action是否已存在
 		pthread_mutex_unlock(&mp_mutex_action);
 		rte_errno = EEXIST;
 		free(entry);
 		return -1;
 	}
+	//将action entry添加到action_entry_list中
 	TAILQ_INSERT_TAIL(&action_entry_list, entry, next);
 	pthread_mutex_unlock(&mp_mutex_action);
 	return 0;
 }
 
+//解注册指定名称的action entry
 void __rte_experimental
 rte_mp_action_unregister(const char *name)
 {
 	struct action_entry *entry;
 
+	//检查action entry是否合法
 	if (validate_action_name(name))
 		return;
 
 	pthread_mutex_lock(&mp_mutex_action);
-	entry = find_action_entry_by_name(name);
+	entry = find_action_entry_by_name(name);//找到指定的entry
 	if (entry == NULL) {
 		pthread_mutex_unlock(&mp_mutex_action);
 		return;
 	}
-	TAILQ_REMOVE(&action_entry_list, entry, next);
+	TAILQ_REMOVE(&action_entry_list, entry, next);//将其删除
 	pthread_mutex_unlock(&mp_mutex_action);
 	free(entry);
 }
@@ -264,6 +274,7 @@ read_msg(struct mp_msg_internal *m, struct sockaddr_un *s)
 	msgh.msg_control = control;
 	msgh.msg_controllen = sizeof(control);
 
+	//自mp_fd读取消息
 	msglen = recvmsg(mp_fd, &msgh, 0);
 	if (msglen < 0) {
 		RTE_LOG(ERR, EAL, "recvmsg failed, %s\n", strerror(errno));
@@ -276,6 +287,7 @@ read_msg(struct mp_msg_internal *m, struct sockaddr_un *s)
 	}
 
 	/* read auxiliary FDs if any */
+	//读取传递过来的fd
 	for (cmsg = CMSG_FIRSTHDR(&msgh); cmsg != NULL;
 		cmsg = CMSG_NXTHDR(&msgh, cmsg)) {
 		if ((cmsg->cmsg_level == SOL_SOCKET) &&
@@ -323,6 +335,7 @@ process_msg(struct mp_msg_internal *m, struct sockaddr_un *s)
 		return;
 	}
 
+	//查找消息中的名称是否对应了一个action entry
 	pthread_mutex_lock(&mp_mutex_action);
 	entry = find_action_entry_by_name(msg->name);
 	if (entry != NULL)
@@ -346,6 +359,7 @@ process_msg(struct mp_msg_internal *m, struct sockaddr_un *s)
 				msg->name);
 		}
 	} else if (action(msg, s->sun_path) < 0) {
+		//如果此消息对应了某个action entry,则交消息交由action entry处理
 		RTE_LOG(ERR, EAL, "Fail to handle message: %s\n", msg->name);
 	}
 }
@@ -357,6 +371,7 @@ mp_handle(void *arg __rte_unused)
 	struct sockaddr_un sa;
 
 	while (1) {
+		//收取消息，并处理
 		if (read_msg(&msg, &sa) == 0)
 			process_msg(&msg, &sa);
 	}
@@ -518,6 +533,7 @@ open_socket_fd(void)
 		snprintf(peer_name, sizeof(peer_name),
 				"%d_%"PRIx64, getpid(), rte_rdtsc());
 
+	//创建unix socket
 	mp_fd = socket(AF_UNIX, SOCK_DGRAM, 0);
 	if (mp_fd < 0) {
 		RTE_LOG(ERR, EAL, "failed to create unix socket\n");
@@ -527,6 +543,7 @@ open_socket_fd(void)
 	memset(&un, 0, sizeof(un));
 	un.sun_family = AF_UNIX;
 
+	//设置un.sun_path为eal_mp_socket_path(),此时peer_name为'\0'
 	create_socket_path(peer_name, un.sun_path, sizeof(un.sun_path));
 
 	unlink(un.sun_path); /* May still exist since last run */

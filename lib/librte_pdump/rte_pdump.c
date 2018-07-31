@@ -57,8 +57,8 @@ struct pdump_response {
 };
 
 static struct pdump_rxtx_cbs {
-	struct rte_ring *ring;
-	struct rte_mempool *mp;
+	struct rte_ring *ring;//将copy好的mbuf入队到哪个ring中
+	struct rte_mempool *mp;//自哪个mbuf pool中申请mbuf
 	const struct rte_eth_rxtx_callback *cb;
 	void *filter;
 } rx_cbs[RTE_MAX_ETHPORTS][RTE_MAX_QUEUES_PER_PORT],
@@ -132,6 +132,7 @@ pdump_pktmbuf_copy(struct rte_mbuf *m, struct rte_mempool *mp)
 	return m_dup;
 }
 
+//将报文入队到cbs->ring中
 static inline void
 pdump_copy(struct rte_mbuf **pkts, uint16_t nb_pkts, void *user_params)
 {
@@ -147,14 +148,17 @@ pdump_copy(struct rte_mbuf **pkts, uint16_t nb_pkts, void *user_params)
 	cbs  = user_params;
 	ring = cbs->ring;
 	mp = cbs->mp;
+	//自mp中申请mbuf,并实现报文copy到pkts,再将pkts中报文统一入队到ring中
 	for (i = 0; i < nb_pkts; i++) {
 		p = pdump_pktmbuf_copy(pkts[i], mp);
 		if (p)
 			dup_bufs[d_pkts++] = p;
 	}
 
+	//将复制的报文统一入队
 	ring_enq = rte_ring_enqueue_burst(ring, (void *)dup_bufs, d_pkts, NULL);
 	if (unlikely(ring_enq < d_pkts)) {
+		//入队失败的报文统一丢弃
 		RTE_LOG(DEBUG, PDUMP,
 			"only %d of packets enqueued to ring\n", ring_enq);
 		do {
@@ -163,6 +167,7 @@ pdump_copy(struct rte_mbuf **pkts, uint16_t nb_pkts, void *user_params)
 	}
 }
 
+//capture收包回调
 static uint16_t
 pdump_rx(uint16_t port __rte_unused, uint16_t qidx __rte_unused,
 	struct rte_mbuf **pkts, uint16_t nb_pkts,
@@ -203,7 +208,7 @@ pdump_register_rx_callbacks(uint16_t end_q, uint16_t port, uint16_t queue,
 			cbs->ring = ring;
 			cbs->mp = mp;
 			cbs->cb = rte_eth_add_first_rx_callback(port, qid,
-								pdump_rx, cbs);
+								pdump_rx, cbs);//注册port的qid在收包时执行回调pdump_rx
 			if (cbs->cb == NULL) {
 				RTE_LOG(ERR, PDUMP,
 					"failed to add rx callback, errno=%d\n",
@@ -304,6 +309,7 @@ set_pdump_rxtx_cbs(const struct pdump_request *p)
 	flags = p->flags;
 	operation = p->op;
 	if (operation == ENABLE) {
+		//找到设备对应的port id
 		ret = rte_eth_dev_get_port_by_name(p->data.en_v1.device,
 				&port);
 		if (ret < 0) {
@@ -331,12 +337,14 @@ set_pdump_rxtx_cbs(const struct pdump_request *p)
 
 	/* validation if packet capture is for all queues */
 	if (queue == RTE_PDUMP_ALL_QUEUES) {
+		//capture所有的queues,则获取此port有多少个queue
 		struct rte_eth_dev_info dev_info;
 
 		rte_eth_dev_info_get(port, &dev_info);
 		nb_rx_q = dev_info.nb_rx_queues;
 		nb_tx_q = dev_info.nb_tx_queues;
 		if (nb_rx_q == 0 && flags & RTE_PDUMP_FLAG_RX) {
+			//rx queue为0，报错
 			RTE_LOG(ERR, PDUMP,
 				"number of rx queues cannot be 0\n");
 			return -EINVAL;
@@ -354,6 +362,7 @@ set_pdump_rxtx_cbs(const struct pdump_request *p)
 		}
 	}
 
+	//分别注册rx,tx的回调
 	/* register RX callback */
 	if (flags & RTE_PDUMP_FLAG_RX) {
 		end_q = (queue == RTE_PDUMP_ALL_QUEUES) ? nb_rx_q : queue + 1;
@@ -375,6 +384,9 @@ set_pdump_rxtx_cbs(const struct pdump_request *p)
 	return ret;
 }
 
+//此函数实现方式：对端通过unix socket发送相应的ring,
+//及mp地址给本端，本端自相应的mp中申请mbuf并copy，然后将copy后的mbuf入队
+//思路没问题，但要求发送端与接收端理解mbuf结构，理解ring结构，这种要求太高了
 static int
 pdump_server(const struct rte_mp_msg *mp_msg, const void *peer)
 {
@@ -383,6 +395,8 @@ pdump_server(const struct rte_mp_msg *mp_msg, const void *peer)
 	struct pdump_response *resp = (struct pdump_response *)&mp_resp.param;
 
 	/* recv client requests */
+	//这太难用了，对端需要指出设备将报文发送到哪个ring,这种在多进程间使用还行，capture到普通进程
+	//时，普通进程这么传地址肯定不行
 	if (mp_msg->len_param != sizeof(*cli_req)) {
 		RTE_LOG(ERR, PDUMP, "failed to recv from client\n");
 		resp->err_value = -EINVAL;
@@ -408,6 +422,7 @@ pdump_server(const struct rte_mp_msg *mp_msg, const void *peer)
 int
 rte_pdump_init(const char *path __rte_unused)
 {
+	//注册action entry,收到PDUMP_MP类消息，将由pdump_server进行处理
 	return rte_mp_action_register(PDUMP_MP, pdump_server);
 }
 
