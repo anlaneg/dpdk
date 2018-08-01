@@ -30,7 +30,7 @@ struct rte_uio_pci_dev {
 	int refcnt;
 };
 
-static int wc_activate;
+static int wc_activate;//模块参数
 static char *intr_mode;
 static enum rte_intr_mode igbuio_intr_mode_preferred = RTE_INTR_MODE_MSIX;
 /* sriov sysfs */
@@ -387,9 +387,9 @@ igbuio_pci_setup_iomem(struct pci_dev *dev, struct uio_info *info,
 	}
 	//设置内存segment的name,addr,size
 	info->mem[n].name = name;
-	info->mem[n].addr = addr;
-	info->mem[n].internal_addr = internal_addr;
-	info->mem[n].size = len;
+	info->mem[n].addr = addr;//设备物理地址
+	info->mem[n].internal_addr = internal_addr;//映射后的设备资源
+	info->mem[n].size = len;//资源长度
 	info->mem[n].memtype = UIO_MEM_PHYS;
 	return 0;
 }
@@ -451,14 +451,14 @@ igbuio_setup_bars(struct pci_dev *dev, struct uio_info *info)
 				pci_resource_start(dev, i) != 0) {
 			flags = pci_resource_flags(dev, i);
 			if (flags & IORESOURCE_MEM) {
-				//内存资源
+				//第i块bar是mem space（映射这部分信息，并填充到info中）
 				ret = igbuio_pci_setup_iomem(dev, info, iom,
 							     i, bar_names[i]);
 				if (ret != 0)
 					return ret;
 				iom++;
 			} else if (flags & IORESOURCE_IO) {
-				//io资源
+				//第i块bar是io space
 				ret = igbuio_pci_setup_ioport(dev, info, iop,
 							      i, bar_names[i]);
 				if (ret != 0)

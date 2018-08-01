@@ -126,6 +126,7 @@ static int mem_parsed;
 //是否指定了核
 static int core_parsed;
 
+//设备选项参数添加（将添加的选项串成一个链）
 static int
 eal_option_device_add(enum rte_devtype type, const char *optarg)
 {
@@ -151,6 +152,7 @@ eal_option_device_add(enum rte_devtype type, const char *optarg)
 	return 0;
 }
 
+//遍历设备选项参数链
 int
 eal_option_device_parse(void)
 {
@@ -158,7 +160,8 @@ eal_option_device_parse(void)
 	void *tmp;
 	int ret = 0;
 
-	TAILQ_FOREACH_SAFE(devopt, &devopt_list, next, tmp) {
+	TAILQ_FOREACH_SAFE(devopt, &devopt_list, next, tmp) {\
+		//如果rte_devargs_add添加失败，则后面所有的devopt将被直接移除
 		if (ret == 0) {
 			ret = rte_devargs_add(devopt->type, devopt->arg);
 			if (ret)

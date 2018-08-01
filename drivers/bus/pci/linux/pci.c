@@ -72,13 +72,13 @@ rte_pci_map_device(struct rte_pci_device *dev)
 
 	/* try mapping the NIC resources using VFIO if it exists */
 	switch (dev->kdrv) {
-	case RTE_KDRV_VFIO:
+	case RTE_KDRV_VFIO://采用vfio驱动
 #ifdef VFIO_PRESENT
 		if (pci_vfio_is_enabled())
 			ret = pci_vfio_map_resource(dev);
 #endif
 		break;
-		//采用igb_uio方式时，映射资源
+		//采用igb_uio驱动方式时，映射资源
 	case RTE_KDRV_IGB_UIO:
 	case RTE_KDRV_UIO_GENERIC:
 		if (rte_eal_using_phys_addrs()) {

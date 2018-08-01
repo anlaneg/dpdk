@@ -94,7 +94,7 @@ static union intr_pipefds intr_pipe;
 static struct rte_intr_source_list intr_sources;
 
 /* interrupt handling thread */
-static pthread_t intr_thread;
+static pthread_t intr_thread;//中断线程
 
 /* VFIO interrupts */
 #ifdef VFIO_PRESENT
@@ -758,6 +758,7 @@ eal_intr_handle_interrupts(int pfd, unsigned totalfds)
 	int nfds = 0;
 
 	for(;;) {
+		//等待事件发生
 		nfds = epoll_wait(pfd, events, totalfds,
 			EAL_INTR_EPOLL_WAIT_FOREVER);
 		/* epoll_wait fail */
@@ -843,7 +844,7 @@ eal_intr_thread_main(__rte_unused void *arg)
 		}
 		rte_spinlock_unlock(&intr_lock);
 		/* serve the interrupt */
-		eal_intr_handle_interrupts(pfd, numfds);
+		eal_intr_handle_interrupts(pfd, numfds);//中断处理
 
 		/**
 		 * when we return, we need to rebuild the

@@ -876,6 +876,7 @@ rte_eal_init(int argc, char **argv)
 		return -1;
 	}
 
+	//遍历设备选项，生成设备参数挂接在设备参数链上
 	if (eal_option_device_parse()) {
 		rte_errno = ENODEV;
 		rte_atomic32_clear(&run_once);
@@ -884,6 +885,7 @@ rte_eal_init(int argc, char **argv)
 
 	rte_config_init();
 
+	//中断线程初始化
 	if (rte_eal_intr_init() < 0) {
 		rte_eal_init_alert("Cannot init interrupt-handling thread\n");
 		return -1;
@@ -892,6 +894,7 @@ rte_eal_init(int argc, char **argv)
 	/* Put mp channel init before bus scan so that we can init the vdev
 	 * bus through mp channel in the secondary process before the bus scan.
 	 */
+	//多进程通道初始化
 	if (rte_mp_channel_init() < 0) {
 		rte_eal_init_alert("failed to init mp channel\n");
 		if (rte_eal_process_type() == RTE_PROC_PRIMARY) {
@@ -961,6 +964,7 @@ rte_eal_init(int argc, char **argv)
 	}
 
 #ifdef VFIO_PRESENT
+	//使能vfio
 	if (rte_eal_vfio_setup() < 0) {
 		rte_eal_init_alert("Cannot init VFIO\n");
 		rte_errno = EAGAIN;
@@ -972,6 +976,7 @@ rte_eal_init(int argc, char **argv)
 	 * not present in primary processes, so to avoid any potential issues,
 	 * initialize memzones first.
 	 */
+	//初始化memzone
 	if (rte_eal_memzone_init() < 0) {
 		rte_eal_init_alert("Cannot init memzone\n");
 		rte_errno = ENODEV;
@@ -987,6 +992,7 @@ rte_eal_init(int argc, char **argv)
 	/* the directories are locked during eal_hugepage_info_init */
 	eal_hugedirs_unlock();
 
+	//初始化malloc
 	if (rte_eal_malloc_heap_init() < 0) {
 		rte_eal_init_alert("Cannot init malloc heap\n");
 		rte_errno = ENODEV;

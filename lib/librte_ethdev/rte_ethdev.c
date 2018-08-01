@@ -1039,7 +1039,7 @@ rte_eth_dev_tx_offload_name(uint64_t offload)
 	return name;
 }
 
-//接口配置
+//接口配置(dpdk初始化完成后，需要针对每个扫描出来的接口进行configure)
 int
 rte_eth_dev_configure(uint16_t port_id, uint16_t nb_rx_q, uint16_t nb_tx_q,
 		      const struct rte_eth_conf *dev_conf)
@@ -1312,7 +1312,7 @@ rte_eth_dev_config_restore(uint16_t port_id)
 		rte_eth_allmulticast_disable(port_id);
 }
 
-//启动网卡
+//启动网卡（1。先配置网卡，2再配置tx队列，rx队列;3启动网卡）
 int
 rte_eth_dev_start(uint16_t port_id)
 {
@@ -1347,6 +1347,7 @@ rte_eth_dev_start(uint16_t port_id)
 	return 0;
 }
 
+//停止网卡
 void
 rte_eth_dev_stop(uint16_t port_id)
 {
@@ -1455,6 +1456,7 @@ rte_eth_dev_is_removed(uint16_t port_id)
 	return ret;
 }
 
+//构建收队列
 int
 rte_eth_rx_queue_setup(uint16_t port_id, uint16_t rx_queue_id,
 		       uint16_t nb_rx_desc, unsigned int socket_id,

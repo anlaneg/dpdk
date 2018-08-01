@@ -872,6 +872,7 @@ main(int argc, char **argv)
 				local_port_conf.rx_adv_conf.rss_conf.rss_hf);
 		}
 
+		//执行接口配置
 		ret = rte_eth_dev_configure(portid, nb_rx_queue,
 					(uint16_t)n_tx_queue, &local_port_conf);
 		if (ret < 0)
@@ -905,6 +906,7 @@ main(int argc, char **argv)
 			rte_exit(EXIT_FAILURE, "init_mem failed\n");
 
 		/* init one TX queue per couple (lcore,port) */
+		//初始化发队列
 		queueid = 0;
 		for (lcore_id = 0; lcore_id < RTE_MAX_LCORE; lcore_id++) {
 			if (rte_lcore_is_enabled(lcore_id) == 0)
@@ -938,6 +940,7 @@ main(int argc, char **argv)
 		printf("\n");
 	}
 
+	//初始化收队列
 	for (lcore_id = 0; lcore_id < RTE_MAX_LCORE; lcore_id++) {
 		if (rte_lcore_is_enabled(lcore_id) == 0)
 			continue;

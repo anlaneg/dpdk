@@ -523,10 +523,11 @@ async_reply_handle(void *arg)
 		trigger_async_action(req);
 }
 
+//创建mp socket
 static int
 open_socket_fd(void)
 {
-	char peer_name[PATH_MAX] = {0};
+	char peer_name[PATH_MAX] = {0};//此变量可以移除
 	struct sockaddr_un un;
 
 	if (rte_eal_process_type() == RTE_PROC_SECONDARY)
@@ -566,13 +567,15 @@ unlink_sockets(const char *filter)
 	DIR *mp_dir;
 	struct dirent *ent;
 
+	//打开mp目录
 	mp_dir = opendir(mp_dir_path);
 	if (!mp_dir) {
 		RTE_LOG(ERR, EAL, "Unable to open directory %s\n", mp_dir_path);
 		return -1;
 	}
-	dir_fd = dirfd(mp_dir);
+	dir_fd = dirfd(mp_dir);//dir转fd
 
+	//读取mp_dir目录，如果此目录中存匹配filter,则将其移除
 	while ((ent = readdir(mp_dir))) {
 		if (fnmatch(filter, ent->d_name, 0) == 0)
 			unlinkat(dir_fd, ent->d_name, 0);
@@ -582,6 +585,7 @@ unlink_sockets(const char *filter)
 	return 0;
 }
 
+//mp通道初始化（主从进程均会进来）
 int
 rte_mp_channel_init(void)
 {
@@ -592,20 +596,26 @@ rte_mp_channel_init(void)
 	/* in no shared files mode, we do not have secondary processes support,
 	 * so no need to initialize IPC.
 	 */
-	if (internal_config.no_shconf) {
+	if (internal_config.no_shconf) {//不share 配置文件，不初始化ipc(不支持从进程）
 		RTE_LOG(DEBUG, EAL, "No shared files mode enabled, IPC will be disabled\n");
 		return 0;
 	}
 
+	//这一段代码写得非常屎，要完成的工作是
+	//1.锁住mp_dir_path
+	//2.删除其下所有文件
 	/* create filter path */
+	//构造'mp_socket/*',将'*'做为mp_filter
 	create_socket_path("*", path, sizeof(path));
 	strlcpy(mp_filter, basename(path), sizeof(mp_filter));
 
 	/* path may have been modified, so recreate it */
+	//构造'mp_socket/*',将'mp_socket/'做为mp_dir_path
 	create_socket_path("*", path, sizeof(path));
 	strlcpy(mp_dir_path, dirname(path), sizeof(mp_dir_path));
 
 	/* lock the directory */
+	//打开目录并锁住目录
 	dir_fd = open(mp_dir_path, O_RDONLY);
 	if (dir_fd < 0) {
 		RTE_LOG(ERR, EAL, "failed to open %s: %s\n",
@@ -622,16 +632,19 @@ rte_mp_channel_init(void)
 
 	if (rte_eal_process_type() == RTE_PROC_PRIMARY &&
 			unlink_sockets(mp_filter)) {
+		//移除mp_dir_path下所有文件
 		RTE_LOG(ERR, EAL, "failed to unlink mp sockets\n");
 		close(dir_fd);
 		return -1;
 	}
 
+	//创建mp socket
 	if (open_socket_fd() < 0) {
 		close(dir_fd);
 		return -1;
 	}
 
+	//创建mp消息处理线程
 	if (rte_ctrl_thread_create(&mp_handle_tid, "rte_mp_handle",
 			NULL, mp_handle, NULL) < 0) {
 		RTE_LOG(ERR, EAL, "failed to create mp thead: %s\n",

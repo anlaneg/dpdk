@@ -224,11 +224,11 @@ rte_devargs_parse(struct rte_devargs *da, const char *dev)
 	/* Retrieve eventual bus info */
 	do {
 		devname = dev;
-		//查找名称为dev的bus
+		//检查dev是否以某一bus名开头（即是否具有某一bus名称前缀）
 		bus = rte_bus_find(bus, bus_name_cmp, dev);
 		if (bus == NULL)
 			break;
-		//查找此设备是否可以被bus解析，如果可以退出
+		//跳过bus前缀，查找此设备是否可以被bus解析，如果可以退出
 		devname = dev + strlen(bus->name) + 1;
 		if (rte_bus_find_by_device_name(devname) == bus)
 			break;
@@ -323,6 +323,7 @@ rte_devargs_add(enum rte_devtype devtype, const char *devargs_str)
 	if (devargs == NULL)
 		goto fail;
 
+	//解析dev,并将结果填充到devargs
 	if (rte_devargs_parse(devargs, dev))
 		goto fail;
 	devargs->type = devtype;
@@ -335,7 +336,7 @@ rte_devargs_add(enum rte_devtype devtype, const char *devargs_str)
 		else if (devargs->policy == RTE_DEV_BLACKLISTED)
 			bus->conf.scan_mode = RTE_BUS_SCAN_BLACKLIST;
 	}
-	TAILQ_INSERT_TAIL(&devargs_list, devargs, next);
+	TAILQ_INSERT_TAIL(&devargs_list, devargs, next);//添加设备参数
 	return 0;
 
 fail:

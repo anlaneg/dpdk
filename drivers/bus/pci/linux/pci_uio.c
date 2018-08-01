@@ -342,6 +342,7 @@ pci_uio_map_resource_by_index(struct rte_pci_device *dev, int res_idx,
 	}
 
 	if (!wc_activate || fd < 0) {
+		//未开启wc_activate或者开启了，但打开文件失败
 		//例：/sys/bus/pci/devices/0000\:00\:01.0/resource
 		snprintf(devname, sizeof(devname),
 			"%s/" PCI_PRI_FMT "/resource%d",

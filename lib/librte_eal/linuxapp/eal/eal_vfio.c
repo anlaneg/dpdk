@@ -885,12 +885,14 @@ rte_vfio_enable(const char *modname)
 
 	/* return error directly */
 	if (vfio_available == -1) {
+		//检测失败
 		RTE_LOG(INFO, EAL, "Could not get loaded module details!\n");
 		return -1;
 	}
 
 	/* return 0 if VFIO modules not loaded */
 	if (vfio_available == 0) {
+		//模块未被加载
 		RTE_LOG(DEBUG, EAL, "VFIO modules not loaded, "
 			"skipping VFIO support...\n");
 		return 0;
