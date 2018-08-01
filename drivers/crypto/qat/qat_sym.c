@@ -225,9 +225,8 @@ qat_sym_build_request(void *in_op, uint8_t *out_msg,
 				ICP_QAT_HW_CIPHER_ALGO_ZUC_3G_128_EEA3) {
 
 			if (unlikely(
-				(cipher_param->cipher_length % BYTE_LENGTH != 0)
-				 || (cipher_param->cipher_offset
-							% BYTE_LENGTH != 0))) {
+			    (op->sym->cipher.data.length % BYTE_LENGTH != 0) ||
+			    (op->sym->cipher.data.offset % BYTE_LENGTH != 0))) {
 				QAT_DP_LOG(ERR,
 		  "SNOW3G/KASUMI/ZUC in QAT PMD only supports byte aligned values");
 				op->status = RTE_CRYPTO_OP_STATUS_INVALID_ARGS;
@@ -260,8 +259,9 @@ qat_sym_build_request(void *in_op, uint8_t *out_msg,
 			ctx->qat_hash_alg == ICP_QAT_HW_AUTH_ALGO_KASUMI_F9 ||
 			ctx->qat_hash_alg ==
 				ICP_QAT_HW_AUTH_ALGO_ZUC_3G_128_EIA3) {
-			if (unlikely((auth_param->auth_off % BYTE_LENGTH != 0)
-				|| (auth_param->auth_len % BYTE_LENGTH != 0))) {
+			if (unlikely(
+			    (op->sym->auth.data.offset % BYTE_LENGTH != 0) ||
+			    (op->sym->auth.data.length % BYTE_LENGTH != 0))) {
 				QAT_DP_LOG(ERR,
 		"For SNOW3G/KASUMI/ZUC, QAT PMD only supports byte aligned values");
 				op->status = RTE_CRYPTO_OP_STATUS_INVALID_ARGS;
@@ -495,8 +495,9 @@ qat_sym_build_request(void *in_op, uint8_t *out_msg,
 		ICP_QAT_FW_COMN_PTR_TYPE_SET(qat_req->comn_hdr.comn_req_flags,
 				QAT_COMN_PTR_TYPE_SGL);
 		ret = qat_sgl_fill_array(op->sym->m_src, src_buf_start,
-				&cookie->qat_sgl_src,
-				qat_req->comn_mid.src_length);
+					&cookie->qat_sgl_src,
+					qat_req->comn_mid.src_length,
+					QAT_SYM_SGL_MAX_NUMBER);
 
 		if (unlikely(ret)) {
 			QAT_DP_LOG(ERR, "QAT PMD Cannot fill sgl array");
@@ -509,9 +510,10 @@ qat_sym_build_request(void *in_op, uint8_t *out_msg,
 				cookie->qat_sgl_src_phys_addr;
 		else {
 			ret = qat_sgl_fill_array(op->sym->m_dst,
-					dst_buf_start,
-					&cookie->qat_sgl_dst,
-						qat_req->comn_mid.dst_length);
+						 dst_buf_start,
+						 &cookie->qat_sgl_dst,
+						 qat_req->comn_mid.dst_length,
+						 QAT_SYM_SGL_MAX_NUMBER);
 
 			if (unlikely(ret)) {
 				QAT_DP_LOG(ERR, "QAT PMD can't fill sgl array");

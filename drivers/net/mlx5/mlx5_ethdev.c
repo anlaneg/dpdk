@@ -41,6 +41,32 @@
 #include "mlx5_rxtx.h"
 #include "mlx5_utils.h"
 
+/* Supported speed values found in /usr/include/linux/ethtool.h */
+#ifndef HAVE_SUPPORTED_40000baseKR4_Full
+#define SUPPORTED_40000baseKR4_Full (1 << 23)
+#endif
+#ifndef HAVE_SUPPORTED_40000baseCR4_Full
+#define SUPPORTED_40000baseCR4_Full (1 << 24)
+#endif
+#ifndef HAVE_SUPPORTED_40000baseSR4_Full
+#define SUPPORTED_40000baseSR4_Full (1 << 25)
+#endif
+#ifndef HAVE_SUPPORTED_40000baseLR4_Full
+#define SUPPORTED_40000baseLR4_Full (1 << 26)
+#endif
+#ifndef HAVE_SUPPORTED_56000baseKR4_Full
+#define SUPPORTED_56000baseKR4_Full (1 << 27)
+#endif
+#ifndef HAVE_SUPPORTED_56000baseCR4_Full
+#define SUPPORTED_56000baseCR4_Full (1 << 28)
+#endif
+#ifndef HAVE_SUPPORTED_56000baseSR4_Full
+#define SUPPORTED_56000baseSR4_Full (1 << 29)
+#endif
+#ifndef HAVE_SUPPORTED_56000baseLR4_Full
+#define SUPPORTED_56000baseLR4_Full (1 << 30)
+#endif
+
 /* Add defines in case the running kernel is not the same as user headers. */
 #ifndef ETHTOOL_GLINKSETTINGS
 struct ethtool_link_settings {
@@ -219,24 +245,20 @@ mlx5_get_ifname(const struct rte_eth_dev *dev, char (*ifname)[IF_NAMESIZE])
  *   Pointer to Ethernet device.
  *
  * @return
- *   Interface index on success, a negative errno value otherwise and
- *   rte_errno is set.
+ *   Nonzero interface index on success, zero otherwise and rte_errno is set.
  */
-int
+unsigned int
 mlx5_ifindex(const struct rte_eth_dev *dev)
 {
 	char ifname[IF_NAMESIZE];
-	unsigned int ret;
+	unsigned int ifindex;
 
-	ret = mlx5_get_ifname(dev, &ifname);
-	if (ret)
-		return ret;
-	ret = if_nametoindex(ifname);
-	if (ret == 0) {
+	if (mlx5_get_ifname(dev, &ifname))
+		return 0;
+	ifindex = if_nametoindex(ifname);
+	if (!ifindex)
 		rte_errno = errno;
-		return -rte_errno;
-	}
-	return ret;
+	return ifindex;
 }
 
 /**
@@ -1294,4 +1316,57 @@ mlx5_dev_to_port_id(const struct rte_device *dev, uint16_t *port_list,
 		n++;
 	}
 	return n;
+}
+
+/**
+ * Get switch information associated with network interface.
+ *
+ * @param ifindex
+ *   Network interface index.
+ * @param[out] info
+ *   Switch information object, populated in case of success.
+ *
+ * @return
+ *   0 on success, a negative errno value otherwise and rte_errno is set.
+ */
+int
+mlx5_sysfs_switch_info(unsigned int ifindex, struct mlx5_switch_info *info)
+{
+	char ifname[IF_NAMESIZE];
+	FILE *file;
+	struct mlx5_switch_info data = { .master = 0, };
+	bool port_name_set = false;
+	bool port_switch_id_set = false;
+	char c;
+
+	if (!if_indextoname(ifindex, ifname)) {
+		rte_errno = errno;
+		return -rte_errno;
+	}
+
+	MKSTR(phys_port_name, "/sys/class/net/%s/phys_port_name",
+	      ifname);
+	MKSTR(phys_switch_id, "/sys/class/net/%s/phys_switch_id",
+	      ifname);
+
+	file = fopen(phys_port_name, "rb");
+	if (file != NULL) {
+		port_name_set =
+			fscanf(file, "%d%c", &data.port_name, &c) == 2 &&
+			c == '\n';
+		fclose(file);
+	}
+	file = fopen(phys_switch_id, "rb");
+	if (file == NULL) {
+		rte_errno = errno;
+		return -rte_errno;
+	}
+	port_switch_id_set =
+		fscanf(file, "%" SCNx64 "%c", &data.switch_id, &c) == 2 &&
+		c == '\n';
+	fclose(file);
+	data.master = port_switch_id_set && !port_name_set;
+	data.representor = port_switch_id_set && port_name_set;
+	*info = data;
+	return 0;
 }

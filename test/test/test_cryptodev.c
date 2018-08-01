@@ -5020,6 +5020,24 @@ test_DES_cipheronly_mb_all(void)
 
 	return TEST_SUCCESS;
 }
+static int
+test_3DES_cipheronly_mb_all(void)
+{
+	struct crypto_testsuite_params *ts_params = &testsuite_params;
+	int status;
+
+	status = test_blockcipher_all_tests(ts_params->mbuf_pool,
+		ts_params->op_mpool,
+		ts_params->session_mpool,
+		ts_params->valid_devs[0],
+		rte_cryptodev_driver_id_get(
+		RTE_STR(CRYPTODEV_NAME_AESNI_MB_PMD)),
+		BLKCIPHER_3DES_CIPHERONLY_TYPE);
+
+	TEST_ASSERT_EQUAL(status, 0, "Test failed");
+
+	return TEST_SUCCESS;
+}
 
 static int
 test_DES_docsis_mb_all(void)
@@ -9033,6 +9051,8 @@ static struct unit_test_suite cryptodev_aesni_mb_testsuite  = {
 		TEST_CASE_ST(ut_setup, ut_teardown,
 						test_DES_docsis_mb_all),
 		TEST_CASE_ST(ut_setup, ut_teardown,
+						test_3DES_cipheronly_mb_all),
+		TEST_CASE_ST(ut_setup, ut_teardown,
 			test_AES_CCM_authenticated_encryption_test_case_128_1),
 		TEST_CASE_ST(ut_setup, ut_teardown,
 			test_AES_CCM_authenticated_decryption_test_case_128_1),
@@ -9938,9 +9958,9 @@ test_cryptodev_qat(void /*argv __rte_unused, int argc __rte_unused*/)
 			RTE_STR(CRYPTODEV_NAME_QAT_SYM_PMD));
 
 	if (gbl_driver_id == -1) {
-		RTE_LOG(ERR, USER1, "QAT PMD must be loaded. Check if "
-				"CONFIG_RTE_LIBRTE_PMD_QAT is enabled "
-				"in config file to run this testsuite.\n");
+		RTE_LOG(ERR, USER1, "QAT PMD must be loaded. Check that both "
+		"CONFIG_RTE_LIBRTE_PMD_QAT and CONFIG_RTE_LIBRTE_PMD_QAT_SYM "
+		"are enabled in config file to run this testsuite.\n");
 		return TEST_SKIPPED;
 	}
 

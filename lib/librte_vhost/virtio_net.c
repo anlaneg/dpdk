@@ -443,12 +443,19 @@ reserve_avail_buf_split(struct virtio_net *dev, struct vhost_virtqueue *vq,
 	cur_idx  = vq->last_avail_idx;
 
 	if (rxvq_is_mergeable(dev))
-		max_tries = vq->size;
+		max_tries = vq->size - 1;
 	else
 		max_tries = 1;
 
 	while (size > 0) {
 		if (unlikely(cur_idx == avail_head))
+			return -1;
+		/*
+		 * if we tried all available ring items, and still
+		 * can't get enough buf, it means something abnormal
+		 * happened.
+		 */
+		if (unlikely(++tries > max_tries))
 			return -1;
 
 		if (unlikely(fill_vec_buf_split(dev, vq, cur_idx,
@@ -461,16 +468,7 @@ reserve_avail_buf_split(struct virtio_net *dev, struct vhost_virtqueue *vq,
 		size -= len;
 
 		cur_idx++;
-		tries++;
 		*num_buffers += 1;
-
-		/*
-		 * if we tried all available ring items, and still
-		 * can't get enough buf, it means something abnormal
-		 * happened.
-		 */
-		if (unlikely(tries > max_tries))
-			return -1;
 	}
 
 	*nr_vec = vec_idx;
@@ -619,11 +617,19 @@ reserve_avail_buf_packed(struct virtio_net *dev, struct vhost_virtqueue *vq,
 	avail_idx = vq->last_avail_idx;
 
 	if (rxvq_is_mergeable(dev))
-		max_tries = vq->size;
+		max_tries = vq->size - 1;
 	else
 		max_tries = 1;
 
 	while (size > 0) {
+		/*
+		 * if we tried all available ring items, and still
+		 * can't get enough buf, it means something abnormal
+		 * happened.
+		 */
+		if (unlikely(++tries > max_tries))
+			return -1;
+
 		if (unlikely(fill_vec_buf_packed(dev, vq,
 						avail_idx, &desc_count,
 						buf_vec, &vec_idx,
@@ -640,16 +646,7 @@ reserve_avail_buf_packed(struct virtio_net *dev, struct vhost_virtqueue *vq,
 			avail_idx -= vq->size;
 
 		*nr_descs += desc_count;
-		tries++;
 		*num_buffers += 1;
-
-		/*
-		 * if we tried all available ring items, and still
-		 * can't get enough buf, it means something abnormal
-		 * happened.
-		 */
-		if (unlikely(tries > max_tries))
-			return -1;
 	}
 
 	*nr_vec = vec_idx;
@@ -767,7 +764,8 @@ copy_mbuf_to_desc(struct virtio_net *dev, struct vhost_virtqueue *vq,
 				uint16_t hdr_vec_idx = 0;
 
 				while (remain) {
-					len = remain;
+					len = RTE_MIN(remain,
+						buf_vec[hdr_vec_idx].buf_len);
 					dst = buf_vec[hdr_vec_idx].buf_addr;
 					rte_memcpy((void *)(uintptr_t)dst,
 							(void *)(uintptr_t)src,
@@ -794,7 +792,7 @@ copy_mbuf_to_desc(struct virtio_net *dev, struct vhost_virtqueue *vq,
 			hdr_addr = 0;
 		}
 
-		cpy_len = RTE_MIN(buf_len, mbuf_avail);
+		cpy_len = RTE_MIN(buf_avail, mbuf_avail);
 
 		if (likely(cpy_len > MAX_BATCH_LEN ||
 					vq->batch_copy_nb_elems >= vq->size)) {
@@ -1191,7 +1189,8 @@ copy_desc_to_mbuf(struct virtio_net *dev, struct vhost_virtqueue *vq,
 			 * in a contiguous virtual area.
 			 */
 			while (remain) {
-				len = remain;
+				len = RTE_MIN(remain,
+					buf_vec[hdr_vec_idx].buf_len);
 				src = buf_vec[hdr_vec_idx].buf_addr;
 				rte_memcpy((void *)(uintptr_t)dst,
 						   (void *)(uintptr_t)src, len);
@@ -1720,8 +1719,10 @@ rte_vhost_dequeue_burst(int vid, uint16_t queue_id,
 		return 0;
 
 	//对列未使能，不处理
-	if (unlikely(vq->enabled == 0))
+	if (unlikely(vq->enabled == 0)) {
+		count = 0;
 		goto out_access_unlock;
+	}
 
 	//iotlb读加锁
 	if (dev->features & (1ULL << VIRTIO_F_IOMMU_PLATFORM))
@@ -1729,8 +1730,10 @@ rte_vhost_dequeue_burst(int vid, uint16_t queue_id,
 
 	//如果ring还未进行地址翻译，则尝试翻译，如果翻译失败，则退出
 	if (unlikely(vq->access_ok == 0))
-		if (unlikely(vring_translate(dev, vq) < 0))
+		if (unlikely(vring_translate(dev, vq) < 0)) {
+			count = 0;
 			goto out;
+		}
 
 	/*
 	 * Construct a RARP broadcast packet, and inject it to the "pkts"
@@ -1758,7 +1761,8 @@ rte_vhost_dequeue_burst(int vid, uint16_t queue_id,
 		if (rarp_mbuf == NULL) {
 			RTE_LOG(ERR, VHOST_DATA,
 				"Failed to make RARP packet.\n");
-			return 0;
+			count = 0;
+			goto out;
 		}
 		count -= 1;//由于需要注入rarp,故count数必须减1（这里可以通过优先去掉memmove操作）
 		//但这种操作并不常见。

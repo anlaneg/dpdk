@@ -664,6 +664,7 @@ igbuio_pci_exit_module(void)
 module_init(igbuio_pci_init_module);
 module_exit(igbuio_pci_exit_module);
 
+//定义模块参数（中断模式）
 module_param(intr_mode, charp, S_IRUGO);
 MODULE_PARM_DESC(intr_mode,
 "igb_uio interrupt mode (default=msix):\n"

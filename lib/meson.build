@@ -26,6 +26,10 @@ libraries = [ 'compat', # just a header, used for versioning
 	# flow_classify lib depends on pkt framework table lib
 	'flow_classify', 'bpf']
 
+default_cflags = machine_args
+if cc.has_argument('-Wno-format-truncation')
+	default_cflags += '-Wno-format-truncation'
+endif
 foreach l:libraries
 	build = true
 	name = l
@@ -34,11 +38,7 @@ foreach l:libraries
 	sources = []
 	headers = []
 	includes = []
-	cflags = machine_args
-	if cc.has_argument('-Wno-format-truncation')
-	    cflags += '-Wno-format-truncation'
-	endif
-
+	cflags = default_cflags
 	objs = [] # other object files to link against, used e.g. for
 	          # instruction-set optimized versions of code
 
@@ -71,6 +71,10 @@ foreach l:libraries
 			shared_deps = ext_deps
 			static_deps = ext_deps
 			foreach d:deps
+				if not is_variable('shared_rte_' + d)
+					error('Missing dependency ' + d +
+						' for library ' + lib_name)
+				endif
 				shared_deps += [get_variable('shared_rte_' + d)]
 				static_deps += [get_variable('static_rte_' + d)]
 			endforeach

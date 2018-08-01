@@ -120,12 +120,17 @@ rte_devargs_layers_parse(struct rte_devargs *devargs,
 	}
 
 	while (s != NULL) {
-		if (strncmp(layers[i].key, s,
-			    strlen(layers[i].key)) &&
-		    /* The last layer is free-form.
-		     * The "driver" key is not required (but accepted).
-		     */
-		    i != RTE_DIM(layers) - 1)
+		if (i >= RTE_DIM(layers)) {
+			RTE_LOG(ERR, EAL, "Unrecognized layer %s\n", s);
+			ret = -EINVAL;
+			goto get_out;
+		}
+		/*
+		 * The last layer is free-form.
+		 * The "driver" key is not required (but accepted).
+		 */
+		if (strncmp(layers[i].key, s, strlen(layers[i].key)) &&
+				i != RTE_DIM(layers) - 1)
 			goto next_layer;
 		layers[i].str = s;
 		layers[i].kvlist = rte_kvargs_parse_delim(s, NULL, "/");
@@ -138,11 +143,6 @@ rte_devargs_layers_parse(struct rte_devargs *devargs,
 		if (s != NULL)
 			s++;
 next_layer:
-		if (i >= RTE_DIM(layers)) {
-			RTE_LOG(ERR, EAL, "Unrecognized layer %s\n", s);
-			ret = -EINVAL;
-			goto get_out;
-		}
 		i++;
 	}
 
@@ -289,7 +289,7 @@ rte_devargs_parsef(struct rte_devargs *da, const char *format, ...)
 	}
 
 	va_start(ap, format);
-	vsnprintf(dev, len, format, ap);
+	vsnprintf(dev, len + 1, format, ap);
 	va_end(ap);
 
 	return rte_devargs_parse(da, dev);

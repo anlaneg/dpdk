@@ -8,6 +8,9 @@
 #include <openssl/evp.h>
 #include <openssl/hmac.h>
 #include <openssl/des.h>
+#include <openssl/rsa.h>
+#include <openssl/dh.h>
+#include <openssl/dsa.h>
 
 #define CRYPTODEV_NAME_OPENSSL_PMD	crypto_openssl
 /**< Open SSL Crypto PMD device name */
@@ -142,6 +145,31 @@ struct openssl_session {
 
 } __rte_cache_aligned;
 
+/** OPENSSL crypto private asymmetric session structure */
+struct openssl_asym_session {
+	enum rte_crypto_asym_xform_type xfrm_type;
+	union {
+		struct rsa {
+			RSA *rsa;
+		} r;
+		struct exp {
+			BIGNUM *exp;
+			BIGNUM *mod;
+			BN_CTX *ctx;
+		} e;
+		struct mod {
+			BIGNUM *modulus;
+			BN_CTX *ctx;
+		} m;
+		struct dh {
+			DH *dh_key;
+			uint32_t key_op;
+		} dh;
+		struct {
+			DSA *dsa;
+		} s;
+	} u;
+} __rte_cache_aligned;
 /** Set and validate OPENSSL crypto session parameters */
 extern int
 openssl_set_session_parameters(struct openssl_session *sess,

@@ -89,8 +89,6 @@ struct mlx5_nl_ifindex_data {
 /**
  * Opens a Netlink socket.
  *
- * @param nl_groups
- *   Netlink group value (e.g. RTMGRP_LINK).
  * @param protocol
  *   Netlink protocol (e.g. NETLINK_ROUTE, NETLINK_RDMA).
  *
@@ -99,14 +97,13 @@ struct mlx5_nl_ifindex_data {
  *   rte_errno is set.
  */
 int
-mlx5_nl_init(uint32_t nl_groups, int protocol)
+mlx5_nl_init(int protocol)
 {
 	int fd;
 	int sndbuf_size = MLX5_SEND_BUF_SIZE;
 	int rcvbuf_size = MLX5_RECV_BUF_SIZE;
 	struct sockaddr_nl local = {
 		.nl_family = AF_NETLINK,
-		.nl_groups = nl_groups,
 	};
 	int ret;
 
@@ -365,7 +362,7 @@ mlx5_nl_mac_addr_list(struct rte_eth_dev *dev, struct ether_addr (*mac)[],
 		      int *mac_n)
 {
 	struct priv *priv = dev->data->dev_private;
-	int iface_idx = mlx5_ifindex(dev);
+	unsigned int iface_idx = mlx5_ifindex(dev);
 	struct {
 		struct nlmsghdr	hdr;
 		struct ifinfomsg ifm;
@@ -424,7 +421,7 @@ mlx5_nl_mac_addr_modify(struct rte_eth_dev *dev, struct ether_addr *mac,
 			int add)
 {
 	struct priv *priv = dev->data->dev_private;
-	int iface_idx = mlx5_ifindex(dev);
+	unsigned int iface_idx = mlx5_ifindex(dev);
 	struct {
 		struct nlmsghdr hdr;
 		struct ndmsg ndm;
@@ -603,7 +600,7 @@ static int
 mlx5_nl_device_flags(struct rte_eth_dev *dev, uint32_t flags, int enable)
 {
 	struct priv *priv = dev->data->dev_private;
-	int iface_idx = mlx5_ifindex(dev);
+	unsigned int iface_idx = mlx5_ifindex(dev);
 	struct {
 		struct nlmsghdr hdr;
 		struct ifinfomsg ifi;

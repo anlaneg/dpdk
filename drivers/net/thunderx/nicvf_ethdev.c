@@ -52,6 +52,8 @@ static void nicvf_dev_stop(struct rte_eth_dev *dev);
 static void nicvf_dev_stop_cleanup(struct rte_eth_dev *dev, bool cleanup);
 static void nicvf_vf_stop(struct rte_eth_dev *dev, struct nicvf *nic,
 			  bool cleanup);
+static int nicvf_vlan_offload_config(struct rte_eth_dev *dev, int mask);
+static int nicvf_vlan_offload_set(struct rte_eth_dev *dev, int mask);
 
 RTE_INIT(nicvf_init_log)
 {
@@ -355,11 +357,9 @@ nicvf_dev_supported_ptypes_get(struct rte_eth_dev *dev)
 	}
 
 	memcpy((char *)ptypes + copied, &ptypes_end, sizeof(ptypes_end));
-	if (dev->rx_pkt_burst == nicvf_recv_pkts ||
-		dev->rx_pkt_burst == nicvf_recv_pkts_multiseg)
-		return ptypes;
 
-	return NULL;
+	/* All Ptypes are supported in all Rx functions. */
+	return ptypes;
 }
 
 static void
@@ -916,13 +916,23 @@ nicvf_set_tx_function(struct rte_eth_dev *dev)
 static void
 nicvf_set_rx_function(struct rte_eth_dev *dev)
 {
-	if (dev->data->scattered_rx) {
-		PMD_DRV_LOG(DEBUG, "Using multi-segment rx callback");
-		dev->rx_pkt_burst = nicvf_recv_pkts_multiseg;
-	} else {
-		PMD_DRV_LOG(DEBUG, "Using single-segment rx callback");
-		dev->rx_pkt_burst = nicvf_recv_pkts;
-	}
+	struct nicvf *nic = nicvf_pmd_priv(dev);
+
+	const eth_rx_burst_t rx_burst_func[2][2][2] = {
+	/* [NORMAL/SCATTER] [CKSUM/NO_CKSUM] [VLAN_STRIP/NO_VLAN_STRIP] */
+		[0][0][0] = nicvf_recv_pkts_no_offload,
+		[0][0][1] = nicvf_recv_pkts_vlan_strip,
+		[0][1][0] = nicvf_recv_pkts_cksum,
+		[0][1][1] = nicvf_recv_pkts_cksum_vlan_strip,
+		[1][0][0] = nicvf_recv_pkts_multiseg_no_offload,
+		[1][0][1] = nicvf_recv_pkts_multiseg_vlan_strip,
+		[1][1][0] = nicvf_recv_pkts_multiseg_cksum,
+		[1][1][1] = nicvf_recv_pkts_multiseg_cksum_vlan_strip,
+	};
+
+	dev->rx_pkt_burst =
+		rx_burst_func[dev->data->scattered_rx]
+			[nic->offload_cksum][nic->vlan_strip];
 }
 
 static int
@@ -1243,6 +1253,9 @@ nicvf_rxq_mbuf_setup(struct nicvf_rxq *rxq)
 				offsetof(struct rte_mbuf, data_off) != 4);
 	RTE_BUILD_BUG_ON(offsetof(struct rte_mbuf, port) -
 				offsetof(struct rte_mbuf, data_off) != 6);
+	RTE_BUILD_BUG_ON(offsetof(struct nicvf_rxq, rxq_fastpath_data_end) -
+				offsetof(struct nicvf_rxq,
+					rxq_fastpath_data_start) > 128);
 	mb_def.nb_segs = 1;
 	mb_def.data_off = RTE_PKTMBUF_HEADROOM + (nic->skip_bytes);
 	mb_def.port = rxq->port_id;
@@ -1467,7 +1480,7 @@ nicvf_vf_start(struct rte_eth_dev *dev, struct nicvf *nic, uint32_t rbdrsz)
 	struct rte_mbuf *mbuf;
 	uint16_t rx_start, rx_end;
 	uint16_t tx_start, tx_end;
-	bool vlan_strip;
+	int mask;
 
 	PMD_INIT_FUNC_TRACE();
 
@@ -1588,9 +1601,9 @@ nicvf_vf_start(struct rte_eth_dev *dev, struct nicvf *nic, uint32_t rbdrsz)
 		     nic->rbdr->tail, nb_rbdr_desc, nic->vf_id);
 
 	/* Configure VLAN Strip */
-	vlan_strip = !!(dev->data->dev_conf.rxmode.offloads &
-			DEV_RX_OFFLOAD_VLAN_STRIP);
-	nicvf_vlan_hw_strip(nic, vlan_strip);
+	mask = ETH_VLAN_STRIP_MASK | ETH_VLAN_FILTER_MASK |
+		ETH_VLAN_EXTEND_MASK;
+	ret = nicvf_vlan_offload_config(dev, mask);
 
 	/* Based on the packet type(IPv4 or IPv6), the nicvf HW aligns L3 data
 	 * to the 64bit memory address.
@@ -1743,7 +1756,7 @@ nicvf_dev_start(struct rte_eth_dev *dev)
 			return ret;
 	}
 
-	/* Configure callbacks based on scatter mode */
+	/* Configure callbacks based on offloads */
 	nicvf_set_tx_function(dev);
 	nicvf_set_rx_function(dev);
 
@@ -1962,6 +1975,9 @@ nicvf_dev_configure(struct rte_eth_dev *dev)
 		}
 	}
 
+	if (rxmode->offloads & DEV_RX_OFFLOAD_CHECKSUM)
+		nic->offload_cksum = 1;
+
 	PMD_INIT_LOG(DEBUG, "Configured ethdev port%d hwcap=0x%" PRIx64,
 		dev->data->port_id, nicvf_hw_cap(nic));
 
@@ -1981,6 +1997,7 @@ static const struct eth_dev_ops nicvf_eth_dev_ops = {
 	.dev_infos_get            = nicvf_dev_info_get,
 	.dev_supported_ptypes_get = nicvf_dev_supported_ptypes_get,
 	.mtu_set                  = nicvf_dev_set_mtu,
+	.vlan_offload_set         = nicvf_vlan_offload_set,
 	.reta_update              = nicvf_dev_reta_update,
 	.reta_query               = nicvf_dev_reta_query,
 	.rss_hash_update          = nicvf_dev_rss_hash_update,
@@ -1996,6 +2013,30 @@ static const struct eth_dev_ops nicvf_eth_dev_ops = {
 	.tx_queue_release         = nicvf_dev_tx_queue_release,
 	.get_reg                  = nicvf_dev_get_regs,
 };
+
+static int
+nicvf_vlan_offload_config(struct rte_eth_dev *dev, int mask)
+{
+	struct rte_eth_rxmode *rxmode;
+	struct nicvf *nic = nicvf_pmd_priv(dev);
+	rxmode = &dev->data->dev_conf.rxmode;
+	if (mask & ETH_VLAN_STRIP_MASK) {
+		if (rxmode->offloads & DEV_RX_OFFLOAD_VLAN_STRIP)
+			nicvf_vlan_hw_strip(nic, true);
+		else
+			nicvf_vlan_hw_strip(nic, false);
+	}
+
+	return 0;
+}
+
+static int
+nicvf_vlan_offload_set(struct rte_eth_dev *dev, int mask)
+{
+	nicvf_vlan_offload_config(dev, mask);
+
+	return 0;
+}
 
 static inline int
 nicvf_set_first_skip(struct rte_eth_dev *dev)

@@ -156,6 +156,14 @@ struct mlx5_drop {
 	struct mlx5_rxq_ibv *rxq; /* Verbs Rx queue. */
 };
 
+/** DPDK port to network interface index (ifindex) conversion. */
+struct mlx5_nl_flow_ptoi {
+	uint16_t port_id; /**< DPDK port ID. */
+	unsigned int ifindex; /**< Network interface index. */
+};
+
+struct mnl_socket;
+
 struct priv {
 	LIST_ENTRY(priv) mem_event_cb; /* Called by memory event callback. */
 	struct rte_eth_dev_data *dev_data;  /* Pointer to device data. */
@@ -220,6 +228,7 @@ struct priv {
 	rte_spinlock_t uar_lock[MLX5_UAR_PAGE_NUM_MAX];
 	/* UAR same-page access control required in 32bit implementations. */
 #endif
+	struct mnl_socket *mnl_socket; /* Libmnl socket. */
 };
 
 #define PORT_ID(priv) ((priv)->dev_data->port_id)
@@ -234,7 +243,7 @@ int mlx5_getenv_int(const char *);
 int mlx5_get_master_ifname(const struct rte_eth_dev *dev,
 			   char (*ifname)[IF_NAMESIZE]);
 int mlx5_get_ifname(const struct rte_eth_dev *dev, char (*ifname)[IF_NAMESIZE]);
-int mlx5_ifindex(const struct rte_eth_dev *dev);
+unsigned int mlx5_ifindex(const struct rte_eth_dev *dev);
 int mlx5_ifreq(const struct rte_eth_dev *dev, int req, struct ifreq *ifr,
 	       int master);
 int mlx5_get_mtu(struct rte_eth_dev *dev, uint16_t *mtu);
@@ -264,6 +273,8 @@ eth_rx_burst_t mlx5_select_rx_function(struct rte_eth_dev *dev);
 unsigned int mlx5_dev_to_port_id(const struct rte_device *dev,
 				 uint16_t *port_list,
 				 unsigned int port_list_n);
+int mlx5_sysfs_switch_info(unsigned int ifindex,
+			   struct mlx5_switch_info *info);
 
 /* mlx5_mac.c */
 
@@ -372,7 +383,7 @@ int mlx5_socket_connect(struct rte_eth_dev *priv);
 
 /* mlx5_nl.c */
 
-int mlx5_nl_init(uint32_t nlgroups, int protocol);
+int mlx5_nl_init(int protocol);
 int mlx5_nl_mac_addr_add(struct rte_eth_dev *dev, struct ether_addr *mac,
 			 uint32_t index);
 int mlx5_nl_mac_addr_remove(struct rte_eth_dev *dev, struct ether_addr *mac,
@@ -384,5 +395,24 @@ int mlx5_nl_allmulti(struct rte_eth_dev *dev, int enable);
 unsigned int mlx5_nl_ifindex(int nl, const char *name);
 int mlx5_nl_switch_info(int nl, unsigned int ifindex,
 			struct mlx5_switch_info *info);
+
+/* mlx5_nl_flow.c */
+
+int mlx5_nl_flow_transpose(void *buf,
+			   size_t size,
+			   const struct mlx5_nl_flow_ptoi *ptoi,
+			   const struct rte_flow_attr *attr,
+			   const struct rte_flow_item *pattern,
+			   const struct rte_flow_action *actions,
+			   struct rte_flow_error *error);
+void mlx5_nl_flow_brand(void *buf, uint32_t handle);
+int mlx5_nl_flow_create(struct mnl_socket *nl, void *buf,
+			struct rte_flow_error *error);
+int mlx5_nl_flow_destroy(struct mnl_socket *nl, void *buf,
+			 struct rte_flow_error *error);
+int mlx5_nl_flow_init(struct mnl_socket *nl, unsigned int ifindex,
+		      struct rte_flow_error *error);
+struct mnl_socket *mlx5_nl_flow_socket_create(void);
+void mlx5_nl_flow_socket_destroy(struct mnl_socket *nl);
 
 #endif /* RTE_PMD_MLX5_H_ */

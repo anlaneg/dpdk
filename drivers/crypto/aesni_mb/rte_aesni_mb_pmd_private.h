@@ -7,6 +7,15 @@
 
 #include "aesni_mb_ops.h"
 
+/*
+ * IMB_VERSION_NUM macro was introduced in version Multi-buffer 0.50,
+ * so if macro is not defined, it means that the version is 0.49.
+ */
+#if !defined(IMB_VERSION_NUM)
+#define IMB_VERSION(a, b, c) (((a) << 16) + ((b) << 8) + (c))
+#define IMB_VERSION_NUM IMB_VERSION(0, 49, 0)
+#endif
+
 #define CRYPTODEV_NAME_AESNI_MB_PMD	crypto_aesni_mb
 /**< AES-NI Multi buffer PMD device name */
 
@@ -123,7 +132,7 @@ struct aesni_mb_qp {
 	/**< Unique Queue Pair Name */
 	const struct aesni_mb_op_fns *op_fns;
 	/**< Vector mode dependent pointer table of the multi-buffer APIs */
-	MB_MGR mb_mgr;
+	MB_MGR *mb_mgr;
 	/**< Multi-buffer instance */
 	struct rte_ring *ingress_queue;
        /**< Ring for placing operations ready for processing */
@@ -160,12 +169,18 @@ struct aesni_mb_session {
 
 		uint64_t key_length_in_bytes;
 
-		struct {
-			uint32_t encode[60] __rte_aligned(16);
-			/**< encode key */
-			uint32_t decode[60] __rte_aligned(16);
-			/**< decode key */
-		} expanded_aes_keys;
+		union {
+			struct {
+				uint32_t encode[60] __rte_aligned(16);
+				/**< encode key */
+				uint32_t decode[60] __rte_aligned(16);
+				/**< decode key */
+			} expanded_aes_keys;
+			struct {
+				const void *ks_ptr[3];
+				uint64_t key[3][16];
+			} exp_3des_keys;
+		};
 		/**< Expanded AES keys - Allocating space to
 		 * contain the maximum expanded key size which
 		 * is 240 bytes for 256 bit AES, calculate by:

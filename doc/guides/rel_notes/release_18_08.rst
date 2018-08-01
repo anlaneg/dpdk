@@ -50,7 +50,10 @@ New Features
 * **Added Flow API support for CXGBE PMD.**
 
   Flow API support has been added to CXGBE Poll Mode Driver to offload
-  flows to Chelsio T5/T6 NICs.
+  flows to Chelsio T5/T6 NICs. Support added for:
+  * Wildcard (LE-TCAM) and Exact (HASH) match filters.
+  * Match items: physical ingress port, IPv4, IPv6, TCP and UDP.
+  * Action items: queue, drop, count, and physical egress port redirect.
 
 * **Added ixgbe preferred Rx/Tx parameters.**
 
@@ -73,6 +76,22 @@ New Features
   * Minor performance improvements to scattered Rx handler.
   * Add handlers to add/delete VxLAN port number.
   * Add devarg to specify ingress VLAN rewrite mode.
+
+* **Updated the AESNI MB PMD.**
+
+  The AESNI MB PMD has been updated with additional support for:
+
+  * 3DES for 8, 16 and 24 byte keys.
+
+* **Added a new compression PMD using Intel's QuickAssist (QAT) device family.**
+
+  Added the new ``QAT`` compression driver, for compression and decompression
+  operations in software. See the :doc:`../compressdevs/qat_comp` compression
+  driver guide for details on this new driver.
+
+* **Updated the ISA-L PMD.**
+
+  Added support for chained mbufs (input and output).
 
 
 API Changes

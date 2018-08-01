@@ -481,7 +481,9 @@ alloc_seg(struct rte_memseg *ms, void *addr, int socket_id,
 	void *new_addr;
 
 	alloc_sz = hi->hugepage_sz;
-	if (internal_config.in_memory && anonymous_hugepages_supported) {
+	if (!internal_config.single_file_segments &&
+			internal_config.in_memory &&
+			anonymous_hugepages_supported) {
 		int log2, flags;
 
 		log2 = rte_log2_u32(alloc_sz);
@@ -729,8 +731,7 @@ alloc_seg_walk(const struct rte_memseg_list *msl, void *arg)
 	need = wa->n_segs;
 
 	/* try finding space in memseg list */
-	cur_idx = rte_fbarray_find_prev_n_free(&cur_msl->memseg_arr,
-			cur_msl->memseg_arr.len - 1, need);
+	cur_idx = rte_fbarray_find_next_n_free(&cur_msl->memseg_arr, 0, need);
 	if (cur_idx < 0)
 		return 0;
 	start_idx = cur_idx;

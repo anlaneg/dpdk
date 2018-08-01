@@ -1282,7 +1282,7 @@ virtio_recv_mergeable_pkts(void *rx_queue,
 			continue;
 		}
 
-		seg_s = seg_num - 1;
+		seg_res = seg_num - 1;
 
 		while (seg_res != 0) {
 			/*
