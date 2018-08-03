@@ -201,7 +201,7 @@ match_inst(cmdline_parse_inst_t *inst, const char *buf,
 
 
 //实现命令行解析
-//dpdk中的命令行功能，使用起来非常麻烦，解析起来了也事情比较多
+//dpdk中的命令行功能，使用起来非常麻烦，解析起来了也事情比较多,写得比较屎
 /**
  * 这块应这样做
  * 1。定义已知的类型（dpdk中也有这种概念，例如cmdline_parse_token_string_t），

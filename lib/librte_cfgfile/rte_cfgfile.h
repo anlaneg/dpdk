@@ -50,13 +50,13 @@ enum {
 	 * defined section.  These entries can be accessed in the "GLOBAL"
 	 * section.
 	 */
-	CFG_FLAG_GLOBAL_SECTION = 1,
+	CFG_FLAG_GLOBAL_SECTION = 1,//是否需要增加global段
 
 	/**
 	 * Indicates that file supports key value entries where the value can
 	 * be zero length (e.g., "key=").
 	 */
-	CFG_FLAG_EMPTY_VALUES = 2,
+	CFG_FLAG_EMPTY_VALUES = 2,//是否容许空的value
 };
 /**@} */
 

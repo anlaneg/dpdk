@@ -40,6 +40,7 @@
  * Creates a symbol version table entry binding symbol <b>@DPDK_<n> to the internal
  * function name <b>_<e>
  */
+//符号版本，用于动态库兼容
 #define VERSION_SYMBOL(b, e, n) __asm__(".symver " RTE_STR(b) RTE_STR(e) ", " RTE_STR(b) "@DPDK_" RTE_STR(n))
 
 /*

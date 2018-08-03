@@ -86,6 +86,7 @@ add_to_backlog(struct rte_distributor_backlog *bl, int64_t item)
 	if (bl->count == RTE_DISTRIB_BACKLOG_SIZE)
 		return -1;
 
+	//将item加入到bl中
 	bl->pkts[(bl->start + bl->count++) & (RTE_DISTRIB_BACKLOG_MASK)]
 			= item;
 	return 0;
@@ -96,6 +97,7 @@ static int64_t
 backlog_pop(struct rte_distributor_backlog *bl)
 {
 	bl->count--;
+	//自bl中弹出item
 	return bl->pkts[bl->start++ & RTE_DISTRIB_BACKLOG_MASK];
 }
 

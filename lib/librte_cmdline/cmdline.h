@@ -21,6 +21,7 @@
 extern "C" {
 #endif
 
+//非常差的库，基本是个垃圾
 struct cmdline {
 	int s_in;//输入fd
 	int s_out;//输出fd
