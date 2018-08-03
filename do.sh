@@ -2,13 +2,13 @@
 function ubuntu_install()
 {
 	echo "ubuntu install"
-	sudo apt install -y gcc numactl-dev libnuma-devel
+	sudo apt install -y gcc libnuma-devel
 }
 
 function centos_install()
 {
 	echo "centos install"
-	sudo yum install -y gcc numactl-dev 
+	sudo yum install -y gcc numactl-devel 
 }
 
 function UNKOWN_install()
