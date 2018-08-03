@@ -87,16 +87,16 @@ endif
 
 install-runtime:
 	$(Q)$(call rte_mkdir, $(DESTDIR)$(libdir))
-	$(Q)cp -a    $O/lib/* $(DESTDIR)$(libdir)
+	-$(Q)cp -a    $O/lib/* $(DESTDIR)$(libdir)
 	$(Q)$(call rte_mkdir, $(DESTDIR)$(bindir))
-	$(Q)tar -cf -      -C $O --exclude 'app/*.map' \
+	-$(Q)tar -cf -      -C $O --exclude 'app/*.map' \
 		--exclude app/dpdk-pmdinfogen \
 		--exclude 'app/cmdline*' --exclude app/test \
 		--exclude app/testacl --exclude app/testpipeline app | \
 	    tar -xf -      -C $(DESTDIR)$(bindir) --strip-components=1 \
 		--keep-newer-files
 	$(Q)$(call rte_mkdir,      $(DESTDIR)$(datadir))
-	$(Q)cp -a $(RTE_SDK)/usertools $(DESTDIR)$(datadir)
+	-$(Q)cp -a $(RTE_SDK)/usertools $(DESTDIR)$(datadir)
 	$(Q)$(call rte_mkdir,      $(DESTDIR)$(sbindir))
 	$(Q)$(call rte_symlink,    $(DESTDIR)$(datadir)/usertools/dpdk-devbind.py, \
 	                           $(DESTDIR)$(sbindir)/dpdk-devbind)
