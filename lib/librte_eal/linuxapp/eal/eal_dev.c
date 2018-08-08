@@ -39,6 +39,7 @@ dev_uev_socket_fd_create(void)
 	struct sockaddr_nl addr;
 	int ret;
 
+	//创建netlink消息，并注udev事件
 	intr_handle.fd = socket(PF_NETLINK, SOCK_RAW | SOCK_CLOEXEC |
 			SOCK_NONBLOCK,
 			NETLINK_KOBJECT_UEVENT);
@@ -152,7 +153,7 @@ dev_uev_handler(__rte_unused void *param)
 	memset(&uevent, 0, sizeof(struct rte_dev_event));
 	memset(buf, 0, EAL_UEV_MSG_LEN);
 
-	//自fd中读取数据
+	//自fd中读取uevent消息
 	ret = recv(intr_handle.fd, buf, EAL_UEV_MSG_LEN, MSG_DONTWAIT);
 	if (ret < 0 && errno == EAGAIN)
 		return;
@@ -163,7 +164,7 @@ dev_uev_handler(__rte_unused void *param)
 		return;
 	}
 
-	//解析uevent
+	//解析uevent消息
 	ret = dev_uev_parse(buf, &uevent, EAL_UEV_MSG_LEN);
 	if (ret < 0) {
 		RTE_LOG(DEBUG, EAL, "It is not an valid event "
@@ -175,7 +176,7 @@ dev_uev_handler(__rte_unused void *param)
 		uevent.devname, uevent.type, uevent.subsystem);
 
 	if (uevent.devname)
-		//udevent处理
+		//udevent消息处理，目前支持设备添加，设备移除两个事件
 		dev_callback_process(uevent.devname, uevent.type);
 }
 
