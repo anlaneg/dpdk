@@ -33,6 +33,7 @@ struct dev_event_callback {
 	rte_dev_event_cb_fn cb_fn;            /**< Callback address */
 	void *cb_arg;                         /**< Callback parameter */
 	char *dev_name;	 /**< Callback device name, NULL is for all device */
+	//指明callback正在执行
 	uint32_t active;                      /**< Callback is executing */
 };
 
@@ -231,6 +232,7 @@ rte_eal_hotplug_remove(const char *busname, const char *devname)
 	return ret;
 }
 
+//注册设备事件处理回调（目前仅新增，删除设备两种事件）
 int __rte_experimental
 rte_dev_event_callback_register(const char *device_name,
 				rte_dev_event_cb_fn cb_fn,
@@ -299,6 +301,7 @@ error:
 	return ret;
 }
 
+//解注册
 int __rte_experimental
 rte_dev_event_callback_unregister(const char *device_name,
 				  rte_dev_event_cb_fn cb_fn,
@@ -344,6 +347,7 @@ rte_dev_event_callback_unregister(const char *device_name,
 	return ret;
 }
 
+//设备新增，删除事件触发
 void
 dev_callback_process(char *device_name, enum rte_dev_event_type event)
 {
@@ -354,10 +358,11 @@ dev_callback_process(char *device_name, enum rte_dev_event_type event)
 
 	rte_spinlock_lock(&dev_event_lock);
 
+	//遍历设备事件回调链
 	TAILQ_FOREACH(cb_lst, &dev_event_cbs, next) {
 		if (cb_lst->dev_name) {
 			if (strcmp(cb_lst->dev_name, device_name))
-				continue;
+				continue;//无法与事件设备相匹配，忽略
 		}
 		cb_lst->active = 1;
 		rte_spinlock_unlock(&dev_event_lock);

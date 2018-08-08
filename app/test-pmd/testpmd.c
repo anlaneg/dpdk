@@ -2274,6 +2274,7 @@ eth_event_callback(portid_t port_id, enum rte_eth_event_type type, void *param,
 }
 
 /* This function is used by the interrupt thread */
+//仅用于对外告警
 static void
 eth_dev_event_callback(char *device_name, enum rte_dev_event_type type,
 			     __rte_unused void *arg)
