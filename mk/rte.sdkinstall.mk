@@ -10,6 +10,7 @@ ifdef T # config, build and install combined
 O ?= .
 RTE_OUTPUT := $O/$T
 else # standard install
+#如果没有指定T，则直接安装在build中
 # Build directory is given with O=
 O ?= build
 RTE_OUTPUT := $O
@@ -72,6 +73,7 @@ ifdef T
 	$(Q)$(MAKE) all O=$(RTE_OUTPUT)
 endif
 
+#仅指出DESTDIR变量即可
 .PHONY: install
 install:
 ifeq ($(DESTDIR)$(if $T,,+),)
