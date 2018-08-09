@@ -11,6 +11,7 @@ _postbuild: $(_BUILD)
 
 else # slower way
 
+#提供在build时执行target钩子点
 _prebuild: $(PREBUILD)
 	@touch _prebuild
 

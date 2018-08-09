@@ -34,6 +34,7 @@ endif
 # $(RTE_SRCDIR)/build
 # Output dir can be given as command line using "O="
 #
+#定义输出目录
 ifdef O
 ifeq ("$(origin O)", "command line")
 RTE_OUTPUT := $(abspath $(O))

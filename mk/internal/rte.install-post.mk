@@ -48,6 +48,7 @@ _postinstall: $(_INSTALL)
 
 else # slower way
 
+#提供install的target钩子点
 _preinstall: $(PREINSTALL)
 	@touch _preinstall
 

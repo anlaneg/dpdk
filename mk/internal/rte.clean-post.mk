@@ -11,6 +11,7 @@ _postclean: $(_CLEAN)
 
 else # slower way
 
+#提供的clean钩子点
 _preclean: $(PRECLEAN)
 	@touch _preclean
 

@@ -44,6 +44,7 @@ ifneq ($(BUILDING_RTE_SDK),)
   RTE_SDK_BIN := $(RTE_OUTPUT)
 endif
 
+#定义target
 RTE_TARGET ?= $(RTE_ARCH)-$(RTE_MACHINE)-$(RTE_EXEC_ENV)-$(RTE_TOOLCHAIN)
 
 ifeq ($(BUILDING_RTE_SDK),)
