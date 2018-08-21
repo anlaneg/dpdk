@@ -1795,6 +1795,7 @@ rte_eth_promiscuous_get(uint16_t port_id)
 	return dev->data->promiscuous;
 }
 
+//开启组播
 void
 rte_eth_allmulticast_enable(uint16_t port_id)
 {
