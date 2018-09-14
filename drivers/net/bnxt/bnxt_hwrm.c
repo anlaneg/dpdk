@@ -182,6 +182,10 @@ err_ret:
 	if (rc) { \
 		PMD_DRV_LOG(ERR, "failed rc:%d\n", rc); \
 		rte_spinlock_unlock(&bp->hwrm_lock); \
+		if (rc == HWRM_ERR_CODE_RESOURCE_ACCESS_DENIED) \
+			rc = -EACCES; \
+		else if (rc > 0) \
+			rc = -EINVAL; \
 		return rc; \
 	} \
 	if (resp->error_code) { \
@@ -200,6 +204,10 @@ err_ret:
 			PMD_DRV_LOG(ERR, "error %d\n", rc); \
 		} \
 		rte_spinlock_unlock(&bp->hwrm_lock); \
+		if (rc == HWRM_ERR_CODE_RESOURCE_ACCESS_DENIED) \
+			rc = -EACCES; \
+		else if (rc > 0) \
+			rc = -EINVAL; \
 		return rc; \
 	} \
 } while (0)
@@ -2020,6 +2028,7 @@ int bnxt_clear_hwrm_vnic_filters(struct bnxt *bp, struct bnxt_vnic_info *vnic)
 			rc = bnxt_hwrm_clear_ntuple_filter(bp, filter);
 		else
 			rc = bnxt_hwrm_clear_l2_filter(bp, filter);
+		STAILQ_REMOVE(&vnic->filter, filter, bnxt_filter_info, next);
 		//if (rc)
 			//break;
 	}
@@ -3352,13 +3361,12 @@ int bnxt_get_nvram_directory(struct bnxt *bp, uint32_t len, uint8_t *data)
 	req.host_dest_addr = rte_cpu_to_le_64(dma_handle);
 	rc = bnxt_hwrm_send_message(bp, &req, sizeof(req));
 
-	HWRM_CHECK_RESULT();
-	HWRM_UNLOCK();
-
 	if (rc == 0)
 		memcpy(data, buf, len > buflen ? buflen : len);
 
 	rte_free(buf);
+	HWRM_CHECK_RESULT();
+	HWRM_UNLOCK();
 
 	return rc;
 }
@@ -3390,12 +3398,13 @@ int bnxt_hwrm_get_nvram_item(struct bnxt *bp, uint32_t index,
 	req.offset = rte_cpu_to_le_32(offset);
 	req.len = rte_cpu_to_le_32(length);
 	rc = bnxt_hwrm_send_message(bp, &req, sizeof(req));
-	HWRM_CHECK_RESULT();
-	HWRM_UNLOCK();
 	if (rc == 0)
 		memcpy(data, buf, length);
 
 	rte_free(buf);
+	HWRM_CHECK_RESULT();
+	HWRM_UNLOCK();
+
 	return rc;
 }
 
@@ -3426,14 +3435,6 @@ int bnxt_hwrm_flash_nvram(struct bnxt *bp, uint16_t dir_type,
 	rte_iova_t dma_handle;
 	uint8_t *buf;
 
-	HWRM_PREP(req, NVM_WRITE);
-
-	req.dir_type = rte_cpu_to_le_16(dir_type);
-	req.dir_ordinal = rte_cpu_to_le_16(dir_ordinal);
-	req.dir_ext = rte_cpu_to_le_16(dir_ext);
-	req.dir_attr = rte_cpu_to_le_16(dir_attr);
-	req.dir_data_length = rte_cpu_to_le_32(data_len);
-
 	buf = rte_malloc("nvm_write", data_len, 0);
 	rte_mem_lock_page(buf);
 	if (!buf)
@@ -3446,14 +3447,22 @@ int bnxt_hwrm_flash_nvram(struct bnxt *bp, uint16_t dir_type,
 		return -ENOMEM;
 	}
 	memcpy(buf, data, data_len);
+
+	HWRM_PREP(req, NVM_WRITE);
+
+	req.dir_type = rte_cpu_to_le_16(dir_type);
+	req.dir_ordinal = rte_cpu_to_le_16(dir_ordinal);
+	req.dir_ext = rte_cpu_to_le_16(dir_ext);
+	req.dir_attr = rte_cpu_to_le_16(dir_attr);
+	req.dir_data_length = rte_cpu_to_le_32(data_len);
 	req.host_src_addr = rte_cpu_to_le_64(dma_handle);
 
 	rc = bnxt_hwrm_send_message(bp, &req, sizeof(req));
 
+	rte_free(buf);
 	HWRM_CHECK_RESULT();
 	HWRM_UNLOCK();
 
-	rte_free(buf);
 	return rc;
 }
 

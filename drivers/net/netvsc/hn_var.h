@@ -69,7 +69,6 @@ struct hn_rx_queue {
 	struct vmbus_channel *chan;
 	struct rte_mempool *mb_pool;
 	struct rte_ring *rx_ring;
-	void	*event_buf;
 
 	rte_spinlock_t ring_lock;
 	uint32_t event_sz;
@@ -77,6 +76,8 @@ struct hn_rx_queue {
 	uint16_t queue_id;
 	struct hn_stats stats;
 	uint64_t ring_full;
+
+	uint8_t	event_buf[];
 };
 
 
@@ -141,6 +142,8 @@ int	hn_dev_tx_queue_setup(struct rte_eth_dev *dev, uint16_t queue_idx,
 			      uint16_t nb_desc, unsigned int socket_id,
 			      const struct rte_eth_txconf *tx_conf);
 void	hn_dev_tx_queue_release(void *arg);
+void	hn_dev_tx_queue_info(struct rte_eth_dev *dev, uint16_t queue_idx,
+			     struct rte_eth_txq_info *qinfo);
 
 struct hn_rx_queue *hn_rx_queue_alloc(struct hn_data *hv,
 				      uint16_t queue_id,
@@ -151,3 +154,5 @@ int	hn_dev_rx_queue_setup(struct rte_eth_dev *dev,
 			      const struct rte_eth_rxconf *rx_conf,
 			      struct rte_mempool *mp);
 void	hn_dev_rx_queue_release(void *arg);
+void	hn_dev_rx_queue_info(struct rte_eth_dev *dev, uint16_t queue_idx,
+			     struct rte_eth_rxq_info *qinfo);

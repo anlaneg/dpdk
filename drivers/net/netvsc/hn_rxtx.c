@@ -24,6 +24,7 @@
 #include <rte_memory.h>
 #include <rte_eal.h>
 #include <rte_dev.h>
+#include <rte_net.h>
 #include <rte_bus_vmbus.h>
 #include <rte_spinlock.h>
 
@@ -40,7 +41,7 @@
 #define HN_TXCOPY_THRESHOLD	512
 
 #define HN_RXCOPY_THRESHOLD	256
-#define HN_RXQ_EVENT_DEFAULT	1024
+#define HN_RXQ_EVENT_DEFAULT	2048
 
 struct hn_rxinfo {
 	uint32_t	vlan_info;
@@ -268,6 +269,17 @@ hn_dev_tx_queue_release(void *arg)
 	rte_free(txq);
 }
 
+void
+hn_dev_tx_queue_info(struct rte_eth_dev *dev, uint16_t queue_idx,
+		     struct rte_eth_txq_info *qinfo)
+{
+	struct hn_data *hv = dev->data->dev_private;
+	struct hn_tx_queue *txq = dev->data->rx_queues[queue_idx];
+
+	qinfo->conf.tx_free_thresh = txq->free_thresh;
+	qinfo->nb_desc = hv->tx_pool->size;
+}
+
 static void
 hn_nvs_send_completed(struct rte_eth_dev *dev, uint16_t queue_id,
 		      unsigned long xactid, const struct hn_nvs_rndis_ack *ack)
@@ -484,6 +496,10 @@ static void hn_rxpkt(struct hn_rx_queue *rxq, struct hn_rx_bufinfo *rxb,
 	m->port = rxq->port_id;
 	m->pkt_len = dlen;
 	m->data_len = dlen;
+	m->packet_type = rte_net_get_ptype(m, NULL,
+					   RTE_PTYPE_L2_MASK |
+					   RTE_PTYPE_L3_MASK |
+					   RTE_PTYPE_L4_MASK);
 
 	if (info->vlan_info != HN_NDIS_VLAN_INFO_INVALID) {
 		m->vlan_tci = info->vlan_info;
@@ -497,6 +513,9 @@ static void hn_rxpkt(struct hn_rx_queue *rxq, struct hn_rx_bufinfo *rxb,
 		if (info->csum_info & (NDIS_RXCSUM_INFO_UDPCS_OK
 				       | NDIS_RXCSUM_INFO_TCPCS_OK))
 			m->ol_flags |= PKT_RX_L4_CKSUM_GOOD;
+		else if (info->csum_info & (NDIS_RXCSUM_INFO_TCPCS_FAILED
+					    | NDIS_RXCSUM_INFO_UDPCS_FAILED))
+			m->ol_flags |= PKT_RX_L4_CKSUM_BAD;
 	}
 
 	if (info->hash_info != HN_NDIS_HASH_INFO_INVALID) {
@@ -504,9 +523,10 @@ static void hn_rxpkt(struct hn_rx_queue *rxq, struct hn_rx_bufinfo *rxb,
 		m->hash.rss = info->hash_value;
 	}
 
-	PMD_RX_LOG(DEBUG, "port %u:%u RX id %" PRIu64 " size %u ol_flags %#" PRIx64,
+	PMD_RX_LOG(DEBUG,
+		   "port %u:%u RX id %"PRIu64" size %u type %#x ol_flags %#"PRIx64,
 		   rxq->port_id, rxq->queue_id, rxb->xactid,
-		   m->pkt_len, m->ol_flags);
+		   m->pkt_len, m->packet_type, m->ol_flags);
 
 	++rxq->stats.packets;
 	rxq->stats.bytes += m->pkt_len;
@@ -698,7 +718,8 @@ struct hn_rx_queue *hn_rx_queue_alloc(struct hn_data *hv,
 {
 	struct hn_rx_queue *rxq;
 
-	rxq = rte_zmalloc_socket("HN_RXQ", sizeof(*rxq),
+	rxq = rte_zmalloc_socket("HN_RXQ",
+				 sizeof(*rxq) + HN_RXQ_EVENT_DEFAULT,
 				 RTE_CACHE_LINE_SIZE, socket_id);
 	if (rxq) {
 		rxq->hv = hv;
@@ -706,16 +727,6 @@ struct hn_rx_queue *hn_rx_queue_alloc(struct hn_data *hv,
 		rte_spinlock_init(&rxq->ring_lock);
 		rxq->port_id = hv->port_id;
 		rxq->queue_id = queue_id;
-
-		rxq->event_sz = HN_RXQ_EVENT_DEFAULT;
-		rxq->event_buf = rte_malloc_socket("RX_EVENTS",
-						   rxq->event_sz,
-						   RTE_CACHE_LINE_SIZE,
-						   socket_id);
-		if (!rxq->event_buf) {
-			rte_free(rxq);
-			rxq = NULL;
-		}
 	}
 	return rxq;
 }
@@ -728,17 +739,11 @@ hn_dev_rx_queue_setup(struct rte_eth_dev *dev,
 		      struct rte_mempool *mp)
 {
 	struct hn_data *hv = dev->data->dev_private;
-	uint32_t qmax = hv->rxbuf_section_cnt;
 	char ring_name[RTE_RING_NAMESIZE];
 	struct hn_rx_queue *rxq;
 	unsigned int count;
-	size_t size;
-	int err = -ENOMEM;
 
 	PMD_INIT_FUNC_TRACE();
-
-	if (nb_desc == 0 || nb_desc > qmax)
-		nb_desc = qmax;
 
 	if (queue_idx == 0) {
 		rxq = hv->primary;
@@ -749,14 +754,9 @@ hn_dev_rx_queue_setup(struct rte_eth_dev *dev,
 	}
 
 	rxq->mb_pool = mp;
-
-	count = rte_align32pow2(nb_desc);
-	size = sizeof(struct rte_ring) + count * sizeof(void *);
-	rxq->rx_ring = rte_malloc_socket("RX_RING", size,
-					 RTE_CACHE_LINE_SIZE,
-					 socket_id);
-	if (!rxq->rx_ring)
-		goto fail;
+	count = rte_mempool_avail_count(mp) / dev->data->nb_rx_queues;
+	if (nb_desc == 0 || nb_desc > count)
+		nb_desc = count;
 
 	/*
 	 * Staging ring from receive event logic to rx_pkts.
@@ -765,16 +765,17 @@ hn_dev_rx_queue_setup(struct rte_eth_dev *dev,
 	 */
 	snprintf(ring_name, sizeof(ring_name),
 		 "hn_rx_%u_%u", dev->data->port_id, queue_idx);
-	err = rte_ring_init(rxq->rx_ring, ring_name,
-			    count, 0);
-	if (err)
+	rxq->rx_ring = rte_ring_create(ring_name,
+				       rte_align32pow2(nb_desc),
+				       socket_id, 0);
+	if (!rxq->rx_ring)
 		goto fail;
 
 	dev->data->rx_queues[queue_idx] = rxq;
 	return 0;
 
 fail:
-	rte_free(rxq->rx_ring);
+	rte_ring_free(rxq->rx_ring);
 	rte_free(rxq->event_buf);
 	rte_free(rxq);
 	return -ENOMEM;
@@ -790,7 +791,7 @@ hn_dev_rx_queue_release(void *arg)
 	if (!rxq)
 		return;
 
-	rte_free(rxq->rx_ring);
+	rte_ring_free(rxq->rx_ring);
 	rxq->rx_ring = NULL;
 	rxq->mb_pool = NULL;
 
@@ -798,6 +799,17 @@ hn_dev_rx_queue_release(void *arg)
 		rte_free(rxq->event_buf);
 		rte_free(rxq);
 	}
+}
+
+void
+hn_dev_rx_queue_info(struct rte_eth_dev *dev, uint16_t queue_idx,
+		     struct rte_eth_rxq_info *qinfo)
+{
+	struct hn_rx_queue *rxq = dev->data->rx_queues[queue_idx];
+
+	qinfo->mp = rxq->mb_pool;
+	qinfo->scattered_rx = 1;
+	qinfo->nb_desc = rte_ring_get_capacity(rxq->rx_ring);
 }
 
 static void
@@ -823,6 +835,7 @@ void hn_process_events(struct hn_data *hv, uint16_t queue_id)
 {
 	struct rte_eth_dev *dev = &rte_eth_devices[hv->port_id];
 	struct hn_rx_queue *rxq;
+	uint32_t bytes_read = 0;
 	int ret = 0;
 
 	rxq = queue_id == 0 ? hv->primary : dev->data->rx_queues[queue_id];
@@ -840,34 +853,21 @@ void hn_process_events(struct hn_data *hv, uint16_t queue_id)
 
 	for (;;) {
 		const struct vmbus_chanpkt_hdr *pkt;
-		uint32_t len = rxq->event_sz;
+		uint32_t len = HN_RXQ_EVENT_DEFAULT;
 		const void *data;
 
 		ret = rte_vmbus_chan_recv_raw(rxq->chan, rxq->event_buf, &len);
 		if (ret == -EAGAIN)
 			break;	/* ring is empty */
 
-		if (ret == -ENOBUFS) {
-			/* expanded buffer needed */
-			len = rte_align32pow2(len);
-			PMD_DRV_LOG(DEBUG, "expand event buf to %u", len);
+		else if (ret == -ENOBUFS)
+			rte_exit(EXIT_FAILURE, "event buffer not big enough (%u < %u)",
+				 HN_RXQ_EVENT_DEFAULT, len);
+		else if (ret <= 0)
+			rte_exit(EXIT_FAILURE,
+				 "vmbus ring buffer error: %d", ret);
 
-			rxq->event_buf = rte_realloc(rxq->event_buf,
-						     len, RTE_CACHE_LINE_SIZE);
-			if (rxq->event_buf) {
-				rxq->event_sz = len;
-				continue;
-			}
-
-			rte_exit(EXIT_FAILURE, "can not expand event buf!\n");
-			break;
-		}
-
-		if (ret != 0) {
-			PMD_DRV_LOG(ERR, "vmbus ring buffer error: %d", ret);
-			break;
-		}
-
+		bytes_read += ret;
 		pkt = (const struct vmbus_chanpkt_hdr *)rxq->event_buf;
 		data = (char *)rxq->event_buf + vmbus_chanpkt_getlen(pkt->hlen);
 
@@ -888,11 +888,15 @@ void hn_process_events(struct hn_data *hv, uint16_t queue_id)
 			PMD_DRV_LOG(ERR, "unknown chan pkt %u", pkt->type);
 			break;
 		}
-	}
-	rte_spinlock_unlock(&rxq->ring_lock);
 
-	if (unlikely(ret != -EAGAIN))
-		PMD_DRV_LOG(ERR, "channel receive failed: %d", ret);
+		if (rxq->rx_ring && rte_ring_full(rxq->rx_ring))
+			break;
+	}
+
+	if (bytes_read > 0)
+		rte_vmbus_chan_signal_read(rxq->chan, bytes_read);
+
+	rte_spinlock_unlock(&rxq->ring_lock);
 }
 
 static void hn_append_to_chim(struct hn_tx_queue *txq,
@@ -1258,7 +1262,7 @@ hn_xmit_pkts(void *ptxq, struct rte_mbuf **tx_pkts, uint16_t nb_pkts)
 
 			pkt = hn_try_txagg(hv, txq, pkt_size);
 			if (unlikely(!pkt))
-				goto fail;
+				break;
 
 			hn_encap(pkt, txq->queue_id, m);
 			hn_append_to_chim(txq, pkt, m);
@@ -1279,7 +1283,7 @@ hn_xmit_pkts(void *ptxq, struct rte_mbuf **tx_pkts, uint16_t nb_pkts)
 			} else {
 				txd = hn_new_txd(hv, txq);
 				if (unlikely(!txd))
-					goto fail;
+					break;
 			}
 
 			pkt = txd->rndis_pkt;
@@ -1320,8 +1324,9 @@ hn_recv_pkts(void *prxq, struct rte_mbuf **rx_pkts, uint16_t nb_pkts)
 	if (unlikely(hv->closed))
 		return 0;
 
-	/* Get all outstanding receive completions */
-	hn_process_events(hv, rxq->queue_id);
+	/* If ring is empty then process more */
+	if (rte_ring_count(rxq->rx_ring) < nb_pkts)
+		hn_process_events(hv, rxq->queue_id);
 
 	/* Get mbufs off staging ring */
 	return rte_ring_sc_dequeue_burst(rxq->rx_ring, (void **)rx_pkts,

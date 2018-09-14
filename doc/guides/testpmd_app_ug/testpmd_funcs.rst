@@ -320,12 +320,8 @@ The available information categories are:
 
 * ``ieee1588``: Demonstrate L2 IEEE1588 V2 PTP timestamping for RX and TX. Requires ``CONFIG_RTE_LIBRTE_IEEE1588=y``.
 
-* ``tm``: Traffic Management forwarding mode
-  Demonstrates the use of ethdev traffic management APIs and softnic PMD for
-  QoS traffic management. In this mode, 5-level hierarchical QoS scheduler is
-  available as an default option that can be enabled through CLI. The user can
-  also modify the default hierarchy or specify the new hierarchy through CLI for
-  implementing QoS scheduler.  Requires ``CONFIG_RTE_LIBRTE_PMD_SOFTNIC=y`` ``CONFIG_RTE_LIBRTE_SCHED=y``.
+* ``softnic``: Demonstrates the softnic forwarding operation. In this mode, packet forwarding is
+  similar to I/O mode except for the fact that packets are loopback to the softnic ports only. Therefore, portmask parameter should be set to softnic port only. The various software based custom NIC pipelines specified through the softnic firmware (DPDK packet framework script) can be tested in this mode. Furthermore, it allows to build 5-level hierarchical QoS scheduler as a default option that can be enabled through CLI once testpmd application is initialised. The user can modify the default scheduler hierarchy or can specify the new QoS Scheduler hierarchy through CLI. Requires ``CONFIG_RTE_LIBRTE_PMD_SOFTNIC=y``.
 
 Example::
 
@@ -1490,7 +1486,7 @@ Enable or disable a per port Rx offloading on all Rx queues of a port::
                   vlan_strip, ipv4_cksum, udp_cksum, tcp_cksum, tcp_lro,
                   qinq_strip, outer_ipv4_cksum, macsec_strip,
                   header_split, vlan_filter, vlan_extend, jumbo_frame,
-                  crc_strip, scatter, timestamp, security
+                  crc_strip, scatter, timestamp, security, keep_crc
 
 This command should be run when the port is stopped, or else it will fail.
 
@@ -1505,7 +1501,7 @@ Enable or disable a per queue Rx offloading only on a specific Rx queue::
                   vlan_strip, ipv4_cksum, udp_cksum, tcp_cksum, tcp_lro,
                   qinq_strip, outer_ipv4_cksum, macsec_strip,
                   header_split, vlan_filter, vlan_extend, jumbo_frame,
-                  crc_strip, scatter, timestamp, security
+                  crc_strip, scatter, timestamp, security, keep_crc
 
 This command should be run when the port is stopped, or else it will fail.
 
@@ -1521,7 +1517,7 @@ Enable or disable a per port Tx offloading on all Tx queues of a port::
                   sctp_cksum, tcp_tso, udp_tso, outer_ipv4_cksum,
                   qinq_insert, vxlan_tnl_tso, gre_tnl_tso,
                   ipip_tnl_tso, geneve_tnl_tso, macsec_insert,
-                  mt_lockfree, multi_segs, fast_free, security
+                  mt_lockfree, multi_segs, mbuf_fast_free, security
 
 This command should be run when the port is stopped, or else it will fail.
 
@@ -1537,7 +1533,7 @@ Enable or disable a per queue Tx offloading only on a specific Tx queue::
                   sctp_cksum, tcp_tso, udp_tso, outer_ipv4_cksum,
                   qinq_insert, vxlan_tnl_tso, gre_tnl_tso,
                   ipip_tnl_tso, geneve_tnl_tso, macsec_insert,
-                  mt_lockfree, multi_segs, fast_free, security
+                  mt_lockfree, multi_segs, mbuf_fast_free, security
 
 This command should be run when the port is stopped, or else it will fail.
 
@@ -2660,8 +2656,8 @@ where:
   call failure. On the other hand, hierarchy is preserved when this parameter
   is equal to zero.
 
-Set port traffic management default hierarchy (tm forwarding mode)
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Set port traffic management default hierarchy (softnic forwarding mode)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 set the traffic management default hierarchy on the port::
 

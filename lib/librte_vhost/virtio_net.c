@@ -1447,7 +1447,6 @@ virtio_dev_tx_split(struct virtio_net *dev, struct vhost_virtqueue *vq,
 	if (unlikely(dev->dequeue_zero_copy)) {
 		//zero copy代码未读
 		struct zcopy_mbuf *zmbuf, *next;
-		int nr_updated = 0;
 
 		for (zmbuf = TAILQ_FIRST(&vq->zmbuf_list);
 		     zmbuf != NULL; zmbuf = next) {
@@ -1456,8 +1455,6 @@ virtio_dev_tx_split(struct virtio_net *dev, struct vhost_virtqueue *vq,
 			if (mbuf_is_consumed(zmbuf->mbuf)) {
 				update_shadow_used_ring_split(vq,
 						zmbuf->desc_idx, 0);
-				nr_updated += 1;
-
 				TAILQ_REMOVE(&vq->zmbuf_list, zmbuf, next);
 				restore_mbuf(zmbuf->mbuf);
 				rte_pktmbuf_free(zmbuf->mbuf);

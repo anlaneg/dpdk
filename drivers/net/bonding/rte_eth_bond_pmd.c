@@ -2141,10 +2141,6 @@ bond_ethdev_start(struct rte_eth_dev *eth_dev)
 		}
 	}
 
-	/* Update all slave devices MACs*/
-	if (mac_address_slaves_update(eth_dev) != 0)
-		goto out_err;
-
 	/* If bonded device is configure in promiscuous mode then re-apply config */
 	if (internals->promiscuous_en)
 		bond_ethdev_promiscuous_enable(eth_dev);
@@ -2184,6 +2180,10 @@ bond_ethdev_start(struct rte_eth_dev *eth_dev)
 			bond_ethdev_slave_link_status_change_monitor,
 			(void *)&rte_eth_devices[internals->port_id]);
 	}
+
+	/* Update all slave devices MACs*/
+	if (mac_address_slaves_update(eth_dev) != 0)
+		goto out_err;
 
 	if (internals->user_defined_primary_port)
 		bond_ethdev_primary_set(internals, internals->primary_port);
@@ -2758,6 +2758,17 @@ bond_ethdev_lsc_event_callback(uint16_t port_id, enum rte_eth_event_type type,
 			lsc_flag = 1;
 
 			mac_address_slaves_update(bonded_eth_dev);
+		}
+
+		/* check link state properties if bonded link is up*/
+		if (bonded_eth_dev->data->dev_link.link_status == ETH_LINK_UP) {
+			if (link_properties_valid(bonded_eth_dev, &link) != 0)
+				RTE_BOND_LOG(ERR, "Invalid link properties "
+					     "for slave %d in bonding mode %d",
+					     port_id, internals->mode);
+		} else {
+			/* inherit slave link properties */
+			link_properties_set(bonded_eth_dev, &link);
 		}
 
 		activate_slave(bonded_eth_dev, port_id);

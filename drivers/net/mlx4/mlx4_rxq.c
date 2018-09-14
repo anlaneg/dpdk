@@ -351,6 +351,12 @@ mlx4_rss_init(struct priv *priv)
 
 	if (priv->rss_init)
 		return 0;
+	if (priv->dev->data->nb_rx_queues > priv->hw_rss_max_qps) {
+		ERROR("RSS does not support more than %d queues",
+		      priv->hw_rss_max_qps);
+		rte_errno = EINVAL;
+		return -rte_errno;
+	}
 	/* Prepare range for RSS contexts before creating the first WQ. */
 	ret = mlx4_glue->dv_set_context_attr
 		(priv->ctx,
@@ -686,7 +692,8 @@ mlx4_get_rx_queue_offloads(struct priv *priv)
 {
 	uint64_t offloads = DEV_RX_OFFLOAD_SCATTER |
 			    DEV_RX_OFFLOAD_CRC_STRIP |
-			    DEV_RX_OFFLOAD_KEEP_CRC;
+			    DEV_RX_OFFLOAD_KEEP_CRC |
+			    DEV_RX_OFFLOAD_JUMBO_FRAME;
 
 	if (priv->hw_csum)
 		offloads |= DEV_RX_OFFLOAD_CHECKSUM;

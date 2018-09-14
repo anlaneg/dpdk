@@ -18,6 +18,7 @@
 #include <rte_common.h>
 #include <rte_malloc.h>
 #include <rte_bus_vmbus.h>
+#include <rte_string_fns.h>
 
 #include "private.h"
 
@@ -38,11 +39,17 @@ void vmbus_uio_irq_control(struct rte_vmbus_device *dev, int32_t onoff)
 int vmbus_uio_irq_read(struct rte_vmbus_device *dev)
 {
 	int32_t count;
+	int cc;
 
-	if (read(dev->intr_handle.fd, &count, sizeof(count)) < 0) {
-		VMBUS_LOG(ERR, "cannot read to %d:%s",
-			dev->intr_handle.fd, strerror(errno));
-		count = -errno;
+	cc = read(dev->intr_handle.fd, &count, sizeof(count));
+	if (cc < (int)sizeof(count)) {
+		if (cc < 0) {
+			VMBUS_LOG(ERR, "IRQ read failed %s",
+				  strerror(errno));
+			return -errno;
+		}
+		VMBUS_LOG(ERR, "can't read IRQ count");
+		return -EINVAL;
 	}
 
 	return count;
@@ -89,7 +96,7 @@ vmbus_uio_alloc_resource(struct rte_vmbus_device *dev,
 		goto error;
 	}
 
-	strncpy((*uio_res)->path, devname, PATH_MAX);
+	strlcpy((*uio_res)->path, devname, PATH_MAX);
 	rte_uuid_copy((*uio_res)->id, dev->device_id);
 
 	return 0;
@@ -357,6 +364,7 @@ int vmbus_uio_get_subchan(struct vmbus_channel *primary,
 		if (err) {
 			VMBUS_LOG(NOTICE, "invalid subchannel id %lu",
 				  subid);
+			closedir(chan_dir);
 			return err;
 		}
 

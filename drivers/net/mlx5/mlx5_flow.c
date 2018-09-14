@@ -103,7 +103,11 @@ extern const struct eth_dev_ops mlx5_dev_ops_isolate;
 enum mlx5_expansion {
 	MLX5_EXPANSION_ROOT,
 	MLX5_EXPANSION_ROOT_OUTER,
+	MLX5_EXPANSION_ROOT_ETH_VLAN,
+	MLX5_EXPANSION_ROOT_OUTER_ETH_VLAN,
 	MLX5_EXPANSION_OUTER_ETH,
+	MLX5_EXPANSION_OUTER_ETH_VLAN,
+	MLX5_EXPANSION_OUTER_VLAN,
 	MLX5_EXPANSION_OUTER_IPV4,
 	MLX5_EXPANSION_OUTER_IPV4_UDP,
 	MLX5_EXPANSION_OUTER_IPV4_TCP,
@@ -115,6 +119,8 @@ enum mlx5_expansion {
 	MLX5_EXPANSION_GRE,
 	MLX5_EXPANSION_MPLS,
 	MLX5_EXPANSION_ETH,
+	MLX5_EXPANSION_ETH_VLAN,
+	MLX5_EXPANSION_VLAN,
 	MLX5_EXPANSION_IPV4,
 	MLX5_EXPANSION_IPV4_UDP,
 	MLX5_EXPANSION_IPV4_TCP,
@@ -137,12 +143,30 @@ static const struct rte_flow_expand_node mlx5_support_expansion[] = {
 						 MLX5_EXPANSION_OUTER_IPV6),
 		.type = RTE_FLOW_ITEM_TYPE_END,
 	},
+	[MLX5_EXPANSION_ROOT_ETH_VLAN] = {
+		.next = RTE_FLOW_EXPAND_RSS_NEXT(MLX5_EXPANSION_ETH_VLAN),
+		.type = RTE_FLOW_ITEM_TYPE_END,
+	},
+	[MLX5_EXPANSION_ROOT_OUTER_ETH_VLAN] = {
+		.next = RTE_FLOW_EXPAND_RSS_NEXT(MLX5_EXPANSION_OUTER_ETH_VLAN),
+		.type = RTE_FLOW_ITEM_TYPE_END,
+	},
 	[MLX5_EXPANSION_OUTER_ETH] = {
 		.next = RTE_FLOW_EXPAND_RSS_NEXT(MLX5_EXPANSION_OUTER_IPV4,
 						 MLX5_EXPANSION_OUTER_IPV6,
 						 MLX5_EXPANSION_MPLS),
 		.type = RTE_FLOW_ITEM_TYPE_ETH,
 		.rss_types = 0,
+	},
+	[MLX5_EXPANSION_OUTER_ETH_VLAN] = {
+		.next = RTE_FLOW_EXPAND_RSS_NEXT(MLX5_EXPANSION_OUTER_VLAN),
+		.type = RTE_FLOW_ITEM_TYPE_ETH,
+		.rss_types = 0,
+	},
+	[MLX5_EXPANSION_OUTER_VLAN] = {
+		.next = RTE_FLOW_EXPAND_RSS_NEXT(MLX5_EXPANSION_OUTER_IPV4,
+						 MLX5_EXPANSION_OUTER_IPV6),
+		.type = RTE_FLOW_ITEM_TYPE_VLAN,
 	},
 	[MLX5_EXPANSION_OUTER_IPV4] = {
 		.next = RTE_FLOW_EXPAND_RSS_NEXT
@@ -204,6 +228,15 @@ static const struct rte_flow_expand_node mlx5_support_expansion[] = {
 		.next = RTE_FLOW_EXPAND_RSS_NEXT(MLX5_EXPANSION_IPV4,
 						 MLX5_EXPANSION_IPV6),
 		.type = RTE_FLOW_ITEM_TYPE_ETH,
+	},
+	[MLX5_EXPANSION_ETH_VLAN] = {
+		.next = RTE_FLOW_EXPAND_RSS_NEXT(MLX5_EXPANSION_VLAN),
+		.type = RTE_FLOW_ITEM_TYPE_ETH,
+	},
+	[MLX5_EXPANSION_VLAN] = {
+		.next = RTE_FLOW_EXPAND_RSS_NEXT(MLX5_EXPANSION_IPV4,
+						 MLX5_EXPANSION_IPV6),
+		.type = RTE_FLOW_ITEM_TYPE_VLAN,
 	},
 	[MLX5_EXPANSION_IPV4] = {
 		.next = RTE_FLOW_EXPAND_RSS_NEXT(MLX5_EXPANSION_IPV4_UDP,
@@ -490,7 +523,7 @@ mlx5_flow_counter_new(struct rte_eth_dev *dev, uint32_t shared, uint32_t id)
 	struct mlx5_flow_counter *cnt;
 
 	LIST_FOREACH(cnt, &priv->flow_counters, next) {
-		if (cnt->shared != shared)
+		if (!cnt->shared || cnt->shared != shared)
 			continue;
 		if (cnt->id != id)
 			continue;
@@ -1746,7 +1779,9 @@ mlx5_flow_item_mpls(const struct rte_flow_item *item __rte_unused,
 					  item,
 					  "protocol filtering not compatible"
 					  " with MPLS layer");
-	if (flow->layers & MLX5_FLOW_LAYER_TUNNEL)
+	/* Multi-tunnel isn't allowed but MPLS over GRE is an exception. */
+	if (flow->layers & MLX5_FLOW_LAYER_TUNNEL &&
+	    (flow->layers & MLX5_FLOW_LAYER_GRE) != MLX5_FLOW_LAYER_GRE)
 		return rte_flow_error_set(error, ENOTSUP,
 					  RTE_FLOW_ERROR_TYPE_ITEM,
 					  item,
@@ -2033,6 +2068,11 @@ mlx5_flow_action_rss(struct rte_eth_dev *dev,
 					  RTE_FLOW_ERROR_TYPE_ACTION_CONF,
 					  &rss->key_len,
 					  "RSS hash key too large");
+	if (!rss->queue_num)
+		return rte_flow_error_set(error, ENOTSUP,
+					  RTE_FLOW_ERROR_TYPE_ACTION_CONF,
+					  rss,
+					  "no queues were provided for RSS");
 	if (rss->queue_num > priv->config.ind_table_max_size)
 		return rte_flow_error_set(error, ENOTSUP,
 					  RTE_FLOW_ERROR_TYPE_ACTION_CONF,
@@ -2045,6 +2085,12 @@ mlx5_flow_action_rss(struct rte_eth_dev *dev,
 					  "some RSS protocols are not"
 					  " supported");
 	for (i = 0; i != rss->queue_num; ++i) {
+		if (rss->queue[i] >= priv->rxqs_n)
+			return rte_flow_error_set
+				(error, EINVAL,
+				 RTE_FLOW_ERROR_TYPE_ACTION_CONF,
+				 rss,
+				 "queue index out of range");
 		if (!(*priv->rxqs)[rss->queue[i]])
 			return rte_flow_error_set
 				(error, EINVAL,
@@ -2465,6 +2511,25 @@ mlx5_flow_merge_switch(struct rte_eth_dev *dev,
 	return off + ret;
 }
 
+static unsigned int
+mlx5_find_graph_root(const struct rte_flow_item pattern[], uint32_t rss_level)
+{
+	const struct rte_flow_item *item;
+	unsigned int has_vlan = 0;
+
+	for (item = pattern; item->type != RTE_FLOW_ITEM_TYPE_END; item++) {
+		if (item->type == RTE_FLOW_ITEM_TYPE_VLAN) {
+			has_vlan = 1;
+			break;
+		}
+	}
+	if (has_vlan)
+		return rss_level < 2 ? MLX5_EXPANSION_ROOT_ETH_VLAN :
+				       MLX5_EXPANSION_ROOT_OUTER_ETH_VLAN;
+	return rss_level < 2 ? MLX5_EXPANSION_ROOT :
+			       MLX5_EXPANSION_ROOT_OUTER;
+}
+
 /**
  * Convert the @p attributes, @p pattern, @p action, into an flow for the NIC
  * after ensuring the NIC will understand and process it correctly.
@@ -2532,12 +2597,14 @@ mlx5_flow_merge(struct rte_eth_dev *dev, struct rte_flow *flow,
 	if (ret < 0)
 		return ret;
 	if (local_flow.rss.types) {
+		unsigned int graph_root;
+
+		graph_root = mlx5_find_graph_root(pattern,
+						  local_flow.rss.level);
 		ret = rte_flow_expand_rss(buf, sizeof(expand_buffer.buffer),
 					  pattern, local_flow.rss.types,
 					  mlx5_support_expansion,
-					  local_flow.rss.level < 2 ?
-					  MLX5_EXPANSION_ROOT :
-					  MLX5_EXPANSION_ROOT_OUTER);
+					  graph_root);
 		assert(ret > 0 &&
 		       (unsigned int)ret < sizeof(expand_buffer.buffer));
 	} else {
@@ -2880,7 +2947,9 @@ mlx5_flow_apply(struct rte_eth_dev *dev, struct rte_flow *flow,
 						     MLX5_RSS_HASH_KEY_LEN,
 						     verbs->hash_fields,
 						     (*flow->queue),
-						     flow->rss.queue_num);
+						     flow->rss.queue_num,
+						     !!(flow->layers &
+						      MLX5_FLOW_LAYER_TUNNEL));
 			if (!hrxq) {
 				rte_flow_error_set
 					(error, rte_errno,
