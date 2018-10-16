@@ -1279,6 +1279,8 @@ cmd_port_in_action_profile(struct pmd_internals *softnic,
  *      stats none | pkts]
  *  [stats pkts | bytes | both]
  *  [time]
+ *  [tag]
+ *  [decap]
  */
 static void
 cmd_table_action_profile(struct pmd_internals *softnic,
@@ -1610,6 +1612,18 @@ cmd_table_action_profile(struct pmd_internals *softnic,
 		t0 += 1;
 	} /* time */
 
+	if (t0 < n_tokens &&
+		(strcmp(tokens[t0], "tag") == 0)) {
+		p.action_mask |= 1LLU << RTE_TABLE_ACTION_TAG;
+		t0 += 1;
+	} /* tag */
+
+	if (t0 < n_tokens &&
+		(strcmp(tokens[t0], "decap") == 0)) {
+		p.action_mask |= 1LLU << RTE_TABLE_ACTION_DECAP;
+		t0 += 1;
+	} /* decap */
+
 	if (t0 < n_tokens) {
 		snprintf(out, out_size, MSG_ARG_MISMATCH, tokens[0]);
 		return;
@@ -1697,6 +1711,8 @@ cmd_pipeline_port_in(struct pmd_internals *softnic,
 	uint32_t t0;
 	int enabled, status;
 
+	memset(&p, 0, sizeof(p));
+
 	if (n_tokens < 7) {
 		snprintf(out, out_size, MSG_ARG_MISMATCH, tokens[0]);
 		return;
@@ -1735,7 +1751,7 @@ cmd_pipeline_port_in(struct pmd_internals *softnic,
 
 		p.type = PORT_IN_RXQ;
 
-		p.dev_name = tokens[t0 + 1];
+		strcpy(p.dev_name, tokens[t0 + 1]);
 
 		if (strcmp(tokens[t0 + 2], "rxq") != 0) {
 			snprintf(out, out_size, MSG_ARG_NOT_FOUND, "rxq");
@@ -1758,7 +1774,7 @@ cmd_pipeline_port_in(struct pmd_internals *softnic,
 
 		p.type = PORT_IN_SWQ;
 
-		p.dev_name = tokens[t0 + 1];
+		strcpy(p.dev_name, tokens[t0 + 1]);
 
 		t0 += 2;
 	} else if (strcmp(tokens[t0], "tmgr") == 0) {
@@ -1770,7 +1786,7 @@ cmd_pipeline_port_in(struct pmd_internals *softnic,
 
 		p.type = PORT_IN_TMGR;
 
-		p.dev_name = tokens[t0 + 1];
+		strcpy(p.dev_name, tokens[t0 + 1]);
 
 		t0 += 2;
 	} else if (strcmp(tokens[t0], "tap") == 0) {
@@ -1782,7 +1798,7 @@ cmd_pipeline_port_in(struct pmd_internals *softnic,
 
 		p.type = PORT_IN_TAP;
 
-		p.dev_name = tokens[t0 + 1];
+		strcpy(p.dev_name, tokens[t0 + 1]);
 
 		if (strcmp(tokens[t0 + 2], "mempool") != 0) {
 			snprintf(out, out_size, MSG_ARG_NOT_FOUND,
@@ -1813,8 +1829,6 @@ cmd_pipeline_port_in(struct pmd_internals *softnic,
 		}
 
 		p.type = PORT_IN_SOURCE;
-
-		p.dev_name = NULL;
 
 		if (strcmp(tokens[t0 + 1], "mempool") != 0) {
 			snprintf(out, out_size, MSG_ARG_NOT_FOUND,
@@ -1851,7 +1865,6 @@ cmd_pipeline_port_in(struct pmd_internals *softnic,
 		return;
 	}
 
-	p.action_profile_name = NULL;
 	if (n_tokens > t0 &&
 		(strcmp(tokens[t0], "action") == 0)) {
 		if (n_tokens < t0 + 2) {
@@ -1859,7 +1872,7 @@ cmd_pipeline_port_in(struct pmd_internals *softnic,
 			return;
 		}
 
-		p.action_profile_name = tokens[t0 + 1];
+		strcpy(p.action_profile_name, tokens[t0 + 1]);
 
 		t0 += 2;
 	}
@@ -1945,7 +1958,7 @@ cmd_pipeline_port_out(struct pmd_internals *softnic,
 
 		p.type = PORT_OUT_TXQ;
 
-		p.dev_name = tokens[7];
+		strcpy(p.dev_name, tokens[7]);
 
 		if (strcmp(tokens[8], "txq") != 0) {
 			snprintf(out, out_size, MSG_ARG_NOT_FOUND, "txq");
@@ -1966,7 +1979,7 @@ cmd_pipeline_port_out(struct pmd_internals *softnic,
 
 		p.type = PORT_OUT_SWQ;
 
-		p.dev_name = tokens[7];
+		strcpy(p.dev_name, tokens[7]);
 	} else if (strcmp(tokens[6], "tmgr") == 0) {
 		if (n_tokens != 8) {
 			snprintf(out, out_size, MSG_ARG_MISMATCH,
@@ -1976,7 +1989,7 @@ cmd_pipeline_port_out(struct pmd_internals *softnic,
 
 		p.type = PORT_OUT_TMGR;
 
-		p.dev_name = tokens[7];
+		strcpy(p.dev_name, tokens[7]);
 	} else if (strcmp(tokens[6], "tap") == 0) {
 		if (n_tokens != 8) {
 			snprintf(out, out_size, MSG_ARG_MISMATCH,
@@ -1986,7 +1999,7 @@ cmd_pipeline_port_out(struct pmd_internals *softnic,
 
 		p.type = PORT_OUT_TAP;
 
-		p.dev_name = tokens[7];
+		strcpy(p.dev_name, tokens[7]);
 	} else if (strcmp(tokens[6], "sink") == 0) {
 		if ((n_tokens != 7) && (n_tokens != 11)) {
 			snprintf(out, out_size, MSG_ARG_MISMATCH,
@@ -1995,8 +2008,6 @@ cmd_pipeline_port_out(struct pmd_internals *softnic,
 		}
 
 		p.type = PORT_OUT_SINK;
-
-		p.dev_name = NULL;
 
 		if (n_tokens == 7) {
 			p.sink.file_name = NULL;
@@ -2064,11 +2075,12 @@ cmd_pipeline_table(struct pmd_internals *softnic,
 	char *out,
 	size_t out_size)
 {
-	uint8_t key_mask[TABLE_RULE_MATCH_SIZE_MAX];
 	struct softnic_table_params p;
 	char *pipeline_name;
 	uint32_t t0;
 	int status;
+
+	memset(&p, 0, sizeof(p));
 
 	if (n_tokens < 5) {
 		snprintf(out, out_size, MSG_ARG_MISMATCH, tokens[0]);
@@ -2203,12 +2215,11 @@ cmd_pipeline_table(struct pmd_internals *softnic,
 		}
 
 		if ((softnic_parse_hex_string(tokens[t0 + 5],
-			key_mask, &key_mask_size) != 0) ||
+			p.match.hash.key_mask, &key_mask_size) != 0) ||
 			key_mask_size != p.match.hash.key_size) {
 			snprintf(out, out_size, MSG_ARG_INVALID, "key_mask");
 			return;
 		}
-		p.match.hash.key_mask = key_mask;
 
 		if (strcmp(tokens[t0 + 6], "offset") != 0) {
 			snprintf(out, out_size, MSG_ARG_NOT_FOUND, "offset");
@@ -2295,7 +2306,6 @@ cmd_pipeline_table(struct pmd_internals *softnic,
 		return;
 	}
 
-	p.action_profile_name = NULL;
 	if (n_tokens > t0 &&
 		(strcmp(tokens[t0], "action") == 0)) {
 		if (n_tokens < t0 + 2) {
@@ -2303,7 +2313,7 @@ cmd_pipeline_table(struct pmd_internals *softnic,
 			return;
 		}
 
-		p.action_profile_name = tokens[t0 + 1];
+		strcpy(p.action_profile_name, tokens[t0 + 1]);
 
 		t0 += 2;
 	}
@@ -3180,6 +3190,8 @@ parse_match(char **tokens,
  *    [ttl dec | keep]
  *    [stats]
  *    [time]
+ *    [tag <tag>]
+ *    [decap <n>]
  *
  * where:
  *    <pa> ::= g | y | r | drop
@@ -3670,6 +3682,38 @@ parse_table_action_time(char **tokens,
 }
 
 static uint32_t
+parse_table_action_tag(char **tokens,
+	uint32_t n_tokens,
+	struct softnic_table_rule_action *a)
+{
+	if (n_tokens < 2 ||
+		strcmp(tokens[0], "tag"))
+		return 0;
+
+	if (softnic_parser_read_uint32(&a->tag.tag, tokens[1]))
+		return 0;
+
+	a->action_mask |= 1 << RTE_TABLE_ACTION_TAG;
+	return 2;
+}
+
+static uint32_t
+parse_table_action_decap(char **tokens,
+	uint32_t n_tokens,
+	struct softnic_table_rule_action *a)
+{
+	if (n_tokens < 2 ||
+		strcmp(tokens[0], "decap"))
+		return 0;
+
+	if (softnic_parser_read_uint16(&a->decap.n, tokens[1]))
+		return 0;
+
+	a->action_mask |= 1 << RTE_TABLE_ACTION_DECAP;
+	return 2;
+}
+
+static uint32_t
 parse_table_action(char **tokens,
 	uint32_t n_tokens,
 	char *out,
@@ -3806,6 +3850,34 @@ parse_table_action(char **tokens,
 		if (n == 0) {
 			snprintf(out, out_size, MSG_ARG_INVALID,
 				"action time");
+			return 0;
+		}
+
+		tokens += n;
+		n_tokens -= n;
+	}
+
+	if (n_tokens && (strcmp(tokens[0], "tag") == 0)) {
+		uint32_t n;
+
+		n = parse_table_action_tag(tokens, n_tokens, a);
+		if (n == 0) {
+			snprintf(out, out_size, MSG_ARG_INVALID,
+				"action tag");
+			return 0;
+		}
+
+		tokens += n;
+		n_tokens -= n;
+	}
+
+	if (n_tokens && (strcmp(tokens[0], "decap") == 0)) {
+		uint32_t n;
+
+		n = parse_table_action_decap(tokens, n_tokens, a);
+		if (n == 0) {
+			snprintf(out, out_size, MSG_ARG_INVALID,
+				"action decap");
 			return 0;
 		}
 
@@ -4797,6 +4869,81 @@ cmd_softnic_thread_pipeline_disable(struct pmd_internals *softnic,
 	}
 }
 
+/**
+ * flowapi map
+ *  group <group_id>
+ *  ingress | egress
+ *  pipeline <pipeline_name>
+ *  table <table_id>
+ */
+static void
+cmd_softnic_flowapi_map(struct pmd_internals *softnic,
+		char **tokens,
+		uint32_t n_tokens,
+		char *out,
+		size_t out_size)
+{
+	char *pipeline_name;
+	uint32_t group_id, table_id;
+	int ingress, status;
+
+	if (n_tokens != 9) {
+		snprintf(out, out_size, MSG_ARG_MISMATCH, tokens[0]);
+		return;
+	}
+
+	if (strcmp(tokens[1], "map") != 0) {
+		snprintf(out, out_size, MSG_ARG_NOT_FOUND, "map");
+		return;
+	}
+
+	if (strcmp(tokens[2], "group") != 0) {
+		snprintf(out, out_size, MSG_ARG_NOT_FOUND, "group");
+		return;
+	}
+
+	if (softnic_parser_read_uint32(&group_id, tokens[3]) != 0) {
+		snprintf(out, out_size, MSG_ARG_INVALID, "group_id");
+		return;
+	}
+
+	if (strcmp(tokens[4], "ingress") == 0) {
+		ingress = 1;
+	} else if (strcmp(tokens[4], "egress") == 0) {
+		ingress = 0;
+	} else {
+		snprintf(out, out_size, MSG_ARG_NOT_FOUND, "ingress | egress");
+		return;
+	}
+
+	if (strcmp(tokens[5], "pipeline") != 0) {
+		snprintf(out, out_size, MSG_ARG_NOT_FOUND, "pipeline");
+		return;
+	}
+
+	pipeline_name = tokens[6];
+
+	if (strcmp(tokens[7], "table") != 0) {
+		snprintf(out, out_size, MSG_ARG_NOT_FOUND, "table");
+		return;
+	}
+
+	if (softnic_parser_read_uint32(&table_id, tokens[8]) != 0) {
+		snprintf(out, out_size, MSG_ARG_INVALID, "table_id");
+		return;
+	}
+
+	status = flow_attr_map_set(softnic,
+			group_id,
+			ingress,
+			pipeline_name,
+			table_id);
+	if (status) {
+		snprintf(out, out_size, MSG_CMD_FAIL, tokens[0]);
+		return;
+	}
+}
+
 void
 softnic_cli_process(char *in, char *out, size_t out_size, void *arg)
 {
@@ -5087,6 +5234,12 @@ softnic_cli_process(char *in, char *out, size_t out_size, void *arg)
 				out, out_size);
 			return;
 		}
+	}
+
+	if (strcmp(tokens[0], "flowapi") == 0) {
+		cmd_softnic_flowapi_map(softnic, tokens, n_tokens, out,
+					out_size);
+		return;
 	}
 
 	snprintf(out, out_size, MSG_CMD_UNKNOWN, tokens[0]);

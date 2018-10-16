@@ -36,12 +36,14 @@ Limitations
 -----------
 
 * Compressdev level 0, no compression, is not supported.
-
 * Dynamic Huffman encoding is not yet supported.
+* Queue pairs are not thread-safe (that is, within a single queue pair, RX and TX from different lcores is not supported).
+* No BSD support as BSD QAT kernel driver not available.
+
 
 Installation
 ------------
 
 The QAT compression PMD is built by default with a standard DPDK build.
 
-It depends on a QAT kernel driver, see :ref:`qat_kernel_installation`.
+It depends on a QAT kernel driver, see :ref:`building_qat`.

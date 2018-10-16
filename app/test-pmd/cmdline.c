@@ -167,7 +167,7 @@ static void cmd_help_long_parsed(void *parsed_result,
 			"Display:\n"
 			"--------\n\n"
 
-			"show port (info|stats|xstats|fdir|stat_qmap|dcb_tc|cap) (port_id|all)\n"
+			"show port (info|stats|summary|xstats|fdir|stat_qmap|dcb_tc|cap) (port_id|all)\n"
 			"    Display information for port_id, or all.\n\n"
 
 			"show port X rss reta (size) (mask0,mask1,...)\n"
@@ -175,11 +175,8 @@ static void cmd_help_long_parsed(void *parsed_result,
 			" by masks on port X. size is used to indicate the"
 			" hardware supported reta size\n\n"
 
-			"show port rss-hash ipv4|ipv4-frag|ipv4-tcp|ipv4-udp|"
-			"ipv4-sctp|ipv4-other|ipv6|ipv6-frag|ipv6-tcp|ipv6-udp|ipv6-sctp|"
-			"ipv6-other|l2-payload|ipv6-ex|ipv6-tcp-ex|ipv6-udp-ex [key]\n"
-			"    Display the RSS hash functions and RSS hash key"
-			" of port X\n\n"
+			"show port (port_id) rss-hash [key]\n"
+			"    Display the RSS hash functions and RSS hash key of port\n\n"
 
 			"clear port (info|stats|xstats|fdir|stat_qmap) (port_id|all)\n"
 			"    Clear information for port_id, or all.\n\n"
@@ -397,12 +394,13 @@ static void cmd_help_long_parsed(void *parsed_result,
 			"    Disable hardware insertion of a VLAN header in"
 			" packets sent on a port.\n\n"
 
-			"csum set (ip|udp|tcp|sctp|outer-ip) (hw|sw) (port_id)\n"
+			"csum set (ip|udp|tcp|sctp|outer-ip|outer-udp) (hw|sw) (port_id)\n"
 			"    Select hardware or software calculation of the"
 			" checksum when transmitting a packet using the"
 			" csum forward engine.\n"
 			"    ip|udp|tcp|sctp always concern the inner layer.\n"
 			"    outer-ip concerns the outer IP layer in"
+			"    outer-udp concerns the outer UDP layer in"
 			" case the packet is recognized as a tunnel packet by"
 			" the forward engine (vxlan, gre and ipip are supported)\n"
 			"    Please check the NIC datasheet for HW limits.\n\n"
@@ -882,6 +880,10 @@ static void cmd_help_long_parsed(void *parsed_result,
 			"port (port_id) (rxq|txq) (queue_id) (start|stop)\n"
 			"    Start/stop a rx/tx queue of port X. Only take effect"
 			" when port X is started\n\n"
+
+			"port (port_id) (rxq|txq) (queue_id) deferred_start (on|off)\n"
+			"    Switch on/off a deferred start of port X rx/tx queue. Only"
+			" take effect when port X is stopped.\n\n"
 
 			"port (port_id) (rxq|txq) (queue_id) setup\n"
 			"    Setup a rx/tx queue of port X.\n\n"
@@ -1898,11 +1900,9 @@ cmd_config_rx_mode_flag_parsed(void *parsed_result,
 		rx_offloads = port->dev_conf.rxmode.offloads;
 		if (!strcmp(res->name, "crc-strip")) {
 			if (!strcmp(res->value, "on")) {
-				rx_offloads |= DEV_RX_OFFLOAD_CRC_STRIP;
 				rx_offloads &= ~DEV_RX_OFFLOAD_KEEP_CRC;
 			} else if (!strcmp(res->value, "off")) {
 				rx_offloads |= DEV_RX_OFFLOAD_KEEP_CRC;
-				rx_offloads &= ~DEV_RX_OFFLOAD_CRC_STRIP;
 			} else {
 				printf("Unknown parameter\n");
 				return;
@@ -2441,6 +2441,92 @@ cmdline_parse_inst_t cmd_config_rxtx_queue = {
 	},
 };
 
+/* *** configure port rxq/txq deferred start on/off *** */
+struct cmd_config_deferred_start_rxtx_queue {
+	cmdline_fixed_string_t port;
+	portid_t port_id;
+	cmdline_fixed_string_t rxtxq;
+	uint16_t qid;
+	cmdline_fixed_string_t opname;
+	cmdline_fixed_string_t state;
+};
+
+static void
+cmd_config_deferred_start_rxtx_queue_parsed(void *parsed_result,
+			__attribute__((unused)) struct cmdline *cl,
+			__attribute__((unused)) void *data)
+{
+	struct cmd_config_deferred_start_rxtx_queue *res = parsed_result;
+	struct rte_port *port;
+	uint8_t isrx;
+	uint8_t ison;
+	uint8_t needreconfig = 0;
+
+	if (port_id_is_invalid(res->port_id, ENABLED_WARN))
+		return;
+
+	if (port_is_started(res->port_id) != 0) {
+		printf("Please stop port %u first\n", res->port_id);
+		return;
+	}
+
+	port = &ports[res->port_id];
+
+	isrx = !strcmp(res->rxtxq, "rxq");
+
+	if (isrx && rx_queue_id_is_invalid(res->qid))
+		return;
+	else if (!isrx && tx_queue_id_is_invalid(res->qid))
+		return;
+
+	ison = !strcmp(res->state, "on");
+
+	if (isrx && port->rx_conf[res->qid].rx_deferred_start != ison) {
+		port->rx_conf[res->qid].rx_deferred_start = ison;
+		needreconfig = 1;
+	} else if (!isrx && port->tx_conf[res->qid].tx_deferred_start != ison) {
+		port->tx_conf[res->qid].tx_deferred_start = ison;
+		needreconfig = 1;
+	}
+
+	if (needreconfig)
+		cmd_reconfig_device_queue(res->port_id, 0, 1);
+}
+
+cmdline_parse_token_string_t cmd_config_deferred_start_rxtx_queue_port =
+	TOKEN_STRING_INITIALIZER(struct cmd_config_deferred_start_rxtx_queue,
+						port, "port");
+cmdline_parse_token_num_t cmd_config_deferred_start_rxtx_queue_port_id =
+	TOKEN_NUM_INITIALIZER(struct cmd_config_deferred_start_rxtx_queue,
+						port_id, UINT16);
+cmdline_parse_token_string_t cmd_config_deferred_start_rxtx_queue_rxtxq =
+	TOKEN_STRING_INITIALIZER(struct cmd_config_deferred_start_rxtx_queue,
+						rxtxq, "rxq#txq");
+cmdline_parse_token_num_t cmd_config_deferred_start_rxtx_queue_qid =
+	TOKEN_NUM_INITIALIZER(struct cmd_config_deferred_start_rxtx_queue,
+						qid, UINT16);
+cmdline_parse_token_string_t cmd_config_deferred_start_rxtx_queue_opname =
+	TOKEN_STRING_INITIALIZER(struct cmd_config_deferred_start_rxtx_queue,
+						opname, "deferred_start");
+cmdline_parse_token_string_t cmd_config_deferred_start_rxtx_queue_state =
+	TOKEN_STRING_INITIALIZER(struct cmd_config_deferred_start_rxtx_queue,
+						state, "on#off");
+
+cmdline_parse_inst_t cmd_config_deferred_start_rxtx_queue = {
+	.f = cmd_config_deferred_start_rxtx_queue_parsed,
+	.data = NULL,
+	.help_str = "port <port_id> rxq|txq <queue_id> deferred_start on|off",
+	.tokens = {
+		(void *)&cmd_config_deferred_start_rxtx_queue_port,
+		(void *)&cmd_config_deferred_start_rxtx_queue_port_id,
+		(void *)&cmd_config_deferred_start_rxtx_queue_rxtxq,
+		(void *)&cmd_config_deferred_start_rxtx_queue_qid,
+		(void *)&cmd_config_deferred_start_rxtx_queue_opname,
+		(void *)&cmd_config_deferred_start_rxtx_queue_state,
+		NULL,
+	},
+};
+
 /* *** configure port rxq/txq setup *** */
 struct cmd_setup_rxtx_queue {
 	cmdline_fixed_string_t port;
@@ -2816,8 +2902,7 @@ static void cmd_showport_rss_hash_parsed(void *parsed_result,
 {
 	struct cmd_showport_rss_hash *res = parsed_result;
 
-	port_rss_hash_conf_show(res->port_id, res->rss_type,
-				show_rss_key != NULL);
+	port_rss_hash_conf_show(res->port_id, show_rss_key != NULL);
 }
 
 cmdline_parse_token_string_t cmd_showport_rss_hash_show =
@@ -2829,28 +2914,18 @@ cmdline_parse_token_num_t cmd_showport_rss_hash_port_id =
 cmdline_parse_token_string_t cmd_showport_rss_hash_rss_hash =
 	TOKEN_STRING_INITIALIZER(struct cmd_showport_rss_hash, rss_hash,
 				 "rss-hash");
-cmdline_parse_token_string_t cmd_showport_rss_hash_rss_hash_info =
-	TOKEN_STRING_INITIALIZER(struct cmd_showport_rss_hash, rss_type,
-				 "ipv4#ipv4-frag#ipv4-tcp#ipv4-udp#ipv4-sctp#"
-				 "ipv4-other#ipv6#ipv6-frag#ipv6-tcp#ipv6-udp#"
-				 "ipv6-sctp#ipv6-other#l2-payload#ipv6-ex#"
-				 "ipv6-tcp-ex#ipv6-udp-ex");
 cmdline_parse_token_string_t cmd_showport_rss_hash_rss_key =
 	TOKEN_STRING_INITIALIZER(struct cmd_showport_rss_hash, key, "key");
 
 cmdline_parse_inst_t cmd_showport_rss_hash = {
 	.f = cmd_showport_rss_hash_parsed,
 	.data = NULL,
-	.help_str = "show port <port_id> rss-hash "
-		"ipv4|ipv4-frag|ipv4-tcp|ipv4-udp|ipv4-sctp|ipv4-other|"
-		"ipv6|ipv6-frag|ipv6-tcp|ipv6-udp|ipv6-sctp|ipv6-other|"
-		"l2-payload|ipv6-ex|ipv6-tcp-ex|ipv6-udp-ex",
+	.help_str = "show port <port_id> rss-hash",
 	.tokens = {
 		(void *)&cmd_showport_rss_hash_show,
 		(void *)&cmd_showport_rss_hash_port,
 		(void *)&cmd_showport_rss_hash_port_id,
 		(void *)&cmd_showport_rss_hash_rss_hash,
-		(void *)&cmd_showport_rss_hash_rss_hash_info,
 		NULL,
 	},
 };
@@ -2858,16 +2933,12 @@ cmdline_parse_inst_t cmd_showport_rss_hash = {
 cmdline_parse_inst_t cmd_showport_rss_hash_key = {
 	.f = cmd_showport_rss_hash_parsed,
 	.data = (void *)1,
-	.help_str = "show port <port_id> rss-hash "
-		"ipv4|ipv4-frag|ipv4-tcp|ipv4-udp|ipv4-sctp|ipv4-other|"
-		"ipv6|ipv6-frag|ipv6-tcp|ipv6-udp|ipv6-sctp|ipv6-other|"
-		"l2-payload|ipv6-ex|ipv6-tcp-ex|ipv6-udp-ex key",
+	.help_str = "show port <port_id> rss-hash key",
 	.tokens = {
 		(void *)&cmd_showport_rss_hash_show,
 		(void *)&cmd_showport_rss_hash_port,
 		(void *)&cmd_showport_rss_hash_port_id,
 		(void *)&cmd_showport_rss_hash_rss_hash,
-		(void *)&cmd_showport_rss_hash_rss_hash_info,
 		(void *)&cmd_showport_rss_hash_rss_key,
 		NULL,
 	},
@@ -4089,6 +4160,8 @@ csum_show(int port_id)
 		(tx_offloads & DEV_TX_OFFLOAD_SCTP_CKSUM) ? "hw" : "sw");
 	printf("Outer-Ip checksum offload is %s\n",
 		(tx_offloads & DEV_TX_OFFLOAD_OUTER_IPV4_CKSUM) ? "hw" : "sw");
+	printf("Outer-Udp checksum offload is %s\n",
+		(tx_offloads & DEV_TX_OFFLOAD_OUTER_UDP_CKSUM) ? "hw" : "sw");
 
 	/* display warnings if configuration is not supported by the NIC */
 	rte_eth_dev_info_get(port_id, &dev_info);
@@ -4115,6 +4188,12 @@ csum_show(int port_id)
 	if ((tx_offloads & DEV_TX_OFFLOAD_OUTER_IPV4_CKSUM) &&
 		(dev_info.tx_offload_capa & DEV_TX_OFFLOAD_OUTER_IPV4_CKSUM) == 0) {
 		printf("Warning: hardware outer IP checksum enabled but not "
+			"supported by port %d\n", port_id);
+	}
+	if ((tx_offloads & DEV_TX_OFFLOAD_OUTER_UDP_CKSUM) &&
+		(dev_info.tx_offload_capa & DEV_TX_OFFLOAD_OUTER_UDP_CKSUM)
+			== 0) {
+		printf("Warning: hardware outer UDP checksum enabled but not "
 			"supported by port %d\n", port_id);
 	}
 }
@@ -4185,6 +4264,15 @@ cmd_csum_parsed(void *parsed_result,
 				printf("Outer IP checksum offload is not "
 				       "supported by port %u\n", res->port_id);
 			}
+		} else if (!strcmp(res->proto, "outer-udp")) {
+			if (hw == 0 || (dev_info.tx_offload_capa &
+					DEV_TX_OFFLOAD_OUTER_UDP_CKSUM)) {
+				csum_offloads |=
+						DEV_TX_OFFLOAD_OUTER_UDP_CKSUM;
+			} else {
+				printf("Outer UDP checksum offload is not "
+				       "supported by port %u\n", res->port_id);
+			}
 		}
 
 		if (hw) {
@@ -4208,7 +4296,7 @@ cmdline_parse_token_string_t cmd_csum_mode =
 				mode, "set");
 cmdline_parse_token_string_t cmd_csum_proto =
 	TOKEN_STRING_INITIALIZER(struct cmd_csum_result,
-				proto, "ip#tcp#udp#sctp#outer-ip");
+				proto, "ip#tcp#udp#sctp#outer-ip#outer-udp");
 cmdline_parse_token_string_t cmd_csum_hwsw =
 	TOKEN_STRING_INITIALIZER(struct cmd_csum_result,
 				hwsw, "hw#sw");
@@ -4219,7 +4307,7 @@ cmdline_parse_token_num_t cmd_csum_portid =
 cmdline_parse_inst_t cmd_csum_set = {
 	.f = cmd_csum_parsed,
 	.data = NULL,
-	.help_str = "csum set ip|tcp|udp|sctp|outer-ip hw|sw <port_id>: "
+	.help_str = "csum set ip|tcp|udp|sctp|outer-ip|outer-udp hw|sw <port_id>: "
 		"Enable/Disable hardware calculation of L3/L4 checksum when "
 		"using csum forward engine",
 	.tokens = {
@@ -4279,7 +4367,7 @@ cmdline_parse_token_string_t cmd_csum_tunnel_csum =
 				csum, "csum");
 cmdline_parse_token_string_t cmd_csum_tunnel_parse =
 	TOKEN_STRING_INITIALIZER(struct cmd_csum_tunnel_result,
-				parse, "parse_tunnel");
+				parse, "parse-tunnel");
 cmdline_parse_token_string_t cmd_csum_tunnel_onoff =
 	TOKEN_STRING_INITIALIZER(struct cmd_csum_tunnel_result,
 				onoff, "on#off");
@@ -4290,7 +4378,7 @@ cmdline_parse_token_num_t cmd_csum_tunnel_portid =
 cmdline_parse_inst_t cmd_csum_tunnel = {
 	.f = cmd_csum_tunnel_parsed,
 	.data = NULL,
-	.help_str = "csum parse_tunnel on|off <port_id>: "
+	.help_str = "csum parse-tunnel on|off <port_id>: "
 		"Enable/Disable parsing of tunnels for csum engine",
 	.tokens = {
 		(void *)&cmd_csum_tunnel_csum,
@@ -7073,6 +7161,11 @@ static void cmd_showportall_parsed(void *parsed_result,
 	} else if (!strcmp(res->what, "info"))
 		RTE_ETH_FOREACH_DEV(i)
 			port_infos_display(i);
+	else if (!strcmp(res->what, "summary")) {
+		port_summary_header_display();
+		RTE_ETH_FOREACH_DEV(i)
+			port_summary_display(i);
+	}
 	else if (!strcmp(res->what, "stats"))
 		RTE_ETH_FOREACH_DEV(i)
 			nic_stats_display(i);
@@ -7100,14 +7193,14 @@ cmdline_parse_token_string_t cmd_showportall_port =
 	TOKEN_STRING_INITIALIZER(struct cmd_showportall_result, port, "port");
 cmdline_parse_token_string_t cmd_showportall_what =
 	TOKEN_STRING_INITIALIZER(struct cmd_showportall_result, what,
-				 "info#stats#xstats#fdir#stat_qmap#dcb_tc#cap");
+				 "info#summary#stats#xstats#fdir#stat_qmap#dcb_tc#cap");
 cmdline_parse_token_string_t cmd_showportall_all =
 	TOKEN_STRING_INITIALIZER(struct cmd_showportall_result, all, "all");
 cmdline_parse_inst_t cmd_showportall = {
 	.f = cmd_showportall_parsed,
 	.data = NULL,
 	.help_str = "show|clear port "
-		"info|stats|xstats|fdir|stat_qmap|dcb_tc|cap all",
+		"info|summary|stats|xstats|fdir|stat_qmap|dcb_tc|cap all",
 	.tokens = {
 		(void *)&cmd_showportall_show,
 		(void *)&cmd_showportall_port,
@@ -7137,6 +7230,10 @@ static void cmd_showport_parsed(void *parsed_result,
 			nic_xstats_clear(res->portnum);
 	} else if (!strcmp(res->what, "info"))
 		port_infos_display(res->portnum);
+	else if (!strcmp(res->what, "summary")) {
+		port_summary_header_display();
+		port_summary_display(res->portnum);
+	}
 	else if (!strcmp(res->what, "stats"))
 		nic_stats_display(res->portnum);
 	else if (!strcmp(res->what, "xstats"))
@@ -7158,7 +7255,7 @@ cmdline_parse_token_string_t cmd_showport_port =
 	TOKEN_STRING_INITIALIZER(struct cmd_showport_result, port, "port");
 cmdline_parse_token_string_t cmd_showport_what =
 	TOKEN_STRING_INITIALIZER(struct cmd_showport_result, what,
-				 "info#stats#xstats#fdir#stat_qmap#dcb_tc#cap");
+				 "info#summary#stats#xstats#fdir#stat_qmap#dcb_tc#cap");
 cmdline_parse_token_num_t cmd_showport_portnum =
 	TOKEN_NUM_INITIALIZER(struct cmd_showport_result, portnum, UINT16);
 
@@ -7166,7 +7263,7 @@ cmdline_parse_inst_t cmd_showport = {
 	.f = cmd_showport_parsed,
 	.data = NULL,
 	.help_str = "show|clear port "
-		"info|stats|xstats|fdir|stat_qmap|dcb_tc|cap "
+		"info|summary|stats|xstats|fdir|stat_qmap|dcb_tc|cap "
 		"<port_id>",
 	.tokens = {
 		(void *)&cmd_showport_show,
@@ -7573,7 +7670,6 @@ static void cmd_quit_parsed(__attribute__((unused)) void *parsed_result,
 			    struct cmdline *cl,
 			    __attribute__((unused)) void *data)
 {
-	pmd_test_exit();
 	cmdline_quit(cl);
 }
 
@@ -17712,6 +17808,7 @@ cmdline_parse_ctx_t main_ctx[] = {
 	(cmdline_parse_inst_t *)&cmd_config_rss,
 	(cmdline_parse_inst_t *)&cmd_config_rxtx_ring_size,
 	(cmdline_parse_inst_t *)&cmd_config_rxtx_queue,
+	(cmdline_parse_inst_t *)&cmd_config_deferred_start_rxtx_queue,
 	(cmdline_parse_inst_t *)&cmd_setup_rxtx_queue,
 	(cmdline_parse_inst_t *)&cmd_config_rss_reta,
 	(cmdline_parse_inst_t *)&cmd_showport_reta,
@@ -17855,6 +17952,9 @@ cmdline_parse_ctx_t main_ctx[] = {
 	(cmdline_parse_inst_t *)&cmd_suspend_port_tm_node,
 	(cmdline_parse_inst_t *)&cmd_resume_port_tm_node,
 	(cmdline_parse_inst_t *)&cmd_port_tm_hierarchy_commit,
+	(cmdline_parse_inst_t *)&cmd_port_tm_mark_ip_ecn,
+	(cmdline_parse_inst_t *)&cmd_port_tm_mark_ip_dscp,
+	(cmdline_parse_inst_t *)&cmd_port_tm_mark_vlan_dei,
 	(cmdline_parse_inst_t *)&cmd_cfg_tunnel_udp_port,
 	(cmdline_parse_inst_t *)&cmd_rx_offload_get_capa,
 	(cmdline_parse_inst_t *)&cmd_rx_offload_get_configuration,

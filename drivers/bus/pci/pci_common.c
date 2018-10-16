@@ -27,8 +27,6 @@
 #include "private.h"
 
 
-extern struct rte_pci_bus rte_pci_bus;
-
 #define SYSFS_PCI_DEVICES "/sys/bus/pci/devices"
 
 //pci扫描路径（例如/sys/bus/pci/devices)
@@ -427,6 +425,96 @@ pci_find_device(const struct rte_device *start, rte_dev_cmp_t cmp,
 	return NULL;
 }
 
+/*
+ * find the device which encounter the failure, by iterate over all device on
+ * PCI bus to check if the memory failure address is located in the range
+ * of the BARs of the device.
+ */
+static struct rte_pci_device *
+pci_find_device_by_addr(const void *failure_addr)
+{
+	struct rte_pci_device *pdev = NULL;
+	uint64_t check_point, start, end, len;
+	int i;
+
+	check_point = (uint64_t)(uintptr_t)failure_addr;
+
+	FOREACH_DEVICE_ON_PCIBUS(pdev) {
+		for (i = 0; i != RTE_DIM(pdev->mem_resource); i++) {
+			start = (uint64_t)(uintptr_t)pdev->mem_resource[i].addr;
+			len = pdev->mem_resource[i].len;
+			end = start + len;
+			if (check_point >= start && check_point < end) {
+				RTE_LOG(DEBUG, EAL, "Failure address %16.16"
+					PRIx64" belongs to device %s!\n",
+					check_point, pdev->device.name);
+				return pdev;
+			}
+		}
+	}
+	return NULL;
+}
+
+static int
+pci_hot_unplug_handler(struct rte_device *dev)
+{
+	struct rte_pci_device *pdev = NULL;
+	int ret = 0;
+
+	pdev = RTE_DEV_TO_PCI(dev);
+	if (!pdev)
+		return -1;
+
+	switch (pdev->kdrv) {
+	case RTE_KDRV_VFIO:
+		/*
+		 * vfio kernel module guaranty the pci device would not be
+		 * deleted until the user space release the resource, so no
+		 * need to remap BARs resource here, just directly notify
+		 * the req event to the user space to handle it.
+		 */
+		rte_dev_event_callback_process(dev->name,
+					       RTE_DEV_EVENT_REMOVE);
+		break;
+	case RTE_KDRV_IGB_UIO:
+	case RTE_KDRV_UIO_GENERIC:
+	case RTE_KDRV_NIC_UIO:
+		/* BARs resource is invalid, remap it to be safe. */
+		ret = pci_uio_remap_resource(pdev);
+		break;
+	default:
+		RTE_LOG(DEBUG, EAL,
+			"Not managed by a supported kernel driver, skipped\n");
+		ret = -1;
+		break;
+	}
+
+	return ret;
+}
+
+static int
+pci_sigbus_handler(const void *failure_addr)
+{
+	struct rte_pci_device *pdev = NULL;
+	int ret = 0;
+
+	pdev = pci_find_device_by_addr(failure_addr);
+	if (!pdev) {
+		/* It is a generic sigbus error, no bus would handle it. */
+		ret = 1;
+	} else {
+		/* The sigbus error is caused of hot-unplug. */
+		ret = pci_hot_unplug_handler(&pdev->device);
+		if (ret) {
+			RTE_LOG(ERR, EAL,
+				"Failed to handle hot-unplug for device %s",
+				pdev->name);
+			ret = -1;
+		}
+	}
+	return ret;
+}
+
 static int
 pci_plug(struct rte_device *dev)
 {
@@ -457,6 +545,9 @@ struct rte_pci_bus rte_pci_bus = {
 		.unplug = pci_unplug,
 		.parse = pci_parse,
 		.get_iommu_class = rte_pci_get_iommu_class,
+		.dev_iterate = rte_pci_dev_iterate,
+		.hot_unplug_handler = pci_hot_unplug_handler,
+		.sigbus_handler = pci_sigbus_handler,
 	},
 	//保存读到的pci设备
 	.device_list = TAILQ_HEAD_INITIALIZER(rte_pci_bus.device_list),

@@ -145,7 +145,6 @@ qat_comp_process_response(void **op, uint8_t *resp)
 		rx_op->debug_status =
 			*((uint16_t *)(&resp_msg->comn_resp.comn_error));
 	} else {
-		struct qat_comp_xform *qat_xform = rx_op->private_xform;
 		struct icp_qat_fw_resp_comp_pars *comp_resp =
 		  (struct icp_qat_fw_resp_comp_pars *)&resp_msg->comp_resp_pars;
 
@@ -345,16 +344,15 @@ qat_comp_private_xform_create(struct rte_compressdev *dev,
 		if (xform->compress.deflate.huffman == RTE_COMP_HUFFMAN_FIXED ||
 		  ((xform->compress.deflate.huffman == RTE_COMP_HUFFMAN_DEFAULT)
 				   && qat->interm_buff_mz == NULL))
-
 			qat_xform->qat_comp_request_type =
 					QAT_COMP_REQUEST_FIXED_COMP_STATELESS;
 
+		qat_xform->checksum_type = xform->compress.chksum;
 
 	} else {
 		qat_xform->qat_comp_request_type = QAT_COMP_REQUEST_DECOMPRESS;
+		qat_xform->checksum_type = xform->decompress.chksum;
 	}
-
-	qat_xform->checksum_type = xform->compress.chksum;
 
 	if (qat_comp_create_templates(qat_xform, qat->interm_buff_mz, xform)) {
 		QAT_LOG(ERR, "QAT: Problem with setting compression");

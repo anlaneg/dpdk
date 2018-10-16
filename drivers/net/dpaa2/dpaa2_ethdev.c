@@ -39,7 +39,6 @@ static uint64_t dev_rx_offloads_sup =
 
 /* Rx offloads which cannot be disabled */
 static uint64_t dev_rx_offloads_nodis =
-		DEV_RX_OFFLOAD_CRC_STRIP |
 		DEV_RX_OFFLOAD_SCATTER;
 
 /* Supported Tx offloads */
@@ -2008,7 +2007,6 @@ rte_dpaa2_probe(struct rte_dpaa2_driver *dpaa2_drv,
 	}
 
 	eth_dev->device = &dpaa2_dev->device;
-	eth_dev->device->driver = &dpaa2_drv->driver;
 
 	dpaa2_dev->eth_dev = eth_dev;
 	eth_dev->data->rx_mbuf_alloc_failed = 0;

@@ -46,6 +46,7 @@
 #include "mlx5_defs.h"
 #include "mlx5_glue.h"
 #include "mlx5_mr.h"
+#include "mlx5_flow.h"
 
 /* Device parameter to enable RX completion queue compression. */
 #define MLX5_RXQ_CQE_COMP_EN "rxq_cqe_comp_en"
@@ -88,6 +89,9 @@
 
 /* Allow L3 VXLAN flow creation. */
 #define MLX5_L3_VXLAN_EN "l3_vxlan_en"
+
+/* Activate DV flow steering. */
+#define MLX5_DV_FLOW_EN "dv_flow_en"
 
 /* Activate Netlink support in VF mode. */
 #define MLX5_VF_NL_EN "vf_nl_en"
@@ -283,7 +287,7 @@ mlx5_dev_close(struct rte_eth_dev *dev)
 	if (priv->nl_socket_rdma >= 0)
 		close(priv->nl_socket_rdma);
 	if (priv->mnl_socket)
-		mlx5_nl_flow_socket_destroy(priv->mnl_socket);
+		mlx5_flow_tcf_socket_destroy(priv->mnl_socket);
 	ret = mlx5_hrxq_ibv_verify(dev);
 	if (ret)
 		DRV_LOG(WARNING, "port %u some hash Rx queue still remain",
@@ -477,7 +481,7 @@ mlx5_args_check(const char *key, const char *val, void *opaque)
 	} else if (strcmp(MLX5_TXQS_MIN_INLINE, key) == 0) {
 		config->txqs_inline = tmp;
 	} else if (strcmp(MLX5_TXQ_MPW_EN, key) == 0) {
-		config->mps = !!tmp ? config->mps : 0;
+		config->mps = !!tmp;
 	} else if (strcmp(MLX5_TXQ_MPW_HDR_DSEG_EN, key) == 0) {
 		config->mpw_hdr_dseg = !!tmp;
 	} else if (strcmp(MLX5_TXQ_MAX_INLINE_LEN, key) == 0) {
@@ -490,6 +494,8 @@ mlx5_args_check(const char *key, const char *val, void *opaque)
 		config->l3_vxlan_en = !!tmp;
 	} else if (strcmp(MLX5_VF_NL_EN, key) == 0) {
 		config->vf_nl_en = !!tmp;
+	} else if (strcmp(MLX5_DV_FLOW_EN, key) == 0) {
+		config->dv_flow_en = !!tmp;
 	} else {
 		DRV_LOG(WARNING, "%s: unknown parameter", key);
 		rte_errno = EINVAL;
@@ -527,6 +533,7 @@ mlx5_args(struct mlx5_dev_config *config, struct rte_devargs *devargs)
 		MLX5_RX_VEC_EN,
 		MLX5_L3_VXLAN_EN,
 		MLX5_VF_NL_EN,
+		MLX5_DV_FLOW_EN,
 		MLX5_REPRESENTOR,
 		NULL,
 	};
@@ -568,11 +575,13 @@ static struct rte_pci_driver mlx5_driver;
 static void *uar_base;
 
 static int
-find_lower_va_bound(const struct rte_memseg_list *msl __rte_unused,
+find_lower_va_bound(const struct rte_memseg_list *msl,
 		const struct rte_memseg *ms, void *arg)
 {
 	void **addr = arg;
 
+	if (msl->external)
+		return 0;
 	if (*addr == NULL)
 		*addr = ms->addr;
 	else
@@ -702,6 +711,7 @@ mlx5_dev_spawn(struct rte_device *dpdk_dev,
 	struct mlx5dv_context dv_attr = { .comp_mask = 0 };
 	struct mlx5_dev_config config = {
 		.vf = !!vf,
+		.mps = MLX5_ARG_UNSET,
 		.tx_vec_en = 1,
 		.rx_vec_en = 1,
 		.mpw_hdr_dseg = 0,
@@ -791,7 +801,6 @@ mlx5_dev_spawn(struct rte_device *dpdk_dev,
 		DRV_LOG(DEBUG, "MPW isn't supported");
 		mps = MLX5_MPW_DISABLED;
 	}
-	config.mps = mps;
 #ifdef HAVE_IBV_MLX5_MOD_SWP
 	if (dv_attr.comp_mask & MLX5DV_CONTEXT_MASK_SWP)
 		swp = dv_attr.sw_parsing_caps.sw_parsing_offloads;
@@ -1035,13 +1044,15 @@ mlx5_dev_spawn(struct rte_device *dpdk_dev,
 		       (1 << IBV_QPT_RAW_PACKET)));
 	if (config.tso)
 		config.tso_max_payload_sz = attr.tso_caps.max_tso;
-	if (config.mps && !mps) {
-		DRV_LOG(ERR,
-			"multi-packet send not supported on this device"
-			" (" MLX5_TXQ_MPW_EN ")");
-		err = ENOTSUP;
-		goto error;
-	}
+	/*
+	 * MPW is disabled by default, while the Enhanced MPW is enabled
+	 * by default.
+	 */
+	if (config.mps == MLX5_ARG_UNSET)
+		config.mps = (mps == MLX5_MPW_ENHANCED) ? MLX5_MPW_ENHANCED :
+							  MLX5_MPW_DISABLED;
+	else
+		config.mps = config.mps ? mps : MLX5_MPW_DISABLED;
 	DRV_LOG(INFO, "%sMPS is %s",
 		config.mps == MLX5_MPW_ENHANCED ? "enhanced " : "",
 		config.mps != MLX5_MPW_DISABLED ? "enabled" : "disabled");
@@ -1128,7 +1139,7 @@ mlx5_dev_spawn(struct rte_device *dpdk_dev,
 	claim_zero(mlx5_mac_addr_add(eth_dev, &mac, 0, 0));
 	if (vf && config.vf_nl_en)
 		mlx5_nl_mac_addr_sync(eth_dev);
-	priv->mnl_socket = mlx5_nl_flow_socket_create();
+	priv->mnl_socket = mlx5_flow_tcf_socket_create();
 	if (!priv->mnl_socket) {
 		err = -rte_errno;
 		DRV_LOG(WARNING,
@@ -1144,7 +1155,7 @@ mlx5_dev_spawn(struct rte_device *dpdk_dev,
 			error.message =
 				"cannot retrieve network interface index";
 		} else {
-			err = mlx5_nl_flow_init(priv->mnl_socket, ifindex,
+			err = mlx5_flow_tcf_init(priv->mnl_socket, ifindex,
 						&error);
 		}
 		if (err) {
@@ -1152,7 +1163,7 @@ mlx5_dev_spawn(struct rte_device *dpdk_dev,
 				"flow rules relying on switch offloads will"
 				" not be supported: %s: %s",
 				error.message, strerror(rte_errno));
-			mlx5_nl_flow_socket_destroy(priv->mnl_socket);
+			mlx5_flow_tcf_socket_destroy(priv->mnl_socket);
 			priv->mnl_socket = NULL;
 		}
 	}
@@ -1209,7 +1220,7 @@ error:
 		if (priv->nl_socket_rdma >= 0)
 			close(priv->nl_socket_rdma);
 		if (priv->mnl_socket)
-			mlx5_nl_flow_socket_destroy(priv->mnl_socket);
+			mlx5_flow_tcf_socket_destroy(priv->mnl_socket);
 		if (own_domain_id)
 			claim_zero(rte_eth_switch_domain_free(priv->domain_id));
 		rte_free(priv);
@@ -1485,6 +1496,10 @@ static const struct rte_pci_id mlx5_pci_id_map[] = {
 	{
 		RTE_PCI_DEVICE(PCI_VENDOR_ID_MELLANOX,
 			       PCI_DEVICE_ID_MELLANOX_CONNECTX5BF)
+	},
+	{
+		RTE_PCI_DEVICE(PCI_VENDOR_ID_MELLANOX,
+			       PCI_DEVICE_ID_MELLANOX_CONNECTX5BFVF)
 	},
 	{
 		.vendor_id = 0

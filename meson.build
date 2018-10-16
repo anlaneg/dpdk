@@ -2,7 +2,7 @@
 # Copyright(c) 2017 Intel Corporation
 
 project('DPDK', 'C',
-	version: '18.11-rc0',
+	version: '18.11.0-rc0',
 	license: 'BSD',
 	default_options: ['buildtype=release', 'default_library=static'],
 	meson_version: '>= 0.41'
@@ -33,6 +33,9 @@ subdir('drivers')
 subdir('usertools')
 subdir('app')
 subdir('test')
+
+# build docs
+subdir('doc')
 
 # build any examples explicitly requested - useful for developers
 if get_option('examples') != ''
@@ -73,3 +76,39 @@ pkg.generate(name: meson.project_name(),
 	subdirs: [get_option('include_subdir_arch'), '.'],
 	extra_cflags: ['-include', 'rte_config.h'] + machine_args
 )
+
+# final output, list all the libs and drivers to be built
+# this does not affect any part of the build, for information only.
+output_message = '\n=================\nLibraries Enabled\n=================\n'
+output_message += '\nlibs:\n\t'
+output_count = 0
+foreach lib:enabled_libs
+	output_message += lib + ', '
+	output_count += 1
+	if output_count == 8
+		output_message += '\n\t'
+		output_count = 0
+	endif
+endforeach
+message(output_message + '\n')
+
+
+# prior to 0.47 set_variable didn't work with arrays, so we can't
+# track driver lists easily
+if meson.version().version_compare('>=0.47')
+	output_message = '\n===============\nDrivers Enabled\n===============\n'
+	foreach class:driver_classes
+		class_drivers = get_variable(class + '_drivers')
+		output_message += '\n' + class + ':\n\t'
+		output_count = 0
+		foreach drv:class_drivers
+			output_message += drv + ', '
+			output_count += 1
+			if output_count == 8
+				output_message += '\n\t'
+				output_count = 0
+			endif
+		endforeach
+	endforeach
+	message(output_message + '\n')
+endif

@@ -308,10 +308,16 @@ const char *rte_get_rx_ol_flag_name(uint64_t mask)
 	case PKT_RX_IEEE1588_PTP: return "PKT_RX_IEEE1588_PTP";
 	case PKT_RX_IEEE1588_TMST: return "PKT_RX_IEEE1588_TMST";
 	case PKT_RX_QINQ_STRIPPED: return "PKT_RX_QINQ_STRIPPED";
+	case PKT_RX_QINQ: return "PKT_RX_QINQ";
 	case PKT_RX_LRO: return "PKT_RX_LRO";
 	case PKT_RX_TIMESTAMP: return "PKT_RX_TIMESTAMP";
 	case PKT_RX_SEC_OFFLOAD: return "PKT_RX_SEC_OFFLOAD";
 	case PKT_RX_SEC_OFFLOAD_FAILED: return "PKT_RX_SEC_OFFLOAD_FAILED";
+	case PKT_RX_OUTER_L4_CKSUM_BAD: return "PKT_RX_OUTER_L4_CKSUM_BAD";
+	case PKT_RX_OUTER_L4_CKSUM_GOOD: return "PKT_RX_OUTER_L4_CKSUM_GOOD";
+	case PKT_RX_OUTER_L4_CKSUM_INVALID:
+		return "PKT_RX_OUTER_L4_CKSUM_INVALID";
+
 	default: return NULL;
 	}
 }
@@ -350,6 +356,13 @@ rte_get_rx_ol_flag_list(uint64_t mask, char *buf, size_t buflen)
 		{ PKT_RX_SEC_OFFLOAD, PKT_RX_SEC_OFFLOAD, NULL },
 		{ PKT_RX_SEC_OFFLOAD_FAILED, PKT_RX_SEC_OFFLOAD_FAILED, NULL },
 		{ PKT_RX_QINQ, PKT_RX_QINQ, NULL },
+		{ PKT_RX_OUTER_L4_CKSUM_BAD, PKT_RX_OUTER_L4_CKSUM_MASK, NULL },
+		{ PKT_RX_OUTER_L4_CKSUM_GOOD, PKT_RX_OUTER_L4_CKSUM_MASK,
+		  NULL },
+		{ PKT_RX_OUTER_L4_CKSUM_INVALID, PKT_RX_OUTER_L4_CKSUM_MASK,
+		  NULL },
+		{ PKT_RX_OUTER_L4_CKSUM_UNKNOWN, PKT_RX_OUTER_L4_CKSUM_MASK,
+		  "PKT_RX_OUTER_L4_CKSUM_UNKNOWN" },
 	};
 	const char *name;
 	unsigned int i;
@@ -446,6 +459,7 @@ rte_get_tx_ol_flag_list(uint64_t mask, char *buf, size_t buflen)
 		  "PKT_TX_TUNNEL_NONE" },
 		{ PKT_TX_MACSEC, PKT_TX_MACSEC, NULL },
 		{ PKT_TX_SEC_OFFLOAD, PKT_TX_SEC_OFFLOAD, NULL },
+		{ PKT_TX_OUTER_UDP_CKSUM, PKT_TX_OUTER_UDP_CKSUM, NULL },
 	};
 	const char *name;
 	unsigned int i;

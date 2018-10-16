@@ -1161,6 +1161,7 @@ em_get_tx_port_offloads_capa(struct rte_eth_dev *dev)
 
 	RTE_SET_USED(dev);
 	tx_offload_capa =
+		DEV_TX_OFFLOAD_MULTI_SEGS  |
 		DEV_TX_OFFLOAD_VLAN_INSERT |
 		DEV_TX_OFFLOAD_IPV4_CKSUM  |
 		DEV_TX_OFFLOAD_UDP_CKSUM   |
@@ -1369,7 +1370,6 @@ em_get_rx_port_offloads_capa(struct rte_eth_dev *dev)
 		DEV_RX_OFFLOAD_IPV4_CKSUM  |
 		DEV_RX_OFFLOAD_UDP_CKSUM   |
 		DEV_RX_OFFLOAD_TCP_CKSUM   |
-		DEV_RX_OFFLOAD_CRC_STRIP   |
 		DEV_RX_OFFLOAD_KEEP_CRC    |
 		DEV_RX_OFFLOAD_SCATTER;
 	if (max_rx_pktlen > ETHER_MAX_LEN)
@@ -1423,12 +1423,13 @@ eth_em_rx_queue_setup(struct rte_eth_dev *dev,
 	}
 
 	/*
-	 * EM devices don't support drop_en functionality
+	 * EM devices don't support drop_en functionality.
+	 * It's an optimization that does nothing on single-queue devices,
+	 * so just log the issue and carry on.
 	 */
 	if (rx_conf->rx_drop_en) {
-		PMD_INIT_LOG(ERR, "drop_en functionality not supported by "
+		PMD_INIT_LOG(NOTICE, "drop_en functionality not supported by "
 			     "device");
-		return -EINVAL;
 	}
 
 	/* Free memory prior to re-allocation if needed. */
@@ -1465,7 +1466,7 @@ eth_em_rx_queue_setup(struct rte_eth_dev *dev,
 	rxq->rx_free_thresh = rx_conf->rx_free_thresh;
 	rxq->queue_id = queue_idx;
 	rxq->port_id = dev->data->port_id;
-	if (rte_eth_dev_must_keep_crc(dev->data->dev_conf.rxmode.offloads))
+	if (dev->data->dev_conf.rxmode.offloads & DEV_RX_OFFLOAD_KEEP_CRC)
 		rxq->crc_len = ETHER_CRC_LEN;
 	else
 		rxq->crc_len = 0;
@@ -1801,7 +1802,7 @@ eth_em_rx_init(struct rte_eth_dev *dev)
 		 * Reset crc_len in case it was changed after queue setup by a
 		 *  call to configure
 		 */
-		if (rte_eth_dev_must_keep_crc(dev->data->dev_conf.rxmode.offloads))
+		if (dev->data->dev_conf.rxmode.offloads & DEV_RX_OFFLOAD_KEEP_CRC)
 			rxq->crc_len = ETHER_CRC_LEN;
 		else
 			rxq->crc_len = 0;
@@ -1883,7 +1884,7 @@ eth_em_rx_init(struct rte_eth_dev *dev)
 	}
 
 	/* Setup the Receive Control Register. */
-	if (rte_eth_dev_must_keep_crc(dev->data->dev_conf.rxmode.offloads))
+	if (dev->data->dev_conf.rxmode.offloads & DEV_RX_OFFLOAD_KEEP_CRC)
 		rctl &= ~E1000_RCTL_SECRC; /* Do not Strip Ethernet CRC. */
 	else
 		rctl |= E1000_RCTL_SECRC; /* Strip Ethernet CRC. */

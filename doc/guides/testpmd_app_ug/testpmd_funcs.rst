@@ -159,11 +159,13 @@ show port
 
 Display information for a given port or all ports::
 
-   testpmd> show port (info|stats|xstats|fdir|stat_qmap|dcb_tc|cap) (port_id|all)
+   testpmd> show port (info|summary|stats|xstats|fdir|stat_qmap|dcb_tc|cap) (port_id|all)
 
 The available information categories are:
 
 * ``info``: General port information such as MAC address.
+
+* ``summary``: Brief port summary such as Device Name, Driver Name etc.
 
 * ``stats``: RX/TX statistics.
 
@@ -231,7 +233,7 @@ show port rss-hash
 
 Display the RSS hash functions and RSS hash key of a port::
 
-   testpmd> show port (port_id) rss-hash ipv4|ipv4-frag|ipv4-tcp|ipv4-udp|ipv4-sctp|ipv4-other|ipv6|ipv6-frag|ipv6-tcp|ipv6-udp|ipv6-sctp|ipv6-other|l2-payload|ipv6-ex|ipv6-tcp-ex|ipv6-udp-ex [key]
+   testpmd> show port (port_id) rss-hash [key]
 
 clear port
 ~~~~~~~~~~
@@ -289,7 +291,7 @@ set fwd
 Set the packet forwarding mode::
 
    testpmd> set fwd (io|mac|macswap|flowgen| \
-                     rxonly|txonly|csum|icmpecho) (""|retry)
+                     rxonly|txonly|csum|icmpecho|noisy) (""|retry)
 
 ``retry`` can be specified for forwarding engines except ``rx_only``.
 
@@ -322,6 +324,10 @@ The available information categories are:
 
 * ``softnic``: Demonstrates the softnic forwarding operation. In this mode, packet forwarding is
   similar to I/O mode except for the fact that packets are loopback to the softnic ports only. Therefore, portmask parameter should be set to softnic port only. The various software based custom NIC pipelines specified through the softnic firmware (DPDK packet framework script) can be tested in this mode. Furthermore, it allows to build 5-level hierarchical QoS scheduler as a default option that can be enabled through CLI once testpmd application is initialised. The user can modify the default scheduler hierarchy or can specify the new QoS Scheduler hierarchy through CLI. Requires ``CONFIG_RTE_LIBRTE_PMD_SOFTNIC=y``.
+
+* ``noisy``: Noisy neighbour simulation.
+  Simulate more realistic behavior of a guest machine engaged in receiving
+  and sending packets performing Virtual Network Function (VNF).
 
 Example::
 
@@ -857,7 +863,7 @@ csum set
 Select hardware or software calculation of the checksum when
 transmitting a packet using the ``csum`` forwarding engine::
 
-   testpmd> csum set (ip|udp|tcp|sctp|outer-ip) (hw|sw) (port_id)
+   testpmd> csum set (ip|udp|tcp|sctp|outer-ip|outer-udp) (hw|sw) (port_id)
 
 Where:
 
@@ -865,6 +871,10 @@ Where:
 
 * ``outer-ip`` relates to the outer IP layer (only for IPv4) in the case where the packet is recognized
   as a tunnel packet by the forwarding engine (vxlan, gre and ipip are
+  supported). See also the ``csum parse-tunnel`` command.
+
+* ``outer-udp`` relates to the outer UDP layer in the case where the packet is recognized
+  as a tunnel packet by the forwarding engine (vxlan, vxlan-gpe are
   supported). See also the ``csum parse-tunnel`` command.
 
 .. note::
@@ -940,7 +950,7 @@ Consider a packet in packet like the following::
 
 * If parse-tunnel is enabled, the ``ip|udp|tcp|sctp`` parameters of ``csum set``
   command relate to the inner headers (here ``ipv4_in`` and ``tcp_in``), and the
-  ``outer-ip parameter`` relates to the outer headers (here ``ipv4_out``).
+  ``outer-ip|outer-udp`` parameter relates to the outer headers (here ``ipv4_out`` and ``udp_out``).
 
 * If parse-tunnel is disabled, the ``ip|udp|tcp|sctp`` parameters of ``csum  set``
    command relate to the outer headers, here ``ipv4_out`` and ``udp_out``.
@@ -1764,6 +1774,13 @@ port start/stop queue
 Start/stop a rx/tx queue on a specific port::
 
    testpmd> port (port_id) (rxq|txq) (queue_id) (start|stop)
+
+port config - queue deferred start
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Switch on/off deferred start of a specific port queue::
+
+   testpmd> port (port_id) (rxq|txq) (queue_id) deferred_start (on|off)
 
 port setup queue
 ~~~~~~~~~~~~~~~~~~~~~
@@ -2655,6 +2672,63 @@ where:
 * ``clean_on_fail``: When set to non-zero, hierarchy is cleared on function
   call failure. On the other hand, hierarchy is preserved when this parameter
   is equal to zero.
+
+Set port traffic management mark VLAN dei
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Enables/Disables the traffic management marking on the port for VLAN packets::
+
+   testpmd> set port tm mark vlan_dei <port_id> <green> <yellow> <red>
+
+where:
+
+* ``port_id``: The port which on which VLAN packets marked as ``green`` or
+  ``yellow`` or ``red`` will have dei bit enabled
+
+* ``green`` enable 1, disable 0 marking for dei bit of VLAN packets marked as green
+
+* ``yellow`` enable 1, disable 0 marking for dei bit of VLAN packets marked as yellow
+
+* ``red`` enable 1, disable 0 marking for dei bit of VLAN packets marked as red
+
+Set port traffic management mark IP dscp
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Enables/Disables the traffic management marking on the port for IP dscp packets::
+
+   testpmd> set port tm mark ip_dscp <port_id> <green> <yellow> <red>
+
+where:
+
+* ``port_id``: The port which on which IP packets marked as ``green`` or
+  ``yellow`` or ``red`` will have IP dscp bits updated
+
+* ``green`` enable 1, disable 0 marking IP dscp to low drop precedence for green packets
+
+* ``yellow`` enable 1, disable 0 marking IP dscp to medium drop precedence for yellow packets
+
+* ``red`` enable 1, disable 0 marking IP dscp to high drop precedence for red packets
+
+Set port traffic management mark IP ecn
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Enables/Disables the traffic management marking on the port for IP ecn packets::
+
+   testpmd> set port tm mark ip_ecn <port_id> <green> <yellow> <red>
+
+where:
+
+* ``port_id``: The port which on which IP packets marked as ``green`` or
+  ``yellow`` or ``red`` will have IP ecn bits updated
+
+* ``green`` enable 1, disable 0 marking IP ecn for green marked packets with ecn of 2'b01  or 2'b10
+  to ecn of 2'b11 when IP is caring TCP or SCTP
+
+* ``yellow`` enable 1, disable 0 marking IP ecn for yellow marked packets with ecn of 2'b01  or 2'b10
+  to ecn of 2'b11 when IP is caring TCP or SCTP
+
+* ``red`` enable 1, disable 0 marking IP ecn for yellow marked packets with ecn of 2'b01  or 2'b10
+  to ecn of 2'b11 when IP is caring TCP or SCTP
 
 Set port traffic management default hierarchy (softnic forwarding mode)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -3696,6 +3770,37 @@ This section lists supported actions and their attributes, if any.
 
 - ``nvgre_decap``: Performs a decapsulation action by stripping all headers of
   the NVGRE tunnel network overlay from the matched flow.
+
+- ``set_ipv4_src``: Set a new IPv4 source address in the outermost IPv4 header.
+
+  - ``ipv4_addr``: New IPv4 source address.
+
+- ``set_ipv4_dst``: Set a new IPv4 destination address in the outermost IPv4
+  header.
+
+  - ``ipv4_addr``: New IPv4 destination address.
+
+- ``set_ipv6_src``: Set a new IPv6 source address in the outermost IPv6 header.
+
+  - ``ipv6_addr``: New IPv6 source address.
+
+- ``set_ipv6_dst``: Set a new IPv6 destination address in the outermost IPv6
+  header.
+
+  - ``ipv6_addr``: New IPv6 destination address.
+
+- ``of_set_tp_src``: Set a new source port number in the outermost TCP/UDP
+  header.
+
+  - ``port``: New TCP/UDP source port number.
+
+- ``of_set_tp_dst``: Set a new destination port number in the outermost TCP/UDP
+  header.
+
+  - ``port``: New TCP/UDP destination port number.
+
+- ``mac_swap``: Swap the source and destination MAC addresses in the outermost
+  Ethernet header.
 
 Destroying flow rules
 ~~~~~~~~~~~~~~~~~~~~~

@@ -870,12 +870,6 @@ struct rte_eth_conf {
 };
 
 /**
- * A structure used to retrieve the contextual information of
- * an Ethernet device, such as the controlling driver of the device,
- * its PCI context, etc...
- */
-
-/**
  * RX offload capabilities of a device.
  */
 #define DEV_RX_OFFLOAD_VLAN_STRIP  0x00000001
@@ -890,16 +884,13 @@ struct rte_eth_conf {
 #define DEV_RX_OFFLOAD_VLAN_FILTER	0x00000200
 #define DEV_RX_OFFLOAD_VLAN_EXTEND	0x00000400
 #define DEV_RX_OFFLOAD_JUMBO_FRAME	0x00000800
-#define DEV_RX_OFFLOAD_CRC_STRIP	0x00001000
 #define DEV_RX_OFFLOAD_SCATTER		0x00002000
 #define DEV_RX_OFFLOAD_TIMESTAMP	0x00004000
 #define DEV_RX_OFFLOAD_SECURITY         0x00008000
-
-/**
- * Invalid to set both DEV_RX_OFFLOAD_CRC_STRIP and DEV_RX_OFFLOAD_KEEP_CRC
- * No DEV_RX_OFFLOAD_CRC_STRIP flag means keep CRC
- */
 #define DEV_RX_OFFLOAD_KEEP_CRC		0x00010000
+#define DEV_RX_OFFLOAD_SCTP_CKSUM	0x00020000
+#define DEV_RX_OFFLOAD_OUTER_UDP_CKSUM  0x00040000
+
 #define DEV_RX_OFFLOAD_CHECKSUM (DEV_RX_OFFLOAD_IPV4_CKSUM | \
 				 DEV_RX_OFFLOAD_UDP_CKSUM | \
 				 DEV_RX_OFFLOAD_TCP_CKSUM)
@@ -953,6 +944,8 @@ struct rte_eth_conf {
  * for tunnel TSO.
  */
 #define DEV_TX_OFFLOAD_IP_TNL_TSO       0x00080000
+/** Device supports outer UDP checksum */
+#define DEV_TX_OFFLOAD_OUTER_UDP_CKSUM  0x00100000
 
 #define RTE_ETH_DEV_CAPA_RUNTIME_RX_QUEUE_SETUP 0x00000001
 /**< Device supports Rx queue setup after device started*/
@@ -1009,6 +1002,12 @@ struct rte_eth_switch_info {
 
 /**
  * Ethernet device information
+ */
+
+/**
+ * A structure used to retrieve the contextual information of
+ * an Ethernet device, such as the controlling driver of the
+ * device, etc...
  */
 struct rte_eth_dev_info {
 	struct rte_device *device; /** Generic device information */
@@ -1269,6 +1268,8 @@ struct rte_eth_dev_owner {
 #define RTE_ETH_DEV_INTR_RMV     0x0008
 /** Device is port representor */
 #define RTE_ETH_DEV_REPRESENTOR  0x0010
+/** Device does not support MAC change after started */
+#define RTE_ETH_DEV_NOLIVE_MAC_ADDR  0x0020
 
 /**
  * Iterates over valid ethdev ports owned by a specific owner.
@@ -1751,6 +1752,10 @@ int rte_eth_dev_tx_queue_stop(uint16_t port_id, uint16_t tx_queue_id);
  * The device start step is the last one and consists of setting the configured
  * offload features and in starting the transmit and the receive units of the
  * device.
+ *
+ * Device RTE_ETH_DEV_NOLIVE_MAC_ADDR flag causes MAC address to be set before
+ * PMD port start callback function is invoked.
+ *
  * On success, all basic functions exported by the Ethernet API (link status,
  * receive/transmit, and so on) can be invoked.
  *
@@ -2718,6 +2723,26 @@ int rte_eth_dev_rx_intr_ctl(uint16_t port_id, int epfd, int op, void *data);
  */
 int rte_eth_dev_rx_intr_ctl_q(uint16_t port_id, uint16_t queue_id,
 			      int epfd, int op, void *data);
+
+/**
+ * @warning
+ * @b EXPERIMENTAL: this API may change without prior notice.
+ *
+ * Get interrupt fd per Rx queue.
+ *
+ * @param port_id
+ *   The port identifier of the Ethernet device.
+ * @param queue_id
+ *   The index of the receive queue from which to retrieve input packets.
+ *   The value must be in the range [0, nb_rx_queue - 1] previously supplied
+ *   to rte_eth_dev_configure().
+ * @return
+ *   - (>=0) the interrupt fd associated to the requested Rx queue if
+ *           successful.
+ *   - (-1) on error.
+ */
+int __rte_experimental
+rte_eth_dev_rx_intr_ctl_q_get_fd(uint16_t port_id, uint16_t queue_id);
 
 /**
  * Turn on the LED on the Ethernet device.

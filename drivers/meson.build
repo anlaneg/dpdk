@@ -9,6 +9,7 @@ driver_classes = ['common',
 	       'crypto',  # depends on common, bus and mempool (net in future).
 	       'compress', # depends on common, bus, mempool.
 	       'event',   # depends on common, bus, mempool and net.
+	       'baseband', # depends on common and bus.
 	       'raw']     # depends on common, bus, mempool, net and event.
 
 default_cflags = machine_args
@@ -24,6 +25,7 @@ foreach class:driver_classes
 	                     # version file for linking
 
 	subdir(class)
+	class_drivers = []
 
 	foreach drv:drivers
 		drv_path = join_paths(class, drv)
@@ -51,6 +53,8 @@ foreach class:driver_classes
 		subdir(drv_path)
 
 		if build
+			class_drivers += name
+
 			dpdk_conf.set(config_flag_fmt.format(name.to_upper()),1)
 			lib_name = driver_name_fmt.format(name)
 
@@ -141,4 +145,9 @@ foreach class:driver_classes
 			set_variable('static_@0@'.format(lib_name), static_dep)
 		endif # build
 	endforeach
+
+	if meson.version().version_compare('>=0.47')
+		# prior to 0.47, set_variable can't take array params
+		set_variable(class + '_drivers', class_drivers)
+	endif
 endforeach

@@ -125,7 +125,7 @@ flush_shadow_used_ring_split(struct virtio_net *dev, struct vhost_virtqueue *vq)
 //记录哪些描述符已被使用完成
 static __rte_always_inline void
 update_shadow_used_ring_split(struct vhost_virtqueue *vq,
-			 uint16_t desc_idx, uint16_t len)
+			 uint16_t desc_idx, uint32_t len)
 {
 	uint16_t i = vq->shadow_used_idx++;
 
@@ -189,7 +189,7 @@ flush_shadow_used_ring_packed(struct virtio_net *dev,
 
 static __rte_always_inline void
 update_shadow_used_ring_packed(struct vhost_virtqueue *vq,
-			 uint16_t desc_idx, uint16_t len, uint16_t count)
+			 uint16_t desc_idx, uint32_t len, uint16_t count)
 {
 	uint16_t i = vq->shadow_used_idx++;
 
@@ -349,7 +349,7 @@ static __rte_always_inline int
 fill_vec_buf_split(struct virtio_net *dev, struct vhost_virtqueue *vq,
 			 uint32_t avail_idx, uint16_t *vec_idx,
 			 struct buf_vector *buf_vec, uint16_t *desc_chain_head,
-			 uint16_t *desc_chain_len, uint8_t perm)
+			 uint32_t *desc_chain_len, uint8_t perm)
 {
 	//取出有效索引位下记录的有效描述符索引
 	uint16_t idx = vq->avail->ring[avail_idx & (vq->size - 1)];
@@ -437,7 +437,7 @@ reserve_avail_buf_split(struct virtio_net *dev, struct vhost_virtqueue *vq,
 	uint16_t max_tries, tries = 0;
 
 	uint16_t head_idx = 0;
-	uint16_t len = 0;
+	uint32_t len = 0;
 
 	*num_buffers = 0;
 	cur_idx  = vq->last_avail_idx;
@@ -480,7 +480,7 @@ static __rte_always_inline int
 fill_vec_buf_packed_indirect(struct virtio_net *dev,
 			struct vhost_virtqueue *vq,
 			struct vring_packed_desc *desc, uint16_t *vec_idx,
-			struct buf_vector *buf_vec, uint16_t *len, uint8_t perm)
+			struct buf_vector *buf_vec, uint32_t *len, uint8_t perm)
 {
 	uint16_t i;
 	uint32_t nr_descs;
@@ -541,7 +541,7 @@ static __rte_always_inline int
 fill_vec_buf_packed(struct virtio_net *dev, struct vhost_virtqueue *vq,
 				uint16_t avail_idx, uint16_t *desc_count,
 				struct buf_vector *buf_vec, uint16_t *vec_idx,
-				uint16_t *buf_id, uint16_t *len, uint8_t perm)
+				uint16_t *buf_id, uint32_t *len, uint8_t perm)
 {
 	bool wrap_counter = vq->avail_wrap_counter;
 	struct vring_packed_desc *descs = vq->desc_packed;
@@ -610,7 +610,7 @@ reserve_avail_buf_packed(struct virtio_net *dev, struct vhost_virtqueue *vq,
 	uint16_t max_tries, tries = 0;
 
 	uint16_t buf_id = 0;
-	uint16_t len = 0;
+	uint32_t len = 0;
 	uint16_t desc_count;
 
 	*num_buffers = 0;
@@ -949,6 +949,7 @@ virtio_dev_rx(struct virtio_net *dev, uint16_t queue_id,
 	struct rte_mbuf **pkts, uint32_t count)
 {
 	struct vhost_virtqueue *vq;
+	uint32_t nb_tx = 0;
 
 	VHOST_LOG_DEBUG(VHOST_DATA, "(%d) %s\n", dev->vid, __func__);
 	//队列合法性检查，不能是收队列，不能超过合法队列数目
@@ -980,9 +981,9 @@ virtio_dev_rx(struct virtio_net *dev, uint16_t queue_id,
 
 	//报文发送(virtio设备收包处理）
 	if (vq_is_packed(dev))
-		count = virtio_dev_rx_packed(dev, vq, pkts, count);
+		nb_tx = virtio_dev_rx_packed(dev, vq, pkts, count);
 	else
-		count = virtio_dev_rx_split(dev, vq, pkts, count);
+		nb_tx = virtio_dev_rx_split(dev, vq, pkts, count);
 
 out:
 	if (dev->features & (1ULL << VIRTIO_F_IOMMU_PLATFORM))
@@ -991,7 +992,7 @@ out:
 out_access_unlock:
 	rte_spinlock_unlock(&vq->access_lock);
 
-	return count;
+	return nb_tx;
 }
 
 //vhost实现报文发送
@@ -1486,7 +1487,8 @@ virtio_dev_tx_split(struct virtio_net *dev, struct vhost_virtqueue *vq,
 
 	for (i = 0; i < count; i++) {
 		struct buf_vector buf_vec[BUF_VECTOR_MAX];
-		uint16_t head_idx, dummy_len;
+		uint16_t head_idx;
+		uint32_t dummy_len;
 		uint16_t nr_vec = 0;
 		int err;
 
@@ -1604,7 +1606,8 @@ virtio_dev_tx_packed(struct virtio_net *dev, struct vhost_virtqueue *vq,
 
 	for (i = 0; i < count; i++) {
 		struct buf_vector buf_vec[BUF_VECTOR_MAX];
-		uint16_t buf_id, dummy_len;
+		uint16_t buf_id;
+		uint32_t dummy_len;
 		uint16_t desc_count, nr_vec = 0;
 		int err;
 

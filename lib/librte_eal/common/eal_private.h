@@ -259,18 +259,6 @@ struct rte_bus *rte_bus_find_by_device_name(const char *str);
 int rte_mp_channel_init(void);
 
 /**
- * Internal Executes all the user application registered callbacks for
- * the specific device. It is for DPDK internal user only. User
- * application should not call it directly.
- *
- * @param device_name
- *  The device name.
- * @param event
- *  the device event type.
- */
-void dev_callback_process(char *device_name, enum rte_dev_event_type event);
-
-/**
  * @internal
  * Parse a device string and store its information in an
  * rte_devargs structure.
@@ -303,5 +291,40 @@ void dev_callback_process(char *device_name, enum rte_dev_event_type event);
 int
 rte_devargs_layers_parse(struct rte_devargs *devargs,
 			 const char *devstr);
+
+/**
+ * Iterate over all buses to find the corresponding bus to handle the sigbus
+ * error.
+ * @param failure_addr
+ *	Pointer of the fault address of the sigbus error.
+ *
+ * @return
+ *	 0 success to handle the sigbus.
+ *	-1 failed to handle the sigbus
+ *	 1 no bus can handler the sigbus
+ */
+int rte_bus_sigbus_handler(const void *failure_addr);
+
+/**
+ * @internal
+ * Register the sigbus handler.
+ *
+ * @return
+ *   - On success, zero.
+ *   - On failure, a negative value.
+ */
+int
+dev_sigbus_handler_register(void);
+
+/**
+ * @internal
+ * Unregister the sigbus handler.
+ *
+ * @return
+ *   - On success, zero.
+ *   - On failure, a negative value.
+ */
+int
+dev_sigbus_handler_unregister(void);
 
 #endif /* _EAL_PRIVATE_H_ */

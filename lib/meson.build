@@ -30,6 +30,8 @@ default_cflags = machine_args
 if cc.has_argument('-Wno-format-truncation')
 	default_cflags += '-Wno-format-truncation'
 endif
+
+enabled_libs = [] # used to print summary at the end
 foreach l:libraries
 	build = true
 	name = l
@@ -45,18 +47,17 @@ foreach l:libraries
 	# use "deps" for internal DPDK dependencies, and "ext_deps" for
 	# external package/library requirements
 	ext_deps = []
-	deps = ['eal']   # eal is standard dependency except for itself
-	if l == 'kvargs'
-		deps = []
-	endif
-	if l == 'eal'
-		deps = ['kvargs']
+	deps = []
+	# eal is standard dependency once built
+	if dpdk_conf.has('RTE_LIBRTE_EAL')
+		deps += ['eal']
 	endif
 
 	dir_name = 'librte_' + l
 	subdir(dir_name)
 
 	if build
+		enabled_libs += name
 		dpdk_conf.set('RTE_LIBRTE_' + name.to_upper(), 1)
 		install_headers(headers)
 

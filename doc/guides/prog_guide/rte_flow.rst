@@ -2076,6 +2076,133 @@ RTE_FLOW_ERROR_TYPE_ACTION error should be returned.
 
 This action modifies the payload of matched flows.
 
+Action: ``SET_IPV4_SRC``
+^^^^^^^^^^^^^^^^^^^^^^^^
+
+Set a new IPv4 source address in the outermost IPv4 header.
+
+It must be used with a valid RTE_FLOW_ITEM_TYPE_IPV4 flow pattern item.
+Otherwise, RTE_FLOW_ERROR_TYPE_ACTION error will be returned.
+
+.. _table_rte_flow_action_set_ipv4_src:
+
+.. table:: SET_IPV4_SRC
+
+   +-----------------------------------------+
+   | Field         | Value                   |
+   +===============+=========================+
+   | ``ipv4_addr`` | new IPv4 source address |
+   +---------------+-------------------------+
+
+Action: ``SET_IPV4_DST``
+^^^^^^^^^^^^^^^^^^^^^^^^
+
+Set a new IPv4 destination address in the outermost IPv4 header.
+
+It must be used with a valid RTE_FLOW_ITEM_TYPE_IPV4 flow pattern item.
+Otherwise, RTE_FLOW_ERROR_TYPE_ACTION error will be returned.
+
+.. _table_rte_flow_action_set_ipv4_dst:
+
+.. table:: SET_IPV4_DST
+
+   +---------------+------------------------------+
+   | Field         | Value                        |
+   +===============+==============================+
+   | ``ipv4_addr`` | new IPv4 destination address |
+   +---------------+------------------------------+
+
+Action: ``SET_IPV6_SRC``
+^^^^^^^^^^^^^^^^^^^^^^^^
+
+Set a new IPv6 source address in the outermost IPv6 header.
+
+It must be used with a valid RTE_FLOW_ITEM_TYPE_IPV6 flow pattern item.
+Otherwise, RTE_FLOW_ERROR_TYPE_ACTION error will be returned.
+
+.. _table_rte_flow_action_set_ipv6_src:
+
+.. table:: SET_IPV6_SRC
+
+   +---------------+-------------------------+
+   | Field         | Value                   |
+   +===============+=========================+
+   | ``ipv6_addr`` | new IPv6 source address |
+   +---------------+-------------------------+
+
+Action: ``SET_IPV6_DST``
+^^^^^^^^^^^^^^^^^^^^^^^^
+
+Set a new IPv6 destination address in the outermost IPv6 header.
+
+It must be used with a valid RTE_FLOW_ITEM_TYPE_IPV6 flow pattern item.
+Otherwise, RTE_FLOW_ERROR_TYPE_ACTION error will be returned.
+
+.. _table_rte_flow_action_set_ipv6_dst:
+
+.. table:: SET_IPV6_DST
+
+   +---------------+------------------------------+
+   | Field         | Value                        |
+   +===============+==============================+
+   | ``ipv6_addr`` | new IPv6 destination address |
+   +---------------+------------------------------+
+
+Action: ``SET_TP_SRC``
+^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Set a new source port number in the outermost TCP/UDP header.
+
+It must be used with a valid RTE_FLOW_ITEM_TYPE_TCP or RTE_FLOW_ITEM_TYPE_UDP
+flow pattern item. Otherwise, RTE_FLOW_ERROR_TYPE_ACTION error will be returned.
+
+.. _table_rte_flow_action_set_tp_src:
+
+.. table:: SET_TP_SRC
+
+   +----------+-------------------------+
+   | Field    | Value                   |
+   +==========+=========================+
+   | ``port`` | new TCP/UDP source port |
+   +---------------+--------------------+
+
+Action: ``SET_TP_DST``
+^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Set a new destination port number in the outermost TCP/UDP header.
+
+It must be used with a valid RTE_FLOW_ITEM_TYPE_TCP or RTE_FLOW_ITEM_TYPE_UDP
+flow pattern item. Otherwise, RTE_FLOW_ERROR_TYPE_ACTION error will be returned.
+
+.. _table_rte_flow_action_set_tp_dst:
+
+.. table:: SET_TP_DST
+
+   +----------+------------------------------+
+   | Field    | Value                        |
+   +==========+==============================+
+   | ``port`` | new TCP/UDP destination port |
+   +---------------+-------------------------+
+
+Action: ``MAC_SWAP``
+^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Swap the source and destination MAC addresses in the outermost Ethernet
+header.
+
+It must be used with a valid RTE_FLOW_ITEM_TYPE_ETH flow pattern item.
+Otherwise, RTE_FLOW_ERROR_TYPE_ACTION error will be returned.
+
+.. _table_rte_flow_action_mac_swap:
+
+.. table:: MAC_SWAP
+
+   +---------------+
+   | Field         |
+   +===============+
+   | no properties |
+   +---------------+
+
 Negative types
 ~~~~~~~~~~~~~~
 
@@ -2418,6 +2545,26 @@ Error initializer
 This function initializes ``error`` (if non-NULL) with the provided
 parameters and sets ``rte_errno`` to ``code``. A negative error ``code`` is
 then returned.
+
+Object conversion
+~~~~~~~~~~~~~~~~~
+
+.. code-block:: c
+
+   int
+   rte_flow_conv(enum rte_flow_conv_op op,
+                 void *dst,
+                 size_t size,
+                 const void *src,
+                 struct rte_flow_error *error);
+
+Convert ``src`` to ``dst`` according to operation ``op``. Possible
+operations include:
+
+- Attributes, pattern item or action duplication.
+- Duplication of an entire pattern or list of actions.
+- Duplication of a complete flow rule description.
+- Pattern item or action name retrieval.
 
 Caveats
 -------

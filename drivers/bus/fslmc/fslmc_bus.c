@@ -161,6 +161,8 @@ scan_one_fslmc_device(char *dev_name)
 		return -ENOMEM;
 	}
 
+	dev->device.bus = &rte_fslmc_bus.bus;
+
 	/* Parse the device name and ID */
 	t_ptr = strtok(dup_dev_name, ".");
 	if (!t_ptr) {
@@ -396,8 +398,12 @@ rte_fslmc_probe(void)
 			   dev->device.devargs->policy ==
 			   RTE_DEV_WHITELISTED)) {
 				ret = drv->probe(drv, dev);
-				if (ret)
+				if (ret) {
 					DPAA2_BUS_ERR("Unable to probe");
+				} else {
+					dev->driver = drv;
+					dev->device.driver = &drv->driver;
+				}
 			}
 			break;
 		}

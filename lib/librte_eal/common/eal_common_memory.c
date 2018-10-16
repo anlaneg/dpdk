@@ -171,7 +171,7 @@ virt2memseg(const void *addr, const struct rte_memseg_list *msl)
 
 	/* a memseg list was specified, check if it's the right one */
 	start = msl->base_va;
-	end = RTE_PTR_ADD(start, (size_t)msl->page_sz * msl->memseg_arr.len);
+	end = RTE_PTR_ADD(start, msl->len);
 
 	if (addr < start || addr >= end)
 		return NULL;
@@ -194,8 +194,7 @@ virt2memseg_list(const void *addr)
 		msl = &mcfg->memsegs[msl_idx];
 
 		start = msl->base_va;
-		end = RTE_PTR_ADD(start,
-				(size_t)msl->page_sz * msl->memseg_arr.len);
+		end = RTE_PTR_ADD(start, msl->len);
 		if (addr >= start && addr < end)
 			break;
 	}
@@ -273,6 +272,9 @@ physmem_size(const struct rte_memseg_list *msl, void *arg)
 {
 	uint64_t *total_len = arg;
 
+	if (msl->external)
+		return 0;
+
 	*total_len += msl->memseg_arr.count * msl->page_sz;
 
 	return 0;
@@ -294,7 +296,7 @@ dump_memseg(const struct rte_memseg_list *msl, const struct rte_memseg *ms,
 		void *arg)
 {
 	struct rte_mem_config *mcfg = rte_eal_get_configuration()->mem_config;
-	int msl_idx, ms_idx;
+	int msl_idx, ms_idx, fd;
 	FILE *f = arg;
 
 	msl_idx = msl - mcfg->memsegs;
@@ -305,10 +307,11 @@ dump_memseg(const struct rte_memseg_list *msl, const struct rte_memseg *ms,
 	if (ms_idx < 0)
 		return -1;
 
+	fd = eal_memalloc_get_seg_fd(msl_idx, ms_idx);
 	fprintf(f, "Segment %i-%i: IOVA:0x%"PRIx64", len:%zu, "
 			"virt:%p, socket_id:%"PRId32", "
 			"hugepage_sz:%"PRIu64", nchannel:%"PRIx32", "
-			"nrank:%"PRIx32"\n",
+			"nrank:%"PRIx32" fd:%i\n",
 			msl_idx, ms_idx,
 			ms->iova,
 			ms->len,
@@ -316,7 +319,8 @@ dump_memseg(const struct rte_memseg_list *msl, const struct rte_memseg *ms,
 			ms->socket_id,
 			ms->hugepage_sz,
 			ms->nchannel,
-			ms->nrank);
+			ms->nrank,
+			fd);
 
 	return 0;
 }
@@ -543,6 +547,105 @@ rte_memseg_list_walk(rte_memseg_list_walk_t func, void *arg)
 	/* do not allow allocations/frees/init while we iterate */
 	rte_rwlock_read_lock(&mcfg->memory_hotplug_lock);
 	ret = rte_memseg_list_walk_thread_unsafe(func, arg);
+	rte_rwlock_read_unlock(&mcfg->memory_hotplug_lock);
+
+	return ret;
+}
+
+int __rte_experimental
+rte_memseg_get_fd_thread_unsafe(const struct rte_memseg *ms)
+{
+	struct rte_mem_config *mcfg = rte_eal_get_configuration()->mem_config;
+	struct rte_memseg_list *msl;
+	struct rte_fbarray *arr;
+	int msl_idx, seg_idx, ret;
+
+	if (ms == NULL) {
+		rte_errno = EINVAL;
+		return -1;
+	}
+
+	msl = rte_mem_virt2memseg_list(ms->addr);
+	if (msl == NULL) {
+		rte_errno = EINVAL;
+		return -1;
+	}
+	arr = &msl->memseg_arr;
+
+	msl_idx = msl - mcfg->memsegs;
+	seg_idx = rte_fbarray_find_idx(arr, ms);
+
+	if (!rte_fbarray_is_used(arr, seg_idx)) {
+		rte_errno = ENOENT;
+		return -1;
+	}
+
+	ret = eal_memalloc_get_seg_fd(msl_idx, seg_idx);
+	if (ret < 0) {
+		rte_errno = -ret;
+		ret = -1;
+	}
+	return ret;
+}
+
+int __rte_experimental
+rte_memseg_get_fd(const struct rte_memseg *ms)
+{
+	struct rte_mem_config *mcfg = rte_eal_get_configuration()->mem_config;
+	int ret;
+
+	rte_rwlock_read_lock(&mcfg->memory_hotplug_lock);
+	ret = rte_memseg_get_fd_thread_unsafe(ms);
+	rte_rwlock_read_unlock(&mcfg->memory_hotplug_lock);
+
+	return ret;
+}
+
+int __rte_experimental
+rte_memseg_get_fd_offset_thread_unsafe(const struct rte_memseg *ms,
+		size_t *offset)
+{
+	struct rte_mem_config *mcfg = rte_eal_get_configuration()->mem_config;
+	struct rte_memseg_list *msl;
+	struct rte_fbarray *arr;
+	int msl_idx, seg_idx, ret;
+
+	if (ms == NULL || offset == NULL) {
+		rte_errno = EINVAL;
+		return -1;
+	}
+
+	msl = rte_mem_virt2memseg_list(ms->addr);
+	if (msl == NULL) {
+		rte_errno = EINVAL;
+		return -1;
+	}
+	arr = &msl->memseg_arr;
+
+	msl_idx = msl - mcfg->memsegs;
+	seg_idx = rte_fbarray_find_idx(arr, ms);
+
+	if (!rte_fbarray_is_used(arr, seg_idx)) {
+		rte_errno = ENOENT;
+		return -1;
+	}
+
+	ret = eal_memalloc_get_seg_fd_offset(msl_idx, seg_idx, offset);
+	if (ret < 0) {
+		rte_errno = -ret;
+		ret = -1;
+	}
+	return ret;
+}
+
+int __rte_experimental
+rte_memseg_get_fd_offset(const struct rte_memseg *ms, size_t *offset)
+{
+	struct rte_mem_config *mcfg = rte_eal_get_configuration()->mem_config;
+	int ret;
+
+	rte_rwlock_read_lock(&mcfg->memory_hotplug_lock);
+	ret = rte_memseg_get_fd_offset_thread_unsafe(ms, offset);
 	rte_rwlock_read_unlock(&mcfg->memory_hotplug_lock);
 
 	return ret;

@@ -19,13 +19,12 @@
 #include <rte_table_acl.h>
 #include <rte_table_array.h>
 #include <rte_table_hash.h>
+#include <rte_table_hash_func.h>
 #include <rte_table_lpm.h>
 #include <rte_table_lpm_ipv6.h>
 #include <rte_table_stub.h>
 
 #include "rte_eth_softnic_internals.h"
-
-#include "hash_func.h"
 
 #ifndef PIPELINE_MSGQ_SIZE
 #define PIPELINE_MSGQ_SIZE                                 64
@@ -43,17 +42,52 @@ softnic_pipeline_init(struct pmd_internals *p)
 	return 0;
 }
 
+static void
+softnic_pipeline_table_free(struct softnic_table *table)
+{
+	for ( ; ; ) {
+		struct rte_flow *flow;
+
+		flow = TAILQ_FIRST(&table->flows);
+		if (flow == NULL)
+			break;
+
+		TAILQ_REMOVE(&table->flows, flow, node);
+		free(flow);
+	}
+
+	for ( ; ; ) {
+		struct softnic_table_meter_profile *mp;
+
+		mp = TAILQ_FIRST(&table->meter_profiles);
+		if (mp == NULL)
+			break;
+
+		TAILQ_REMOVE(&table->meter_profiles, mp, node);
+		free(mp);
+	}
+}
+
 void
 softnic_pipeline_free(struct pmd_internals *p)
 {
 	for ( ; ; ) {
 		struct pipeline *pipeline;
+		uint32_t table_id;
 
 		pipeline = TAILQ_FIRST(&p->pipeline_list);
 		if (pipeline == NULL)
 			break;
 
 		TAILQ_REMOVE(&p->pipeline_list, pipeline, node);
+
+		for (table_id = 0; table_id < pipeline->n_tables; table_id++) {
+			struct softnic_table *table =
+				&pipeline->table[table_id];
+
+			softnic_pipeline_table_free(table);
+		}
+
 		rte_ring_free(pipeline->msgq_req);
 		rte_ring_free(pipeline->msgq_rsp);
 		rte_pipeline_free(pipeline->p);
@@ -160,6 +194,7 @@ softnic_pipeline_create(struct pmd_internals *softnic,
 	/* Node fill in */
 	strlcpy(pipeline->name, name, sizeof(pipeline->name));
 	pipeline->p = p;
+	memcpy(&pipeline->params, params, sizeof(*params));
 	pipeline->n_ports_in = 0;
 	pipeline->n_ports_out = 0;
 	pipeline->n_tables = 0;
@@ -213,7 +248,7 @@ softnic_pipeline_port_in_create(struct pmd_internals *softnic,
 		return -1;
 
 	ap = NULL;
-	if (params->action_profile_name) {
+	if (strlen(params->action_profile_name)) {
 		ap = softnic_port_in_action_profile_find(softnic,
 			params->action_profile_name);
 		if (ap == NULL)
@@ -401,6 +436,7 @@ softnic_pipeline_port_out_create(struct pmd_internals *softnic,
 	} pp_nodrop;
 
 	struct pipeline *pipeline;
+	struct softnic_port_out *port_out;
 	uint32_t port_id;
 	int status;
 
@@ -542,6 +578,8 @@ softnic_pipeline_port_out_create(struct pmd_internals *softnic,
 		return -1;
 
 	/* Pipeline */
+	port_out = &pipeline->port_out[pipeline->n_ports_out];
+	memcpy(&port_out->params, params, sizeof(*params));
 	pipeline->n_ports_out++;
 
 	return 0;
@@ -730,7 +768,7 @@ softnic_pipeline_table_create(struct pmd_internals *softnic,
 		return -1;
 
 	ap = NULL;
-	if (params->action_profile_name) {
+	if (strlen(params->action_profile_name)) {
 		ap = softnic_table_action_profile_find(softnic,
 			params->action_profile_name);
 		if (ap == NULL)
@@ -797,28 +835,28 @@ softnic_pipeline_table_create(struct pmd_internals *softnic,
 
 		switch (params->match.hash.key_size) {
 		case  8:
-			f_hash = hash_default_key8;
+			f_hash = rte_table_hash_crc_key8;
 			break;
 		case 16:
-			f_hash = hash_default_key16;
+			f_hash = rte_table_hash_crc_key16;
 			break;
 		case 24:
-			f_hash = hash_default_key24;
+			f_hash = rte_table_hash_crc_key24;
 			break;
 		case 32:
-			f_hash = hash_default_key32;
+			f_hash = rte_table_hash_crc_key32;
 			break;
 		case 40:
-			f_hash = hash_default_key40;
+			f_hash = rte_table_hash_crc_key40;
 			break;
 		case 48:
-			f_hash = hash_default_key48;
+			f_hash = rte_table_hash_crc_key48;
 			break;
 		case 56:
-			f_hash = hash_default_key56;
+			f_hash = rte_table_hash_crc_key56;
 			break;
 		case 64:
-			f_hash = hash_default_key64;
+			f_hash = rte_table_hash_crc_key64;
 			break;
 		default:
 			return -1;
@@ -960,7 +998,51 @@ softnic_pipeline_table_create(struct pmd_internals *softnic,
 	memcpy(&table->params, params, sizeof(*params));
 	table->ap = ap;
 	table->a = action;
+	TAILQ_INIT(&table->flows);
+	TAILQ_INIT(&table->meter_profiles);
+	memset(&table->dscp_table, 0, sizeof(table->dscp_table));
 	pipeline->n_tables++;
 
 	return 0;
+}
+
+int
+softnic_pipeline_port_out_find(struct pmd_internals *softnic,
+		const char *pipeline_name,
+		const char *name,
+		uint32_t *port_id)
+{
+	struct pipeline *pipeline;
+	uint32_t i;
+
+	if (softnic == NULL ||
+			pipeline_name == NULL ||
+			name == NULL ||
+			port_id == NULL)
+		return -1;
+
+	pipeline = softnic_pipeline_find(softnic, pipeline_name);
+	if (pipeline == NULL)
+		return -1;
+
+	for (i = 0; i < pipeline->n_ports_out; i++)
+		if (strcmp(pipeline->port_out[i].params.dev_name, name) == 0) {
+			*port_id = i;
+			return 0;
+		}
+
+	return -1;
+}
+
+struct softnic_table_meter_profile *
+softnic_pipeline_table_meter_profile_find(struct softnic_table *table,
+	uint32_t meter_profile_id)
+{
+	struct softnic_table_meter_profile *mp;
+
+	TAILQ_FOREACH(mp, &table->meter_profiles, node)
+		if (mp->meter_profile_id == meter_profile_id)
+			return mp;
+
+	return NULL;
 }

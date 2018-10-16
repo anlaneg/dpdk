@@ -17,6 +17,7 @@
 #include <sys/stat.h>
 #include <sys/queue.h>
 #include <sys/file.h>
+#include <sys/resource.h>
 #include <unistd.h>
 #include <limits.h>
 #include <sys/ioctl.h>
@@ -273,7 +274,7 @@ map_all_hugepages(struct hugepage_file *hugepg_tbl, struct hugepage_info *hpi,
 	int node_id = -1;
 	int essential_prev = 0;
 	int oldpolicy;
-	struct bitmask *oldmask = numa_allocate_nodemask();
+	struct bitmask *oldmask = NULL;
 	bool have_numa = true;
 	unsigned long maxnode = 0;
 
@@ -285,6 +286,7 @@ map_all_hugepages(struct hugepage_file *hugepg_tbl, struct hugepage_info *hpi,
 
 	if (have_numa) {
 		RTE_LOG(DEBUG, EAL, "Trying to obtain current memory policy.\n");
+		oldmask = numa_allocate_nodemask();
 		if (get_mempolicy(&oldpolicy, oldmask->maskp,
 				  oldmask->size + 1, 0, 0) < 0) {
 			RTE_LOG(ERR, EAL,
@@ -412,7 +414,8 @@ out:
 			numa_set_localalloc();
 		}
 	}
-	numa_free_cpumask(oldmask);
+	if (oldmask != NULL)
+		numa_free_cpumask(oldmask);
 #endif
 	return i;
 }
@@ -594,7 +597,7 @@ unlink_hugepage_files(struct hugepage_file *hugepg_tbl,
 	for (page = 0; page < nrpages; page++) {
 		struct hugepage_file *hp = &hugepg_tbl[page];
 
-		if (hp->final_va != NULL && unlink(hp->filepath)) {
+		if (hp->orig_va != NULL && unlink(hp->filepath)) {
 			RTE_LOG(WARNING, EAL, "%s(): Removing %s failed: %s\n",
 				__func__, hp->filepath, strerror(errno));
 		}
@@ -781,7 +784,10 @@ remap_segment(struct hugepage_file *hugepages, int seg_start, int seg_end)
 
 		rte_fbarray_set_used(arr, ms_idx);
 
-		close(fd);
+		/* store segment fd internally */
+		if (eal_memalloc_set_seg_fd(msl_idx, ms_idx, fd) < 0)
+			RTE_LOG(ERR, EAL, "Could not store segment fd: %s\n",
+				rte_strerror(rte_errno));
 	}
 	RTE_LOG(DEBUG, EAL, "Allocated %" PRIu64 "M on socket %i\n",
 			(seg_len * page_sz) >> 20, socket_id);
@@ -867,6 +873,7 @@ alloc_va_space(struct rte_memseg_list *msl)
 		return -1;
 	}
 	msl->base_va = addr;
+	msl->len = mem_sz;
 
 	return 0;
 }
@@ -1379,6 +1386,7 @@ eal_legacy_hugepage_init(void)
 		msl->base_va = addr;
 		msl->page_sz = page_sz;
 		msl->socket_id = 0;
+		msl->len = internal_config.memory;
 
 		/* populate memsegs. each memseg is one page long */
 		for (cur_seg = 0; cur_seg < n_segs; cur_seg++) {
@@ -1626,7 +1634,7 @@ eal_legacy_hugepage_init(void)
 		if (msl->memseg_arr.count > 0)
 			continue;
 		/* this is an unused list, deallocate it */
-		mem_sz = (size_t)msl->page_sz * msl->memseg_arr.len;
+		mem_sz = msl->len;
 		munmap(msl->base_va, mem_sz);
 		msl->base_va = NULL;
 
@@ -1785,6 +1793,7 @@ getFileSize(int fd)
 static int
 eal_legacy_hugepage_attach(void)
 {
+	struct rte_mem_config *mcfg = rte_eal_get_configuration()->mem_config;
 	struct hugepage_file *hp = NULL;
 	unsigned int num_hp = 0;
 	unsigned int i = 0;
@@ -1829,6 +1838,9 @@ eal_legacy_hugepage_attach(void)
 		struct hugepage_file *hf = &hp[i];
 		size_t map_sz = hf->size;
 		void *map_addr = hf->final_va;
+		int msl_idx, ms_idx;
+		struct rte_memseg_list *msl;
+		struct rte_memseg *ms;
 
 		/* if size is zero, no more pages left */
 		if (map_sz == 0)
@@ -1846,25 +1858,50 @@ eal_legacy_hugepage_attach(void)
 		if (map_addr == MAP_FAILED) {
 			RTE_LOG(ERR, EAL, "Could not map %s: %s\n",
 				hf->filepath, strerror(errno));
-			close(fd);
-			goto error;
+			goto fd_error;
 		}
 
 		/* set shared lock on the file. */
 		if (flock(fd, LOCK_SH) < 0) {
 			RTE_LOG(DEBUG, EAL, "%s(): Locking file failed: %s\n",
 				__func__, strerror(errno));
-			close(fd);
-			goto error;
+			goto fd_error;
 		}
 
-		close(fd);
+		/* find segment data */
+		msl = rte_mem_virt2memseg_list(map_addr);
+		if (msl == NULL) {
+			RTE_LOG(DEBUG, EAL, "%s(): Cannot find memseg list\n",
+				__func__);
+			goto fd_error;
+		}
+		ms = rte_mem_virt2memseg(map_addr, msl);
+		if (ms == NULL) {
+			RTE_LOG(DEBUG, EAL, "%s(): Cannot find memseg\n",
+				__func__);
+			goto fd_error;
+		}
+
+		msl_idx = msl - mcfg->memsegs;
+		ms_idx = rte_fbarray_find_idx(&msl->memseg_arr, ms);
+		if (ms_idx < 0) {
+			RTE_LOG(DEBUG, EAL, "%s(): Cannot find memseg idx\n",
+				__func__);
+			goto fd_error;
+		}
+
+		/* store segment fd internally */
+		if (eal_memalloc_set_seg_fd(msl_idx, ms_idx, fd) < 0)
+			RTE_LOG(ERR, EAL, "Could not store segment fd: %s\n",
+				rte_strerror(rte_errno));
 	}
 	/* unmap the hugepage config file, since we are done using it */
 	munmap(hp, size);
 	close(fd_hugepage);
 	return 0;
 
+fd_error:
+	close(fd);
 error:
 	/* map all segments into memory to make sure we get the addrs */
 	cur_seg = 0;
@@ -2221,6 +2258,25 @@ memseg_secondary_init(void)
 int
 rte_eal_memseg_init(void)
 {
+	/* increase rlimit to maximum */
+	struct rlimit lim;
+
+	if (getrlimit(RLIMIT_NOFILE, &lim) == 0) {
+		/* set limit to maximum */
+		lim.rlim_cur = lim.rlim_max;
+
+		if (setrlimit(RLIMIT_NOFILE, &lim) < 0) {
+			RTE_LOG(DEBUG, EAL, "Setting maximum number of open files failed: %s\n",
+					strerror(errno));
+		} else {
+			RTE_LOG(DEBUG, EAL, "Setting maximum number of open files to %"
+					PRIu64 "\n",
+					(uint64_t)lim.rlim_cur);
+		}
+	} else {
+		RTE_LOG(ERR, EAL, "Cannot get current resource limits\n");
+	}
+
 	return rte_eal_process_type() == RTE_PROC_PRIMARY ?
 #ifndef RTE_ARCH_64
 			memseg_primary_init_32() :

@@ -71,6 +71,7 @@ SRCS-y += test_bitmap.c
 SRCS-y += test_reciprocal_division.c
 SRCS-y += test_reciprocal_division_perf.c
 SRCS-y += test_fbarray.c
+SRCS-y += test_external_mem.c
 
 SRCS-y += test_ring.c
 SRCS-y += test_ring_perf.c
@@ -191,6 +192,7 @@ ifeq ($(CONFIG_RTE_LIBRTE_EVENTDEV),y)
 SRCS-y += test_eventdev.c
 SRCS-y += test_event_ring.c
 SRCS-y += test_event_eth_rx_adapter.c
+SRCS-y += test_event_eth_tx_adapter.c
 SRCS-y += test_event_timer_adapter.c
 SRCS-y += test_event_crypto_adapter.c
 endif

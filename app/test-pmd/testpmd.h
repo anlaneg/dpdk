@@ -69,6 +69,16 @@ enum {
 	PORT_TOPOLOGY_LOOP,
 };
 
+enum {
+	MP_ALLOC_NATIVE, /**< allocate and populate mempool natively */
+	MP_ALLOC_ANON,
+	/**< allocate mempool natively, but populate using anonymous memory */
+	MP_ALLOC_XMEM,
+	/**< allocate and populate mempool using anonymous memory */
+	MP_ALLOC_XMEM_HUGE
+	/**< allocate and populate mempool using anonymous hugepage memory */
+};
+
 #ifdef RTE_TEST_PMD_RECORD_BURST_STATS
 /**
  * The data structure associated with RX and TX packet burst statistics
@@ -112,6 +122,8 @@ struct fwd_stream {
 	unsigned int fwd_dropped; /**< received packets not forwarded */
 	unsigned int rx_bad_ip_csum ; /**< received packets has bad ip checksum */
 	unsigned int rx_bad_l4_csum ; /**< received packets has bad l4 checksum */
+	unsigned int rx_bad_outer_l4_csum;
+	/**< received packets has bad outer l4 checksum */
 	unsigned int gro_times;	/**< GRO operation times */
 #ifdef RTE_TEST_PMD_RECORD_CORE_CYCLES
 	uint64_t     core_cycles; /**< used for RX and TX processing */
@@ -124,15 +136,12 @@ struct fwd_stream {
 
 /** Descriptor for a single flow. */
 struct port_flow {
-	size_t size; /**< Allocated space including data[]. */
 	struct port_flow *next; /**< Next flow in list. */
 	struct port_flow *tmp; /**< Temporary linking. */
 	uint32_t id; /**< Flow rule ID. */
 	struct rte_flow *flow; /**< Opaque flow object returned by PMD. */
-	struct rte_flow_attr attr; /**< Attributes. */
-	struct rte_flow_item *pattern; /**< Pattern. */
-	struct rte_flow_action *actions; /**< Actions. */
-	uint8_t data[]; /**< Storage for pattern/actions. */
+	struct rte_flow_conv_rule rule; /* Saved flow rule description. */
+	uint8_t data[]; /**< Storage for flow rule description */
 };
 
 #ifdef SOFTNIC
@@ -165,6 +174,8 @@ struct rte_port {
 	void                    *fwd_ctx;   /**< Forwarding mode context */
 	uint64_t                rx_bad_ip_csum; /**< rx pkts with bad ip checksum  */
 	uint64_t                rx_bad_l4_csum; /**< rx pkts with bad l4 checksum */
+	uint64_t                rx_bad_outer_l4_csum;
+	/**< rx pkts with bad outer l4 checksum */
 	uint8_t                 tx_queue_stats_mapping_enabled;
 	uint8_t                 rx_queue_stats_mapping_enabled;
 	volatile uint16_t        port_status;    /**< port started or not */
@@ -244,6 +255,7 @@ extern struct fwd_engine rx_only_engine;
 extern struct fwd_engine tx_only_engine;
 extern struct fwd_engine csum_fwd_engine;
 extern struct fwd_engine icmp_echo_engine;
+extern struct fwd_engine noisy_vnf_engine;
 #ifdef SOFTNIC
 extern struct fwd_engine softnic_fwd_engine;
 #endif
@@ -305,7 +317,8 @@ extern uint8_t  numa_support; /**< set by "--numa" parameter */
 extern uint16_t port_topology; /**< set by "--port-topology" parameter */
 extern uint8_t no_flush_rx; /**<set by "--no-flush-rx" parameter */
 extern uint8_t flow_isolate_all; /**< set by "--flow-isolate-all */
-extern uint8_t  mp_anon; /**< set by "--mp-anon" parameter */
+extern uint8_t  mp_alloc_type;
+/**< set by "--mp-anon" or "--mp-alloc" parameter */
 extern uint8_t no_link_check; /**<set by "--disable-link-check" parameter */
 extern volatile int test_done; /* stop packet forwarding when set to 1. */
 extern uint8_t lsc_interrupt; /**< disabled by "--no-lsc-interrupt" parameter */
@@ -375,6 +388,13 @@ extern int16_t rx_free_thresh;
 extern int8_t rx_drop_en;
 extern int16_t tx_free_thresh;
 extern int16_t tx_rs_thresh;
+
+extern uint16_t noisy_tx_sw_bufsz;
+extern uint16_t noisy_tx_sw_buf_flush_time;
+extern uint64_t noisy_lkup_mem_sz;
+extern uint64_t noisy_lkup_num_writes;
+extern uint64_t noisy_lkup_num_reads;
+extern uint64_t noisy_lkup_num_reads_writes;
 
 extern uint8_t dcb_config;
 extern uint8_t dcb_test;
@@ -596,6 +616,8 @@ void nic_xstats_display(portid_t port_id);
 void nic_xstats_clear(portid_t port_id);
 void nic_stats_mapping_display(portid_t port_id);
 void port_infos_display(portid_t port_id);
+void port_summary_display(portid_t port_id);
+void port_summary_header_display(void);
 void port_offload_cap_display(portid_t port_id);
 void rx_queue_infos_display(portid_t port_idi, uint16_t queue_id);
 void tx_queue_infos_display(portid_t port_idi, uint16_t queue_id);
@@ -710,8 +732,7 @@ int set_queue_rate_limit(portid_t port_id, uint16_t queue_idx, uint16_t rate);
 int set_vf_rate_limit(portid_t port_id, uint16_t vf, uint16_t rate,
 				uint64_t q_msk);
 
-void port_rss_hash_conf_show(portid_t port_id, char rss_info[],
-			     int show_rss_key);
+void port_rss_hash_conf_show(portid_t port_id, int show_rss_key);
 void port_rss_hash_key_update(portid_t port_id, char rss_type[],
 			      uint8_t *hash_key, uint hash_key_len);
 int rx_queue_id_is_invalid(queueid_t rxq_id);

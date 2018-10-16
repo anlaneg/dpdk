@@ -39,7 +39,7 @@ struct rte_dev_event {
 	char *devname;			/**< device name */
 };
 
-typedef void (*rte_dev_event_cb_fn)(char *device_name,
+typedef void (*rte_dev_event_cb_fn)(const char *device_name,
 					enum rte_dev_event_type event,
 					void *cb_arg);
 
@@ -158,6 +158,7 @@ struct rte_device {
 	TAILQ_ENTRY(rte_device) next; /**< Next device */ //用于将设备串连起来，例如一条bus一串设备
 	const char *name;             /**< Device name */ //设备名称
 	const struct rte_driver *driver;/**< Associated driver */ //采用哪个驱动
+	const struct rte_bus *bus;    /**< Bus handle assigned on scan */
 	int numa_node;                /**< NUMA node connection */ //属于那个numa
 	struct rte_devargs *devargs;  /**< Device user arguments */ //用户为此设备提供的参数
 };
@@ -190,9 +191,6 @@ __rte_deprecated
 int rte_eal_dev_detach(struct rte_device *dev);
 
 /**
- * @warning
- * @b EXPERIMENTAL: this API may change without prior notice
- *
  * Hotplug add a given device to a specific bus.
  *
  * @param busname
@@ -200,18 +198,28 @@ int rte_eal_dev_detach(struct rte_device *dev);
  * @param devname
  *   The device name. Based on this device name, eal will identify a driver
  *   capable of handling it and pass it to the driver probing function.
- * @param devargs
+ * @param drvargs
  *   Device arguments to be passed to the driver.
  * @return
  *   0 on success, negative on error.
  */
-int __rte_experimental rte_eal_hotplug_add(const char *busname, const char *devname,
-			const char *devargs);
+int rte_eal_hotplug_add(const char *busname, const char *devname,
+			const char *drvargs);
 
 /**
  * @warning
  * @b EXPERIMENTAL: this API may change without prior notice
  *
+ * Add matching devices.
+ *
+ * @param devargs
+ *   Device arguments including bus, class and driver properties.
+ * @return
+ *   0 on success, negative on error.
+ */
+int __rte_experimental rte_dev_probe(const char *devargs);
+
+/**
  * Hotplug remove a given device from a specific bus.
  *
  * @param busname
@@ -221,8 +229,20 @@ int __rte_experimental rte_eal_hotplug_add(const char *busname, const char *devn
  * @return
  *   0 on success, negative on error.
  */
-int __rte_experimental rte_eal_hotplug_remove(const char *busname,
-					  const char *devname);
+int rte_eal_hotplug_remove(const char *busname, const char *devname);
+
+/**
+ * @warning
+ * @b EXPERIMENTAL: this API may change without prior notice
+ *
+ * Remove one device.
+ *
+ * @param dev
+ *   Data structure of the device to remove.
+ * @return
+ *   0 on success, negative on error.
+ */
+int __rte_experimental rte_dev_remove(struct rte_device *dev);
 
 /**
  * Device comparison function.
@@ -440,6 +460,22 @@ rte_dev_event_callback_unregister(const char *device_name,
  * @warning
  * @b EXPERIMENTAL: this API may change without prior notice
  *
+ * Executes all the user application registered callbacks for
+ * the specific device.
+ *
+ * @param device_name
+ *  The device name.
+ * @param event
+ *  the device event type.
+ */
+void  __rte_experimental
+rte_dev_event_callback_process(const char *device_name,
+			       enum rte_dev_event_type event);
+
+/**
+ * @warning
+ * @b EXPERIMENTAL: this API may change without prior notice
+ *
  * Start the device event monitoring.
  *
  * @return
@@ -461,5 +497,31 @@ rte_dev_event_monitor_start(void);
  */
 int __rte_experimental
 rte_dev_event_monitor_stop(void);
+
+/**
+ * @warning
+ * @b EXPERIMENTAL: this API may change without prior notice
+ *
+ * Enable hotplug handling for devices.
+ *
+ * @return
+ *   - On success, zero.
+ *   - On failure, a negative value.
+ */
+int __rte_experimental
+rte_dev_hotplug_handle_enable(void);
+
+/**
+ * @warning
+ * @b EXPERIMENTAL: this API may change without prior notice
+ *
+ * Disable hotplug handling for devices.
+ *
+ * @return
+ *   - On success, zero.
+ *   - On failure, a negative value.
+ */
+int __rte_experimental
+rte_dev_hotplug_handle_disable(void);
 
 #endif /* _RTE_DEV_H_ */

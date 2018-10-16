@@ -140,7 +140,7 @@ extern "C" {
  * The 2 vlans have been stripped by the hardware and their tci are
  * saved in mbuf->vlan_tci (inner) and mbuf->vlan_tci_outer (outer).
  * This can only happen if vlan stripping is enabled in the RX
- * configuration of the PMD. If this flag is set,
+ * configuration of the PMD.
  * When PKT_RX_QINQ_STRIPPED is set, the flags (PKT_RX_VLAN |
  * PKT_RX_VLAN_STRIPPED | PKT_RX_QINQ) must also be set.
  */
@@ -170,16 +170,47 @@ extern "C" {
 
 /**
  * The RX packet is a double VLAN, and the outer tci has been
- * saved in in mbuf->vlan_tci_outer.
+ * saved in in mbuf->vlan_tci_outer. If PKT_RX_QINQ set, PKT_RX_VLAN
+ * also should be set and inner tci should be saved to mbuf->vlan_tci.
  * If the flag PKT_RX_QINQ_STRIPPED is also present, both VLANs
  * headers have been stripped from mbuf data, else they are still
  * present.
  */
 #define PKT_RX_QINQ          (1ULL << 20)
 
+/**
+ * Mask of bits used to determine the status of outer RX L4 checksum.
+ * - PKT_RX_OUTER_L4_CKSUM_UNKNOWN: no info about the outer RX L4 checksum
+ * - PKT_RX_OUTER_L4_CKSUM_BAD: the outer L4 checksum in the packet is wrong
+ * - PKT_RX_OUTER_L4_CKSUM_GOOD: the outer L4 checksum in the packet is valid
+ * - PKT_RX_OUTER_L4_CKSUM_INVALID: invalid outer L4 checksum state.
+ *
+ * The detection of PKT_RX_OUTER_L4_CKSUM_GOOD shall be based on the given
+ * HW capability, At minimum, the PMD should support
+ * PKT_RX_OUTER_L4_CKSUM_UNKNOWN and PKT_RX_OUTER_L4_CKSUM_BAD states
+ * if the DEV_RX_OFFLOAD_OUTER_UDP_CKSUM offload is available.
+ */
+#define PKT_RX_OUTER_L4_CKSUM_MASK	((1ULL << 21) | (1ULL << 22))
+
+#define PKT_RX_OUTER_L4_CKSUM_UNKNOWN	0
+#define PKT_RX_OUTER_L4_CKSUM_BAD	(1ULL << 21)
+#define PKT_RX_OUTER_L4_CKSUM_GOOD	(1ULL << 22)
+#define PKT_RX_OUTER_L4_CKSUM_INVALID	((1ULL << 21) | (1ULL << 22))
+
 /* add new RX flags here */
 
 /* add new TX flags here */
+
+/**
+ * Outer UDP checksum offload flag. This flag is used for enabling
+ * outer UDP checksum in PMD. To use outer UDP checksum, the user needs to
+ * 1) Enable the following in mbuff,
+ * a) Fill outer_l2_len and outer_l3_len in mbuf.
+ * b) Set the PKT_TX_OUTER_UDP_CKSUM flag.
+ * c) Set the PKT_TX_OUTER_IPV4 or PKT_TX_OUTER_IPV6 flag.
+ * 2) Configure DEV_TX_OFFLOAD_OUTER_UDP_CKSUM offload flag.
+ */
+#define PKT_TX_OUTER_UDP_CKSUM     (1ULL << 41)
 
 /**
  * UDP Fragmentation Offload flag. This flag is used for enabling UDP
@@ -335,16 +366,22 @@ extern "C" {
  * which can be set for packet.
  */
 #define PKT_TX_OFFLOAD_MASK (    \
+		PKT_TX_OUTER_IPV6 |	 \
+		PKT_TX_OUTER_IPV4 |	 \
+		PKT_TX_OUTER_IP_CKSUM |  \
+		PKT_TX_VLAN_PKT |        \
+		PKT_TX_IPV6 |		 \
+		PKT_TX_IPV4 |		 \
 		PKT_TX_IP_CKSUM |        \
 		PKT_TX_L4_MASK |         \
-		PKT_TX_OUTER_IP_CKSUM |  \
-		PKT_TX_TCP_SEG |         \
 		PKT_TX_IEEE1588_TMST |	 \
+		PKT_TX_TCP_SEG |         \
 		PKT_TX_QINQ_PKT |        \
-		PKT_TX_VLAN_PKT |        \
 		PKT_TX_TUNNEL_MASK |	 \
 		PKT_TX_MACSEC |		 \
-		PKT_TX_SEC_OFFLOAD)
+		PKT_TX_SEC_OFFLOAD |	\
+		PKT_TX_UDP_SEG |	\
+		PKT_TX_OUTER_UDP_CKSUM)
 
 /**
  * Mbuf having an external buffer attached. shinfo in mbuf must be filled.
@@ -466,7 +503,9 @@ struct rte_mbuf {
 	};
 	uint16_t nb_segs;         /**< Number of segments. */
 
-	/** Input port (16 bits to support more than 256 virtual ports). */
+	/** Input port (16 bits to support more than 256 virtual ports).
+	 * The event eth Tx adapter uses this field to specify the output port.
+	 */
 	uint16_t port;
 
 	//mbuf的offload功能标记（dpdk定义了一组功能，然后由驱动对这组功能进行映射，并对应到各自硬件特性上）
@@ -536,6 +575,9 @@ struct rte_mbuf {
 		struct {
 			uint32_t lo;
 			uint32_t hi;
+			/**< The event eth Tx adapter uses this field to store
+			 * Tx queue id. @see rte_event_eth_tx_adapter_txq_set()
+			 */
 		} sched;          /**< Hierarchical scheduler */
 		uint32_t usr;	  /**< User defined tags. See rte_distributor_process() */
 	} hash;                   /**< hash information */
@@ -1052,14 +1094,6 @@ rte_mbuf_raw_free(struct rte_mbuf *m)
 	RTE_ASSERT(m->nb_segs == 1);
 	__rte_mbuf_sanity_check(m, 0);
 	rte_mempool_put(m->pool, m);
-}
-
-/* compat with older versions */
-__rte_deprecated
-static inline void
-__rte_mbuf_raw_free(struct rte_mbuf *m)
-{
-	rte_mbuf_raw_free(m);
 }
 
 /**
@@ -1672,14 +1706,6 @@ rte_pktmbuf_prefree_seg(struct rte_mbuf *m)
 		return m;
 	}
 	return NULL;
-}
-
-/* deprecated, replaced by rte_pktmbuf_prefree_seg() */
-__rte_deprecated
-static inline struct rte_mbuf *
-__rte_pktmbuf_prefree_seg(struct rte_mbuf *m)
-{
-	return rte_pktmbuf_prefree_seg(m);
 }
 
 /**

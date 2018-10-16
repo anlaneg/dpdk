@@ -27,6 +27,7 @@
 #include <rte_log.h>
 #include <rte_debug.h>
 #include <rte_cycles.h>
+#include <rte_malloc_heap.h>
 #include <rte_memory.h>
 #include <rte_memcpy.h>
 #include <rte_launch.h>
@@ -63,6 +64,22 @@
 
 #include "testpmd.h"
 
+#ifndef MAP_HUGETLB
+/* FreeBSD may not have MAP_HUGETLB (in fact, it probably doesn't) */
+#define HUGE_FLAG (0x40000)
+#else
+#define HUGE_FLAG MAP_HUGETLB
+#endif
+
+#ifndef MAP_HUGE_SHIFT
+/* older kernels (or FreeBSD) will not have this define */
+#define HUGE_SHIFT (26)
+#else
+#define HUGE_SHIFT MAP_HUGE_SHIFT
+#endif
+
+#define EXTMEM_HEAP_NAME "extmem"
+
 uint16_t verbose_level = 0; /**< Silent by default. */
 int testpmd_logtype; /**< Log type for testpmd logs */
 
@@ -88,9 +105,13 @@ uint8_t numa_support = 1; /**< numa enabled by default */
 uint8_t socket_num = UMA_NO_CONFIG;
 
 /*
- * Use ANONYMOUS mapped memory (might be not physically continuous) for mbufs.
+ * Select mempool allocation type:
+ * - native: use regular DPDK memory
+ * - anon: use regular DPDK memory to create mempool, but populate using
+ *         anonymous memory (may not be IOVA-contiguous)
+ * - xmem: use externally allocated hugepage memory
  */
-uint8_t mp_anon = 0;
+uint8_t mp_alloc_type = MP_ALLOC_NATIVE;
 
 /*
  * Store specified sockets on which memory pool to be used by ports
@@ -161,6 +182,7 @@ struct fwd_engine * fwd_engines[] = {
 	&tx_only_engine,
 	&csum_fwd_engine,
 	&icmp_echo_engine,
+	&noisy_vnf_engine,
 #if defined RTE_LIBRTE_PMD_SOFTNIC
 	&softnic_fwd_engine,
 #endif
@@ -260,6 +282,40 @@ int16_t tx_free_thresh = RTE_PMD_PARAM_UNSET;
 int16_t tx_rs_thresh = RTE_PMD_PARAM_UNSET;
 
 /*
+ * Configurable value of buffered packets before sending.
+ */
+uint16_t noisy_tx_sw_bufsz;
+
+/*
+ * Configurable value of packet buffer timeout.
+ */
+uint16_t noisy_tx_sw_buf_flush_time;
+
+/*
+ * Configurable value for size of VNF internal memory area
+ * used for simulating noisy neighbour behaviour
+ */
+uint64_t noisy_lkup_mem_sz;
+
+/*
+ * Configurable value of number of random writes done in
+ * VNF simulation memory area.
+ */
+uint64_t noisy_lkup_num_writes;
+
+/*
+ * Configurable value of number of random reads done in
+ * VNF simulation memory area.
+ */
+uint64_t noisy_lkup_num_reads;
+
+/*
+ * Configurable value of number of random reads/writes done in
+ * VNF simulation memory area.
+ */
+uint64_t noisy_lkup_num_reads_writes;
+
+/*
  * Receive Side Scaling (RSS) configuration.
  */
 uint64_t rss_hf = ETH_RSS_IP; /* RSS IP by default. */
@@ -341,7 +397,6 @@ lcoreid_t latencystats_lcore_id = -1;
  */
 struct rte_eth_rxmode rx_mode = {
 	.max_rx_pkt_len = ETHER_MAX_LEN, /**< Default maximum frame length. */
-	.offloads = DEV_RX_OFFLOAD_CRC_STRIP,
 };
 
 struct rte_eth_txmode tx_mode = {
@@ -440,12 +495,9 @@ static void check_all_ports_link_status(uint32_t port_mask);
 static int eth_event_callback(portid_t port_id,
 			      enum rte_eth_event_type type,
 			      void *param, void *ret_param);
-static void eth_dev_event_callback(char *device_name,
+static void eth_dev_event_callback(const char *device_name,
 				enum rte_dev_event_type type,
 				void *param);
-static int eth_dev_event_callback_register(void);
-static int eth_dev_event_callback_unregister(void);
-
 
 /*
  * Check if all the ports are started.
@@ -485,6 +537,8 @@ set_default_fwd_lcores_config(void)
 
 	nb_lc = 0;
 	for (i = 0; i < RTE_MAX_LCORE; i++) {
+		if (!rte_lcore_is_enabled(i))
+			continue;
 		sock_num = rte_lcore_to_socket_id(i);
 		if (new_socket_id(sock_num)) {
 			//识别出新的socket,检查sockets是否超限
@@ -495,9 +549,7 @@ set_default_fwd_lcores_config(void)
 			}
 			socket_ids[num_sockets++] = sock_num;
 		}
-		//跳过未启用的core,跳过master core
-		if (!rte_lcore_is_enabled(i))
-			continue;
+		//跳过master core
 		if (i == rte_get_master_lcore())
 			continue;
 		//记录可用于转发的core
@@ -543,6 +595,236 @@ set_def_fwd_config(void)
 	set_default_fwd_ports_config();
 }
 
+/* extremely pessimistic estimation of memory required to create a mempool */
+static int
+calc_mem_size(uint32_t nb_mbufs, uint32_t mbuf_sz, size_t pgsz, size_t *out)
+{
+	unsigned int n_pages, mbuf_per_pg, leftover;
+	uint64_t total_mem, mbuf_mem, obj_sz;
+
+	/* there is no good way to predict how much space the mempool will
+	 * occupy because it will allocate chunks on the fly, and some of those
+	 * will come from default DPDK memory while some will come from our
+	 * external memory, so just assume 128MB will be enough for everyone.
+	 */
+	uint64_t hdr_mem = 128 << 20;
+
+	/* account for possible non-contiguousness */
+	obj_sz = rte_mempool_calc_obj_size(mbuf_sz, 0, NULL);
+	if (obj_sz > pgsz) {
+		TESTPMD_LOG(ERR, "Object size is bigger than page size\n");
+		return -1;
+	}
+
+	mbuf_per_pg = pgsz / obj_sz;
+	leftover = (nb_mbufs % mbuf_per_pg) > 0;
+	n_pages = (nb_mbufs / mbuf_per_pg) + leftover;
+
+	mbuf_mem = n_pages * pgsz;
+
+	total_mem = RTE_ALIGN(hdr_mem + mbuf_mem, pgsz);
+
+	if (total_mem > SIZE_MAX) {
+		TESTPMD_LOG(ERR, "Memory size too big\n");
+		return -1;
+	}
+	*out = (size_t)total_mem;
+
+	return 0;
+}
+
+static inline uint32_t
+bsf64(uint64_t v)
+{
+	return (uint32_t)__builtin_ctzll(v);
+}
+
+static inline uint32_t
+log2_u64(uint64_t v)
+{
+	if (v == 0)
+		return 0;
+	v = rte_align64pow2(v);
+	return bsf64(v);
+}
+
+static int
+pagesz_flags(uint64_t page_sz)
+{
+	/* as per mmap() manpage, all page sizes are log2 of page size
+	 * shifted by MAP_HUGE_SHIFT
+	 */
+	int log2 = log2_u64(page_sz);
+
+	return (log2 << HUGE_SHIFT);
+}
+
+static void *
+alloc_mem(size_t memsz, size_t pgsz, bool huge)
+{
+	void *addr;
+	int flags;
+
+	/* allocate anonymous hugepages */
+	flags = MAP_ANONYMOUS | MAP_PRIVATE;
+	if (huge)
+		flags |= HUGE_FLAG | pagesz_flags(pgsz);
+
+	addr = mmap(NULL, memsz, PROT_READ | PROT_WRITE, flags, -1, 0);
+	if (addr == MAP_FAILED)
+		return NULL;
+
+	return addr;
+}
+
+struct extmem_param {
+	void *addr;
+	size_t len;
+	size_t pgsz;
+	rte_iova_t *iova_table;
+	unsigned int iova_table_len;
+};
+
+static int
+create_extmem(uint32_t nb_mbufs, uint32_t mbuf_sz, struct extmem_param *param,
+		bool huge)
+{
+	uint64_t pgsizes[] = {RTE_PGSIZE_2M, RTE_PGSIZE_1G, /* x86_64, ARM */
+			RTE_PGSIZE_16M, RTE_PGSIZE_16G};    /* POWER */
+	unsigned int cur_page, n_pages, pgsz_idx;
+	size_t mem_sz, cur_pgsz;
+	rte_iova_t *iovas = NULL;
+	void *addr;
+	int ret;
+
+	for (pgsz_idx = 0; pgsz_idx < RTE_DIM(pgsizes); pgsz_idx++) {
+		/* skip anything that is too big */
+		if (pgsizes[pgsz_idx] > SIZE_MAX)
+			continue;
+
+		cur_pgsz = pgsizes[pgsz_idx];
+
+		/* if we were told not to allocate hugepages, override */
+		if (!huge)
+			cur_pgsz = sysconf(_SC_PAGESIZE);
+
+		ret = calc_mem_size(nb_mbufs, mbuf_sz, cur_pgsz, &mem_sz);
+		if (ret < 0) {
+			TESTPMD_LOG(ERR, "Cannot calculate memory size\n");
+			return -1;
+		}
+
+		/* allocate our memory */
+		addr = alloc_mem(mem_sz, cur_pgsz, huge);
+
+		/* if we couldn't allocate memory with a specified page size,
+		 * that doesn't mean we can't do it with other page sizes, so
+		 * try another one.
+		 */
+		if (addr == NULL)
+			continue;
+
+		/* store IOVA addresses for every page in this memory area */
+		n_pages = mem_sz / cur_pgsz;
+
+		iovas = malloc(sizeof(*iovas) * n_pages);
+
+		if (iovas == NULL) {
+			TESTPMD_LOG(ERR, "Cannot allocate memory for iova addresses\n");
+			goto fail;
+		}
+		/* lock memory if it's not huge pages */
+		if (!huge)
+			mlock(addr, mem_sz);
+
+		/* populate IOVA addresses */
+		for (cur_page = 0; cur_page < n_pages; cur_page++) {
+			rte_iova_t iova;
+			size_t offset;
+			void *cur;
+
+			offset = cur_pgsz * cur_page;
+			cur = RTE_PTR_ADD(addr, offset);
+
+			/* touch the page before getting its IOVA */
+			*(volatile char *)cur = 0;
+
+			iova = rte_mem_virt2iova(cur);
+
+			iovas[cur_page] = iova;
+		}
+
+		break;
+	}
+	/* if we couldn't allocate anything */
+	if (iovas == NULL)
+		return -1;
+
+	param->addr = addr;
+	param->len = mem_sz;
+	param->pgsz = cur_pgsz;
+	param->iova_table = iovas;
+	param->iova_table_len = n_pages;
+
+	return 0;
+fail:
+	if (iovas)
+		free(iovas);
+	if (addr)
+		munmap(addr, mem_sz);
+
+	return -1;
+}
+
+static int
+setup_extmem(uint32_t nb_mbufs, uint32_t mbuf_sz, bool huge)
+{
+	struct extmem_param param;
+	int socket_id, ret;
+
+	memset(&param, 0, sizeof(param));
+
+	/* check if our heap exists */
+	socket_id = rte_malloc_heap_get_socket(EXTMEM_HEAP_NAME);
+	if (socket_id < 0) {
+		/* create our heap */
+		ret = rte_malloc_heap_create(EXTMEM_HEAP_NAME);
+		if (ret < 0) {
+			TESTPMD_LOG(ERR, "Cannot create heap\n");
+			return -1;
+		}
+	}
+
+	ret = create_extmem(nb_mbufs, mbuf_sz, &param, huge);
+	if (ret < 0) {
+		TESTPMD_LOG(ERR, "Cannot create memory area\n");
+		return -1;
+	}
+
+	/* we now have a valid memory area, so add it to heap */
+	ret = rte_malloc_heap_memory_add(EXTMEM_HEAP_NAME,
+			param.addr, param.len, param.iova_table,
+			param.iova_table_len, param.pgsz);
+
+	/* when using VFIO, memory is automatically mapped for DMA by EAL */
+
+	/* not needed any more */
+	free(param.iova_table);
+
+	if (ret < 0) {
+		TESTPMD_LOG(ERR, "Cannot add memory to heap\n");
+		munmap(param.addr, param.len);
+		return -1;
+	}
+
+	/* success */
+
+	TESTPMD_LOG(DEBUG, "Allocated %zuMB of external memory\n",
+			param.len >> 20);
+
+	return 0;
+}
+
 /*
  * Configuration initialisation done once at init time.
  */
@@ -563,28 +845,60 @@ mbuf_pool_create(uint16_t mbuf_seg_size, unsigned nb_mbuf,
 		"create a new mbuf pool <%s>: n=%u, size=%u, socket=%u\n",
 		pool_name, nb_mbuf, mbuf_seg_size, socket_id);
 
-	if (mp_anon != 0) {
-		//创建mempool
-		rte_mp = rte_mempool_create_empty(pool_name, nb_mbuf,
-			mb_size, (unsigned) mb_mempool_cache,
-			sizeof(struct rte_pktmbuf_pool_private),
-			socket_id, 0);
-		if (rte_mp == NULL)
-			goto err;
-
-		if (rte_mempool_populate_anon(rte_mp) == 0) {
-			rte_mempool_free(rte_mp);
-			rte_mp = NULL;
-			goto err;
+	switch (mp_alloc_type) {
+	case MP_ALLOC_NATIVE:
+		{
+			/* wrapper to rte_mempool_create() */
+			TESTPMD_LOG(INFO, "preferred mempool ops selected: %s\n",
+					rte_mbuf_best_mempool_ops());
+			rte_mp = rte_pktmbuf_pool_create(pool_name, nb_mbuf,
+				mb_mempool_cache, 0, mbuf_seg_size, socket_id);
+			break;
 		}
-		rte_pktmbuf_pool_init(rte_mp, NULL);
-		rte_mempool_obj_iter(rte_mp, rte_pktmbuf_init, NULL);
-	} else {
-		/* wrapper to rte_mempool_create() */
-		TESTPMD_LOG(INFO, "preferred mempool ops selected: %s\n",
-				rte_mbuf_best_mempool_ops());
-		rte_mp = rte_pktmbuf_pool_create(pool_name, nb_mbuf,
-			mb_mempool_cache, 0, mbuf_seg_size, socket_id);
+	case MP_ALLOC_ANON:
+		{
+			rte_mp = rte_mempool_create_empty(pool_name, nb_mbuf,
+				mb_size, (unsigned int) mb_mempool_cache,
+				sizeof(struct rte_pktmbuf_pool_private),
+				socket_id, 0);
+			if (rte_mp == NULL)
+				goto err;
+
+			if (rte_mempool_populate_anon(rte_mp) == 0) {
+				rte_mempool_free(rte_mp);
+				rte_mp = NULL;
+				goto err;
+			}
+			rte_pktmbuf_pool_init(rte_mp, NULL);
+			rte_mempool_obj_iter(rte_mp, rte_pktmbuf_init, NULL);
+			break;
+		}
+	case MP_ALLOC_XMEM:
+	case MP_ALLOC_XMEM_HUGE:
+		{
+			int heap_socket;
+			bool huge = mp_alloc_type == MP_ALLOC_XMEM_HUGE;
+
+			if (setup_extmem(nb_mbuf, mbuf_seg_size, huge) < 0)
+				rte_exit(EXIT_FAILURE, "Could not create external memory\n");
+
+			heap_socket =
+				rte_malloc_heap_get_socket(EXTMEM_HEAP_NAME);
+			if (heap_socket < 0)
+				rte_exit(EXIT_FAILURE, "Could not get external memory socket ID\n");
+
+			TESTPMD_LOG(INFO, "preferred mempool ops selected: %s\n",
+					rte_mbuf_best_mempool_ops());
+			rte_mp = rte_pktmbuf_pool_create(pool_name, nb_mbuf,
+					mb_mempool_cache, 0, mbuf_seg_size,
+					heap_socket);
+			break;
+		}
+	default:
+		{
+			rte_exit(EXIT_FAILURE, "Invalid mempool creation mode\n");
+		}
+>>>>>>> upstream/master
 	}
 
 err:
@@ -758,10 +1072,6 @@ init_config(void)
 		//取设备信息
 		rte_eth_dev_info_get(pid, &port->dev_info);
 
-		if (!(port->dev_info.rx_offload_capa &
-					DEV_RX_OFFLOAD_CRC_STRIP))
-			port->dev_conf.rxmode.offloads &=
-				~DEV_RX_OFFLOAD_CRC_STRIP;
 		if (!(port->dev_info.tx_offload_capa &
 		      DEV_TX_OFFLOAD_MBUF_FAST_FREE))
 			port->dev_conf.txmode.offloads &=
@@ -1068,8 +1378,9 @@ fwd_port_stats_display(portid_t port_id, struct rte_eth_stats *stats)
 		       (uint64_t) (stats->ipackets + stats->imissed));
 
 		if (cur_fwd_eng == &csum_fwd_engine)
-			printf("  Bad-ipcsum: %-14"PRIu64" Bad-l4csum: %-14"PRIu64" \n",
-			       port->rx_bad_ip_csum, port->rx_bad_l4_csum);
+			printf("  Bad-ipcsum: %-14"PRIu64" Bad-l4csum: %-14"PRIu64"Bad-outer-l4csum: %-14"PRIu64"\n",
+			       port->rx_bad_ip_csum, port->rx_bad_l4_csum,
+			       port->rx_bad_outer_l4_csum);
 		if ((stats->ierrors + stats->rx_nombuf) > 0) {
 			printf("  RX-error: %-"PRIu64"\n",  stats->ierrors);
 			printf("  RX-nombufs: %-14"PRIu64"\n", stats->rx_nombuf);
@@ -1087,8 +1398,9 @@ fwd_port_stats_display(portid_t port_id, struct rte_eth_stats *stats)
 		       (uint64_t) (stats->ipackets + stats->imissed));
 
 		if (cur_fwd_eng == &csum_fwd_engine)
-			printf("  Bad-ipcsum:%14"PRIu64"    Bad-l4csum:%14"PRIu64"\n",
-			       port->rx_bad_ip_csum, port->rx_bad_l4_csum);
+			printf("  Bad-ipcsum:%14"PRIu64"    Bad-l4csum:%14"PRIu64"    Bad-outer-l4csum: %-14"PRIu64"\n",
+			       port->rx_bad_ip_csum, port->rx_bad_l4_csum,
+			       port->rx_bad_outer_l4_csum);
 		if ((stats->ierrors + stats->rx_nombuf) > 0) {
 			printf("  RX-error:%"PRIu64"\n", stats->ierrors);
 			printf("  RX-nombufs:             %14"PRIu64"\n",
@@ -1152,7 +1464,9 @@ fwd_stream_stats_display(streamid_t stream_id)
 	/* if checksum mode */
 	if (cur_fwd_eng == &csum_fwd_engine) {
 	       printf("  RX- bad IP checksum: %-14u  Rx- bad L4 checksum: "
-			"%-14u\n", fs->rx_bad_ip_csum, fs->rx_bad_l4_csum);
+			"%-14u Rx- bad outer L4 checksum: %-14u\n",
+			fs->rx_bad_ip_csum, fs->rx_bad_l4_csum,
+			fs->rx_bad_outer_l4_csum);
 	}
 
 #ifdef RTE_TEST_PMD_RECORD_BURST_STATS
@@ -1411,6 +1725,7 @@ start_packet_forwarding(int with_tx_first)
 		fwd_streams[sm_id]->fwd_dropped = 0;
 		fwd_streams[sm_id]->rx_bad_ip_csum = 0;
 		fwd_streams[sm_id]->rx_bad_l4_csum = 0;
+		fwd_streams[sm_id]->rx_bad_outer_l4_csum = 0;
 
 #ifdef RTE_TEST_PMD_RECORD_BURST_STATS
 		memset(&fwd_streams[sm_id]->rx_burst_stats, 0,
@@ -1515,6 +1830,9 @@ stop_packet_forwarding(void)
 					 fwd_streams[sm_id]->rx_bad_l4_csum);
 		ports[fwd_streams[sm_id]->rx_port].rx_bad_l4_csum =
 							rx_bad_l4_csum;
+
+		ports[fwd_streams[sm_id]->rx_port].rx_bad_outer_l4_csum +=
+				fwd_streams[sm_id]->rx_bad_outer_l4_csum;
 
 #ifdef RTE_TEST_PMD_RECORD_CORE_CYCLES
 		fwd_cycles = (uint64_t) (fwd_cycles +
@@ -1988,39 +2306,6 @@ reset_port(portid_t pid)
 	printf("Done\n");
 }
 
-static int
-eth_dev_event_callback_register(void)
-{
-	int ret;
-
-	/* register the device event callback */
-	ret = rte_dev_event_callback_register(NULL,
-		eth_dev_event_callback, NULL);
-	if (ret) {
-		printf("Failed to register device event callback\n");
-		return -1;
-	}
-
-	return 0;
-}
-
-
-static int
-eth_dev_event_callback_unregister(void)
-{
-	int ret;
-
-	/* unregister the device event callback */
-	ret = rte_dev_event_callback_unregister(NULL,
-		eth_dev_event_callback, NULL);
-	if (ret < 0) {
-		printf("Failed to unregister device event callback\n");
-		return -1;
-	}
-
-	return 0;
-}
-
 void
 attach_port(char *identifier)
 {
@@ -2127,14 +2412,26 @@ pmd_test_exit(void)
 
 	if (hot_plug) {
 		ret = rte_dev_event_monitor_stop();
-		if (ret)
+		if (ret) {
 			RTE_LOG(ERR, EAL,
 				"fail to stop device event monitor.");
+			return;
+		}
 
-		ret = eth_dev_event_callback_unregister();
-		if (ret)
+		ret = rte_dev_event_callback_unregister(NULL,
+			eth_dev_event_callback, NULL);
+		if (ret < 0) {
 			RTE_LOG(ERR, EAL,
-				"fail to unregister all event callbacks.");
+				"fail to unregister device event callback.\n");
+			return;
+		}
+
+		ret = rte_dev_hotplug_handle_disable();
+		if (ret) {
+			RTE_LOG(ERR, EAL,
+				"fail to disable hotplug handling.\n");
+			return;
+		}
 	}
 
 	printf("\nBye...\n");
@@ -2249,11 +2546,11 @@ eth_event_callback(portid_t port_id, enum rte_eth_event_type type, void *param,
 	RTE_SET_USED(ret_param);
 
 	if (type >= RTE_ETH_EVENT_MAX) {
-		fprintf(stderr, "\nPort %" PRIu8 ": %s called upon invalid event %d\n",
+		fprintf(stderr, "\nPort %" PRIu16 ": %s called upon invalid event %d\n",
 			port_id, __func__, type);
 		fflush(stderr);
 	} else if (event_print_mask & (UINT32_C(1) << type)) {
-		printf("\nPort %" PRIu8 ": %s event\n", port_id,
+		printf("\nPort %" PRIu16 ": %s event\n", port_id,
 			event_desc[type]);
 		fflush(stdout);
 	}
@@ -2276,9 +2573,12 @@ eth_event_callback(portid_t port_id, enum rte_eth_event_type type, void *param,
 /* This function is used by the interrupt thread */
 //仅用于对外告警
 static void
-eth_dev_event_callback(char *device_name, enum rte_dev_event_type type,
+eth_dev_event_callback(const char *device_name, enum rte_dev_event_type type,
 			     __rte_unused void *arg)
 {
+	uint16_t port_id;
+	int ret;
+
 	if (type >= RTE_DEV_EVENT_MAX) {
 		fprintf(stderr, "%s called upon invalid event %d\n",
 			__func__, type);
@@ -2289,9 +2589,13 @@ eth_dev_event_callback(char *device_name, enum rte_dev_event_type type,
 	case RTE_DEV_EVENT_REMOVE:
 		RTE_LOG(ERR, EAL, "The device: %s has been removed!\n",
 			device_name);
-		/* TODO: After finish failure handle, begin to stop
-		 * packet forward, stop port, close port, detach port.
-		 */
+		ret = rte_eth_dev_get_port_by_name(device_name, &port_id);
+		if (ret) {
+			RTE_LOG(ERR, EAL, "can not get port by device %s!\n",
+				device_name);
+			return;
+		}
+		rmv_event_callback((void *)(intptr_t)port_id);
 		break;
 	case RTE_DEV_EVENT_ADD:
 		RTE_LOG(ERR, EAL, "The device: %s has been added!\n",
@@ -2823,14 +3127,27 @@ main(int argc, char** argv)
 	init_config();
 
 	if (hot_plug) {
-		/* enable hot plug monitoring */
-		ret = rte_dev_event_monitor_start();
+		ret = rte_dev_hotplug_handle_enable();
 		if (ret) {
-			rte_errno = EINVAL;
+			RTE_LOG(ERR, EAL,
+				"fail to enable hotplug handling.");
 			return -1;
 		}
-		eth_dev_event_callback_register();
 
+		ret = rte_dev_event_monitor_start();
+		if (ret) {
+			RTE_LOG(ERR, EAL,
+				"fail to start device event monitoring.");
+			return -1;
+		}
+
+		ret = rte_dev_event_callback_register(NULL,
+			eth_dev_event_callback, NULL);
+		if (ret) {
+			RTE_LOG(ERR, EAL,
+				"fail  to register device event callback\n");
+			return -1;
+		}
 	}
 
 	//启动所有port

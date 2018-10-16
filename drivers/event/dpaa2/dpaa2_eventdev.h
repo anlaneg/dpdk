@@ -21,6 +21,7 @@
 #define DPAA2_EVENT_MAX_QUEUES			16
 #define DPAA2_EVENT_MIN_DEQUEUE_TIMEOUT		1
 #define DPAA2_EVENT_MAX_DEQUEUE_TIMEOUT		(UINT32_MAX - 1)
+#define DPAA2_EVENT_PORT_DEQUEUE_TIMEOUT_NS	100UL
 #define DPAA2_EVENT_MAX_QUEUE_FLOWS		2048
 #define DPAA2_EVENT_MAX_QUEUE_PRIORITY_LEVELS	8
 #define DPAA2_EVENT_MAX_EVENT_PRIORITY_LEVELS	0
@@ -56,17 +57,27 @@ struct dpaa2_dpcon_dev {
 	uint8_t channel_index;
 };
 
-struct evq_info_t {
+struct dpaa2_eventq {
 	/* DPcon device */
 	struct dpaa2_dpcon_dev *dpcon;
 	/* Attached DPCI device */
 	struct dpaa2_dpci_dev *dpci;
+	/* Mapped event port */
+	struct dpaa2_io_portal_t *event_port;
 	/* Configuration provided by the user */
 	uint32_t event_queue_cfg;
+	uint32_t event_queue_id;
+};
+
+struct dpaa2_port {
+	struct dpaa2_eventq evq_info[DPAA2_EVENT_MAX_QUEUES];
+	uint8_t num_linked_evq;
+	uint8_t is_port_linked;
+	uint64_t timeout_us;
 };
 
 struct dpaa2_eventdev {
-	struct evq_info_t evq_info[DPAA2_EVENT_MAX_QUEUES];
+	struct dpaa2_eventq evq_info[DPAA2_EVENT_MAX_QUEUES];
 	uint32_t dequeue_timeout_ns;
 	uint8_t max_event_queues;
 	uint8_t nb_event_queues;

@@ -23,6 +23,7 @@
 
 #include "rte_bus_vdev.h"
 #include "vdev_logs.h"
+#include "vdev_private.h"
 
 #define VDEV_MP_KEY	"bus_vdev_mp"
 
@@ -264,7 +265,6 @@ int
 rte_vdev_init(const char *name, const char *args)
 {
 	struct rte_vdev_device *dev;
-	struct rte_devargs *devargs;
 	int ret;
 
 	rte_spinlock_recursive_lock(&vdev_device_list_lock);
@@ -276,9 +276,8 @@ rte_vdev_init(const char *name, const char *args)
 			if (ret > 0)
 				VDEV_LOG(ERR, "no driver found for %s", name);
 			/* If fails, remove it from vdev list */
-			devargs = dev->device.devargs;
 			TAILQ_REMOVE(&vdev_device_list, dev, next);
-			rte_devargs_remove(devargs->bus->name, devargs->name);
+			rte_devargs_remove(dev->device.devargs);
 			free(dev);
 		}
 	}
@@ -308,7 +307,6 @@ int
 rte_vdev_uninit(const char *name)
 {
 	struct rte_vdev_device *dev;
-	struct rte_devargs *devargs;
 	int ret;
 
 	if (name == NULL)
@@ -331,8 +329,7 @@ rte_vdev_uninit(const char *name)
 	//自device_list中移除设备
 	TAILQ_REMOVE(&vdev_device_list, dev, next);
 	//移除设备参数
-	devargs = dev->device.devargs;
-	rte_devargs_remove(devargs->bus->name, devargs->name);
+	rte_devargs_remove(dev->device.devargs);
 	free(dev);
 
 unlock:
@@ -369,6 +366,7 @@ vdev_action(const struct rte_mp_msg *mp_msg, const void *peer)
 	const struct vdev_param *in = (const struct vdev_param *)mp_msg->param;
 	const char *devname;
 	int num;
+	int ret;
 
 	strlcpy(mp_resp.name, VDEV_MP_KEY, sizeof(mp_resp.name));
 	mp_resp.len_param = sizeof(*ou);
@@ -403,7 +401,10 @@ vdev_action(const struct rte_mp_msg *mp_msg, const void *peer)
 		break;
 	case VDEV_SCAN_ONE:
 		VDEV_LOG(INFO, "receive vdev, %s", in->name);
-		if (insert_vdev(in->name, NULL, NULL) < 0)
+		ret = insert_vdev(in->name, NULL, NULL);
+		if (ret == -EEXIST)
+			VDEV_LOG(DEBUG, "device already exist, %s", in->name);
+		else if (ret < 0)
 			VDEV_LOG(ERR, "failed to add vdev, %s", in->name);
 		break;
 	default:
@@ -481,6 +482,7 @@ vdev_scan(void)
 			continue;
 		}
 
+		dev->device.bus = &rte_vdev_bus;
 		dev->device.devargs = devargs;
 		dev->device.numa_node = SOCKET_ID_ANY;
 		dev->device.name = devargs->name;
@@ -524,9 +526,9 @@ vdev_probe(void)
 	return ret;
 }
 
-static struct rte_device *
-vdev_find_device(const struct rte_device *start, rte_dev_cmp_t cmp,
-		 const void *data)
+struct rte_device *
+rte_vdev_find_device(const struct rte_device *start, rte_dev_cmp_t cmp,
+		     const void *data)
 {
 	const struct rte_vdev_device *vstart;
 	struct rte_vdev_device *dev;
@@ -565,10 +567,11 @@ vdev_unplug(struct rte_device *dev)
 static struct rte_bus rte_vdev_bus = {
 	.scan = vdev_scan,//vdev设备发现
 	.probe = vdev_probe,//为所有vdev探测驱动，如果发现可匹配的驱动，则调用driver probe
-	.find_device = vdev_find_device,
+	.find_device = rte_vdev_find_device,
 	.plug = vdev_plug,
 	.unplug = vdev_unplug,//设备移除
 	.parse = vdev_parse,//查找设备对应的驱动
+	.dev_iterate = rte_vdev_dev_iterate,
 };
 
 //注册rte_vdev_bus

@@ -243,6 +243,19 @@ enum index {
 	ACTION_VXLAN_DECAP,
 	ACTION_NVGRE_ENCAP,
 	ACTION_NVGRE_DECAP,
+	ACTION_SET_IPV4_SRC,
+	ACTION_SET_IPV4_SRC_IPV4_SRC,
+	ACTION_SET_IPV4_DST,
+	ACTION_SET_IPV4_DST_IPV4_DST,
+	ACTION_SET_IPV6_SRC,
+	ACTION_SET_IPV6_SRC_IPV6_SRC,
+	ACTION_SET_IPV6_DST,
+	ACTION_SET_IPV6_DST_IPV6_DST,
+	ACTION_SET_TP_SRC,
+	ACTION_SET_TP_SRC_TP_SRC,
+	ACTION_SET_TP_DST,
+	ACTION_SET_TP_DST_TP_DST,
+	ACTION_MAC_SWAP,
 };
 
 /** Maximum size for pattern in struct rte_flow_item_raw. */
@@ -816,6 +829,13 @@ static const enum index next_action[] = {
 	ACTION_VXLAN_DECAP,
 	ACTION_NVGRE_ENCAP,
 	ACTION_NVGRE_DECAP,
+	ACTION_SET_IPV4_SRC,
+	ACTION_SET_IPV4_DST,
+	ACTION_SET_IPV6_SRC,
+	ACTION_SET_IPV6_DST,
+	ACTION_SET_TP_SRC,
+	ACTION_SET_TP_DST,
+	ACTION_MAC_SWAP,
 	ZERO,
 };
 
@@ -914,6 +934,42 @@ static const enum index action_of_pop_mpls[] = {
 
 static const enum index action_of_push_mpls[] = {
 	ACTION_OF_PUSH_MPLS_ETHERTYPE,
+	ACTION_NEXT,
+	ZERO,
+};
+
+static const enum index action_set_ipv4_src[] = {
+	ACTION_SET_IPV4_SRC_IPV4_SRC,
+	ACTION_NEXT,
+	ZERO,
+};
+
+static const enum index action_set_ipv4_dst[] = {
+	ACTION_SET_IPV4_DST_IPV4_DST,
+	ACTION_NEXT,
+	ZERO,
+};
+
+static const enum index action_set_ipv6_src[] = {
+	ACTION_SET_IPV6_SRC_IPV6_SRC,
+	ACTION_NEXT,
+	ZERO,
+};
+
+static const enum index action_set_ipv6_dst[] = {
+	ACTION_SET_IPV6_DST_IPV6_DST,
+	ACTION_NEXT,
+	ZERO,
+};
+
+static const enum index action_set_tp_src[] = {
+	ACTION_SET_TP_SRC_TP_SRC,
+	ACTION_NEXT,
+	ZERO,
+};
+
+static const enum index action_set_tp_dst[] = {
+	ACTION_SET_TP_DST_TP_DST,
 	ACTION_NEXT,
 	ZERO,
 };
@@ -2467,6 +2523,116 @@ static const struct token token_list[] = {
 			" headers of the NVGRE tunnel network overlay from the"
 			" matched flow.",
 		.priv = PRIV_ACTION(NVGRE_DECAP, 0),
+		.next = NEXT(NEXT_ENTRY(ACTION_NEXT)),
+		.call = parse_vc,
+	},
+	[ACTION_SET_IPV4_SRC] = {
+		.name = "set_ipv4_src",
+		.help = "Set a new IPv4 source address in the outermost"
+			" IPv4 header",
+		.priv = PRIV_ACTION(SET_IPV4_SRC,
+			sizeof(struct rte_flow_action_set_ipv4)),
+		.next = NEXT(action_set_ipv4_src),
+		.call = parse_vc,
+	},
+	[ACTION_SET_IPV4_SRC_IPV4_SRC] = {
+		.name = "ipv4_addr",
+		.help = "new IPv4 source address to set",
+		.next = NEXT(action_set_ipv4_src, NEXT_ENTRY(IPV4_ADDR)),
+		.args = ARGS(ARGS_ENTRY_HTON
+			(struct rte_flow_action_set_ipv4, ipv4_addr)),
+		.call = parse_vc_conf,
+	},
+	[ACTION_SET_IPV4_DST] = {
+		.name = "set_ipv4_dst",
+		.help = "Set a new IPv4 destination address in the outermost"
+			" IPv4 header",
+		.priv = PRIV_ACTION(SET_IPV4_DST,
+			sizeof(struct rte_flow_action_set_ipv4)),
+		.next = NEXT(action_set_ipv4_dst),
+		.call = parse_vc,
+	},
+	[ACTION_SET_IPV4_DST_IPV4_DST] = {
+		.name = "ipv4_addr",
+		.help = "new IPv4 destination address to set",
+		.next = NEXT(action_set_ipv4_dst, NEXT_ENTRY(IPV4_ADDR)),
+		.args = ARGS(ARGS_ENTRY_HTON
+			(struct rte_flow_action_set_ipv4, ipv4_addr)),
+		.call = parse_vc_conf,
+	},
+	[ACTION_SET_IPV6_SRC] = {
+		.name = "set_ipv6_src",
+		.help = "Set a new IPv6 source address in the outermost"
+			" IPv6 header",
+		.priv = PRIV_ACTION(SET_IPV6_SRC,
+			sizeof(struct rte_flow_action_set_ipv6)),
+		.next = NEXT(action_set_ipv6_src),
+		.call = parse_vc,
+	},
+	[ACTION_SET_IPV6_SRC_IPV6_SRC] = {
+		.name = "ipv6_addr",
+		.help = "new IPv6 source address to set",
+		.next = NEXT(action_set_ipv6_src, NEXT_ENTRY(IPV6_ADDR)),
+		.args = ARGS(ARGS_ENTRY_HTON
+			(struct rte_flow_action_set_ipv6, ipv6_addr)),
+		.call = parse_vc_conf,
+	},
+	[ACTION_SET_IPV6_DST] = {
+		.name = "set_ipv6_dst",
+		.help = "Set a new IPv6 destination address in the outermost"
+			" IPv6 header",
+		.priv = PRIV_ACTION(SET_IPV6_DST,
+			sizeof(struct rte_flow_action_set_ipv6)),
+		.next = NEXT(action_set_ipv6_dst),
+		.call = parse_vc,
+	},
+	[ACTION_SET_IPV6_DST_IPV6_DST] = {
+		.name = "ipv6_addr",
+		.help = "new IPv6 destination address to set",
+		.next = NEXT(action_set_ipv6_dst, NEXT_ENTRY(IPV6_ADDR)),
+		.args = ARGS(ARGS_ENTRY_HTON
+			(struct rte_flow_action_set_ipv6, ipv6_addr)),
+		.call = parse_vc_conf,
+	},
+	[ACTION_SET_TP_SRC] = {
+		.name = "set_tp_src",
+		.help = "set a new source port number in the outermost"
+			" TCP/UDP header",
+		.priv = PRIV_ACTION(SET_TP_SRC,
+			sizeof(struct rte_flow_action_set_tp)),
+		.next = NEXT(action_set_tp_src),
+		.call = parse_vc,
+	},
+	[ACTION_SET_TP_SRC_TP_SRC] = {
+		.name = "port",
+		.help = "new source port number to set",
+		.next = NEXT(action_set_tp_src, NEXT_ENTRY(UNSIGNED)),
+		.args = ARGS(ARGS_ENTRY_HTON
+			     (struct rte_flow_action_set_tp, port)),
+		.call = parse_vc_conf,
+	},
+	[ACTION_SET_TP_DST] = {
+		.name = "set_tp_dst",
+		.help = "set a new destination port number in the outermost"
+			" TCP/UDP header",
+		.priv = PRIV_ACTION(SET_TP_DST,
+			sizeof(struct rte_flow_action_set_tp)),
+		.next = NEXT(action_set_tp_dst),
+		.call = parse_vc,
+	},
+	[ACTION_SET_TP_DST_TP_DST] = {
+		.name = "port",
+		.help = "new destination port number to set",
+		.next = NEXT(action_set_tp_dst, NEXT_ENTRY(UNSIGNED)),
+		.args = ARGS(ARGS_ENTRY_HTON
+			     (struct rte_flow_action_set_tp, port)),
+		.call = parse_vc_conf,
+	},
+	[ACTION_MAC_SWAP] = {
+		.name = "mac_swap",
+		.help = "Swap the source and destination MAC addresses"
+			" in the outermost Ethernet header",
+		.priv = PRIV_ACTION(MAC_SWAP, 0),
 		.next = NEXT(NEXT_ENTRY(ACTION_NEXT)),
 		.call = parse_vc,
 	},

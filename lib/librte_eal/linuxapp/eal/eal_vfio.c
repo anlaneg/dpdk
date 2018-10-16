@@ -509,7 +509,7 @@ vfio_mem_event_callback(enum rte_mem_event type, const void *addr, size_t len,
 	msl = rte_mem_virt2memseg_list(addr);
 
 	/* for IOVA as VA mode, no need to care for IOVA addresses */
-	if (rte_eal_iova_mode() == RTE_IOVA_VA) {
+	if (rte_eal_iova_mode() == RTE_IOVA_VA && msl->external == 0) {
 		uint64_t vfio_va = (uint64_t)(uintptr_t)addr;
 		if (type == RTE_MEM_EVENT_ALLOC)
 			vfio_dma_mem_map(default_vfio_cfg, vfio_va, vfio_va,
@@ -523,13 +523,19 @@ vfio_mem_event_callback(enum rte_mem_event type, const void *addr, size_t len,
 	/* memsegs are contiguous in memory */
 	ms = rte_mem_virt2memseg(addr, msl);
 	while (cur_len < len) {
+		/* some memory segments may have invalid IOVA */
+		if (ms->iova == RTE_BAD_IOVA) {
+			RTE_LOG(DEBUG, EAL, "Memory segment at %p has bad IOVA, skipping\n",
+					ms->addr);
+			goto next;
+		}
 		if (type == RTE_MEM_EVENT_ALLOC)
 			vfio_dma_mem_map(default_vfio_cfg, ms->addr_64,
 					ms->iova, ms->len, 1);
 		else
 			vfio_dma_mem_map(default_vfio_cfg, ms->addr_64,
 					ms->iova, ms->len, 0);
-
+next:
 		cur_len += ms->len;
 		++ms;
 	}
@@ -1084,10 +1090,13 @@ rte_vfio_get_group_num(const char *sysfs_base,
 }
 
 static int
-type1_map(const struct rte_memseg_list *msl __rte_unused,
-		const struct rte_memseg *ms, void *arg)
+type1_map(const struct rte_memseg_list *msl, const struct rte_memseg *ms,
+		void *arg)
 {
 	int *vfio_container_fd = arg;
+
+	if (msl->external)
+		return 0;
 
 	return vfio_type1_dma_mem_map(*vfio_container_fd, ms->addr_64, ms->iova,
 			ms->len, 1);
@@ -1198,10 +1207,13 @@ vfio_spapr_dma_do_map(int vfio_container_fd, uint64_t vaddr, uint64_t iova,
 }
 
 static int
-vfio_spapr_map_walk(const struct rte_memseg_list *msl __rte_unused,
+vfio_spapr_map_walk(const struct rte_memseg_list *msl,
 		const struct rte_memseg *ms, void *arg)
 {
 	int *vfio_container_fd = arg;
+
+	if (msl->external)
+		return 0;
 
 	return vfio_spapr_dma_mem_map(*vfio_container_fd, ms->addr_64, ms->iova,
 			ms->len, 1);
@@ -1212,11 +1224,14 @@ struct spapr_walk_param {
 	uint64_t hugepage_sz;
 };
 static int
-vfio_spapr_window_size_walk(const struct rte_memseg_list *msl __rte_unused,
+vfio_spapr_window_size_walk(const struct rte_memseg_list *msl,
 		const struct rte_memseg *ms, void *arg)
 {
 	struct spapr_walk_param *param = arg;
 	uint64_t max = ms->iova + ms->len;
+
+	if (msl->external)
+		return 0;
 
 	if (max > param->window_size) {
 		param->hugepage_sz = ms->hugepage_sz;

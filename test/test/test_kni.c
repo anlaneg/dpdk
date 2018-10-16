@@ -70,9 +70,6 @@ static const struct rte_eth_txconf tx_conf = {
 };
 
 static const struct rte_eth_conf port_conf = {
-	.rxmode = {
-		.offloads = DEV_RX_OFFLOAD_CRC_STRIP,
-	},
 	.txmode = {
 		.mq_mode = ETH_DCB_NONE,
 	},
@@ -428,12 +425,6 @@ test_kni_processing(uint16_t port_id, struct rte_mempool *mp)
 		return -1;
 	}
 	test_kni_ctx = NULL;
-
-	/* test of releasing a released kni device */
-	if (rte_kni_release(kni) == 0) {
-		printf("should not release a released kni device\n");
-		return -1;
-	}
 
 	/* test of reusing memzone */
 	kni = rte_kni_alloc(mp, &conf, &ops);

@@ -123,11 +123,12 @@ static const struct {
 	RTE_RX_OFFLOAD_BIT2STR(VLAN_FILTER),
 	RTE_RX_OFFLOAD_BIT2STR(VLAN_EXTEND),
 	RTE_RX_OFFLOAD_BIT2STR(JUMBO_FRAME),
-	RTE_RX_OFFLOAD_BIT2STR(CRC_STRIP),
 	RTE_RX_OFFLOAD_BIT2STR(SCATTER),
 	RTE_RX_OFFLOAD_BIT2STR(TIMESTAMP),
 	RTE_RX_OFFLOAD_BIT2STR(SECURITY),
 	RTE_RX_OFFLOAD_BIT2STR(KEEP_CRC),
+	RTE_RX_OFFLOAD_BIT2STR(SCTP_CKSUM),
+	RTE_RX_OFFLOAD_BIT2STR(OUTER_UDP_CKSUM),
 };
 
 #undef RTE_RX_OFFLOAD_BIT2STR
@@ -157,6 +158,9 @@ static const struct {
 	RTE_TX_OFFLOAD_BIT2STR(MULTI_SEGS),
 	RTE_TX_OFFLOAD_BIT2STR(MBUF_FAST_FREE),
 	RTE_TX_OFFLOAD_BIT2STR(SECURITY),
+	RTE_TX_OFFLOAD_BIT2STR(UDP_TNL_TSO),
+	RTE_TX_OFFLOAD_BIT2STR(IP_TNL_TSO),
+	RTE_TX_OFFLOAD_BIT2STR(OUTER_UDP_CKSUM),
 };
 
 #undef RTE_TX_OFFLOAD_BIT2STR
@@ -406,11 +410,8 @@ static int
 rte_eth_is_valid_owner_id(uint64_t owner_id)
 {
 	if (owner_id == RTE_ETH_DEV_NO_OWNER ||
-	    rte_eth_dev_shared_data->next_owner_id <= owner_id) {
-		RTE_ETHDEV_LOG(ERR, "Invalid owner_id=%016"PRIx64"\n",
-			owner_id);
+	    rte_eth_dev_shared_data->next_owner_id <= owner_id)
 		return 0;
-	}
 	return 1;
 }
 
@@ -458,8 +459,12 @@ _rte_eth_dev_owner_set(const uint16_t port_id, const uint64_t old_owner_id,
 	}
 
 	if (!rte_eth_is_valid_owner_id(new_owner->id) &&
-	    !rte_eth_is_valid_owner_id(old_owner_id))
+	    !rte_eth_is_valid_owner_id(old_owner_id)) {
+		RTE_ETHDEV_LOG(ERR,
+			"Invalid owner old_id=%016"PRIx64" new_id=%016"PRIx64"\n",
+		       old_owner_id, new_owner->id);
 		return -EINVAL;
+	}
 
 	port_owner = &rte_eth_devices[port_id].data->owner;
 	if (port_owner->id != old_owner_id) {
@@ -530,9 +535,13 @@ rte_eth_dev_owner_delete(const uint64_t owner_id)
 			if (rte_eth_devices[port_id].data->owner.id == owner_id)
 				memset(&rte_eth_devices[port_id].data->owner, 0,
 				       sizeof(struct rte_eth_dev_owner));
-		RTE_ETHDEV_LOG(ERR,
+		RTE_ETHDEV_LOG(NOTICE,
 			"All port owners owned by %016"PRIx64" identifier have removed\n",
 			owner_id);
+	} else {
+		RTE_ETHDEV_LOG(ERR,
+			       "Invalid owner id=%016"PRIx64"\n",
+			       owner_id);
 	}
 
 	rte_spinlock_unlock(&rte_eth_dev_shared_data->ownership_lock);
@@ -1178,14 +1187,6 @@ rte_eth_dev_configure(uint16_t port_id, uint16_t nb_rx_q, uint16_t nb_tx_q,
 		return -EINVAL;
 	}
 
-	if ((local_conf.rxmode.offloads & DEV_RX_OFFLOAD_CRC_STRIP) &&
-			(local_conf.rxmode.offloads & DEV_RX_OFFLOAD_KEEP_CRC)) {
-		RTE_ETHDEV_LOG(ERR,
-			"Port id=%u not allowed to set both CRC STRIP and KEEP CRC offload flags\n",
-			port_id);
-		return -EINVAL;
-	}
-
 	/* Check that device supports requested rss hash functions. */
 	if ((dev_info.flow_type_rss_offloads |
 	     dev_conf->rx_adv_conf.rss_conf.rss_hf) !=
@@ -1230,9 +1231,9 @@ rte_eth_dev_configure(uint16_t port_id, uint16_t nb_rx_q, uint16_t nb_tx_q,
 	}
 
 	/* Initialize Rx profiling if enabled at compilation time. */
-	diag = __rte_eth_profile_rx_init(port_id, dev);
+	diag = __rte_eth_dev_profile_init(port_id, dev);
 	if (diag != 0) {
-		RTE_ETHDEV_LOG(ERR, "Port%u __rte_eth_profile_rx_init = %d\n",
+		RTE_ETHDEV_LOG(ERR, "Port%u __rte_eth_dev_profile_init = %d\n",
 			port_id, diag);
 		rte_eth_dev_rx_queue_config(dev, 0);
 		rte_eth_dev_tx_queue_config(dev, 0);
@@ -1258,18 +1259,13 @@ _rte_eth_dev_reset(struct rte_eth_dev *dev)
 }
 
 static void
-rte_eth_dev_config_restore(uint16_t port_id)
+rte_eth_dev_mac_restore(struct rte_eth_dev *dev,
+			struct rte_eth_dev_info *dev_info)
 {
-	struct rte_eth_dev *dev;
-	struct rte_eth_dev_info dev_info;
 	struct ether_addr *addr;
 	uint16_t i;
 	uint32_t pool = 0;
 	uint64_t pool_mask;
-
-	dev = &rte_eth_devices[port_id];
-
-	rte_eth_dev_info_get(port_id, &dev_info);
 
 	/* replay MAC address configuration including default MAC */
 	addr = &dev->data->mac_addrs[0];
@@ -1279,7 +1275,7 @@ rte_eth_dev_config_restore(uint16_t port_id)
 		(*dev->dev_ops->mac_addr_add)(dev, addr, 0, pool);
 
 	if (*dev->dev_ops->mac_addr_add != NULL) {
-		for (i = 1; i < dev_info.max_mac_addrs; i++) {
+		for (i = 1; i < dev_info->max_mac_addrs; i++) {
 			addr = &dev->data->mac_addrs[i];
 
 			/* skip zero address */
@@ -1298,6 +1294,14 @@ rte_eth_dev_config_restore(uint16_t port_id)
 			} while (pool_mask);
 		}
 	}
+}
+
+static void
+rte_eth_dev_config_restore(struct rte_eth_dev *dev,
+			   struct rte_eth_dev_info *dev_info, uint16_t port_id)
+{
+	if (!(*dev_info->dev_flags & RTE_ETH_DEV_NOLIVE_MAC_ADDR))
+		rte_eth_dev_mac_restore(dev, dev_info);
 
 	/* replay promiscuous configuration */
 	if (rte_eth_promiscuous_get(port_id) == 1)
@@ -1317,6 +1321,7 @@ int
 rte_eth_dev_start(uint16_t port_id)
 {
 	struct rte_eth_dev *dev;
+	struct rte_eth_dev_info dev_info;
 	int diag;
 
 	RTE_ETH_VALID_PORTID_OR_ERR_RET(port_id, -EINVAL);
@@ -1332,13 +1337,19 @@ rte_eth_dev_start(uint16_t port_id)
 		return 0;
 	}
 
+	rte_eth_dev_info_get(port_id, &dev_info);
+
+	/* Lets restore MAC now if device does not support live change */
+	if (*dev_info.dev_flags & RTE_ETH_DEV_NOLIVE_MAC_ADDR)
+		rte_eth_dev_mac_restore(dev, &dev_info);
+
 	diag = (*dev->dev_ops->dev_start)(dev);
 	if (diag == 0)
 		dev->data->dev_started = 1;
 	else
 		return eth_err(port_id, diag);
 
-	rte_eth_dev_config_restore(port_id);
+	rte_eth_dev_config_restore(dev, &dev_info, port_id);
 
 	if (dev->data->dev_conf.intr_conf.lsc == 0) {
 		RTE_FUNC_PTR_OR_ERR_RET(*dev->dev_ops->link_update, -ENOTSUP);
@@ -3489,6 +3500,43 @@ rte_eth_dev_rx_intr_ctl(uint16_t port_id, int epfd, int op, void *data)
 	return 0;
 }
 
+int __rte_experimental
+rte_eth_dev_rx_intr_ctl_q_get_fd(uint16_t port_id, uint16_t queue_id)
+{
+	struct rte_intr_handle *intr_handle;
+	struct rte_eth_dev *dev;
+	unsigned int efd_idx;
+	uint32_t vec;
+	int fd;
+
+	RTE_ETH_VALID_PORTID_OR_ERR_RET(port_id, -1);
+
+	dev = &rte_eth_devices[port_id];
+
+	if (queue_id >= dev->data->nb_rx_queues) {
+		RTE_ETHDEV_LOG(ERR, "Invalid RX queue_id=%u\n", queue_id);
+		return -1;
+	}
+
+	if (!dev->intr_handle) {
+		RTE_ETHDEV_LOG(ERR, "RX Intr handle unset\n");
+		return -1;
+	}
+
+	intr_handle = dev->intr_handle;
+	if (!intr_handle->intr_vec) {
+		RTE_ETHDEV_LOG(ERR, "RX Intr vector unset\n");
+		return -1;
+	}
+
+	vec = intr_handle->intr_vec[queue_id];
+	efd_idx = (vec >= RTE_INTR_VEC_RXTX_OFFSET) ?
+		(vec - RTE_INTR_VEC_RXTX_OFFSET) : vec;
+	fd = intr_handle->efds[efd_idx];
+
+	return fd;
+}
+
 const struct rte_memzone *
 rte_eth_dma_zone_reserve(const struct rte_eth_dev *dev, const char *ring_name,
 			 uint16_t queue_id, size_t size, unsigned align,
@@ -3523,10 +3571,8 @@ rte_eth_dev_create(struct rte_device *device, const char *name,
 
 	if (rte_eal_process_type() == RTE_PROC_PRIMARY) {
 		ethdev = rte_eth_dev_allocate(name);
-		if (!ethdev) {
-			retval = -ENODEV;
-			goto probe_failed;
-		}
+		if (!ethdev)
+			return -ENODEV;
 
 		if (priv_data_size) {
 			ethdev->data->dev_private = rte_zmalloc_socket(
@@ -3536,7 +3582,7 @@ rte_eth_dev_create(struct rte_device *device, const char *name,
 			if (!ethdev->data->dev_private) {
 				RTE_LOG(ERR, EAL, "failed to allocate private data");
 				retval = -ENOMEM;
-				goto probe_failed;
+				goto data_alloc_failed;
 			}
 		}
 	} else {
@@ -3544,8 +3590,7 @@ rte_eth_dev_create(struct rte_device *device, const char *name,
 		if (!ethdev) {
 			RTE_LOG(ERR, EAL, "secondary process attach failed, "
 				"ethdev doesn't exist");
-			retval = -ENODEV;
-			goto probe_failed;
+			return  -ENODEV;
 		}
 	}
 
@@ -3574,6 +3619,7 @@ probe_failed:
 	if (rte_eal_process_type() == RTE_PROC_PRIMARY)
 		rte_free(ethdev->data->dev_private);
 
+data_alloc_failed:
 	rte_eth_dev_release_port(ethdev);
 
 	return retval;
