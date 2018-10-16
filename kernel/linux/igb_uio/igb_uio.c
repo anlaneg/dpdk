@@ -527,6 +527,8 @@ igbuio_pci_probe(struct pci_dev *dev, const struct pci_device_id *id)
 	udev->pdev = dev;
 	atomic_set(&udev->refcnt, 0);
 
+	//在sys文件系统中创建dev_attr_grp对应的一组文件
+	//（没有指定文件名称，文件目录来自kobj中对应的kernfs node)
 	err = sysfs_create_group(&dev->dev.kobj, &dev_attr_grp);
 	if (err != 0)
 		goto fail_release_iomem;
