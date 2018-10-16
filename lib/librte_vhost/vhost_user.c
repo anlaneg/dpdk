@@ -1117,7 +1117,6 @@ static int vhost_user_set_vring_err(struct virtio_net **pdev __rte_unused,
 
 static int
 vhost_user_set_vring_kick(struct virtio_net **pdev, struct VhostUserMsg *msg)
->>>>>>> upstream/master
 {
 	struct virtio_net *dev = *pdev;
 	struct vhost_vring_file file;

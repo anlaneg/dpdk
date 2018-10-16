@@ -898,7 +898,6 @@ mbuf_pool_create(uint16_t mbuf_seg_size, unsigned nb_mbuf,
 		{
 			rte_exit(EXIT_FAILURE, "Invalid mempool creation mode\n");
 		}
->>>>>>> upstream/master
 	}
 
 err:
