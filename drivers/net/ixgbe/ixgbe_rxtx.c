@@ -58,6 +58,10 @@
 #endif
 /* Bit Mask to indicate what bits required for building TX context */
 #define IXGBE_TX_OFFLOAD_MASK (			 \
+		PKT_TX_OUTER_IPV6 |		 \
+		PKT_TX_OUTER_IPV4 |		 \
+		PKT_TX_IPV6 |			 \
+		PKT_TX_IPV4 |			 \
 		PKT_TX_VLAN_PKT |		 \
 		PKT_TX_IP_CKSUM |		 \
 		PKT_TX_L4_MASK |		 \
@@ -2057,8 +2061,7 @@ next_desc:
 		 * of the ixgbe PMD.
 		 *
 		 * TODO:
-		 *    - Get rid of "volatile" crap and let the compiler do its
-		 *      job.
+		 *    - Get rid of "volatile" and let the compiler do its job.
 		 *    - Use the proper memory barrier (rte_rmb()) to ensure the
 		 *      memory ordering below.
 		 */
@@ -5703,7 +5706,7 @@ ixgbe_config_rss_filter(struct rte_eth_dev *dev,
 	 */
 	if ((rss_conf.rss_hf & IXGBE_RSS_OFFLOAD_ALL) == 0) {
 		ixgbe_rss_disable(dev);
-		return -EINVAL;
+		return 0;
 	}
 	if (rss_conf.rss_key == NULL)
 		rss_conf.rss_key = rss_intel_key; /* Default hash key */
@@ -5716,13 +5719,13 @@ ixgbe_config_rss_filter(struct rte_eth_dev *dev,
 }
 
 /* Stubs needed for linkage when CONFIG_RTE_IXGBE_INC_VECTOR is set to 'n' */
-int __attribute__((weak))
+__rte_weak int
 ixgbe_rx_vec_dev_conf_condition_check(struct rte_eth_dev __rte_unused *dev)
 {
 	return -1;
 }
 
-uint16_t __attribute__((weak))
+__rte_weak uint16_t
 ixgbe_recv_pkts_vec(
 	void __rte_unused *rx_queue,
 	struct rte_mbuf __rte_unused **rx_pkts,
@@ -5731,7 +5734,7 @@ ixgbe_recv_pkts_vec(
 	return 0;
 }
 
-uint16_t __attribute__((weak))
+__rte_weak uint16_t
 ixgbe_recv_scattered_pkts_vec(
 	void __rte_unused *rx_queue,
 	struct rte_mbuf __rte_unused **rx_pkts,
@@ -5740,7 +5743,7 @@ ixgbe_recv_scattered_pkts_vec(
 	return 0;
 }
 
-int __attribute__((weak))
+__rte_weak int
 ixgbe_rxq_vec_setup(struct ixgbe_rx_queue __rte_unused *rxq)
 {
 	return -1;

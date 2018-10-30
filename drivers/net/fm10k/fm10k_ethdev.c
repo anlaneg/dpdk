@@ -72,7 +72,7 @@ struct fm10k_xstats_name_off {
 	unsigned offset;
 };
 
-struct fm10k_xstats_name_off fm10k_hw_stats_strings[] = {
+static const struct fm10k_xstats_name_off fm10k_hw_stats_strings[] = {
 	{"completion_timeout_count", offsetof(struct fm10k_hw_stats, timeout)},
 	{"unsupported_requests_count", offsetof(struct fm10k_hw_stats, ur)},
 	{"completer_abort_count", offsetof(struct fm10k_hw_stats, ca)},
@@ -87,7 +87,7 @@ struct fm10k_xstats_name_off fm10k_hw_stats_strings[] = {
 #define FM10K_NB_HW_XSTATS (sizeof(fm10k_hw_stats_strings) / \
 		sizeof(fm10k_hw_stats_strings[0]))
 
-struct fm10k_xstats_name_off fm10k_hw_stats_rx_q_strings[] = {
+static const struct fm10k_xstats_name_off fm10k_hw_stats_rx_q_strings[] = {
 	{"packets", offsetof(struct fm10k_hw_stats_q, rx_packets)},
 	{"bytes", offsetof(struct fm10k_hw_stats_q, rx_bytes)},
 	{"dropped", offsetof(struct fm10k_hw_stats_q, rx_drops)},
@@ -96,7 +96,7 @@ struct fm10k_xstats_name_off fm10k_hw_stats_rx_q_strings[] = {
 #define FM10K_NB_RX_Q_XSTATS (sizeof(fm10k_hw_stats_rx_q_strings) / \
 		sizeof(fm10k_hw_stats_rx_q_strings[0]))
 
-struct fm10k_xstats_name_off fm10k_hw_stats_tx_q_strings[] = {
+static const struct fm10k_xstats_name_off fm10k_hw_stats_tx_q_strings[] = {
 	{"packets", offsetof(struct fm10k_hw_stats_q, tx_packets)},
 	{"bytes", offsetof(struct fm10k_hw_stats_q, tx_bytes)},
 };
@@ -129,13 +129,13 @@ fm10k_mbx_unlock(struct fm10k_hw *hw)
 }
 
 /* Stubs needed for linkage when vPMD is disabled */
-int __attribute__((weak))
+__rte_weak int
 fm10k_rx_vec_condition_check(__rte_unused struct rte_eth_dev *dev)
 {
 	return -1;
 }
 
-uint16_t __attribute__((weak))
+__rte_weak uint16_t
 fm10k_recv_pkts_vec(
 	__rte_unused void *rx_queue,
 	__rte_unused struct rte_mbuf **rx_pkts,
@@ -144,7 +144,7 @@ fm10k_recv_pkts_vec(
 	return 0;
 }
 
-uint16_t __attribute__((weak))
+__rte_weak uint16_t
 fm10k_recv_scattered_pkts_vec(
 		__rte_unused void *rx_queue,
 		__rte_unused struct rte_mbuf **rx_pkts,
@@ -153,33 +153,33 @@ fm10k_recv_scattered_pkts_vec(
 	return 0;
 }
 
-int __attribute__((weak))
+__rte_weak int
 fm10k_rxq_vec_setup(__rte_unused struct fm10k_rx_queue *rxq)
 
 {
 	return -1;
 }
 
-void __attribute__((weak))
+__rte_weak void
 fm10k_rx_queue_release_mbufs_vec(
 		__rte_unused struct fm10k_rx_queue *rxq)
 {
 	return;
 }
 
-void __attribute__((weak))
+__rte_weak void
 fm10k_txq_vec_setup(__rte_unused struct fm10k_tx_queue *txq)
 {
 	return;
 }
 
-int __attribute__((weak))
+__rte_weak int
 fm10k_tx_vec_condition_check(__rte_unused struct fm10k_tx_queue *txq)
 {
 	return -1;
 }
 
-uint16_t __attribute__((weak))
+__rte_weak uint16_t
 fm10k_xmit_fixed_burst_vec(__rte_unused void *tx_queue,
 			   __rte_unused struct rte_mbuf **tx_pkts,
 			   __rte_unused uint16_t nb_pkts)
@@ -3233,14 +3233,6 @@ eth_fm10k_dev_uninit(struct rte_eth_dev *dev)
 		rte_intr_callback_unregister(intr_handle,
 			fm10k_dev_interrupt_handler_vf, (void *)dev);
 	}
-
-	/* free mac memory */
-	if (dev->data->mac_addrs) {
-		rte_free(dev->data->mac_addrs);
-		dev->data->mac_addrs = NULL;
-	}
-
-	memset(hw, 0, sizeof(*hw));
 
 	return 0;
 }

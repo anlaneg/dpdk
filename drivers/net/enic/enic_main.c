@@ -1710,11 +1710,9 @@ static int enic_dev_init(struct enic *enic)
 			DEV_TX_OFFLOAD_OUTER_IPV4_CKSUM |
 			DEV_TX_OFFLOAD_GENEVE_TNL_TSO |
 			DEV_TX_OFFLOAD_VXLAN_TNL_TSO;
-		/*
-		 * Do not add PKT_TX_OUTER_{IPV4,IPV6} as they are not
-		 * 'offload' flags (i.e. not part of PKT_TX_OFFLOAD_MASK).
-		 */
 		enic->tx_offload_mask |=
+			PKT_TX_OUTER_IPV6 |
+			PKT_TX_OUTER_IPV4 |
 			PKT_TX_OUTER_IP_CKSUM |
 			PKT_TX_TUNNEL_MASK;
 		enic->overlay_offload = true;
@@ -1766,7 +1764,7 @@ int enic_probe(struct enic *enic)
 
 	/*
 	 * Allocate the consistent memory for stats and counters upfront so
-	 * both primary and secondary processes can dump stats.
+	 * both primary and secondary processes can access them.
 	 */
 	err = vnic_dev_alloc_stats_mem(enic->vdev);
 	if (err) {

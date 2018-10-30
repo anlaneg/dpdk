@@ -1708,7 +1708,7 @@ eth_virtio_dev_uninit(struct rte_eth_dev *eth_dev)
 	PMD_INIT_FUNC_TRACE();
 
 	if (rte_eal_process_type() == RTE_PROC_SECONDARY)
-		return -EPERM;
+		return 0;
 
 	virtio_dev_stop(eth_dev);
 	virtio_dev_close(eth_dev);
@@ -1716,9 +1716,6 @@ eth_virtio_dev_uninit(struct rte_eth_dev *eth_dev)
 	eth_dev->dev_ops = NULL;
 	eth_dev->tx_pkt_burst = NULL;
 	eth_dev->rx_pkt_burst = NULL;
-
-	rte_free(eth_dev->data->mac_addrs);
-	eth_dev->data->mac_addrs = NULL;
 
 	/* reset interrupt callback  */
 	if (eth_dev->data->dev_flags & RTE_ETH_DEV_INTR_LSC)

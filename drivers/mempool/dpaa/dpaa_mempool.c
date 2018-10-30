@@ -26,6 +26,7 @@
 #include <rte_ring.h>
 
 #include <dpaa_mempool.h>
+#include <dpaax_iova_table.h>
 
 /* List of all the memseg information locally maintained in dpaa driver. This
  * is to optimize the PA_to_VA searches until a better mechanism (algo) is
@@ -285,6 +286,9 @@ dpaa_populate(struct rte_mempool *mp, unsigned int max_objs,
 		return 0;
 	}
 
+	/* Update the PA-VA Table */
+	dpaax_iova_table_update(paddr, vaddr, len);
+
 	bp_info = DPAA_MEMPOOL_TO_POOL_INFO(mp);
 	total_elt_sz = mp->header_size + mp->elt_size + mp->trailer_size;
 
@@ -324,7 +328,7 @@ dpaa_populate(struct rte_mempool *mp, unsigned int max_objs,
 					       obj_cb, obj_cb_arg);
 }
 
-struct rte_mempool_ops dpaa_mpool_ops = {
+static const struct rte_mempool_ops dpaa_mpool_ops = {
 	.name = DPAA_MEMPOOL_OPS_NAME,
 	.alloc = dpaa_mbuf_create_pool,
 	.free = dpaa_mbuf_free_pool,

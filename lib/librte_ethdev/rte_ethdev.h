@@ -167,6 +167,85 @@ extern int rte_eth_dev_logtype;
 struct rte_mbuf;
 
 /**
+ * @warning
+ * @b EXPERIMENTAL: this API may change without prior notice.
+ *
+ * Initializes a device iterator.
+ *
+ * This iterator allows accessing a list of devices matching some devargs.
+ *
+ * @param iter
+ *   Device iterator handle initialized by the function.
+ *   The fields bus_str and cls_str might be dynamically allocated,
+ *   and could be freed by calling rte_eth_iterator_cleanup().
+ *
+ * @param devargs
+ *   Device description string.
+ *
+ * @return
+ *   0 on successful initialization, negative otherwise.
+ */
+__rte_experimental
+int rte_eth_iterator_init(struct rte_dev_iterator *iter, const char *devargs);
+
+/**
+ * @warning
+ * @b EXPERIMENTAL: this API may change without prior notice.
+ *
+ * Iterates on devices with devargs filter.
+ * The ownership is not checked.
+ *
+ * The next port id is returned, and the iterator is updated.
+ *
+ * @param iter
+ *   Device iterator handle initialized by rte_eth_iterator_init().
+ *   Some fields bus_str and cls_str might be freed when no more port is found,
+ *   by calling rte_eth_iterator_cleanup().
+ *
+ * @return
+ *   A port id if found, RTE_MAX_ETHPORTS otherwise.
+ */
+__rte_experimental
+uint16_t rte_eth_iterator_next(struct rte_dev_iterator *iter);
+
+/**
+ * @warning
+ * @b EXPERIMENTAL: this API may change without prior notice.
+ *
+ * Free some allocated fields of the iterator.
+ *
+ * This function is automatically called by rte_eth_iterator_next()
+ * on the last iteration (i.e. when no more matching port is found).
+ *
+ * It is safe to call this function twice; it will do nothing more.
+ *
+ * @param iter
+ *   Device iterator handle initialized by rte_eth_iterator_init().
+ *   The fields bus_str and cls_str are freed if needed.
+ */
+__rte_experimental
+void rte_eth_iterator_cleanup(struct rte_dev_iterator *iter);
+
+/**
+ * Macro to iterate over all ethdev ports matching some devargs.
+ *
+ * If a break is done before the end of the loop,
+ * the function rte_eth_iterator_cleanup() must be called.
+ *
+ * @param id
+ *   Iterated port id of type uint16_t.
+ * @param devargs
+ *   Device parameters input as string of type char*.
+ * @param iter
+ *   Iterator handle of type struct rte_dev_iterator, used internally.
+ */
+#define RTE_ETH_FOREACH_MATCHING_DEV(id, devargs, iter) \
+	for (rte_eth_iterator_init(iter, devargs), \
+	     id = rte_eth_iterator_next(iter); \
+	     id != RTE_MAX_ETHPORTS; \
+	     id = rte_eth_iterator_next(iter))
+
+/**
  * A structure used to retrieve statistics for an Ethernet port.
  * Not all statistics fields in struct rte_eth_stats are supported
  * by any type of network interface card (NIC). If any statistics
@@ -946,6 +1025,11 @@ struct rte_eth_conf {
 #define DEV_TX_OFFLOAD_IP_TNL_TSO       0x00080000
 /** Device supports outer UDP checksum */
 #define DEV_TX_OFFLOAD_OUTER_UDP_CKSUM  0x00100000
+/**
+ * Device supports match on metadata Tx offload..
+ * Application must set PKT_TX_METADATA and mbuf metadata field.
+ */
+#define DEV_TX_OFFLOAD_MATCH_METADATA   0x00200000
 
 #define RTE_ETH_DEV_CAPA_RUNTIME_RX_QUEUE_SETUP 0x00000001
 /**< Device supports Rx queue setup after device started*/
@@ -1260,6 +1344,11 @@ struct rte_eth_dev_owner {
 	char name[RTE_ETH_MAX_OWNER_NAME_LEN]; /**< The owner name. */
 };
 
+/**
+ * Port is released (i.e. totally freed and data erased) on close.
+ * Temporary flag for PMD migration to new rte_eth_dev_close() behaviour.
+ */
+#define RTE_ETH_DEV_CLOSE_REMOVE 0x0001
 /** Device supports link state interrupt */
 #define RTE_ETH_DEV_INTR_LSC     0x0002
 /** Device is a bonded slave */
@@ -1422,37 +1511,6 @@ uint16_t rte_eth_dev_count_avail(void);
 uint16_t __rte_experimental rte_eth_dev_count_total(void);
 
 /**
- * Attach a new Ethernet device specified by arguments.
- *
- * @param devargs
- *  A pointer to a strings array describing the new device
- *  to be attached. The strings should be a pci address like
- *  '0000:01:00.0' or virtual device name like 'net_pcap0'.
- * @param port_id
- *  A pointer to a port identifier actually attached.
- * @return
- *  0 on success and port_id is filled, negative on error
- */
-__rte_deprecated
-int rte_eth_dev_attach(const char *devargs, uint16_t *port_id);
-
-/**
- * Detach a Ethernet device specified by port identifier.
- * This function must be called when the device is in the
- * closed state.
- *
- * @param port_id
- *   The port identifier of the device to detach.
- * @param devname
- *   A pointer to a buffer that will be filled with the device name.
- *   This buffer must be at least RTE_DEV_NAME_MAX_LEN long.
- * @return
- *  0 on success and devname is filled, negative on error
- */
-__rte_deprecated
-int rte_eth_dev_detach(uint16_t port_id, char *devname);
-
-/**
  * Convert a numerical speed in Mbps to a bitmap flag that can be used in
  * the bitmap link_speeds of the struct rte_eth_conf
  *
@@ -1466,9 +1524,6 @@ int rte_eth_dev_detach(uint16_t port_id, char *devname);
 uint32_t rte_eth_speed_bitflag(uint32_t speed, int duplex);
 
 /**
- * @warning
- * @b EXPERIMENTAL: this API may change without prior notice
- *
  * Get DEV_RX_OFFLOAD_* flag name.
  *
  * @param offload
@@ -1476,12 +1531,9 @@ uint32_t rte_eth_speed_bitflag(uint32_t speed, int duplex);
  * @return
  *   Offload name or 'UNKNOWN' if the flag cannot be recognised.
  */
-const char * __rte_experimental rte_eth_dev_rx_offload_name(uint64_t offload);
+const char *rte_eth_dev_rx_offload_name(uint64_t offload);
 
 /**
- * @warning
- * @b EXPERIMENTAL: this API may change without prior notice
- *
  * Get DEV_TX_OFFLOAD_* flag name.
  *
  * @param offload
@@ -1489,7 +1541,7 @@ const char * __rte_experimental rte_eth_dev_rx_offload_name(uint64_t offload);
  * @return
  *   Offload name or 'UNKNOWN' if the flag cannot be recognised.
  */
-const char * __rte_experimental rte_eth_dev_tx_offload_name(uint64_t offload);
+const char *rte_eth_dev_tx_offload_name(uint64_t offload);
 
 /**
  * Configure an Ethernet device.
@@ -1803,8 +1855,8 @@ int rte_eth_dev_set_link_down(uint16_t port_id);
 
 /**
  * Close a stopped Ethernet device. The device cannot be restarted!
- * The function frees all resources except for needed by the
- * closed state. To free these resources, call rte_eth_dev_detach().
+ * The function frees all port resources if the driver supports
+ * the flag RTE_ETH_DEV_CLOSE_REMOVE.
  *
  * @param port_id
  *   The port identifier of the Ethernet device.

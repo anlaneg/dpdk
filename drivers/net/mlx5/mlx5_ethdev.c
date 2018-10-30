@@ -3,8 +3,6 @@
  * Copyright 2015 Mellanox Technologies, Ltd
  */
 
-#define _GNU_SOURCE
-
 #include <stddef.h>
 #include <assert.h>
 #include <inttypes.h>
@@ -1305,10 +1303,7 @@ mlx5_dev_to_port_id(const struct rte_device *dev, uint16_t *port_list,
 	RTE_ETH_FOREACH_DEV(id) {
 		struct rte_eth_dev *ldev = &rte_eth_devices[id];
 
-		if (!ldev->device ||
-		    !ldev->device->driver ||
-		    strcmp(ldev->device->driver->name, MLX5_DRIVER_NAME) ||
-		    ldev->device != dev)
+		if (ldev->device != dev)
 			continue;
 		if (n < port_list_n)
 			port_list[n] = id;

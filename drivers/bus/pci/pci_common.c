@@ -6,6 +6,7 @@
 #include <string.h>
 #include <inttypes.h>
 #include <stdint.h>
+#include <stdbool.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <sys/queue.h>
@@ -23,6 +24,7 @@
 #include <rte_string_fns.h>
 #include <rte_common.h>
 #include <rte_devargs.h>
+#include <rte_vfio.h>
 
 #include "private.h"
 
@@ -124,6 +126,7 @@ rte_pci_probe_one_driver(struct rte_pci_driver *dr,
 			 struct rte_pci_device *dev)
 {
 	int ret;
+	bool already_probed;
 	struct rte_pci_addr *loc;
 
 	if ((dr == NULL) || (dev == NULL))
@@ -158,6 +161,13 @@ rte_pci_probe_one_driver(struct rte_pci_driver *dr,
 		dev->device.numa_node = 0;
 	}
 
+	already_probed = rte_dev_is_probed(&dev->device);
+	if (already_probed && !(dr->drv_flags & RTE_PCI_DRV_PROBE_AGAIN)) {
+		RTE_LOG(DEBUG, EAL, "Device %s is already probed\n",
+				dev->device.name);
+		return -EEXIST;
+	}
+
 	//指名驱动适配成功
 	RTE_LOG(INFO, EAL, "  probe driver: %x:%x %s\n", dev->id.vendor_id,
 		dev->id.device_id, dr->driver.name);
@@ -168,17 +178,16 @@ rte_pci_probe_one_driver(struct rte_pci_driver *dr,
 	 * driver flags for adjusting configuration.
 	 */
 	//为设备暂时赋上此驱动，进行probe(这段代码与kernel极其相似）
-	dev->driver = dr;
-	dev->device.driver = &dr->driver;
+	if (!already_probed)
+		dev->driver = dr;
 
 	//如果driver要求mapping，则进行资源map(例如bnxt驱动就要求进行mapping)
 	//按理解，所有采用igb_uio方式绑定的均要走此函数
-	if (dr->drv_flags & RTE_PCI_DRV_NEED_MAPPING) {
+	if (!already_probed && (dr->drv_flags & RTE_PCI_DRV_NEED_MAPPING)) {
 		/* map resources for devices that use igb_uio */
 		ret = rte_pci_map_device(dev);
 		if (ret != 0) {
 			dev->driver = NULL;
-			dev->device.driver = NULL;
 			return ret;
 		}
 	}
@@ -186,10 +195,10 @@ rte_pci_probe_one_driver(struct rte_pci_driver *dr,
 	/* call the driver probe() function */
 	//用此driver探测此设备
 	ret = dr->probe(dr, dev);
+	if (already_probed)
+		return ret; /* no rollback if already succeeded earlier */
 	if (ret) {
 		dev->driver = NULL;
-		dev->device.driver = NULL;
-		//适配失败，检查是否需要unmap资源
 		if ((dr->drv_flags & RTE_PCI_DRV_NEED_MAPPING) &&
 			/* Don't unmap if device is unsupported and
 			 * driver needs mapped resources.
@@ -197,6 +206,8 @@ rte_pci_probe_one_driver(struct rte_pci_driver *dr,
 			!(ret > 0 &&
 				(dr->drv_flags & RTE_PCI_DRV_KEEP_MAPPED_RES)))
 			rte_pci_unmap_device(dev);
+	} else {
+		dev->device.driver = &dr->driver;
 	}
 
 	return ret;
@@ -244,7 +255,7 @@ rte_pci_detach_dev(struct rte_pci_device *dev)
 
 /*
  * If vendor/device ID match, call the probe() function of all
- * registered driver for the given device. Return -1 if initialization
+ * registered driver for the given device. Return < 0 if initialization
  * failed, return 1 if no driver is found for this device.
  */
 //针对当前device，检查其是否可以匹配已知的driver
@@ -255,19 +266,14 @@ pci_probe_all_drivers(struct rte_pci_device *dev)
 	int rc = 0;
 
 	if (dev == NULL)
-		return -1;
-
-	/* Check if a driver is already loaded */
-	//如果已有驱动，则不必再探测了
-	if (dev->driver != NULL)
-		return 0;
+		return -EINVAL;
 
 	//遍历已注册的所有pci驱动，检查是否有驱动可适配dev
 	FOREACH_DRIVER_ON_PCIBUS(dr) {
 		rc = rte_pci_probe_one_driver(dr, dev);
 		if (rc < 0)
 			/* negative value is an error */
-			return -1;
+			return rc;
 		if (rc > 0)
 			/* positive value means driver doesn't support it */
 			continue;
@@ -307,12 +313,15 @@ rte_pci_probe(void)
 
 		//黑名单或者虚拟设备时，将被跳过
 		if (ret < 0) {
-			//设备无法被使用，报错，继续尝试
-			RTE_LOG(ERR, EAL, "Requested device " PCI_PRI_FMT
-				 " cannot be used\n", dev->addr.domain, dev->addr.bus,
-				 dev->addr.devid, dev->addr.function);
-			rte_errno = errno;
-			failed++;
+			if (ret != -EEXIST) {
+			        //设备无法被使用，报错，继续尝试
+				RTE_LOG(ERR, EAL, "Requested device "
+					PCI_PRI_FMT " cannot be used\n",
+					dev->addr.domain, dev->addr.bus,
+					dev->addr.devid, dev->addr.function);
+				rte_errno = errno;
+				failed++;
+			}
 			ret = 0;
 		}
 	}
@@ -466,6 +475,7 @@ pci_hot_unplug_handler(struct rte_device *dev)
 		return -1;
 
 	switch (pdev->kdrv) {
+#ifdef HAVE_VFIO_DEV_REQ_INTERFACE
 	case RTE_KDRV_VFIO:
 		/*
 		 * vfio kernel module guaranty the pci device would not be
@@ -476,6 +486,7 @@ pci_hot_unplug_handler(struct rte_device *dev)
 		rte_dev_event_callback_process(dev->name,
 					       RTE_DEV_EVENT_REMOVE);
 		break;
+#endif
 	case RTE_KDRV_IGB_UIO:
 	case RTE_KDRV_UIO_GENERIC:
 	case RTE_KDRV_NIC_UIO:
@@ -531,6 +542,7 @@ pci_unplug(struct rte_device *dev)
 	ret = rte_pci_detach_dev(pdev);
 	if (ret == 0) {
 		rte_pci_remove_device(pdev);
+		rte_devargs_remove(dev->devargs);
 		free(pdev);
 	}
 	return ret;

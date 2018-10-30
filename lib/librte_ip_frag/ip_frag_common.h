@@ -76,10 +76,11 @@ ip_frag_key_invalidate(struct ip_frag_key * key)
 }
 
 /* compare two keys */
-static inline int
+static inline uint64_t
 ip_frag_key_cmp(const struct ip_frag_key * k1, const struct ip_frag_key * k2)
 {
-	uint32_t i, val;
+	uint32_t i;
+	uint64_t val;
 	val = k1->id ^ k2->id;//id相等
 	for (i = 0; i < k1->key_len; i++)
 		val |= k1->src_dst[i] ^ k2->src_dst[i];//且源目的地址相等时，认为匹配

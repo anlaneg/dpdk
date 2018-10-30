@@ -2,7 +2,7 @@
 # Copyright(c) 2017 Intel Corporation
 
 project('DPDK', 'C',
-	version: '18.11.0-rc0',
+	version: '18.11.0-rc1',
 	license: 'BSD',
 	default_options: ['buildtype=release', 'default_library=static'],
 	meson_version: '>= 0.41'
@@ -12,10 +12,21 @@ project('DPDK', 'C',
 cc = meson.get_compiler('c')
 dpdk_conf = configuration_data()
 dpdk_libraries = []
+dpdk_static_libraries = []
 dpdk_drivers = []
 dpdk_extra_ldflags = []
+dpdk_app_link_libraries = []
 
-driver_install_path = join_paths(get_option('libdir'), 'dpdk/drivers')
+# set the major version, which might be used by drivers and libraries
+# depending on the configuration options
+pver = meson.project_version().split('.')
+major_version = '@0@.@1@'.format(pver.get(0), pver.get(1))
+
+pmd_subdir_opt = get_option('drivers_install_subdir')
+if pmd_subdir_opt.contains('<VERSION>')
+	pmd_subdir_opt = major_version.join(pmd_subdir_opt.split('<VERSION>'))
+endif
+driver_install_path = join_paths(get_option('libdir'), pmd_subdir_opt)
 eal_pmd_path = join_paths(get_option('prefix'), driver_install_path)
 
 # configure the build, and make sure configs here and in config folder are

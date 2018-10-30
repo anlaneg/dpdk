@@ -194,7 +194,9 @@ find_biggest_element(struct malloc_heap *heap, size_t *size,
 		for (elem = LIST_FIRST(&heap->free_head[idx]);
 				!!elem; elem = LIST_NEXT(elem, free_list)) {
 			size_t cur_size;
-			if (!check_hugepage_sz(flags, elem->msl->page_sz))
+			if ((flags & RTE_MEMZONE_SIZE_HINT_ONLY) == 0 &&
+					!check_hugepage_sz(flags,
+						elem->msl->page_sz))
 				continue;
 			if (contig) {
 				cur_size =
@@ -288,11 +290,13 @@ alloc_pages_on_heap(struct malloc_heap *heap, uint64_t pg_sz, size_t elt_size,
 		int socket, unsigned int flags, size_t align, size_t bound,
 		bool contig, struct rte_memseg **ms, int n_segs)
 {
+	struct rte_mem_config *mcfg = rte_eal_get_configuration()->mem_config;
 	struct rte_memseg_list *msl;
 	struct malloc_elem *elem = NULL;
 	size_t alloc_sz;
 	int allocd_pages;
 	void *ret, *map_addr;
+	uint64_t mask;
 
 	alloc_sz = (size_t)pg_sz * n_segs;
 
@@ -318,6 +322,16 @@ alloc_pages_on_heap(struct malloc_heap *heap, uint64_t pg_sz, size_t elt_size,
 		RTE_LOG(DEBUG, EAL, "%s(): couldn't allocate physically contiguous space\n",
 				__func__);
 		goto fail;
+	}
+
+	if (mcfg->dma_maskbits) {
+		mask = ~((1ULL << mcfg->dma_maskbits) - 1);
+		if (rte_eal_check_dma_mask(mask)) {
+			RTE_LOG(ERR, EAL,
+				"%s(): couldn't allocate memory due to DMA mask\n",
+				__func__);
+			goto fail;
+		}
 	}
 
 	/* add newly minted memsegs to malloc heap */

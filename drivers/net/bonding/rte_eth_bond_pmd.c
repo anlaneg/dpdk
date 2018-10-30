@@ -337,7 +337,7 @@ bond_ethdev_tx_burst_8023ad_fast_queue(void *queue, struct rte_mbuf **bufs,
 
 	dist_slave_count = 0;
 	for (i = 0; i < slave_count; i++) {
-		struct port *port = &mode_8023ad_ports[slave_port_ids[i]];
+		struct port *port = &bond_mode_8023ad_ports[slave_port_ids[i]];
 
 		if (ACTOR_STATE(port, DISTRIBUTING))
 			dist_slave_port_ids[dist_slave_count++] =
@@ -395,8 +395,9 @@ bond_ethdev_rx_burst_8023ad(void *queue, struct rte_mbuf **bufs,
 	/* Cast to structure, containing bonded device's port id and queue id */
 	struct bond_rx_queue *bd_rx_q = (struct bond_rx_queue *)queue;
 	struct bond_dev_private *internals = bd_rx_q->dev_private;
-	struct ether_addr bond_mac;
-
+	struct rte_eth_dev *bonded_eth_dev =
+					&rte_eth_devices[internals->port_id];
+	struct ether_addr *bond_mac = bonded_eth_dev->data->mac_addrs;
 	struct ether_hdr *hdr;
 
 	const uint16_t ether_type_slow_be = rte_be_to_cpu_16(ETHER_TYPE_SLOW);
@@ -409,7 +410,6 @@ bond_ethdev_rx_burst_8023ad(void *queue, struct rte_mbuf **bufs,
 	uint8_t i, j, k;
 	uint8_t subtype;
 
-	rte_eth_macaddr_get(internals->port_id, &bond_mac);
 	/* Copy slave list to protect against slave up/down changes during tx
 	 * bursting */
 	slave_count = internals->active_slave_count;
@@ -423,7 +423,7 @@ bond_ethdev_rx_burst_8023ad(void *queue, struct rte_mbuf **bufs,
 	}
 	for (i = 0; i < slave_count && num_rx_total < nb_pkts; i++) {
 		j = num_rx_total;
-		collecting = ACTOR_STATE(&mode_8023ad_ports[slaves[idx]],
+		collecting = ACTOR_STATE(&bond_mode_8023ad_ports[slaves[idx]],
 					 COLLECTING);
 
 		/* Read packets from this slave */ //收包
@@ -453,9 +453,11 @@ bond_ethdev_rx_burst_8023ad(void *queue, struct rte_mbuf **bufs,
 			 * in collecting state or bonding interface is not in promiscuous
 			 * mode and packet address does not match. */
 			if (unlikely(is_lacp_packets(hdr->ether_type, subtype, bufs[j]) ||
-				!collecting || (!promisc &&
-					!is_multicast_ether_addr(&hdr->d_addr) &&
-					!is_same_ether_addr(&bond_mac, &hdr->d_addr)))) {
+				!collecting ||
+				(!promisc &&
+				 !is_multicast_ether_addr(&hdr->d_addr) &&
+				 !is_same_ether_addr(bond_mac,
+						     &hdr->d_addr)))) {
 
 				//仅处理lacp报文，其它的丢弃掉
 				if (hdr->ether_type == ether_type_slow_be) {
@@ -1329,7 +1331,7 @@ bond_ethdev_tx_burst_8023ad(void *queue, struct rte_mbuf **bufs,
 
 	dist_slave_count = 0;
 	for (i = 0; i < slave_count; i++) {
-		struct port *port = &mode_8023ad_ports[slave_port_ids[i]];
+		struct port *port = &bond_mode_8023ad_ports[slave_port_ids[i]];
 
 		if (ACTOR_STATE(port, DISTRIBUTING))
 			dist_slave_port_ids[dist_slave_count++] =
@@ -1384,7 +1386,7 @@ bond_ethdev_tx_burst_8023ad(void *queue, struct rte_mbuf **bufs,
 
 	/* Check for LACP control packets and send if available */
 	for (i = 0; i < slave_count; i++) {
-		struct port *port = &mode_8023ad_ports[slave_port_ids[i]];
+		struct port *port = &bond_mode_8023ad_ports[slave_port_ids[i]];
 		struct rte_mbuf *ctrl_pkt = NULL;
 
 		if (likely(rte_ring_empty(port->tx_ring)))
@@ -1744,7 +1746,7 @@ slave_configure_slow_queue(struct rte_eth_dev *bonded_eth_dev,
 	int errval = 0;
 	struct bond_dev_private *internals = (struct bond_dev_private *)
 		bonded_eth_dev->data->dev_private;
-	struct port *port = &mode_8023ad_ports[slave_eth_dev->data->port_id];
+	struct port *port = &bond_mode_8023ad_ports[slave_eth_dev->data->port_id];
 
 	if (port->slow_pool == NULL) {
 		char mem_name[256];
@@ -2183,7 +2185,7 @@ bond_ethdev_stop(struct rte_eth_dev *eth_dev)
 
 		/* Discard all messages to/from mode 4 state machines */
 		for (i = 0; i < internals->active_slave_count; i++) {
-			port = &mode_8023ad_ports[internals->active_slaves[i]];
+			port = &bond_mode_8023ad_ports[internals->active_slaves[i]];
 
 			RTE_ASSERT(port->rx_ring != NULL);
 			while (rte_ring_dequeue(port->rx_ring, &pkt) != -ENOENT)
@@ -3157,10 +3159,9 @@ bond_alloc(struct rte_vdev_device *dev, uint8_t mode)
 
 err:
 	rte_free(internals);
-	if (eth_dev != NULL) {
-		rte_free(eth_dev->data->mac_addrs);
-		rte_eth_dev_release_port(eth_dev);
-	}
+	if (eth_dev != NULL)
+		eth_dev->data->dev_private = NULL;
+	rte_eth_dev_release_port(eth_dev);
 	return -1;
 }
 
@@ -3183,8 +3184,7 @@ bond_probe(struct rte_vdev_device *dev)
 	RTE_BOND_LOG(INFO, "Initializing pmd_bond for %s", name);
 
 	//主备进程模式处理
-	if (rte_eal_process_type() == RTE_PROC_SECONDARY &&
-	    strlen(rte_vdev_device_args(dev)) == 0) {
+	if (rte_eal_process_type() == RTE_PROC_SECONDARY) {
 		eth_dev = rte_eth_dev_attach_secondary(name);
 		if (!eth_dev) {
 			RTE_BOND_LOG(ERR, "Failed to probe %s", name);
@@ -3302,6 +3302,9 @@ bond_remove(struct rte_vdev_device *dev)
 	if (eth_dev == NULL)
 		return -ENODEV;
 
+	if (rte_eal_process_type() != RTE_PROC_PRIMARY)
+		return rte_eth_dev_release_port(eth_dev);
+
 	RTE_ASSERT(eth_dev->device == &dev->device);
 
 	internals = eth_dev->data->dev_private;
@@ -3324,8 +3327,6 @@ bond_remove(struct rte_vdev_device *dev)
 	rte_mempool_free(internals->mode6.mempool);
 	rte_bitmap_free(internals->vlan_filter_bmp);
 	rte_free(internals->vlan_filter_bmpmem);
-	rte_free(eth_dev->data->dev_private);
-	rte_free(eth_dev->data->mac_addrs);
 
 	rte_eth_dev_release_port(eth_dev);
 

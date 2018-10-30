@@ -113,9 +113,9 @@ SRCS-$(CONFIG_RTE_LIBRTE_HASH) += test_hash.c
 SRCS-$(CONFIG_RTE_LIBRTE_HASH) += test_thash.c
 SRCS-$(CONFIG_RTE_LIBRTE_HASH) += test_hash_perf.c
 SRCS-$(CONFIG_RTE_LIBRTE_HASH) += test_hash_functions.c
-SRCS-$(CONFIG_RTE_LIBRTE_HASH) += test_hash_scaling.c
 SRCS-$(CONFIG_RTE_LIBRTE_HASH) += test_hash_multiwriter.c
 SRCS-$(CONFIG_RTE_LIBRTE_HASH) += test_hash_readwrite.c
+SRCS-$(CONFIG_RTE_LIBRTE_HASH) += test_hash_readwrite_lf.c
 
 SRCS-$(CONFIG_RTE_LIBRTE_LPM) += test_lpm.c
 SRCS-$(CONFIG_RTE_LIBRTE_LPM) += test_lpm_perf.c
@@ -184,6 +184,8 @@ SRCS-$(CONFIG_RTE_LIBRTE_CRYPTODEV) += test_cryptodev_blockcipher.c
 SRCS-$(CONFIG_RTE_LIBRTE_CRYPTODEV) += test_cryptodev.c
 SRCS-$(CONFIG_RTE_LIBRTE_CRYPTODEV) += test_cryptodev_asym.c
 
+SRCS-$(CONFIG_RTE_LIBRTE_METRICS) += test_metrics.c
+
 ifeq ($(CONFIG_RTE_COMPRESSDEV_TEST),y)
 SRCS-$(CONFIG_RTE_LIBRTE_COMPRESSDEV) += test_compressdev.c
 endif
@@ -209,8 +211,6 @@ CFLAGS += -DALLOW_EXPERIMENTAL_API
 
 CFLAGS += -O3
 CFLAGS += $(WERROR_FLAGS)
-
-CFLAGS += -D_GNU_SOURCE
 
 LDLIBS += -lm
 ifeq ($(CONFIG_RTE_COMPRESSDEV_TEST),y)

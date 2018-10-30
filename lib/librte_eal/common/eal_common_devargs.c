@@ -26,7 +26,7 @@ TAILQ_HEAD(rte_devargs_list, rte_devargs);
 
 /** Global list of user devices */
 //黑名单（-b)，白名单(-w)，虚拟设备（--vdev参数）均串在此链上。
-struct rte_devargs_list devargs_list =
+static struct rte_devargs_list devargs_list =
 	TAILQ_HEAD_INITIALIZER(devargs_list);
 
 static size_t
@@ -240,6 +240,7 @@ rte_devargs_parsef(struct rte_devargs *da, const char *format, ...)
 	va_list ap;
 	size_t len;
 	char *dev;
+	int ret;
 
 	if (da == NULL)
 		return -EINVAL;
@@ -258,7 +259,10 @@ rte_devargs_parsef(struct rte_devargs *da, const char *format, ...)
 	vsnprintf(dev, len + 1, format, ap);
 	va_end(ap);
 
-	return rte_devargs_parse(da, dev);
+	ret = rte_devargs_parse(da, dev);
+
+	free(dev);
+	return ret;
 }
 
 int __rte_experimental

@@ -43,6 +43,9 @@
 #define MLX5_FLOW_LAYER_GRE (1u << 14)
 #define MLX5_FLOW_LAYER_MPLS (1u << 15)
 
+/* General pattern items bits. */
+#define MLX5_FLOW_ITEM_METADATA (1u << 16)
+
 /* Outer Masks. */
 #define MLX5_FLOW_LAYER_OUTER_L3 \
 	(MLX5_FLOW_LAYER_OUTER_L3_IPV4 | MLX5_FLOW_LAYER_OUTER_L3_IPV6)
@@ -84,6 +87,11 @@
 #define MLX5_FLOW_ACTION_SET_IPV6_DST (1u << 14)
 #define MLX5_FLOW_ACTION_SET_TP_SRC (1u << 15)
 #define MLX5_FLOW_ACTION_SET_TP_DST (1u << 16)
+#define MLX5_FLOW_ACTION_JUMP (1u << 17)
+#define MLX5_FLOW_ACTION_SET_TTL (1u << 18)
+#define MLX5_FLOW_ACTION_DEC_TTL (1u << 19)
+#define MLX5_FLOW_ACTION_SET_MAC_SRC (1u << 20)
+#define MLX5_FLOW_ACTION_SET_MAC_DST (1u << 21)
 
 #define MLX5_FLOW_FATE_ACTIONS \
 	(MLX5_FLOW_ACTION_DROP | MLX5_FLOW_ACTION_QUEUE | MLX5_FLOW_ACTION_RSS)
@@ -207,7 +215,8 @@ struct mlx5_flow_verbs {
 struct mlx5_flow {
 	LIST_ENTRY(mlx5_flow) next;
 	struct rte_flow *flow; /**< Pointer to the main flow. */
-	uint32_t layers; /**< Bit-fields that holds the detected layers. */
+	uint64_t layers;
+	/**< Bit-fields of present layers, see MLX5_FLOW_LAYER_*. */
 	union {
 #ifdef HAVE_IBV_FLOW_DV_SUPPORT
 		struct mlx5_flow_dv dv;
@@ -223,7 +232,11 @@ struct mlx5_flow_counter {
 	uint32_t shared:1; /**< Share counter ID with other flow rules. */
 	uint32_t ref_cnt:31; /**< Reference counter. */
 	uint32_t id; /**< Counter ID. */
+#if defined(HAVE_IBV_DEVICE_COUNTERS_SET_V42)
 	struct ibv_counter_set *cs; /**< Holds the counters for the rule. */
+#elif defined(HAVE_IBV_DEVICE_COUNTERS_SET_V45)
+	struct ibv_counters *cs; /**< Holds the counters for the rule. */
+#endif
 	uint64_t hits; /**< Number of packets matched by the rule. */
 	uint64_t bytes; /**< Number of bytes matched by the rule. */
 };
@@ -232,16 +245,14 @@ struct mlx5_flow_counter {
 struct rte_flow {
 	TAILQ_ENTRY(rte_flow) next; /**< Pointer to the next flow structure. */
 	enum mlx5_flow_drv_type drv_type; /**< Drvier type. */
-	uint32_t layers;
-	/**< Bit-fields of present layers see MLX5_FLOW_LAYER_*. */
 	struct mlx5_flow_counter *counter; /**< Holds flow counter. */
 	struct rte_flow_action_rss rss;/**< RSS context. */
 	uint8_t key[MLX5_RSS_HASH_KEY_LEN]; /**< RSS hash key. */
 	uint16_t (*queue)[]; /**< Destination queues to redirect traffic to. */
-	void *nl_flow; /**< Netlink flow buffer if relevant. */
 	LIST_HEAD(dev_flows, mlx5_flow) dev_flows;
 	/**< Device flows that are part of the flow. */
-	uint32_t actions; /**< Bit-fields which mark all detected actions. */
+	uint64_t actions;
+	/**< Bit-fields of detected actions, see MLX5_FLOW_ACTION_*. */
 };
 typedef int (*mlx5_flow_validate_t)(struct rte_eth_dev *dev,
 				    const struct rte_flow_attr *attr,
@@ -264,6 +275,11 @@ typedef void (*mlx5_flow_remove_t)(struct rte_eth_dev *dev,
 				   struct rte_flow *flow);
 typedef void (*mlx5_flow_destroy_t)(struct rte_eth_dev *dev,
 				    struct rte_flow *flow);
+typedef int (*mlx5_flow_query_t)(struct rte_eth_dev *dev,
+				 struct rte_flow *flow,
+				 const struct rte_flow_action *actions,
+				 void *data,
+				 struct rte_flow_error *error);
 struct mlx5_flow_driver_ops {
 	mlx5_flow_validate_t validate;
 	mlx5_flow_prepare_t prepare;
@@ -271,12 +287,13 @@ struct mlx5_flow_driver_ops {
 	mlx5_flow_apply_t apply;
 	mlx5_flow_remove_t remove;
 	mlx5_flow_destroy_t destroy;
+	mlx5_flow_query_t query;
 };
 
 /* mlx5_flow.c */
 
 uint64_t mlx5_flow_hashfields_adjust(struct mlx5_flow *dev_flow, int tunnel,
-				     uint32_t layer_types,
+				     uint64_t layer_types,
 				     uint64_t hash_fields);
 uint32_t mlx5_flow_adjust_priority(struct rte_eth_dev *dev, int32_t priority,
 				   uint32_t subpriority);
@@ -306,6 +323,11 @@ int mlx5_flow_validate_action_rss(const struct rte_flow_action *action,
 int mlx5_flow_validate_attributes(struct rte_eth_dev *dev,
 				  const struct rte_flow_attr *attributes,
 				  struct rte_flow_error *error);
+int mlx5_flow_item_acceptable(const struct rte_flow_item *item,
+			      const uint8_t *mask,
+			      const uint8_t *nic_mask,
+			      unsigned int size,
+			      struct rte_flow_error *error);
 int mlx5_flow_validate_item_eth(const struct rte_flow_item *item,
 				uint64_t item_flags,
 				struct rte_flow_error *error);
@@ -345,9 +367,9 @@ int mlx5_flow_validate_item_vxlan_gpe(const struct rte_flow_item *item,
 
 /* mlx5_flow_tcf.c */
 
-int mlx5_flow_tcf_init(struct mnl_socket *nl, unsigned int ifindex,
-		       struct rte_flow_error *error);
-struct mnl_socket *mlx5_flow_tcf_socket_create(void);
-void mlx5_flow_tcf_socket_destroy(struct mnl_socket *nl);
+int mlx5_flow_tcf_init(struct mlx5_flow_tcf_context *ctx,
+		       unsigned int ifindex, struct rte_flow_error *error);
+struct mlx5_flow_tcf_context *mlx5_flow_tcf_context_create(void);
+void mlx5_flow_tcf_context_destroy(struct mlx5_flow_tcf_context *ctx);
 
 #endif /* RTE_PMD_MLX5_FLOW_H_ */

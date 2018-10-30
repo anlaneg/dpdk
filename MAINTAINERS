@@ -428,6 +428,7 @@ F: drivers/bus/ifpga/
 NXP buses
 M: Hemant Agrawal <hemant.agrawal@nxp.com>
 M: Shreyansh Jain <shreyansh.jain@nxp.com>
+F: drivers/common/dpaax/
 F: drivers/bus/dpaa/
 F: drivers/bus/fslmc/
 
@@ -486,6 +487,13 @@ F: drivers/net/axgbe/
 F: doc/guides/nics/axgbe.rst
 F: doc/guides/nics/features/axgbe.ini
 
+Aquantia atlantic
+M: Igor Russkikh <igor.russkikh@aquantia.com>
+M: Pavel Belous <pavel.belous@aquantia.com>
+F: drivers/net/atlantic/
+F: doc/guides/nics/atlantic.rst
+F: doc/guides/nics/features/atlantic.ini
+
 Atomic Rules ARK
 M: Shepard Siegel <shepard.siegel@atomicrules.com>
 M: Ed Czeck <ed.czeck@atomicrules.com>
@@ -515,7 +523,7 @@ F: drivers/net/liquidio/
 F: doc/guides/nics/liquidio.rst
 F: doc/guides/nics/features/liquidio.ini
 
-Cavium OcteonTX
+Cavium OCTEON TX
 M: Jerin Jacob <jerin.jacob@caviumnetworks.com>
 F: drivers/common/octeontx/
 F: drivers/mempool/octeontx/
@@ -797,6 +805,13 @@ F: drivers/crypto/armv8/
 F: doc/guides/cryptodevs/armv8.rst
 F: doc/guides/cryptodevs/features/armv8.ini
 
+Cavium OCTEON TX crypto
+M: Anoob Joseph <anoob.joseph@caviumnetworks.com>
+F: drivers/common/cpt/
+F: drivers/crypto/octeontx/
+F: doc/guides/cryptodevs/octeontx.rst
+F: doc/guides/cryptodevs/features/octeontx.ini
+
 Crypto Scheduler
 M: Fan Zhang <roy.fan.zhang@intel.com>
 F: drivers/crypto/scheduler/
@@ -843,6 +858,13 @@ F: drivers/crypto/null/
 F: doc/guides/cryptodevs/null.rst
 F: doc/guides/cryptodevs/features/null.ini
 
+NXP CAAM JR
+M: Gagandeep Singh <g.singh@nxp.com>
+M: Hemant Agrawal <hemant.agrawal@nxp.com>
+F: drivers/crypto/caam_jr/
+F: doc/guides/cryptodevs/caam_jr.rst
+F: doc/guides/cryptodevs/features/caam_jr.ini
+
 NXP DPAA_SEC
 M: Akhil Goyal <akhil.goyal@nxp.com>
 M: Hemant Agrawal <hemant.agrawal@nxp.com>
@@ -887,7 +909,7 @@ Compression Drivers
 M: Pablo de Lara <pablo.de.lara.guarch@intel.com>
 T: git://dpdk.org/next/dpdk-next-crypto
 
-Cavium OCTEONTX zipvf
+Cavium OCTEON TX zipvf
 M: Ashish Gupta <ashish.gupta@cavium.com>
 F: drivers/compress/octeontx/
 F: doc/guides/compressdevs/octeontx.rst
@@ -916,12 +938,12 @@ Eventdev Drivers
 M: Jerin Jacob <jerin.jacob@caviumnetworks.com>
 T: git://dpdk.org/next/dpdk-next-eventdev
 
-Cavium OCTEONTX ssovf
+Cavium OCTEON TX ssovf
 M: Jerin Jacob <jerin.jacob@caviumnetworks.com>
 F: drivers/event/octeontx/
 F: doc/guides/eventdevs/octeontx.rst
 
-Cavium OCTEONTX timvf
+Cavium OCTEON TX timvf
 M: Pavan Nikhilesh <pbhagavatula@caviumnetworks.com>
 F: drivers/event/octeontx/timvf_*
 
@@ -1170,6 +1192,7 @@ F: doc/guides/sample_app_ug/l2_forward_job_stats.rst
 Metrics
 M: Remy Horton <remy.horton@intel.com>
 F: lib/librte_metrics/
+F: test/test/test_metrics.c
 
 Bit-rate statistics
 M: Remy Horton <remy.horton@intel.com>
@@ -1178,6 +1201,12 @@ F: lib/librte_bitratestats/
 Latency statistics
 M: Reshma Pattan <reshma.pattan@intel.com>
 F: lib/librte_latencystats/
+
+Telemetry - EXPERIMENTAL
+M: Kevin Laatz <kevin.laatz@intel.com>
+F: lib/librte_telemetry/
+F: usertools/dpdk-telemetry-client.py
+F: doc/guides/howto/telemetry.rst
 
 BPF - EXPERIMENTAL
 M: Konstantin Ananyev <konstantin.ananyev@intel.com>

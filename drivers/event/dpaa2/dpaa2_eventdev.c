@@ -27,6 +27,7 @@
 #include <rte_pci.h>
 #include <rte_bus_vdev.h>
 #include <rte_ethdev_driver.h>
+#include <rte_cryptodev.h>
 #include <rte_event_eth_rx_adapter.h>
 
 #include <fslmc_vfio.h>
@@ -34,6 +35,9 @@
 #include <dpaa2_hw_mempool.h>
 #include <dpaa2_hw_dpio.h>
 #include <dpaa2_ethdev.h>
+#ifdef RTE_LIBRTE_SECURITY
+#include <dpaa2_sec_event.h>
+#endif
 #include "dpaa2_eventdev.h"
 #include "dpaa2_eventdev_logs.h"
 #include <portal/dpaa2_hw_pvt.h>
@@ -109,8 +113,8 @@ skip_linking:
 	evq_info = &dpaa2_portal->evq_info[queue_id];
 
 	while (nb_events) {
-		frames_to_send = (nb_events >> 3) ?
-			MAX_TX_RING_SLOTS : nb_events;
+		frames_to_send = (nb_events > dpaa2_eqcr_size) ?
+			dpaa2_eqcr_size : nb_events;
 
 		for (loop = 0; loop < frames_to_send; loop++) {
 			const struct rte_event *event = &ev[num_tx + loop];
@@ -793,6 +797,151 @@ dpaa2_eventdev_eth_stop(const struct rte_eventdev *dev,
 	return 0;
 }
 
+#ifdef RTE_LIBRTE_SECURITY
+static int
+dpaa2_eventdev_crypto_caps_get(const struct rte_eventdev *dev,
+			    const struct rte_cryptodev *cdev,
+			    uint32_t *caps)
+{
+	const char *name = cdev->data->name;
+
+	EVENTDEV_INIT_FUNC_TRACE();
+
+	RTE_SET_USED(dev);
+
+	if (!strncmp(name, "dpsec-", 6))
+		*caps = RTE_EVENT_CRYPTO_ADAPTER_DPAA2_CAP;
+	else
+		return -1;
+
+	return 0;
+}
+
+static int
+dpaa2_eventdev_crypto_queue_add_all(const struct rte_eventdev *dev,
+		const struct rte_cryptodev *cryptodev,
+		const struct rte_event *ev)
+{
+	struct dpaa2_eventdev *priv = dev->data->dev_private;
+	uint8_t ev_qid = ev->queue_id;
+	uint16_t dpcon_id = priv->evq_info[ev_qid].dpcon->dpcon_id;
+	int i, ret;
+
+	EVENTDEV_INIT_FUNC_TRACE();
+
+	for (i = 0; i < cryptodev->data->nb_queue_pairs; i++) {
+		ret = dpaa2_sec_eventq_attach(cryptodev, i,
+				dpcon_id, ev);
+		if (ret) {
+			DPAA2_EVENTDEV_ERR("dpaa2_sec_eventq_attach failed: ret %d\n",
+				    ret);
+			goto fail;
+		}
+	}
+	return 0;
+fail:
+	for (i = (i - 1); i >= 0 ; i--)
+		dpaa2_sec_eventq_detach(cryptodev, i);
+
+	return ret;
+}
+
+static int
+dpaa2_eventdev_crypto_queue_add(const struct rte_eventdev *dev,
+		const struct rte_cryptodev *cryptodev,
+		int32_t rx_queue_id,
+		const struct rte_event *ev)
+{
+	struct dpaa2_eventdev *priv = dev->data->dev_private;
+	uint8_t ev_qid = ev->queue_id;
+	uint16_t dpcon_id = priv->evq_info[ev_qid].dpcon->dpcon_id;
+	int ret;
+
+	EVENTDEV_INIT_FUNC_TRACE();
+
+	if (rx_queue_id == -1)
+		return dpaa2_eventdev_crypto_queue_add_all(dev,
+				cryptodev, ev);
+
+	ret = dpaa2_sec_eventq_attach(cryptodev, rx_queue_id,
+			dpcon_id, ev);
+	if (ret) {
+		DPAA2_EVENTDEV_ERR(
+			"dpaa2_sec_eventq_attach failed: ret: %d\n", ret);
+		return ret;
+	}
+	return 0;
+}
+
+static int
+dpaa2_eventdev_crypto_queue_del_all(const struct rte_eventdev *dev,
+			     const struct rte_cryptodev *cdev)
+{
+	int i, ret;
+
+	EVENTDEV_INIT_FUNC_TRACE();
+
+	RTE_SET_USED(dev);
+
+	for (i = 0; i < cdev->data->nb_queue_pairs; i++) {
+		ret = dpaa2_sec_eventq_detach(cdev, i);
+		if (ret) {
+			DPAA2_EVENTDEV_ERR(
+				"dpaa2_sec_eventq_detach failed:ret %d\n", ret);
+			return ret;
+		}
+	}
+
+	return 0;
+}
+
+static int
+dpaa2_eventdev_crypto_queue_del(const struct rte_eventdev *dev,
+			     const struct rte_cryptodev *cryptodev,
+			     int32_t rx_queue_id)
+{
+	int ret;
+
+	EVENTDEV_INIT_FUNC_TRACE();
+
+	if (rx_queue_id == -1)
+		return dpaa2_eventdev_crypto_queue_del_all(dev, cryptodev);
+
+	ret = dpaa2_sec_eventq_detach(cryptodev, rx_queue_id);
+	if (ret) {
+		DPAA2_EVENTDEV_ERR(
+			"dpaa2_sec_eventq_detach failed: ret: %d\n", ret);
+		return ret;
+	}
+
+	return 0;
+}
+
+static int
+dpaa2_eventdev_crypto_start(const struct rte_eventdev *dev,
+			    const struct rte_cryptodev *cryptodev)
+{
+	EVENTDEV_INIT_FUNC_TRACE();
+
+	RTE_SET_USED(dev);
+	RTE_SET_USED(cryptodev);
+
+	return 0;
+}
+
+static int
+dpaa2_eventdev_crypto_stop(const struct rte_eventdev *dev,
+			   const struct rte_cryptodev *cryptodev)
+{
+	EVENTDEV_INIT_FUNC_TRACE();
+
+	RTE_SET_USED(dev);
+	RTE_SET_USED(cryptodev);
+
+	return 0;
+}
+#endif
+
 static struct rte_eventdev_ops dpaa2_eventdev_ops = {
 	.dev_infos_get    = dpaa2_eventdev_info_get,
 	.dev_configure    = dpaa2_eventdev_configure,
@@ -814,6 +963,13 @@ static struct rte_eventdev_ops dpaa2_eventdev_ops = {
 	.eth_rx_adapter_queue_del = dpaa2_eventdev_eth_queue_del,
 	.eth_rx_adapter_start = dpaa2_eventdev_eth_start,
 	.eth_rx_adapter_stop = dpaa2_eventdev_eth_stop,
+#ifdef RTE_LIBRTE_SECURITY
+	.crypto_adapter_caps_get	= dpaa2_eventdev_crypto_caps_get,
+	.crypto_adapter_queue_pair_add	= dpaa2_eventdev_crypto_queue_add,
+	.crypto_adapter_queue_pair_del	= dpaa2_eventdev_crypto_queue_del,
+	.crypto_adapter_start		= dpaa2_eventdev_crypto_start,
+	.crypto_adapter_stop		= dpaa2_eventdev_crypto_stop,
+#endif
 };
 
 static int

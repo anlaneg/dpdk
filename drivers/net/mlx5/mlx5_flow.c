@@ -418,7 +418,7 @@ uint32_t mlx5_flow_adjust_priority(struct rte_eth_dev *dev, int32_t priority,
  * @return
  *   0 on success, a negative errno value otherwise and rte_errno is set.
  */
-static int
+int
 mlx5_flow_item_acceptable(const struct rte_flow_item *item,
 			  const uint8_t *mask,
 			  const uint8_t *nic_mask,
@@ -477,7 +477,7 @@ mlx5_flow_item_acceptable(const struct rte_flow_item *item,
  */
 uint64_t
 mlx5_flow_hashfields_adjust(struct mlx5_flow *dev_flow,
-			    int tunnel __rte_unused, uint32_t layer_types,
+			    int tunnel __rte_unused, uint64_t layer_types,
 			    uint64_t hash_fields)
 {
 	struct rte_flow *flow = dev_flow->flow;
@@ -505,7 +505,7 @@ mlx5_flow_hashfields_adjust(struct mlx5_flow *dev_flow,
  *   Rx queue to update.
  */
 static void
-mlx5_flow_rxq_tunnel_ptype_update(struct mlx5_rxq_ctrl *rxq_ctrl)
+flow_rxq_tunnel_ptype_update(struct mlx5_rxq_ctrl *rxq_ctrl)
 {
 	unsigned int i;
 	uint32_t tunnel_ptype = 0;
@@ -525,20 +525,22 @@ mlx5_flow_rxq_tunnel_ptype_update(struct mlx5_rxq_ctrl *rxq_ctrl)
 }
 
 /**
- * Set the Rx queue flags (Mark/Flag and Tunnel Ptypes) according to the flow.
+ * Set the Rx queue flags (Mark/Flag and Tunnel Ptypes) according to the devive
+ * flow.
  *
  * @param[in] dev
  *   Pointer to the Ethernet device structure.
- * @param[in] flow
- *   Pointer to flow structure.
+ * @param[in] dev_flow
+ *   Pointer to device flow structure.
  */
 static void
-mlx5_flow_rxq_flags_set(struct rte_eth_dev *dev, struct rte_flow *flow)
+flow_drv_rxq_flags_set(struct rte_eth_dev *dev, struct mlx5_flow *dev_flow)
 {
 	struct priv *priv = dev->data->dev_private;
+	struct rte_flow *flow = dev_flow->flow;
 	const int mark = !!(flow->actions &
 			    (MLX5_FLOW_ACTION_FLAG | MLX5_FLOW_ACTION_MARK));
-	const int tunnel = !!(flow->layers & MLX5_FLOW_LAYER_TUNNEL);
+	const int tunnel = !!(dev_flow->layers & MLX5_FLOW_LAYER_TUNNEL);
 	unsigned int i;
 
 	for (i = 0; i != flow->rss.queue_num; ++i) {
@@ -556,33 +558,52 @@ mlx5_flow_rxq_flags_set(struct rte_eth_dev *dev, struct rte_flow *flow)
 
 			/* Increase the counter matching the flow. */
 			for (j = 0; j != MLX5_FLOW_TUNNEL; ++j) {
-				if ((tunnels_info[j].tunnel & flow->layers) ==
+				if ((tunnels_info[j].tunnel &
+				     dev_flow->layers) ==
 				    tunnels_info[j].tunnel) {
 					rxq_ctrl->flow_tunnels_n[j]++;
 					break;
 				}
 			}
-			mlx5_flow_rxq_tunnel_ptype_update(rxq_ctrl);
+			flow_rxq_tunnel_ptype_update(rxq_ctrl);
 		}
 	}
 }
 
 /**
+ * Set the Rx queue flags (Mark/Flag and Tunnel Ptypes) for a flow
+ *
+ * @param[in] dev
+ *   Pointer to the Ethernet device structure.
+ * @param[in] flow
+ *   Pointer to flow structure.
+ */
+static void
+flow_rxq_flags_set(struct rte_eth_dev *dev, struct rte_flow *flow)
+{
+	struct mlx5_flow *dev_flow;
+
+	LIST_FOREACH(dev_flow, &flow->dev_flows, next)
+		flow_drv_rxq_flags_set(dev, dev_flow);
+}
+
+/**
  * Clear the Rx queue flags (Mark/Flag and Tunnel Ptype) associated with the
- * @p flow if no other flow uses it with the same kind of request.
+ * device flow if no other flow uses it with the same kind of request.
  *
  * @param dev
  *   Pointer to Ethernet device.
- * @param[in] flow
- *   Pointer to the flow.
+ * @param[in] dev_flow
+ *   Pointer to the device flow.
  */
 static void
-mlx5_flow_rxq_flags_trim(struct rte_eth_dev *dev, struct rte_flow *flow)
+flow_drv_rxq_flags_trim(struct rte_eth_dev *dev, struct mlx5_flow *dev_flow)
 {
 	struct priv *priv = dev->data->dev_private;
+	struct rte_flow *flow = dev_flow->flow;
 	const int mark = !!(flow->actions &
 			    (MLX5_FLOW_ACTION_FLAG | MLX5_FLOW_ACTION_MARK));
-	const int tunnel = !!(flow->layers & MLX5_FLOW_LAYER_TUNNEL);
+	const int tunnel = !!(dev_flow->layers & MLX5_FLOW_LAYER_TUNNEL);
 	unsigned int i;
 
 	assert(dev->data->dev_started);
@@ -601,15 +622,34 @@ mlx5_flow_rxq_flags_trim(struct rte_eth_dev *dev, struct rte_flow *flow)
 
 			/* Decrease the counter matching the flow. */
 			for (j = 0; j != MLX5_FLOW_TUNNEL; ++j) {
-				if ((tunnels_info[j].tunnel & flow->layers) ==
+				if ((tunnels_info[j].tunnel &
+				     dev_flow->layers) ==
 				    tunnels_info[j].tunnel) {
 					rxq_ctrl->flow_tunnels_n[j]--;
 					break;
 				}
 			}
-			mlx5_flow_rxq_tunnel_ptype_update(rxq_ctrl);
+			flow_rxq_tunnel_ptype_update(rxq_ctrl);
 		}
 	}
+}
+
+/**
+ * Clear the Rx queue flags (Mark/Flag and Tunnel Ptype) associated with the
+ * @p flow if no other flow uses it with the same kind of request.
+ *
+ * @param dev
+ *   Pointer to Ethernet device.
+ * @param[in] flow
+ *   Pointer to the flow.
+ */
+static void
+flow_rxq_flags_trim(struct rte_eth_dev *dev, struct rte_flow *flow)
+{
+	struct mlx5_flow *dev_flow;
+
+	LIST_FOREACH(dev_flow, &flow->dev_flows, next)
+		flow_drv_rxq_flags_trim(dev, dev_flow);
 }
 
 /**
@@ -619,7 +659,7 @@ mlx5_flow_rxq_flags_trim(struct rte_eth_dev *dev, struct rte_flow *flow)
  *   Pointer to Ethernet device.
  */
 static void
-mlx5_flow_rxq_flags_clear(struct rte_eth_dev *dev)
+flow_rxq_flags_clear(struct rte_eth_dev *dev)
 {
 	struct priv *priv = dev->data->dev_private;
 	unsigned int i;
@@ -921,16 +961,10 @@ mlx5_flow_validate_action_rss(const struct rte_flow_action *action,
  *   0 on success, a negative errno value otherwise and rte_ernno is set.
  */
 int
-mlx5_flow_validate_action_count(struct rte_eth_dev *dev,
+mlx5_flow_validate_action_count(struct rte_eth_dev *dev __rte_unused,
 				const struct rte_flow_attr *attr,
 				struct rte_flow_error *error)
 {
-	struct priv *priv = dev->data->dev_private;
-
-	if (!priv->config.flow_counter_en)
-		return rte_flow_error_set(error, ENOTSUP,
-					  RTE_FLOW_ERROR_TYPE_ACTION, NULL,
-					  "flow counters are not supported.");
 	if (attr->egress)
 		return rte_flow_error_set(error, ENOTSUP,
 					  RTE_FLOW_ERROR_TYPE_ATTR_EGRESS, NULL,
@@ -1653,6 +1687,17 @@ flow_null_destroy(struct rte_eth_dev *dev __rte_unused,
 {
 }
 
+static int
+flow_null_query(struct rte_eth_dev *dev __rte_unused,
+		struct rte_flow *flow __rte_unused,
+		const struct rte_flow_action *actions __rte_unused,
+		void *data __rte_unused,
+		struct rte_flow_error *error __rte_unused)
+{
+	rte_errno = ENOTSUP;
+	return -rte_errno;
+}
+
 /* Void driver to protect from null pointer reference. */
 const struct mlx5_flow_driver_ops mlx5_flow_null_drv_ops = {
 	.validate = flow_null_validate,
@@ -1661,6 +1706,7 @@ const struct mlx5_flow_driver_ops mlx5_flow_null_drv_ops = {
 	.apply = flow_null_apply,
 	.remove = flow_null_remove,
 	.destroy = flow_null_destroy,
+	.query = flow_null_query,
 };
 
 /**
@@ -1673,25 +1719,19 @@ const struct mlx5_flow_driver_ops mlx5_flow_null_drv_ops = {
  *   Pointer to the flow attributes.
  *
  * @return
- *   flow driver type if supported, MLX5_FLOW_TYPE_MAX otherwise.
+ *   flow driver type, MLX5_FLOW_TYPE_MAX otherwise.
  */
 static enum mlx5_flow_drv_type
-flow_get_drv_type(struct rte_eth_dev *dev __rte_unused,
-		  const struct rte_flow_attr *attr)
+flow_get_drv_type(struct rte_eth_dev *dev, const struct rte_flow_attr *attr)
 {
-	struct priv *priv __rte_unused = dev->data->dev_private;
+	struct priv *priv = dev->data->dev_private;
 	enum mlx5_flow_drv_type type = MLX5_FLOW_TYPE_MAX;
 
-	if (attr->transfer) {
+	if (attr->transfer)
 		type = MLX5_FLOW_TYPE_TCF;
-	} else {
-#ifdef HAVE_IBV_FLOW_DV_SUPPORT
-		type = priv->config.dv_flow_en ?  MLX5_FLOW_TYPE_DV :
-						  MLX5_FLOW_TYPE_VERBS;
-#else
-		type = MLX5_FLOW_TYPE_VERBS;
-#endif
-	}
+	else
+		type = priv->config.dv_flow_en ? MLX5_FLOW_TYPE_DV :
+						 MLX5_FLOW_TYPE_VERBS;
 	return type;
 }
 
@@ -1908,7 +1948,7 @@ mlx5_flow_validate(struct rte_eth_dev *dev,
  *   Pointer to the RSS action if exist, else return NULL.
  */
 static const struct rte_flow_action_rss*
-mlx5_flow_get_rss_action(const struct rte_flow_action actions[])
+flow_get_rss_action(const struct rte_flow_action actions[])
 {
 	for (; actions->type != RTE_FLOW_ACTION_TYPE_END; actions++) {
 		switch (actions->type) {
@@ -1923,7 +1963,7 @@ mlx5_flow_get_rss_action(const struct rte_flow_action actions[])
 }
 
 static unsigned int
-mlx5_find_graph_root(const struct rte_flow_item pattern[], uint32_t rss_level)
+find_graph_root(const struct rte_flow_item pattern[], uint32_t rss_level)
 {
 	const struct rte_flow_item *item;
 	unsigned int has_vlan = 0;
@@ -1961,12 +2001,11 @@ mlx5_find_graph_root(const struct rte_flow_item pattern[], uint32_t rss_level)
  *   A flow on success, NULL otherwise and rte_errno is set.
  */
 static struct rte_flow *
-mlx5_flow_list_create(struct rte_eth_dev *dev,
-		      struct mlx5_flows *list,
-		      const struct rte_flow_attr *attr,
-		      const struct rte_flow_item items[],
-		      const struct rte_flow_action actions[],
-		      struct rte_flow_error *error)
+flow_list_create(struct rte_eth_dev *dev, struct mlx5_flows *list,
+		 const struct rte_flow_attr *attr,
+		 const struct rte_flow_item items[],
+		 const struct rte_flow_action actions[],
+		 struct rte_flow_error *error)
 {
 	struct rte_flow *flow = NULL;
 	struct mlx5_flow *dev_flow;
@@ -1986,7 +2025,7 @@ mlx5_flow_list_create(struct rte_eth_dev *dev,
 	if (ret < 0)
 		return NULL;
 	flow_size = sizeof(struct rte_flow);
-	rss = mlx5_flow_get_rss_action(actions);
+	rss = flow_get_rss_action(actions);
 	if (rss)
 		flow_size += RTE_ALIGN_CEIL(rss->queue_num * sizeof(uint16_t),
 					    sizeof(void *));
@@ -2001,7 +2040,7 @@ mlx5_flow_list_create(struct rte_eth_dev *dev,
 	if (rss && rss->types) {
 		unsigned int graph_root;
 
-		graph_root = mlx5_find_graph_root(items, rss->level);
+		graph_root = find_graph_root(items, rss->level);
 		ret = rte_flow_expand_rss(buf, sizeof(expand_buffer.buffer),
 					  items, rss->types,
 					  mlx5_support_expansion,
@@ -2019,6 +2058,11 @@ mlx5_flow_list_create(struct rte_eth_dev *dev,
 		if (!dev_flow)
 			goto error;
 		dev_flow->flow = flow;
+		dev_flow->layers = item_flags;
+		/* Store actions once as expanded flows have same actions. */
+		if (i == 0)
+			flow->actions = action_flags;
+		assert(flow->actions == action_flags);
 		LIST_INSERT_HEAD(&flow->dev_flows, dev_flow, next);
 		ret = flow_drv_translate(dev, dev_flow, attr,
 					 buf->entry[i].pattern,
@@ -2032,7 +2076,7 @@ mlx5_flow_list_create(struct rte_eth_dev *dev,
 			goto error;
 	}
 	TAILQ_INSERT_TAIL(list, flow, next);
-	mlx5_flow_rxq_flags_set(dev, flow);
+	flow_rxq_flags_set(dev, flow);
 	return flow;
 error:
 	ret = rte_errno; /* Save rte_errno before cleanup. */
@@ -2056,9 +2100,9 @@ mlx5_flow_create(struct rte_eth_dev *dev,
 		 const struct rte_flow_action actions[],
 		 struct rte_flow_error *error)
 {
-	return mlx5_flow_list_create
-		(dev, &((struct priv *)dev->data->dev_private)->flows,
-		 attr, items, actions, error);
+	return flow_list_create(dev,
+				&((struct priv *)dev->data->dev_private)->flows,
+				attr, items, actions, error);
 }
 
 /**
@@ -2072,8 +2116,8 @@ mlx5_flow_create(struct rte_eth_dev *dev,
  *   Flow to destroy.
  */
 static void
-mlx5_flow_list_destroy(struct rte_eth_dev *dev, struct mlx5_flows *list,
-		       struct rte_flow *flow)
+flow_list_destroy(struct rte_eth_dev *dev, struct mlx5_flows *list,
+		  struct rte_flow *flow)
 {
 	flow_drv_destroy(dev, flow);
 	TAILQ_REMOVE(list, flow, next);
@@ -2082,7 +2126,7 @@ mlx5_flow_list_destroy(struct rte_eth_dev *dev, struct mlx5_flows *list,
 	 * already clean.
 	 */
 	if (dev->data->dev_started)
-		mlx5_flow_rxq_flags_trim(dev, flow);
+		flow_rxq_flags_trim(dev, flow);
 	rte_free(flow);
 }
 
@@ -2101,7 +2145,7 @@ mlx5_flow_list_flush(struct rte_eth_dev *dev, struct mlx5_flows *list)
 		struct rte_flow *flow;
 
 		flow = TAILQ_FIRST(list);
-		mlx5_flow_list_destroy(dev, list, flow);
+		flow_list_destroy(dev, list, flow);
 	}
 }
 
@@ -2120,7 +2164,7 @@ mlx5_flow_stop(struct rte_eth_dev *dev, struct mlx5_flows *list)
 
 	TAILQ_FOREACH_REVERSE(flow, list, mlx5_flows, next)
 		flow_drv_remove(dev, flow);
-	mlx5_flow_rxq_flags_clear(dev);
+	flow_rxq_flags_clear(dev);
 }
 
 /**
@@ -2146,7 +2190,7 @@ mlx5_flow_start(struct rte_eth_dev *dev, struct mlx5_flows *list)
 		ret = flow_drv_apply(dev, flow, &error);
 		if (ret < 0)
 			goto error;
-		mlx5_flow_rxq_flags_set(dev, flow);
+		flow_rxq_flags_set(dev, flow);
 	}
 	return 0;
 error:
@@ -2255,8 +2299,8 @@ mlx5_ctrl_flow_vlan(struct rte_eth_dev *dev,
 	}
 	for (i = 0; i != priv->reta_idx_n; ++i)
 		queue[i] = (*priv->reta_idx)[i];
-	flow = mlx5_flow_list_create(dev, &priv->ctrl_flows, &attr, items,
-				     actions, &error);
+	flow = flow_list_create(dev, &priv->ctrl_flows,
+				&attr, items, actions, &error);
 	if (!flow)
 		return -rte_errno;
 	return 0;
@@ -2296,7 +2340,7 @@ mlx5_flow_destroy(struct rte_eth_dev *dev,
 {
 	struct priv *priv = dev->data->dev_private;
 
-	mlx5_flow_list_destroy(dev, &priv->flows, flow);
+	flow_list_destroy(dev, &priv->flows, flow);
 	return 0;
 }
 
@@ -2345,92 +2389,45 @@ mlx5_flow_isolate(struct rte_eth_dev *dev,
 }
 
 /**
- * Query flow counter.
+ * Query a flow.
  *
- * @param flow
- *   Pointer to the flow.
- *
- * @return
- *   0 on success, a negative errno value otherwise and rte_errno is set.
+ * @see rte_flow_query()
+ * @see rte_flow_ops
  */
 static int
-mlx5_flow_query_count(struct rte_flow *flow __rte_unused,
-		      void *data __rte_unused,
-		      struct rte_flow_error *error)
+flow_drv_query(struct rte_eth_dev *dev,
+	       struct rte_flow *flow,
+	       const struct rte_flow_action *actions,
+	       void *data,
+	       struct rte_flow_error *error)
 {
-#ifdef HAVE_IBV_DEVICE_COUNTERS_SET_SUPPORT
-	if (flow->actions & MLX5_FLOW_ACTION_COUNT) {
-		struct rte_flow_query_count *qc = data;
-		uint64_t counters[2] = {0, 0};
-		struct ibv_query_counter_set_attr query_cs_attr = {
-			.cs = flow->counter->cs,
-			.query_flags = IBV_COUNTER_SET_FORCE_UPDATE,
-		};
-		struct ibv_counter_set_data query_out = {
-			.out = counters,
-			.outlen = 2 * sizeof(uint64_t),
-		};
-		int err = mlx5_glue->query_counter_set(&query_cs_attr,
-						       &query_out);
+	const struct mlx5_flow_driver_ops *fops;
+	enum mlx5_flow_drv_type ftype = flow->drv_type;
 
-		if (err)
-			return rte_flow_error_set
-				(error, err,
-				 RTE_FLOW_ERROR_TYPE_UNSPECIFIED,
-				 NULL,
-				 "cannot read counter");
-		qc->hits_set = 1;
-		qc->bytes_set = 1;
-		qc->hits = counters[0] - flow->counter->hits;
-		qc->bytes = counters[1] - flow->counter->bytes;
-		if (qc->reset) {
-			flow->counter->hits = counters[0];
-			flow->counter->bytes = counters[1];
-		}
-		return 0;
-	}
-	return rte_flow_error_set(error, EINVAL,
-				  RTE_FLOW_ERROR_TYPE_UNSPECIFIED,
-				  NULL,
-				  "flow does not have counter");
-#endif
-	return rte_flow_error_set(error, ENOTSUP,
-				  RTE_FLOW_ERROR_TYPE_UNSPECIFIED,
-				  NULL,
-				  "counters are not available");
+	assert(ftype > MLX5_FLOW_TYPE_MIN && ftype < MLX5_FLOW_TYPE_MAX);
+	fops = flow_get_drv_ops(ftype);
+
+	return fops->query(dev, flow, actions, data, error);
 }
 
 /**
- * Query a flows.
+ * Query a flow.
  *
  * @see rte_flow_query()
  * @see rte_flow_ops
  */
 int
-mlx5_flow_query(struct rte_eth_dev *dev __rte_unused,
+mlx5_flow_query(struct rte_eth_dev *dev,
 		struct rte_flow *flow,
 		const struct rte_flow_action *actions,
 		void *data,
 		struct rte_flow_error *error)
 {
-	int ret = 0;
+	int ret;
 
-	for (; actions->type != RTE_FLOW_ACTION_TYPE_END; actions++) {
-		switch (actions->type) {
-		case RTE_FLOW_ACTION_TYPE_VOID:
-			break;
-		case RTE_FLOW_ACTION_TYPE_COUNT:
-			ret = mlx5_flow_query_count(flow, data, error);
-			break;
-		default:
-			return rte_flow_error_set(error, ENOTSUP,
-						  RTE_FLOW_ERROR_TYPE_ACTION,
-						  actions,
-						  "action not supported");
-		}
-		if (ret < 0)
-			return ret;
-	}
+	ret = flow_drv_query(dev, flow, actions, data, error);
+	if (ret < 0)
+		return ret;
 	return 0;
 }
 
@@ -2651,9 +2648,8 @@ mlx5_fdir_filter_add(struct rte_eth_dev *dev,
 	ret = mlx5_fdir_filter_convert(dev, fdir_filter, &attributes);
 	if (ret)
 		return ret;
-	flow = mlx5_flow_list_create(dev, &priv->flows, &attributes.attr,
-				     attributes.items, attributes.actions,
-				     &error);
+	flow = flow_list_create(dev, &priv->flows, &attributes.attr,
+				attributes.items, attributes.actions, &error);
 	if (flow) {
 		DRV_LOG(DEBUG, "port %u FDIR created %p", dev->data->port_id,
 			(void *)flow);

@@ -417,6 +417,14 @@ enum rte_flow_item_type {
 	 * See struct rte_flow_item_mark.
 	 */
 	RTE_FLOW_ITEM_TYPE_MARK,
+
+	/**
+	 * [META]
+	 *
+	 * Matches a metadata value specified in mbuf metadata field.
+	 * See struct rte_flow_item_meta.
+	 */
+	RTE_FLOW_ITEM_TYPE_META,
 };
 
 /**
@@ -1162,6 +1170,22 @@ rte_flow_item_icmp6_nd_opt_tla_eth_mask = {
 #endif
 
 /**
+ * RTE_FLOW_ITEM_TYPE_META.
+ *
+ * Matches a specified metadata value.
+ */
+struct rte_flow_item_meta {
+	rte_be32_t data;
+};
+
+/** Default mask for RTE_FLOW_ITEM_TYPE_META. */
+#ifndef __cplusplus
+static const struct rte_flow_item_meta rte_flow_item_meta_mask = {
+	.data = RTE_BE32(UINT32_MAX),
+};
+#endif
+
+/**
  * @warning
  * @b EXPERIMENTAL: this structure may change without prior notice
  *
@@ -1515,6 +1539,20 @@ enum rte_flow_action_type {
 	RTE_FLOW_ACTION_TYPE_NVGRE_DECAP,
 
 	/**
+	 * Add outer header whose template is provided in its data buffer
+	 *
+	 * See struct rte_flow_action_raw_encap.
+	 */
+	RTE_FLOW_ACTION_TYPE_RAW_ENCAP,
+
+	/**
+	 * Remove outer header whose template is provided in its data buffer.
+	 *
+	 * See struct rte_flow_action_raw_decap
+	 */
+	RTE_FLOW_ACTION_TYPE_RAW_DECAP,
+
+	/**
 	 * Modify IPv4 source address in the outermost IPv4 header.
 	 *
 	 * If flow pattern does not define a valid RTE_FLOW_ITEM_TYPE_IPV4,
@@ -1586,6 +1624,40 @@ enum rte_flow_action_type {
 	 * No associated configuration structure.
 	 */
 	RTE_FLOW_ACTION_TYPE_MAC_SWAP,
+
+	/**
+	 * Decrease TTL value directly
+	 *
+	 * No associated configuration structure.
+	 */
+	RTE_FLOW_ACTION_TYPE_DEC_TTL,
+
+	/**
+	 * Set TTL value
+	 *
+	 * See struct rte_flow_action_set_ttl
+	 */
+	RTE_FLOW_ACTION_TYPE_SET_TTL,
+
+	/**
+	 * Set source MAC address from matched flow.
+	 *
+	 * If flow pattern does not define a valid RTE_FLOW_ITEM_TYPE_ETH,
+	 * the PMD should return a RTE_FLOW_ERROR_TYPE_ACTION error.
+	 *
+	 * See struct rte_flow_action_set_mac.
+	 */
+	RTE_FLOW_ACTION_TYPE_SET_MAC_SRC,
+
+	/**
+	 * Set destination MAC address from matched flow.
+	 *
+	 * If flow pattern does not define a valid RTE_FLOW_ITEM_TYPE_ETH,
+	 * the PMD should return a RTE_FLOW_ERROR_TYPE_ACTION error.
+	 *
+	 * See struct rte_flow_action_set_mac.
+	 */
+	RTE_FLOW_ACTION_TYPE_SET_MAC_DST,
 };
 
 /**
@@ -1953,6 +2025,51 @@ struct rte_flow_action_nvgre_encap {
  * @warning
  * @b EXPERIMENTAL: this structure may change without prior notice
  *
+ * RTE_FLOW_ACTION_TYPE_RAW_ENCAP
+ *
+ * Raw tunnel end-point encapsulation data definition.
+ *
+ * The data holds the headers definitions to be applied on the packet.
+ * The data must start with ETH header up to the tunnel item header itself.
+ * When used right after RAW_DECAP (for decapsulating L3 tunnel type for
+ * example MPLSoGRE) the data will just hold layer 2 header.
+ *
+ * The preserve parameter holds which bits in the packet the PMD is not allowed
+ * to change, this parameter can also be NULL and then the PMD is allowed
+ * to update any field.
+ *
+ * size holds the number of bytes in @p data and @p preserve.
+ */
+struct rte_flow_action_raw_encap {
+	uint8_t *data; /**< Encapsulation data. */
+	uint8_t *preserve; /**< Bit-mask of @p data to preserve on output. */
+	size_t size; /**< Size of @p data and @p preserve. */
+};
+
+/**
+ * @warning
+ * @b EXPERIMENTAL: this structure may change without prior notice
+ *
+ * RTE_FLOW_ACTION_TYPE_RAW_DECAP
+ *
+ * Raw tunnel end-point decapsulation data definition.
+ *
+ * The data holds the headers definitions to be removed from the packet.
+ * The data must start with ETH header up to the tunnel item header itself.
+ * When used right before RAW_DECAP (for encapsulating L3 tunnel type for
+ * example MPLSoGRE) the data will just hold layer 2 header.
+ *
+ * size holds the number of bytes in @p data.
+ */
+struct rte_flow_action_raw_decap {
+	uint8_t *data; /**< Encapsulation data. */
+	size_t size; /**< Size of @p data and @p preserve. */
+};
+
+/**
+ * @warning
+ * @b EXPERIMENTAL: this structure may change without prior notice
+ *
  * RTE_FLOW_ACTION_TYPE_SET_IPV4_SRC
  * RTE_FLOW_ACTION_TYPE_SET_IPV4_DST
  *
@@ -1992,6 +2109,24 @@ struct rte_flow_action_set_ipv6 {
  */
 struct rte_flow_action_set_tp {
 	rte_be16_t port;
+};
+
+/**
+ * RTE_FLOW_ACTION_TYPE_SET_TTL
+ *
+ * Set the TTL value directly for IPv4 or IPv6
+ */
+struct rte_flow_action_set_ttl {
+	uint8_t ttl_value;
+};
+
+/**
+ * RTE_FLOW_ACTION_TYPE_SET_MAC
+ *
+ * Set MAC address from the matched flow
+ */
+struct rte_flow_action_set_mac {
+	uint8_t mac_addr[ETHER_ADDR_LEN];
 };
 
 /*

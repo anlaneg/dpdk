@@ -35,7 +35,6 @@
 #define RTE_MAX_TAILQ 32
 #define RTE_LOG_DP_LEVEL RTE_LOG_INFO
 #define RTE_BACKTRACE 1
-#define RTE_EAL_VFIO 1
 #define RTE_MAX_VFIO_CONTAINERS 64
 
 /* bsd module defines */
@@ -95,6 +94,7 @@
 /* Max. number of QuickAssist devices which can be attached */
 #define RTE_PMD_QAT_MAX_PCI_DEVICES 48
 #define RTE_PMD_QAT_COMP_SGL_MAX_SEGMENTS 16
+#define RTE_PMD_QAT_COMP_IM_BUFFER_SIZE 65536
 
 /* virtio crypto defines */
 #define RTE_MAX_VIRTIO_CRYPTO 32

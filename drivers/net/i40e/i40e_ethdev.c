@@ -1728,9 +1728,6 @@ eth_i40e_dev_uninit(struct rte_eth_dev *dev)
 	/* uninitialize pf host driver */
 	i40e_pf_host_uninit(dev);
 
-	rte_free(dev->data->mac_addrs);
-	dev->data->mac_addrs = NULL;
-
 	/* disable uio intr before callback unregister */
 	rte_intr_disable(intr_handle);
 
@@ -2586,6 +2583,10 @@ i40e_dev_promiscuous_disable(struct rte_eth_dev *dev)
 						     false, NULL, true);
 	if (status != I40E_SUCCESS)
 		PMD_DRV_LOG(ERR, "Failed to disable unicast promiscuous");
+
+	/* must remain in all_multicast mode */
+	if (dev->data->all_multicast == 1)
+		return;
 
 	status = i40e_aq_set_vsi_multicast_promiscuous(hw, vsi->seid,
 							false, NULL);
@@ -5371,7 +5372,7 @@ i40e_enable_pf_lb(struct i40e_pf *pf)
 	int ret;
 
 	/* Use the FW API if FW >= v5.0 */
-	if (hw->aq.fw_maj_ver < 5) {
+	if (hw->aq.fw_maj_ver < 5 && hw->mac.type != I40E_MAC_X722) {
 		PMD_INIT_LOG(ERR, "FW < v5.0, cannot enable loopback");
 		return;
 	}
@@ -5642,7 +5643,7 @@ i40e_vsi_setup(struct i40e_pf *pf,
 		ctxt.flags = I40E_AQ_VSI_TYPE_VF;
 
 		/* Use the VEB configuration if FW >= v5.0 */
-		if (hw->aq.fw_maj_ver >= 5) {
+		if (hw->aq.fw_maj_ver >= 5 || hw->mac.type == I40E_MAC_X722) {
 			/* Configure switch ID */
 			ctxt.info.valid_sections |=
 			rte_cpu_to_le_16(I40E_AQ_VSI_PROP_SWITCH_VALID);

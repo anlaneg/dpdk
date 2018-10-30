@@ -55,6 +55,10 @@
 		PKT_TX_OUTER_IP_CKSUM)
 
 #define I40E_TX_OFFLOAD_MASK (  \
+		PKT_TX_OUTER_IPV4 |	\
+		PKT_TX_OUTER_IPV6 |	\
+		PKT_TX_IPV4 |		\
+		PKT_TX_IPV6 |		\
 		PKT_TX_IP_CKSUM |       \
 		PKT_TX_L4_MASK |        \
 		PKT_TX_OUTER_IP_CKSUM | \
@@ -3176,13 +3180,13 @@ i40e_set_default_pctype_table(struct rte_eth_dev *dev)
 }
 
 /* Stubs needed for linkage when CONFIG_RTE_I40E_INC_VECTOR is set to 'n' */
-int __attribute__((weak))
+__rte_weak int
 i40e_rx_vec_dev_conf_condition_check(struct rte_eth_dev __rte_unused *dev)
 {
 	return -1;
 }
 
-uint16_t __attribute__((weak))
+__rte_weak uint16_t
 i40e_recv_pkts_vec(
 	void __rte_unused *rx_queue,
 	struct rte_mbuf __rte_unused **rx_pkts,
@@ -3191,7 +3195,7 @@ i40e_recv_pkts_vec(
 	return 0;
 }
 
-uint16_t __attribute__((weak))
+__rte_weak uint16_t
 i40e_recv_scattered_pkts_vec(
 	void __rte_unused *rx_queue,
 	struct rte_mbuf __rte_unused **rx_pkts,
@@ -3200,7 +3204,7 @@ i40e_recv_scattered_pkts_vec(
 	return 0;
 }
 
-uint16_t __attribute__((weak))
+__rte_weak uint16_t
 i40e_recv_pkts_vec_avx2(void __rte_unused *rx_queue,
 			struct rte_mbuf __rte_unused **rx_pkts,
 			uint16_t __rte_unused nb_pkts)
@@ -3208,7 +3212,7 @@ i40e_recv_pkts_vec_avx2(void __rte_unused *rx_queue,
 	return 0;
 }
 
-uint16_t __attribute__((weak))
+__rte_weak uint16_t
 i40e_recv_scattered_pkts_vec_avx2(void __rte_unused *rx_queue,
 			struct rte_mbuf __rte_unused **rx_pkts,
 			uint16_t __rte_unused nb_pkts)
@@ -3216,25 +3220,25 @@ i40e_recv_scattered_pkts_vec_avx2(void __rte_unused *rx_queue,
 	return 0;
 }
 
-int __attribute__((weak))
+__rte_weak int
 i40e_rxq_vec_setup(struct i40e_rx_queue __rte_unused *rxq)
 {
 	return -1;
 }
 
-int __attribute__((weak))
+__rte_weak int
 i40e_txq_vec_setup(struct i40e_tx_queue __rte_unused *txq)
 {
 	return -1;
 }
 
-void __attribute__((weak))
+__rte_weak void
 i40e_rx_queue_release_mbufs_vec(struct i40e_rx_queue __rte_unused*rxq)
 {
 	return;
 }
 
-uint16_t __attribute__((weak))
+__rte_weak uint16_t
 i40e_xmit_fixed_burst_vec(void __rte_unused * tx_queue,
 			  struct rte_mbuf __rte_unused **tx_pkts,
 			  uint16_t __rte_unused nb_pkts)
@@ -3242,7 +3246,7 @@ i40e_xmit_fixed_burst_vec(void __rte_unused * tx_queue,
 	return 0;
 }
 
-uint16_t __attribute__((weak))
+__rte_weak uint16_t
 i40e_xmit_pkts_vec_avx2(void __rte_unused * tx_queue,
 			  struct rte_mbuf __rte_unused **tx_pkts,
 			  uint16_t __rte_unused nb_pkts)

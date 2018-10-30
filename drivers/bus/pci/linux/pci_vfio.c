@@ -37,7 +37,9 @@
 
 #ifdef VFIO_PRESENT
 
+#ifndef PAGE_SIZE
 #define PAGE_SIZE   (sysconf(_SC_PAGESIZE))
+#endif
 #define PAGE_MASK   (~(PAGE_SIZE - 1))
 
 static struct rte_tailq_elem rte_vfio_tailq = {
@@ -279,6 +281,7 @@ pci_vfio_setup_interrupts(struct rte_pci_device *dev, int vfio_dev_fd)
 	return -1;
 }
 
+#ifdef HAVE_VFIO_DEV_REQ_INTERFACE
 static void
 pci_vfio_req_handler(void *param)
 {
@@ -338,7 +341,7 @@ pci_vfio_enable_notifier(struct rte_pci_device *dev, int vfio_dev_fd)
 		ret = rte_intr_callback_unregister(&dev->vfio_req_intr_handle,
 						 pci_vfio_req_handler,
 						 (void *)&dev->device);
-		if (ret)
+		if (ret < 0)
 			RTE_LOG(ERR, EAL,
 				"Fail to unregister req notifier handler.\n");
 		goto error;
@@ -370,7 +373,7 @@ pci_vfio_disable_notifier(struct rte_pci_device *dev)
 	ret = rte_intr_callback_unregister(&dev->vfio_req_intr_handle,
 					   pci_vfio_req_handler,
 					   (void *)&dev->device);
-	if (ret) {
+	if (ret < 0) {
 		RTE_LOG(ERR, EAL,
 			 "fail to unregister req notifier handler.\n");
 		return -1;
@@ -384,6 +387,7 @@ pci_vfio_disable_notifier(struct rte_pci_device *dev)
 
 	return 0;
 }
+#endif
 
 static int
 pci_vfio_is_ioport_bar(int vfio_dev_fd, int bar_index)
@@ -625,7 +629,9 @@ pci_vfio_map_resource_primary(struct rte_pci_device *dev)
 	struct pci_map *maps;
 
 	dev->intr_handle.fd = -1;
+#ifdef HAVE_VFIO_DEV_REQ_INTERFACE
 	dev->vfio_req_intr_handle.fd = -1;
+#endif
 
 	/* store PCI address string */
 	snprintf(pci_addr, sizeof(pci_addr), PCI_PRI_FMT,
@@ -736,11 +742,13 @@ pci_vfio_map_resource_primary(struct rte_pci_device *dev)
 		goto err_vfio_res;
 	}
 
+#ifdef HAVE_VFIO_DEV_REQ_INTERFACE
 	if (pci_vfio_enable_notifier(dev, vfio_dev_fd) != 0) {
 		RTE_LOG(ERR, EAL, "Error setting up notifier!\n");
 		goto err_vfio_res;
 	}
 
+#endif
 	TAILQ_INSERT_TAIL(vfio_res_list, vfio_res, next);
 
 	return 0;
@@ -766,7 +774,9 @@ pci_vfio_map_resource_secondary(struct rte_pci_device *dev)
 	struct pci_map *maps;
 
 	dev->intr_handle.fd = -1;
+#ifdef HAVE_VFIO_DEV_REQ_INTERFACE
 	dev->vfio_req_intr_handle.fd = -1;
+#endif
 
 	/* store PCI address string */
 	snprintf(pci_addr, sizeof(pci_addr), PCI_PRI_FMT,
@@ -807,7 +817,9 @@ pci_vfio_map_resource_secondary(struct rte_pci_device *dev)
 
 	/* we need save vfio_dev_fd, so it can be used during release */
 	dev->intr_handle.vfio_dev_fd = vfio_dev_fd;
+#ifdef HAVE_VFIO_DEV_REQ_INTERFACE
 	dev->vfio_req_intr_handle.vfio_dev_fd = vfio_dev_fd;
+#endif
 
 	return 0;
 err_vfio_dev_fd:
@@ -880,12 +892,14 @@ pci_vfio_unmap_resource_primary(struct rte_pci_device *dev)
 	snprintf(pci_addr, sizeof(pci_addr), PCI_PRI_FMT,
 			loc->domain, loc->bus, loc->devid, loc->function);
 
+#ifdef HAVE_VFIO_DEV_REQ_INTERFACE
 	ret = pci_vfio_disable_notifier(dev);
 	if (ret) {
 		RTE_LOG(ERR, EAL, "fail to disable req notifier.\n");
 		return -1;
 	}
 
+#endif
 	if (close(dev->intr_handle.fd) < 0) {
 		RTE_LOG(INFO, EAL, "Error when closing eventfd file descriptor for %s\n",
 			pci_addr);

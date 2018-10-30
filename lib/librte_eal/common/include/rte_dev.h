@@ -160,38 +160,28 @@ struct rte_device {
 	const struct rte_driver *driver;/**< Associated driver */ //采用哪个驱动
 	const struct rte_bus *bus;    /**< Bus handle assigned on scan */
 	int numa_node;                /**< NUMA node connection */ //属于那个numa
-	struct rte_devargs *devargs;  /**< Device user arguments */ //用户为此设备提供的参数
+	struct rte_devargs *devargs;  /**< Arguments for latest probing */ //用户为此设备提供的参数
 };
 
 /**
- * Attach a device to a registered driver.
+ * @warning
+ * @b EXPERIMENTAL: this API may change without prior notice
  *
- * @param name
- *   The device name, that refers to a pci device (or some private
- *   way of designating a vdev device). Based on this device name, eal
- *   will identify a driver capable of handling it and pass it to the
- *   driver probing function.
- * @param devargs
- *   Device arguments to be passed to the driver.
- * @return
- *   0 on success, negative on error.
- */
-__rte_deprecated
-int rte_eal_dev_attach(const char *name, const char *devargs);
-
-/**
- * Detach a device from its driver.
+ * Query status of a device.
  *
  * @param dev
- *   A pointer to a rte_device structure.
+ *   Generic device pointer.
  * @return
- *   0 on success, negative on error.
+ *   (int)true if already probed successfully, 0 otherwise.
  */
-__rte_deprecated
-int rte_eal_dev_detach(struct rte_device *dev);
+__rte_experimental
+int rte_dev_is_probed(const struct rte_device *dev);
 
 /**
  * Hotplug add a given device to a specific bus.
+ *
+ * In multi-process, it will request other processes to add the same device.
+ * A failure, in any process, will rollback the action
  *
  * @param busname
  *   The bus name the device is added to.
@@ -212,6 +202,9 @@ int rte_eal_hotplug_add(const char *busname, const char *devname,
  *
  * Add matching devices.
  *
+ * In multi-process, it will request other processes to add the same device.
+ * A failure, in any process, will rollback the action
+ *
  * @param devargs
  *   Device arguments including bus, class and driver properties.
  * @return
@@ -221,6 +214,9 @@ int __rte_experimental rte_dev_probe(const char *devargs);
 
 /**
  * Hotplug remove a given device from a specific bus.
+ *
+ * In multi-process, it will request other processes to remove the same device.
+ * A failure, in any process, will rollback the action
  *
  * @param busname
  *   The bus name the device is removed from.
@@ -236,6 +232,9 @@ int rte_eal_hotplug_remove(const char *busname, const char *devname);
  * @b EXPERIMENTAL: this API may change without prior notice
  *
  * Remove one device.
+ *
+ * In multi-process, it will request other processes to remove the same device.
+ * A failure, in any process, will rollback the action
  *
  * @param dev
  *   Data structure of the device to remove.

@@ -56,6 +56,7 @@ INPUT                   = @TOPDIR@/doc/api/doxy-api-index.md \
                           @TOPDIR@/lib/librte_sched \
                           @TOPDIR@/lib/librte_security \
                           @TOPDIR@/lib/librte_table \
+                          @TOPDIR@/lib/librte_telemetry \
                           @TOPDIR@/lib/librte_timer \
                           @TOPDIR@/lib/librte_vhost
 INPUT                   += @API_EXAMPLES@
@@ -74,7 +75,7 @@ DISTRIBUTE_GROUP_DOC    = YES
 HIDE_UNDOC_MEMBERS      = YES
 HIDE_UNDOC_CLASSES      = YES
 HIDE_SCOPE_NAMES        = YES
-GENERATE_DEPRECATEDLIST = NO
+GENERATE_DEPRECATEDLIST = YES
 VERBATIM_HEADERS        = NO
 ALPHABETICAL_INDEX      = NO
 

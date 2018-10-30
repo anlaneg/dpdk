@@ -292,6 +292,28 @@ int
 rte_devargs_layers_parse(struct rte_devargs *devargs,
 			 const char *devstr);
 
+/*
+ * probe a device at local process.
+ *
+ * @param devargs
+ *   Device arguments including bus, class and driver properties.
+ * @param new_dev
+ *   new device be probed as output.
+ * @return
+ *   0 on success, negative on error.
+ */
+int local_dev_probe(const char *devargs, struct rte_device **new_dev);
+
+/**
+ * Hotplug remove a given device from a specific bus at local process.
+ *
+ * @param dev
+ *   Data structure of the device to remove.
+ * @return
+ *   0 on success, negative on error.
+ */
+int local_dev_remove(struct rte_device *dev);
+
 /**
  * Iterate over all buses to find the corresponding bus to handle the sigbus
  * error.
@@ -326,5 +348,26 @@ dev_sigbus_handler_register(void);
  */
 int
 dev_sigbus_handler_unregister(void);
+
+/**
+ * Check if the option is registered.
+ *
+ * @param option
+ *  The option to be parsed.
+ *
+ * @return
+ *  0 on success
+ * @return
+ *  -1 on fail
+ */
+int
+rte_option_parse(const char *opt);
+
+/**
+ * Iterate through the registered options and execute the associated
+ * callback if enabled.
+ */
+void
+rte_option_init(void);
 
 #endif /* _EAL_PRIVATE_H_ */

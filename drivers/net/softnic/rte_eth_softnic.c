@@ -28,7 +28,7 @@
 #define PMD_PARAM_TM_QSIZE2                                "tm_qsize2"
 #define PMD_PARAM_TM_QSIZE3                                "tm_qsize3"
 
-static const char *pmd_valid_args[] = {
+static const char * const pmd_valid_args[] = {
 	PMD_PARAM_FIRMWARE,
 	PMD_PARAM_CONN_PORT,
 	PMD_PARAM_CPU_ID,
@@ -47,7 +47,7 @@ static const char welcome[] =
 
 static const char prompt[] = "softnic> ";
 
-struct softnic_conn_params conn_params_default = {
+static const struct softnic_conn_params conn_params_default = {
 	.welcome = welcome,
 	.prompt = prompt,
 	.addr = "0.0.0.0",
@@ -298,6 +298,7 @@ pmd_init(struct pmd_params *params)
 	softnic_link_init(p);
 	softnic_tmgr_init(p);
 	softnic_tap_init(p);
+	softnic_cryptodev_init(p);
 	softnic_port_in_action_profile_init(p);
 	softnic_table_action_profile_init(p);
 	softnic_pipeline_init(p);
@@ -556,7 +557,6 @@ static int
 pmd_remove(struct rte_vdev_device *vdev)
 {
 	struct rte_eth_dev *dev = NULL;
-	struct pmd_internals *p;
 
 	if (!vdev)
 		return -EINVAL;
@@ -567,12 +567,12 @@ pmd_remove(struct rte_vdev_device *vdev)
 	dev = rte_eth_dev_allocated(rte_vdev_device_name(vdev));
 	if (dev == NULL)
 		return -ENODEV;
-	p = dev->data->dev_private;
 
 	/* Free device data structures*/
-	rte_free(dev->data);
+	pmd_free(dev->data->dev_private);
+	dev->data->dev_private = NULL; /* already freed */
+	dev->data->mac_addrs = NULL; /* statically allocated */
 	rte_eth_dev_release_port(dev);
-	pmd_free(p);
 
 	return 0;
 }

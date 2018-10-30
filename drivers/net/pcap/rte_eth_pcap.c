@@ -1122,8 +1122,7 @@ pmd_pcap_probe(struct rte_vdev_device *dev)
 	start_cycles = rte_get_timer_cycles();
 	hz = rte_get_timer_hz();
 
-	if (rte_eal_process_type() == RTE_PROC_SECONDARY &&
-	    strlen(rte_vdev_device_args(dev)) == 0) {
+	if (rte_eal_process_type() == RTE_PROC_SECONDARY) {
 		eth_dev = rte_eth_dev_attach_secondary(name);
 		if (!eth_dev) {
 			PMD_LOG(ERR, "Failed to probe %s", name);
@@ -1229,11 +1228,12 @@ pmd_pcap_remove(struct rte_vdev_device *dev)
 	if (eth_dev == NULL)
 		return -1;
 
-	internals = eth_dev->data->dev_private;
-	if (internals && internals->phy_mac)
-		rte_free(eth_dev->data->mac_addrs);
-
-	rte_free(eth_dev->data->dev_private);
+	if (rte_eal_process_type() == RTE_PROC_PRIMARY) {
+		internals = eth_dev->data->dev_private;
+		if (internals != NULL && internals->phy_mac == 0)
+			/* not dynamically allocated, must not be freed */
+			eth_dev->data->mac_addrs = NULL;
+	}
 
 	rte_eth_dev_release_port(eth_dev);
 

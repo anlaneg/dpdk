@@ -362,6 +362,7 @@ vhost_new_device(void)
 	dev->flags = VIRTIO_DEV_BUILTIN_VIRTIO_NET;
 	dev->slave_req_fd = -1;
 	dev->vdpa_dev_id = -1;
+	dev->postcopy_ufd = -1;
 	rte_spinlock_init(&dev->slave_req_lock);
 
 	return i;
@@ -693,8 +694,10 @@ vhost_enable_notify_packed(struct virtio_net *dev,
 {
 	uint16_t flags;
 
-	if (!enable)
+	if (!enable) {
 		vq->device_event->flags = VRING_EVENT_F_DISABLE;
+		return;
+	}
 
 	flags = VRING_EVENT_F_ENABLE;
 	if (dev->features & (1ULL << VIRTIO_RING_F_EVENT_IDX)) {

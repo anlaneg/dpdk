@@ -75,6 +75,7 @@ struct internal_config {
 			/**< user defined mbuf pool ops name */
 	unsigned num_hugepage_sizes;      /**< how many sizes on this system *///有多少种大页类型
 	struct hugepage_info hugepage_info[MAX_HUGEPAGE_SIZES];//每种大页的信息
+	enum rte_iova_mode iova_mode ;    /**< Set IOVA mode on this system  */
 	volatile unsigned int init_complete;
 	/**< indicates whether EAL has completed initialization */
 };

@@ -279,6 +279,12 @@ parallel_test_list = [
         "Report":  None,
     },
     {
+        "Name":    "Sleep delay",
+        "Command": "delay_us_sleep_autotest",
+        "Func":    default_autotest,
+        "Report":  None,
+    },
+    {
         "Name":    "Rawdev autotest",
         "Command": "rawdev_autotest",
         "Func":    default_autotest,
@@ -341,12 +347,6 @@ parallel_test_list = [
     {
         "Name":    "Bitmap test",
         "Command": "bitmap_test",
-        "Func":    default_autotest,
-        "Report":  None,
-    },
-    {
-        "Name":    "Hash scaling autotest",
-        "Command": "hash_scaling_autotest",
         "Func":    default_autotest,
         "Report":  None,
     },
@@ -488,6 +488,12 @@ parallel_test_list = [
 	"Func":    default_autotest,
 	"Report":  None,
     },
+    {
+        "Name":    "Metrics autotest",
+        "Command": "metrics_autotest",
+        "Func":    default_autotest,
+        "Report":  None,
+    },
     #
     #Please always keep all dump tests at the end and together!
     #
@@ -576,6 +582,18 @@ non_parallel_test_list = [
     {
         "Name":    "Hash performance autotest",
         "Command": "hash_perf_autotest",
+        "Func":    default_autotest,
+        "Report":  None,
+    },
+    {
+        "Name":    "Hash read-write concurrency autotest",
+        "Command": "hash_readwrite_autotest",
+        "Func":    default_autotest,
+        "Report":  None,
+    },
+    {
+        "Name":    "Hash read-write lock-free concurrency autotest",
+        "Command": "hash_readwrite_lf_autotest",
         "Func":    default_autotest,
         "Report":  None,
     },

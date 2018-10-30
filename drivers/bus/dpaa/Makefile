@@ -14,7 +14,6 @@ CFLAGS := -I$(SRCDIR) $(CFLAGS)
 CFLAGS += -O3 $(WERROR_FLAGS)
 CFLAGS += -Wno-pointer-arith
 CFLAGS += -Wno-cast-qual
-CFLAGS += -D _GNU_SOURCE
 CFLAGS += -I$(RTE_BUS_DPAA)/
 CFLAGS += -I$(RTE_BUS_DPAA)/include
 CFLAGS += -I$(RTE_BUS_DPAA)/base/qbman
@@ -48,5 +47,6 @@ SRCS-$(CONFIG_RTE_LIBRTE_DPAA_BUS) += \
 LDLIBS += -lpthread
 LDLIBS += -lrte_eal -lrte_mbuf -lrte_mempool -lrte_ring
 LDLIBS += -lrte_ethdev
+LDLIBS += -lrte_common_dpaax
 
 include $(RTE_SDK)/mk/rte.lib.mk

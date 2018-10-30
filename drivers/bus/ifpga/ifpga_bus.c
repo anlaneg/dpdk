@@ -280,14 +280,13 @@ ifpga_probe_one_driver(struct rte_afu_driver *drv,
 
 	/* reference driver structure */
 	afu_dev->driver = drv;
-	afu_dev->device.driver = &drv->driver;
 
 	/* call the driver probe() function */
 	ret = drv->probe(afu_dev);
-	if (ret) {
+	if (ret)
 		afu_dev->driver = NULL;
-		afu_dev->device.driver = NULL;
-	}
+	else
+		afu_dev->device.driver = &drv->driver;
 
 	return ret;
 }
@@ -302,8 +301,11 @@ ifpga_probe_all_drivers(struct rte_afu_device *afu_dev)
 		return -1;
 
 	/* Check if a driver is already loaded */
-	if (afu_dev->driver != NULL)
-		return 0;
+	if (rte_dev_is_probed(&afu_dev->device)) {
+		IFPGA_BUS_DEBUG("Device %s is already probed\n",
+				rte_ifpga_device_name(afu_dev));
+		return -EEXIST;
+	}
 
 	TAILQ_FOREACH(drv, &ifpga_afu_drv_list, next) {
 		if (ifpga_probe_one_driver(drv, afu_dev)) {
@@ -326,14 +328,13 @@ ifpga_probe(void)
 	int ret = 0;
 
 	TAILQ_FOREACH(afu_dev, &ifpga_afu_dev_list, next) {
-		if (afu_dev->device.driver)
-			continue;
-
 		ret = ifpga_probe_all_drivers(afu_dev);
+		if (ret == -EEXIST)
+			continue;
 		if (ret < 0)
 			IFPGA_BUS_ERR("failed to initialize %s device\n",
 				rte_ifpga_device_name(afu_dev));
-		}
+	}
 
 	return ret;
 }

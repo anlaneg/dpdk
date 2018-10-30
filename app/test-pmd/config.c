@@ -50,6 +50,7 @@
 #endif
 #include <rte_gro.h>
 #include <cmdline_parse_etheraddr.h>
+#include <rte_config.h>
 
 #include "testpmd.h"
 
@@ -74,6 +75,10 @@ static const struct {
 };
 
 const struct rss_type_info rss_type_table[] = {
+	{ "all", ETH_RSS_IP | ETH_RSS_TCP |
+			ETH_RSS_UDP | ETH_RSS_SCTP |
+			ETH_RSS_L2_PAYLOAD },
+	{ "none", 0 },
 	{ "ipv4", ETH_RSS_IPV4 },
 	{ "ipv4-frag", ETH_RSS_FRAG_IPV4 },
 	{ "ipv4-tcp", ETH_RSS_NONFRAG_IPV4_TCP },
@@ -582,7 +587,7 @@ port_offload_cap_display(portid_t port_id)
 	if (dev_info.rx_offload_capa & DEV_RX_OFFLOAD_QINQ_STRIP) {
 		printf("Double VLANs stripped:         ");
 		if (ports[port_id].dev_conf.rxmode.offloads &
-		    DEV_RX_OFFLOAD_VLAN_EXTEND)
+		    DEV_RX_OFFLOAD_QINQ_STRIP)
 			printf("on\n");
 		else
 			printf("off\n");
@@ -1479,8 +1484,8 @@ ring_dma_zone_lookup(const char *ring_name, portid_t port_id, uint16_t q_id)
 	char mz_name[RTE_MEMZONE_NAMESIZE];
 	const struct rte_memzone *mz;
 
-	snprintf(mz_name, sizeof(mz_name), "%s_%s_%d_%d",
-		 ports[port_id].dev_info.driver_name, ring_name, port_id, q_id);
+	snprintf(mz_name, sizeof(mz_name), "eth_p%d_q%d_%s",
+			port_id, q_id, ring_name);
 	mz = rte_memzone_lookup(mz_name);
 	if (mz == NULL)
 		printf("%s ring memory zoneof (port %d, queue %d) not"
@@ -2712,11 +2717,102 @@ set_pkt_forwarding_mode(const char *fwd_mode_name)
 }
 
 void
+add_rx_dump_callbacks(portid_t portid)
+{
+	struct rte_eth_dev_info dev_info;
+	uint16_t queue;
+
+	if (port_id_is_invalid(portid, ENABLED_WARN))
+		return;
+
+	rte_eth_dev_info_get(portid, &dev_info);
+	for (queue = 0; queue < dev_info.nb_rx_queues; queue++)
+		if (!ports[portid].rx_dump_cb[queue])
+			ports[portid].rx_dump_cb[queue] =
+				rte_eth_add_rx_callback(portid, queue,
+					dump_rx_pkts, NULL);
+}
+
+void
+add_tx_dump_callbacks(portid_t portid)
+{
+	struct rte_eth_dev_info dev_info;
+	uint16_t queue;
+
+	if (port_id_is_invalid(portid, ENABLED_WARN))
+		return;
+	rte_eth_dev_info_get(portid, &dev_info);
+	for (queue = 0; queue < dev_info.nb_tx_queues; queue++)
+		if (!ports[portid].tx_dump_cb[queue])
+			ports[portid].tx_dump_cb[queue] =
+				rte_eth_add_tx_callback(portid, queue,
+							dump_tx_pkts, NULL);
+}
+
+void
+remove_rx_dump_callbacks(portid_t portid)
+{
+	struct rte_eth_dev_info dev_info;
+	uint16_t queue;
+
+	if (port_id_is_invalid(portid, ENABLED_WARN))
+		return;
+	rte_eth_dev_info_get(portid, &dev_info);
+	for (queue = 0; queue < dev_info.nb_rx_queues; queue++)
+		if (ports[portid].rx_dump_cb[queue]) {
+			rte_eth_remove_rx_callback(portid, queue,
+				ports[portid].rx_dump_cb[queue]);
+			ports[portid].rx_dump_cb[queue] = NULL;
+		}
+}
+
+void
+remove_tx_dump_callbacks(portid_t portid)
+{
+	struct rte_eth_dev_info dev_info;
+	uint16_t queue;
+
+	if (port_id_is_invalid(portid, ENABLED_WARN))
+		return;
+	rte_eth_dev_info_get(portid, &dev_info);
+	for (queue = 0; queue < dev_info.nb_tx_queues; queue++)
+		if (ports[portid].tx_dump_cb[queue]) {
+			rte_eth_remove_tx_callback(portid, queue,
+				ports[portid].tx_dump_cb[queue]);
+			ports[portid].tx_dump_cb[queue] = NULL;
+		}
+}
+
+void
+configure_rxtx_dump_callbacks(uint16_t verbose)
+{
+	portid_t portid;
+
+#ifndef RTE_ETHDEV_RXTX_CALLBACKS
+		TESTPMD_LOG(ERR, "setting rxtx callbacks is not enabled\n");
+		return;
+#endif
+
+	RTE_ETH_FOREACH_DEV(portid)
+	{
+		if (verbose == 1 || verbose > 2)
+			add_rx_dump_callbacks(portid);
+		else
+			remove_rx_dump_callbacks(portid);
+		if (verbose >= 2)
+			add_tx_dump_callbacks(portid);
+		else
+			remove_tx_dump_callbacks(portid);
+	}
+}
+
+void
 set_verbose_level(uint16_t vb_level)
 {
 	printf("Change verbose level from %u to %u\n",
 	       (unsigned int) verbose_level, (unsigned int) vb_level);
 	verbose_level = vb_level;
+	configure_rxtx_dump_callbacks(verbose_level);
 }
 
 void

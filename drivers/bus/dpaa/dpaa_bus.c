@@ -34,6 +34,7 @@
 
 #include <rte_dpaa_bus.h>
 #include <rte_dpaa_logs.h>
+#include <dpaax_iova_table.h>
 
 #include <fsl_usd.h>
 #include <fsl_qman.h>
@@ -46,7 +47,7 @@ int dpaa_logtype_mempool;
 int dpaa_logtype_pmd;
 int dpaa_logtype_eventdev;
 
-struct rte_dpaa_bus rte_dpaa_bus;
+static struct rte_dpaa_bus rte_dpaa_bus;
 struct netcfg_info *dpaa_netcfg;
 
 /* define a variable to hold the portal_key, once created.*/
@@ -548,11 +549,17 @@ rte_dpaa_bus_probe(void)
 		fclose(svr_file);
 	}
 
+	/* And initialize the PA->VA translation table */
+	dpaax_iova_table_populate();
+
 	/* For each registered driver, and device, call the driver->probe */
 	TAILQ_FOREACH(dev, &rte_dpaa_bus.device_list, next) {
 		TAILQ_FOREACH(drv, &rte_dpaa_bus.driver_list, next) {
 			ret = rte_dpaa_device_match(drv, dev);
 			if (ret)
+				continue;
+
+			if (rte_dev_is_probed(&dev->device))
 				continue;
 
 			if (!drv->probe ||
@@ -617,7 +624,7 @@ rte_dpaa_get_iommu_class(void)
 	return RTE_IOVA_PA;
 }
 
-struct rte_dpaa_bus rte_dpaa_bus = {
+static struct rte_dpaa_bus rte_dpaa_bus = {
 	.bus = {
 		.scan = rte_dpaa_bus_scan,
 		.probe = rte_dpaa_bus_probe,

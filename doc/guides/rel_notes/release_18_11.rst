@@ -60,10 +60,26 @@ New Features
   memory that was created outside of DPDK's own page allocator, and using that
   memory natively with any other DPDK library or data structure.
 
+* **Added check for ensuring allocated memory addressable by devices.**
+
+  Some devices can have addressing limitations so a new function,
+  ``rte_eal_check_dma_mask``, has been added for checking allocated memory is
+  not out of the device range. Because now memory can be dynamically allocated
+  after initialization, a dma mask is kept and any new allocated memory will be
+  checked out against that dma mask and rejected if out of range. If more than
+  one device has addressing limitations, the dma mask is the more restricted one.
+
 * **Added hot-unplug handle mechanism.**
 
   ``rte_dev_hotplug_handle_enable`` and ``rte_dev_hotplug_handle_disable`` are
   for enabling or disabling hotplug handle mechanism.
+
+* **Support device multi-process hotplug.**
+
+  Hotplug and hot-unplug for devices will now be supported in multiprocessing
+  scenario. Any ethdev devices created in the primary process will be regarded
+  as shared and will be available for all DPDK processes. Synchronization
+  between processes will be done using DPDK IPC.
 
 * **Added new Flow API actions to rewrite fields in packet headers.**
 
@@ -86,7 +102,8 @@ New Features
   * Match items: destination MAC address.
   * Action items: push/pop/rewrite vlan header,
     rewrite IP addresses in outermost IPv4/IPv6 header,
-    rewrite port numbers in outermost TCP/UDP header.
+    rewrite port numbers in outermost TCP/UDP header,
+    swap MAC addresses in outermost Ethernet header.
 
 * **Added a devarg to use the latest supported vector path in i40e.**
   A new devarg ``use-latest-supported-vec`` was introduced to allow users to
@@ -109,6 +126,12 @@ New Features
   Added the new enetc driver for NXP enetc platform. See the
   "ENETC Poll Mode Driver" document for more details on this new driver.
 
+* **Added Ethernet poll mode driver for Aquantia aQtion family of 10G devices.**
+
+  Added the new ``atlantic`` ethernet poll mode driver for Aquantia XGBE devices.
+  See the :doc:`../nics/atlantic` nic driver guide for more details on this
+  driver.
+
 * **Updated Solarflare network PMD.**
 
   Updated the sfc_efx driver including the following changes:
@@ -118,6 +141,13 @@ New Features
   * Added support for TSO in EF10 datapath implementation.
   * Added support for Tx descriptor status API in EF10 (ef10 and ef10_simple)
     datapaths implementation.
+
+* **Updated the enic driver.**
+
+  * Added AVX2-based vectorized Rx handler.
+  * Added VLAN and checksum offloads to the simple Tx handler.
+  * Added the count flow action.
+  * Enabled the virtual address IOVA mode.
 
 * **Updated failsafe driver.**
 
@@ -131,6 +161,59 @@ New Features
 * **Added a devarg to use PCAP interface physical MAC address.**
   A new devarg ``phy_mac`` was introduced to allow users to use physical
   MAC address of the selected PCAP interface.
+
+* **Added TAP Rx/Tx queues sharing with a secondary process.**
+
+  A secondary process can attach a TAP device created in the primary process,
+  probe the queues, and process Rx/Tx in a secondary process.
+
+* **Added classification and metering support to SoftNIC PMD.**
+
+  Added support for flow classification (rte_flow API), and metering and
+  policing (rte_mtr API) to the SoftNIC PMD.
+
+* **Added Crypto support to Softnic PMD.**
+
+  The Softnic is now capable of processing symmetric crypto workloads such
+  as cipher, cipher-authentication chaining, and aead encryption and
+  decryption. This is achieved by calling DPDK Cryptodev APIs.
+
+* **Added cryptodev port to port library.**
+
+  Cryptodev port is a shim layer in the port library that interacts with DPDK
+  Cryptodev PMDs including burst enqueuing and dequeuing crypto operations.
+
+* **Added symmetric cryptographic actions to the pipeline library.**
+
+  In the pipeline library an added symmetric crypto action parsing and action
+  handler are implemented. The action allows automatically preparing the crypto
+  operation with the rules specified such as algorithm, key, and IV, etc for
+  the cryptodev port to process.
+
+* **Added support for GEN3 devices to Intel QAT driver .**
+
+  Added support for the third generation of Intel QuickAssist devices.
+
+* **Updated the QAT PMD.**
+
+  The QAT PMD was updated with additional support for:
+
+  * AES-CMAC algorithm.
+
+* **Updated the AESNI MB PMD.**
+
+  The AESNI MB PMD has been updated with additional support for AES-GCM
+  algorithm support.
+
+* **Added NXP CAAM JR PMD.**
+
+  Added the new caam job ring driver for NXP platforms. See the
+  "NXP CAAM JOB RING (caam_jr)" document for more details on this new driver.
+
+* **Added support for Dynamic Huffman Encoding to Intel QAT comp PMD.**
+
+  The Intel QuickAssist (QAT) compression PMD has been updated with support
+  for Dynamic Huffman Encoding for the Deflate algorithm.
 
 * **Added Event Ethernet Tx Adapter.**
 
@@ -147,6 +230,44 @@ New Features
   among all eventdev ports and the lcores using them. DSW, compared to
   the SW eventdev PMD, sacrifices load balancing performance to
   gain better event scheduling throughput and scalability.
+
+* **Added extendable bucket feature to hash library (rte_hash).**
+
+  This new “extendable bucket” feature provides 100% insertion guarantee to
+  the capacity specified by the user by extending hash table with extra
+  buckets when needed to accommodate the unlikely event of intensive hash
+  collisions.  In addition, the internal hashing algorithm was changed to use
+  partial-key hashing to improve memory efficiency and lookup performance.
+
+* **Added lock free reader/writer concurrency to hash library (rte_hash).**
+
+  Lock free reader/writer concurrency prevents the readers from getting
+  blocked due to a pre-empted writer thread. This allows the hash library
+  to be used in scenarios where the writer thread runs on control plane.
+
+* **Added Traffic Pattern Aware Power Control Library**
+
+  Added an experimental library. This extend Power Library and provide
+  empty_poll APIs. This feature measure how many times empty_poll are
+  executed per core, use the number of empty polls as a hint for system
+  power management.
+
+  See the :doc:`../prog_guide/power_man` section of the DPDK Programmers
+  Guide document for more information.
+
+* **Added JSON power policy interface for containers.**
+
+  Extended the Power Library and vm_power_manager sample app to allow power
+  policies to be submitted via a FIFO using JSON formatted strings. Previously
+  limited to Virtual Machines, this feature extends power policy functionality
+  to containers and host applications that need to have their cores frequency
+  controlled based on the rules contained in the policy.
+
+* **Added Telemetry API.**
+
+  Added the telemetry API which allows applications to transparently expose
+  their telemetry via a UNIX socket in JSON. The JSON can be consumed by any
+  Service Assurance agent, such as CollectD.
 
 * **Added ability to switch queue deferred start flag on testpmd app.**
 
@@ -199,9 +320,31 @@ API Changes
 * eal: The parameters of the function ``rte_devargs_remove()`` have changed
   from bus and device names to ``struct rte_devargs``.
 
+* eal: The deprecated functions attach/detach were removed in 18.11.
+  ``rte_eal_dev_attach`` can be replaced by
+  ``rte_dev_probe`` or ``rte_eal_hotplug_add``.
+  ``rte_eal_dev_detach`` can be replaced by
+  ``rte_dev_remove`` or ``rte_eal_hotplug_remove``.
+
+* eal: The scope of ``rte_eal_hotplug_add()``/``rte_dev_probe()``
+  and ``rte_eal_hotplug_remove()``/``rte_dev_remove()`` is extended.
+  In multi-process model, they will guarantee that the device is
+  attached or detached on all processes.
+
 * mbuf: The ``__rte_mbuf_raw_free()`` and ``__rte_pktmbuf_prefree_seg()``
   functions were deprecated since 17.05 and are replaced by
   ``rte_mbuf_raw_free()`` and ``rte_pktmbuf_prefree_seg()``.
+
+* ethdev: The deprecated functions attach/detach were removed in 18.11.
+  ``rte_eth_dev_attach`` can be replaced by ``RTE_ETH_FOREACH_MATCHING_DEV``
+  and ``rte_dev_probe`` or ``rte_eal_hotplug_add``.
+  ``rte_eth_dev_detach`` can be replaced by
+  ``rte_dev_remove`` or ``rte_eal_hotplug_remove``.
+
+* ethdev: A call to ``rte_eth_dev_release_port()`` has been added in
+  ``rte_eth_dev_close()``. As a consequence, a closed port is freed
+  and seen as invalid because of its state ``RTE_ETH_DEV_UNUSED``.
+  This new behaviour is enabled per driver for a migration period.
 
 * A new device flag, RTE_ETH_DEV_NOLIVE_MAC_ADDR, changes the order of
   actions inside rte_eth_dev_start regarding MAC set. Some NICs do not
@@ -251,6 +394,9 @@ ABI Changes
          - structure ``rte_eal_memconfig`` has been extended to contain next
            socket ID for externally allocated segments
 
+* eal: Added ``dma_maskbits`` to ``rte_mem_config`` for keeping more restricted
+       dma mask based on devices addressing limitations.
+
 * eal: The structure ``rte_device`` got a new field to reference a ``rte_bus``.
   It is changing the size of the ``struct rte_device`` and the inherited
   device structures of all buses.
@@ -298,12 +444,12 @@ The libraries prepended with a plus sign were incremented in this version.
    + librte_bus_vmbus.so.2
      librte_cfgfile.so.2
      librte_cmdline.so.2
-     librte_common_octeontx.so.1
      librte_compressdev.so.1
      librte_cryptodev.so.5
      librte_distributor.so.1
    + librte_eal.so.9
-     librte_ethdev.so.10
+     librte_efd.so.1
+   + librte_ethdev.so.11
    + librte_eventdev.so.6
      librte_flow_classify.so.1
      librte_gro.so.1
@@ -316,6 +462,7 @@ The libraries prepended with a plus sign were incremented in this version.
      librte_latencystats.so.1
      librte_lpm.so.2
      librte_mbuf.so.4
+     librte_member.so.1
      librte_mempool.so.5
      librte_meter.so.2
      librte_metrics.so.1
@@ -327,12 +474,10 @@ The libraries prepended with a plus sign were incremented in this version.
      librte_pmd_bond.so.2
      librte_pmd_i40e.so.2
      librte_pmd_ixgbe.so.2
-     librte_pmd_dpaa2_cmdif.so.1
      librte_pmd_dpaa2_qdma.so.1
      librte_pmd_ring.so.2
      librte_pmd_softnic.so.1
      librte_pmd_vhost.so.2
-   + librte_pmd_netvsc.so.1
      librte_port.so.3
      librte_power.so.1
      librte_rawdev.so.1
@@ -342,7 +487,7 @@ The libraries prepended with a plus sign were incremented in this version.
      librte_security.so.1
      librte_table.so.3
      librte_timer.so.1
-     librte_vhost.so.3
+     librte_vhost.so.4
 
 
 Known Issues

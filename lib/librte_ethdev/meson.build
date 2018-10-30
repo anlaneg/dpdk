@@ -2,7 +2,7 @@
 # Copyright(c) 2017 Intel Corporation
 
 name = 'ethdev'
-version = 10
+version = 11
 allow_experimental_apis = true
 sources = files('ethdev_private.c',
 	'ethdev_profile.c',
@@ -26,4 +26,4 @@ headers = files('rte_ethdev.h',
 	'rte_tm.h',
 	'rte_tm_driver.h')
 
-deps += ['net', 'kvargs']
+deps += ['net', 'kvargs', 'cmdline']

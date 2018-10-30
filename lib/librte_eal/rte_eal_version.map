@@ -130,8 +130,6 @@ DPDK_16.11 {
 
 	rte_delay_us_block;
 	rte_delay_us_callback_register;
-	rte_eal_dev_attach;
-	rte_eal_dev_detach;
 
 } DPDK_16.07;
 
@@ -261,6 +259,7 @@ DPDK_18.08 {
 DPDK_18.11 {
 	global:
 
+	rte_eal_get_runtime_dir;
 	rte_eal_hotplug_add;
 	rte_eal_hotplug_remove;
 	rte_strscpy;
@@ -275,6 +274,7 @@ EXPERIMENTAL {
 	rte_class_register;
 	rte_class_unregister;
 	rte_ctrl_thread_create;
+	rte_delay_us_sleep;
 	rte_dev_event_callback_process;
 	rte_dev_event_callback_register;
 	rte_dev_event_callback_unregister;
@@ -282,6 +282,7 @@ EXPERIMENTAL {
 	rte_dev_event_monitor_stop;
 	rte_dev_hotplug_handle_disable;
 	rte_dev_hotplug_handle_enable;
+	rte_dev_is_probed;
 	rte_dev_iterator_init;
 	rte_dev_iterator_next;
 	rte_dev_probe;
@@ -294,6 +295,7 @@ EXPERIMENTAL {
 	rte_devargs_parsef;
 	rte_devargs_remove;
 	rte_devargs_type_count;
+	rte_eal_check_dma_mask;
 	rte_eal_cleanup;
 	rte_fbarray_attach;
 	rte_fbarray_destroy;
@@ -350,6 +352,7 @@ EXPERIMENTAL {
 	rte_mp_request_sync;
 	rte_mp_request_async;
 	rte_mp_sendmsg;
+	rte_option_register;
 	rte_service_lcore_attr_get;
 	rte_service_lcore_attr_reset_all;
 	rte_service_may_be_active;

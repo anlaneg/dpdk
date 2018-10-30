@@ -29,6 +29,7 @@ DIRS-$(CONFIG_RTE_LIBRTE_ETHER) += librte_ethdev
 DEPDIRS-librte_ethdev := librte_net librte_eal librte_mempool librte_ring
 DEPDIRS-librte_ethdev += librte_mbuf
 DEPDIRS-librte_ethdev += librte_kvargs
+DEPDIRS-librte_ethdev += librte_cmdline
 DIRS-$(CONFIG_RTE_LIBRTE_BBDEV) += librte_bbdev
 DEPDIRS-librte_bbdev := librte_eal librte_mempool librte_mbuf
 DIRS-$(CONFIG_RTE_LIBRTE_CRYPTODEV) += librte_cryptodev
@@ -75,7 +76,7 @@ DEPDIRS-librte_bitratestats := librte_eal librte_metrics librte_ethdev
 DIRS-$(CONFIG_RTE_LIBRTE_LATENCY_STATS) += librte_latencystats
 DEPDIRS-librte_latencystats := librte_eal librte_metrics librte_ethdev librte_mbuf
 DIRS-$(CONFIG_RTE_LIBRTE_POWER) += librte_power
-DEPDIRS-librte_power := librte_eal
+DEPDIRS-librte_power := librte_eal librte_timer
 DIRS-$(CONFIG_RTE_LIBRTE_METER) += librte_meter
 DEPDIRS-librte_meter := librte_eal
 DIRS-$(CONFIG_RTE_LIBRTE_FLOW_CLASSIFY) += librte_flow_classify
@@ -109,6 +110,8 @@ DEPDIRS-librte_gso := librte_eal librte_mbuf librte_ethdev librte_net
 DEPDIRS-librte_gso += librte_mempool
 DIRS-$(CONFIG_RTE_LIBRTE_BPF) += librte_bpf
 DEPDIRS-librte_bpf := librte_eal librte_mempool librte_mbuf librte_ethdev
+DIRS-$(CONFIG_RTE_LIBRTE_TELEMETRY) += librte_telemetry
+DEPDIRS-librte_telemetry := librte_eal librte_metrics librte_ethdev
 
 ifeq ($(CONFIG_RTE_EXEC_ENV_LINUXAPP),y)
 DIRS-$(CONFIG_RTE_LIBRTE_KNI) += librte_kni

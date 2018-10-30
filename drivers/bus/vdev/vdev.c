@@ -43,7 +43,7 @@ static rte_spinlock_recursive_t vdev_device_list_lock =
 	RTE_SPINLOCK_RECURSIVE_INITIALIZER;
 
 //所有注册的vdev挂载在此链上
-struct vdev_driver_list vdev_driver_list =
+static struct vdev_driver_list vdev_driver_list =
 	TAILQ_HEAD_INITIALIZER(vdev_driver_list);
 
 struct vdev_custom_scan {
@@ -161,10 +161,9 @@ vdev_probe_all_drivers(struct rte_vdev_device *dev)
 	if (vdev_parse(name, &driver))
 		return -1;
 	//设备找到对应的驱动，执行驱动probe
-	dev->device.driver = &driver->driver;
 	ret = driver->probe(dev);
-	if (ret)
-		dev->device.driver = NULL;
+	if (ret == 0)
+		dev->device.driver = &driver->driver;
 	return ret;
 }
 
@@ -218,7 +217,9 @@ alloc_devargs(const char *name, const char *args)
 
 //创建并加入dev
 static int
-insert_vdev(const char *name, const char *args, struct rte_vdev_device **p_dev)
+insert_vdev(const char *name, const char *args,
+		struct rte_vdev_device **p_dev,
+		bool init)
 {
 	struct rte_vdev_device *dev;
 	struct rte_devargs *devargs;
@@ -237,18 +238,25 @@ insert_vdev(const char *name, const char *args, struct rte_vdev_device **p_dev)
 		goto fail;
 	}
 
+	dev->device.bus = &rte_vdev_bus;
 	dev->device.devargs = devargs;
 	dev->device.numa_node = SOCKET_ID_ANY;
 	dev->device.name = devargs->name;
 
 	if (find_vdev(name)) {
+		/*
+		 * A vdev is expected to have only one port.
+		 * So there is no reason to try probing again,
+		 * even with new arguments.
+		 */
 		ret = -EEXIST;//重复添加，报错
 		goto fail;
 	}
 
 	//加入
 	TAILQ_INSERT_TAIL(&vdev_device_list, dev, next);
-	rte_devargs_insert(devargs);
+	if (init)
+		rte_devargs_insert(devargs);
 
 	if (p_dev)
 		*p_dev = dev;
@@ -268,7 +276,7 @@ rte_vdev_init(const char *name, const char *args)
 	int ret;
 
 	rte_spinlock_recursive_lock(&vdev_device_list_lock);
-	ret = insert_vdev(name, args, &dev);//创建dev
+	ret = insert_vdev(name, args, &dev, true);//创建dev
 	if (ret == 0) {
 		//查驱动
 		ret = vdev_probe_all_drivers(dev);
@@ -401,7 +409,7 @@ vdev_action(const struct rte_mp_msg *mp_msg, const void *peer)
 		break;
 	case VDEV_SCAN_ONE:
 		VDEV_LOG(INFO, "receive vdev, %s", in->name);
-		ret = insert_vdev(in->name, NULL, NULL);
+		ret = insert_vdev(in->name, NULL, NULL, false);
 		if (ret == -EEXIST)
 			VDEV_LOG(DEBUG, "device already exist, %s", in->name);
 		else if (ret < 0)
@@ -444,6 +452,7 @@ vdev_scan(void)
 			mp_rep = &mp_reply.msgs[0];
 			resp = (struct vdev_param *)mp_rep->param;
 			VDEV_LOG(INFO, "Received %d vdevs", resp->num);
+			free(mp_reply.msgs);
 		} else
 			VDEV_LOG(ERR, "Failed to request vdev from primary");
 
@@ -512,7 +521,7 @@ vdev_probe(void)
 		 */
 
 		//如果其已绑定驱动，则跳过
-		if (dev->device.driver)
+		if (rte_dev_is_probed(&dev->device))
 			continue;
 
 		//为dev查找合适的驱动

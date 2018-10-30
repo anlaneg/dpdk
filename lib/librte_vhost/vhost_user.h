@@ -23,7 +23,8 @@
 					 (1ULL << VHOST_USER_PROTOCOL_F_SLAVE_REQ) | \
 					 (1ULL << VHOST_USER_PROTOCOL_F_CRYPTO_SESSION) | \
 					 (1ULL << VHOST_USER_PROTOCOL_F_SLAVE_SEND_FD) | \
-					 (1ULL << VHOST_USER_PROTOCOL_F_HOST_NOTIFIER))
+					 (1ULL << VHOST_USER_PROTOCOL_F_HOST_NOTIFIER) | \
+					 (1ULL << VHOST_USER_PROTOCOL_F_PAGEFAULT))
 
 typedef enum VhostUserRequest {
 	VHOST_USER_NONE = 0,
@@ -51,7 +52,10 @@ typedef enum VhostUserRequest {
 	VHOST_USER_IOTLB_MSG = 22,
 	VHOST_USER_CRYPTO_CREATE_SESS = 26,
 	VHOST_USER_CRYPTO_CLOSE_SESS = 27,
-	VHOST_USER_MAX = 28
+	VHOST_USER_POSTCOPY_ADVISE = 28,
+	VHOST_USER_POSTCOPY_LISTEN = 29,
+	VHOST_USER_POSTCOPY_END = 30,
+	VHOST_USER_MAX = 31
 } VhostUserRequest;
 
 typedef enum VhostUserSlaveRequest {
@@ -133,6 +137,7 @@ typedef struct VhostUserMsg {
 		VhostUserVringArea area;
 	} payload;
 	int fds[VHOST_MEMORY_MAX_NREGIONS];//对端传送过来的fd
+	int fd_num;
 } __attribute((packed)) VhostUserMsg;
 
 //即VhostUserMsg的头部(payload之前占用的字节）
@@ -148,7 +153,8 @@ int vhost_user_iotlb_miss(struct virtio_net *dev, uint64_t iova, uint8_t perm);
 int vhost_user_host_notifier_ctrl(int vid, bool enable);
 
 /* socket.c */
-int read_fd_message(int sockfd, char *buf, int buflen, int *fds, int fd_num);
+int read_fd_message(int sockfd, char *buf, int buflen, int *fds, int max_fds,
+		int *fd_num);
 int send_fd_message(int sockfd, char *buf, int buflen, int *fds, int fd_num);
 
 #endif

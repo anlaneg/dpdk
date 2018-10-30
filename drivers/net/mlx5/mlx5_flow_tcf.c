@@ -6,6 +6,7 @@
 #include <assert.h>
 #include <errno.h>
 #include <libmnl/libmnl.h>
+#include <linux/gen_stats.h>
 #include <linux/if_ether.h>
 #include <linux/netlink.h>
 #include <linux/pkt_cls.h>
@@ -26,6 +27,7 @@
 #include <rte_ether.h>
 #include <rte_flow.h>
 #include <rte_malloc.h>
+#include <rte_common.h>
 
 #include "mlx5.h"
 #include "mlx5_flow.h"
@@ -93,19 +95,20 @@ enum pedit_cmd {
 };
 
 struct tc_pedit_key {
-	__u32           mask;  /* AND */
-	__u32           val;   /*XOR */
-	__u32           off;  /*offset */
-	__u32           at;
-	__u32           offmask;
-	__u32           shift;
+	__u32 mask; /* AND */
+	__u32 val; /*XOR */
+	__u32 off; /*offset */
+	__u32 at;
+	__u32 offmask;
+	__u32 shift;
 };
 
+__extension__
 struct tc_pedit_sel {
 	tc_gen;
-	unsigned char           nkeys;
-	unsigned char           flags;
-	struct tc_pedit_key     keys[0];
+	unsigned char nkeys;
+	unsigned char flags;
+	struct tc_pedit_key keys[0];
 };
 
 #endif /* HAVE_TC_ACT_VLAN */
@@ -123,6 +126,9 @@ struct tc_pedit_sel {
 /* Normally found in linux/pkt_cls.h. */
 #ifndef TCA_CLS_FLAGS_SKIP_SW
 #define TCA_CLS_FLAGS_SKIP_SW (1 << 1)
+#endif
+#ifndef HAVE_TCA_CHAIN
+#define TCA_CHAIN 11
 #endif
 #ifndef HAVE_TCA_FLOWER_ACT
 #define TCA_FLOWER_ACT 3
@@ -211,6 +217,9 @@ struct tc_pedit_sel {
 #ifndef HAVE_TCA_FLOWER_KEY_TCP_FLAGS_MASK
 #define TCA_FLOWER_KEY_TCP_FLAGS_MASK 72
 #endif
+#ifndef HAVE_TC_ACT_GOTO_CHAIN
+#define TC_ACT_GOTO_CHAIN 0x20000000
+#endif
 
 #ifndef IPV6_ADDR_LEN
 #define IPV6_ADDR_LEN 16
@@ -223,6 +232,35 @@ struct tc_pedit_sel {
 #ifndef TP_PORT_LEN
 #define TP_PORT_LEN 2 /* Transport Port (UDP/TCP) Length */
 #endif
+
+#ifndef TTL_LEN
+#define TTL_LEN 1
+#endif
+
+#ifndef TCA_ACT_MAX_PRIO
+#define TCA_ACT_MAX_PRIO 32
+#endif
+
+/**
+ * Structure for holding netlink context.
+ * Note the size of the message buffer which is MNL_SOCKET_BUFFER_SIZE.
+ * Using this (8KB) buffer size ensures that netlink messages will never be
+ * truncated.
+ */
+struct mlx5_flow_tcf_context {
+	struct mnl_socket *nl; /* NETLINK_ROUTE libmnl socket. */
+	uint32_t seq; /* Message sequence number. */
+	uint32_t buf_size; /* Message buffer size. */
+	uint8_t *buf; /* Message buffer. */
+};
+
+/** Structure used when extracting the values of a flow counters
+ * from a netlink message.
+ */
+struct flow_tcf_stats_basic {
+	bool valid;
+	struct gnet_stats_basic counters;
+};
 
 /** Empty masks for known item types. */
 static const union {
@@ -297,7 +335,14 @@ struct flow_tcf_ptoi {
 	unsigned int ifindex; /**< Network interface index. */
 };
 
-#define MLX5_TCF_FATE_ACTIONS (MLX5_FLOW_ACTION_DROP | MLX5_FLOW_ACTION_PORT_ID)
+/* Due to a limitation on driver/FW. */
+#define MLX5_TCF_GROUP_ID_MAX 3
+#define MLX5_TCF_GROUP_PRIORITY_MAX 14
+
+#define MLX5_TCF_FATE_ACTIONS \
+	(MLX5_FLOW_ACTION_DROP | MLX5_FLOW_ACTION_PORT_ID | \
+	 MLX5_FLOW_ACTION_JUMP)
+
 #define MLX5_TCF_VLAN_ACTIONS \
 	(MLX5_FLOW_ACTION_OF_POP_VLAN | MLX5_FLOW_ACTION_OF_PUSH_VLAN | \
 	 MLX5_FLOW_ACTION_OF_SET_VLAN_VID | MLX5_FLOW_ACTION_OF_SET_VLAN_PCP)
@@ -305,12 +350,15 @@ struct flow_tcf_ptoi {
 #define MLX5_TCF_PEDIT_ACTIONS \
 	(MLX5_FLOW_ACTION_SET_IPV4_SRC | MLX5_FLOW_ACTION_SET_IPV4_DST | \
 	 MLX5_FLOW_ACTION_SET_IPV6_SRC | MLX5_FLOW_ACTION_SET_IPV6_DST | \
-	 MLX5_FLOW_ACTION_SET_TP_SRC | MLX5_FLOW_ACTION_SET_TP_DST)
+	 MLX5_FLOW_ACTION_SET_TP_SRC | MLX5_FLOW_ACTION_SET_TP_DST | \
+	 MLX5_FLOW_ACTION_SET_TTL | MLX5_FLOW_ACTION_DEC_TTL | \
+	 MLX5_FLOW_ACTION_SET_MAC_SRC | MLX5_FLOW_ACTION_SET_MAC_DST)
 
 #define MLX5_TCF_CONFIG_ACTIONS \
-	(MLX5_FLOW_ACTION_PORT_ID | MLX5_FLOW_ACTION_OF_PUSH_VLAN | \
-	 MLX5_FLOW_ACTION_OF_SET_VLAN_VID | MLX5_FLOW_ACTION_OF_SET_VLAN_PCP | \
-	 MLX5_TCF_PEDIT_ACTIONS)
+	(MLX5_FLOW_ACTION_PORT_ID | MLX5_FLOW_ACTION_JUMP | \
+	 MLX5_FLOW_ACTION_OF_PUSH_VLAN | MLX5_FLOW_ACTION_OF_SET_VLAN_VID | \
+	 MLX5_FLOW_ACTION_OF_SET_VLAN_PCP | \
+	 (MLX5_TCF_PEDIT_ACTIONS & ~MLX5_FLOW_ACTION_DEC_TTL))
 
 #define MAX_PEDIT_KEYS 128
 #define SZ_PEDIT_KEY_VAL 4
@@ -329,6 +377,114 @@ struct pedit_parser {
 	struct pedit_key_ex keys_ex[MAX_PEDIT_KEYS];
 };
 
+/**
+ * Create space for using the implicitly created TC flow counter.
+ *
+ * @param[in] dev
+ *   Pointer to the Ethernet device structure.
+ *
+ * @return
+ *   A pointer to the counter data structure, NULL otherwise and
+ *   rte_errno is set.
+ */
+static struct mlx5_flow_counter *
+flow_tcf_counter_new(void)
+{
+	struct mlx5_flow_counter *cnt;
+
+	/*
+	 * eswitch counter cannot be shared and its id is unknown.
+	 * currently returning all with id 0.
+	 * in the future maybe better to switch to unique numbers.
+	 */
+	struct mlx5_flow_counter tmpl = {
+		.ref_cnt = 1,
+	};
+	cnt = rte_calloc(__func__, 1, sizeof(*cnt), 0);
+	if (!cnt) {
+		rte_errno = ENOMEM;
+		return NULL;
+	}
+	*cnt = tmpl;
+	/* Implicit counter, do not add to list. */
+	return cnt;
+}
+
+/**
+ * Set pedit key of MAC address
+ *
+ * @param[in] actions
+ *   pointer to action specification
+ * @param[in,out] p_parser
+ *   pointer to pedit_parser
+ */
+static void
+flow_tcf_pedit_key_set_mac(const struct rte_flow_action *actions,
+			   struct pedit_parser *p_parser)
+{
+	int idx = p_parser->sel.nkeys;
+	uint32_t off = actions->type == RTE_FLOW_ACTION_TYPE_SET_MAC_SRC ?
+					offsetof(struct ether_hdr, s_addr) :
+					offsetof(struct ether_hdr, d_addr);
+	const struct rte_flow_action_set_mac *conf =
+		(const struct rte_flow_action_set_mac *)actions->conf;
+
+	p_parser->keys[idx].off = off;
+	p_parser->keys[idx].mask = ~UINT32_MAX;
+	p_parser->keys_ex[idx].htype = TCA_PEDIT_KEY_EX_HDR_TYPE_ETH;
+	p_parser->keys_ex[idx].cmd = TCA_PEDIT_KEY_EX_CMD_SET;
+	memcpy(&p_parser->keys[idx].val,
+		conf->mac_addr, SZ_PEDIT_KEY_VAL);
+	idx++;
+	p_parser->keys[idx].off = off + SZ_PEDIT_KEY_VAL;
+	p_parser->keys[idx].mask = 0xFFFF0000;
+	p_parser->keys_ex[idx].htype = TCA_PEDIT_KEY_EX_HDR_TYPE_ETH;
+	p_parser->keys_ex[idx].cmd = TCA_PEDIT_KEY_EX_CMD_SET;
+	memcpy(&p_parser->keys[idx].val,
+		conf->mac_addr + SZ_PEDIT_KEY_VAL,
+		ETHER_ADDR_LEN - SZ_PEDIT_KEY_VAL);
+	p_parser->sel.nkeys = (++idx);
+}
+
+/**
+ * Set pedit key of decrease/set ttl
+ *
+ * @param[in] actions
+ *   pointer to action specification
+ * @param[in,out] p_parser
+ *   pointer to pedit_parser
+ * @param[in] item_flags
+ *   flags of all items presented
+ */
+static void
+flow_tcf_pedit_key_set_dec_ttl(const struct rte_flow_action *actions,
+				struct pedit_parser *p_parser,
+				uint64_t item_flags)
+{
+	int idx = p_parser->sel.nkeys;
+
+	p_parser->keys[idx].mask = 0xFFFFFF00;
+	if (item_flags & MLX5_FLOW_LAYER_OUTER_L3_IPV4) {
+		p_parser->keys_ex[idx].htype = TCA_PEDIT_KEY_EX_HDR_TYPE_IP4;
+		p_parser->keys[idx].off =
+			offsetof(struct ipv4_hdr, time_to_live);
+	}
+	if (item_flags & MLX5_FLOW_LAYER_OUTER_L3_IPV6) {
+		p_parser->keys_ex[idx].htype = TCA_PEDIT_KEY_EX_HDR_TYPE_IP6;
+		p_parser->keys[idx].off =
+			offsetof(struct ipv6_hdr, hop_limits);
+	}
+	if (actions->type == RTE_FLOW_ACTION_TYPE_DEC_TTL) {
+		p_parser->keys_ex[idx].cmd = TCA_PEDIT_KEY_EX_CMD_ADD;
+		p_parser->keys[idx].val = 0x000000FF;
+	} else {
+		p_parser->keys_ex[idx].cmd = TCA_PEDIT_KEY_EX_CMD_SET;
+		p_parser->keys[idx].val =
+			(__u32)((const struct rte_flow_action_set_ttl *)
+			 actions->conf)->ttl_value;
+	}
+	p_parser->sel.nkeys = (++idx);
+}
 
 /**
  * Set pedit key of transport (TCP/UDP) port value
@@ -465,6 +621,15 @@ flow_tcf_create_pedit_mnl_msg(struct nlmsghdr *nl,
 			flow_tcf_pedit_key_set_tp_port(*actions,
 							&p_parser, item_flags);
 			break;
+		case RTE_FLOW_ACTION_TYPE_SET_TTL:
+		case RTE_FLOW_ACTION_TYPE_DEC_TTL:
+			flow_tcf_pedit_key_set_dec_ttl(*actions,
+							&p_parser, item_flags);
+			break;
+		case RTE_FLOW_ACTION_TYPE_SET_MAC_SRC:
+		case RTE_FLOW_ACTION_TYPE_SET_MAC_DST:
+			flow_tcf_pedit_key_set_mac(*actions, &p_parser);
+			break;
 		default:
 			goto pedit_mnl_msg_done;
 		}
@@ -544,6 +709,22 @@ flow_tcf_get_pedit_actions_size(const struct rte_flow_action **actions,
 			/* TCP is as same as UDP */
 			keys += NUM_OF_PEDIT_KEYS(TP_PORT_LEN);
 			flags |= MLX5_FLOW_ACTION_SET_TP_DST;
+			break;
+		case RTE_FLOW_ACTION_TYPE_SET_TTL:
+			keys += NUM_OF_PEDIT_KEYS(TTL_LEN);
+			flags |= MLX5_FLOW_ACTION_SET_TTL;
+			break;
+		case RTE_FLOW_ACTION_TYPE_DEC_TTL:
+			keys += NUM_OF_PEDIT_KEYS(TTL_LEN);
+			flags |= MLX5_FLOW_ACTION_DEC_TTL;
+			break;
+		case RTE_FLOW_ACTION_TYPE_SET_MAC_SRC:
+			keys += NUM_OF_PEDIT_KEYS(ETHER_ADDR_LEN);
+			flags |= MLX5_FLOW_ACTION_SET_MAC_SRC;
+			break;
+		case RTE_FLOW_ACTION_TYPE_SET_MAC_DST:
+			keys += NUM_OF_PEDIT_KEYS(ETHER_ADDR_LEN);
+			flags |= MLX5_FLOW_ACTION_SET_MAC_DST;
 			break;
 		default:
 			goto get_pedit_action_size_done;
@@ -704,14 +885,25 @@ flow_tcf_validate_attributes(const struct rte_flow_attr *attr,
 			     struct rte_flow_error *error)
 {
 	/*
-	 * Supported attributes: no groups, some priorities and ingress only.
-	 * Don't care about transfer as it is the caller's problem.
+	 * Supported attributes: groups, some priorities and ingress only.
+	 * group is supported only if kernel supports chain. Don't care about
+	 * transfer as it is the caller's problem.
 	 */
-	if (attr->group)
+	if (attr->group > MLX5_TCF_GROUP_ID_MAX)
 		return rte_flow_error_set(error, ENOTSUP,
 					  RTE_FLOW_ERROR_TYPE_ATTR_GROUP, attr,
-					  "groups are not supported");
-	if (attr->priority > 0xfffe)
+					  "group ID larger than "
+					  RTE_STR(MLX5_TCF_GROUP_ID_MAX)
+					  " isn't supported");
+	else if (attr->group > 0 &&
+		 attr->priority > MLX5_TCF_GROUP_PRIORITY_MAX)
+		return rte_flow_error_set(error, ENOTSUP,
+					  RTE_FLOW_ERROR_TYPE_ATTR_PRIORITY,
+					  attr,
+					  "lowest priority level is "
+					  RTE_STR(MLX5_TCF_GROUP_PRIORITY_MAX)
+					  " when group is configured");
+	else if (attr->priority > 0xfffe)
 		return rte_flow_error_set(error, ENOTSUP,
 					  RTE_FLOW_ERROR_TYPE_ATTR_PRIORITY,
 					  attr,
@@ -762,6 +954,7 @@ flow_tcf_validate(struct rte_eth_dev *dev,
 	} spec, mask;
 	union {
 		const struct rte_flow_action_port_id *port_id;
+		const struct rte_flow_action_jump *jump;
 		const struct rte_flow_action_of_push_vlan *of_push_vlan;
 		const struct rte_flow_action_of_set_vlan_vid *
 			of_set_vlan_vid;
@@ -770,8 +963,8 @@ flow_tcf_validate(struct rte_eth_dev *dev,
 		const struct rte_flow_action_set_ipv4 *set_ipv4;
 		const struct rte_flow_action_set_ipv6 *set_ipv6;
 	} conf;
-	uint32_t item_flags = 0;
-	uint32_t action_flags = 0;
+	uint64_t item_flags = 0;
+	uint64_t action_flags = 0;
 	uint8_t next_protocol = -1;
 	unsigned int tcm_ifindex = 0;
 	uint8_t pedit_validated = 0;
@@ -988,18 +1181,13 @@ flow_tcf_validate(struct rte_eth_dev *dev,
 	}
 	for (; actions->type != RTE_FLOW_ACTION_TYPE_END; actions++) {
 		unsigned int i;
-		uint32_t current_action_flag = 0;
+		uint64_t current_action_flag = 0;
 
 		switch (actions->type) {
 		case RTE_FLOW_ACTION_TYPE_VOID:
 			break;
 		case RTE_FLOW_ACTION_TYPE_PORT_ID:
 			current_action_flag = MLX5_FLOW_ACTION_PORT_ID;
-			if (action_flags & MLX5_TCF_FATE_ACTIONS)
-				return rte_flow_error_set
-					(error, EINVAL,
-					 RTE_FLOW_ERROR_TYPE_ACTION, actions,
-					 "can't have multiple fate actions");
 			if (!actions->conf)
 				break;
 			conf.port_id = actions->conf;
@@ -1018,13 +1206,22 @@ flow_tcf_validate(struct rte_eth_dev *dev,
 					 " ifindex");
 			port_id_dev = &rte_eth_devices[conf.port_id->id];
 			break;
-		case RTE_FLOW_ACTION_TYPE_DROP:
-			if (action_flags & MLX5_TCF_FATE_ACTIONS)
+		case RTE_FLOW_ACTION_TYPE_JUMP:
+			current_action_flag = MLX5_FLOW_ACTION_JUMP;
+			if (!actions->conf)
+				break;
+			conf.jump = actions->conf;
+			if (attr->group >= conf.jump->group)
 				return rte_flow_error_set
-					(error, EINVAL,
-					 RTE_FLOW_ERROR_TYPE_ACTION, actions,
-					 "can't have multiple fate actions");
+					(error, ENOTSUP,
+					 RTE_FLOW_ERROR_TYPE_ACTION,
+					 actions,
+					 "can jump only to a group forward");
+			break;
+		case RTE_FLOW_ACTION_TYPE_DROP:
 			current_action_flag = MLX5_FLOW_ACTION_DROP;
+			break;
+		case RTE_FLOW_ACTION_TYPE_COUNT:
 			break;
 		case RTE_FLOW_ACTION_TYPE_OF_POP_VLAN:
 			current_action_flag = MLX5_FLOW_ACTION_OF_POP_VLAN;
@@ -1068,6 +1265,18 @@ flow_tcf_validate(struct rte_eth_dev *dev,
 		case RTE_FLOW_ACTION_TYPE_SET_TP_DST:
 			current_action_flag = MLX5_FLOW_ACTION_SET_TP_DST;
 			break;
+		case RTE_FLOW_ACTION_TYPE_SET_TTL:
+			current_action_flag = MLX5_FLOW_ACTION_SET_TTL;
+			break;
+		case RTE_FLOW_ACTION_TYPE_DEC_TTL:
+			current_action_flag = MLX5_FLOW_ACTION_DEC_TTL;
+			break;
+		case RTE_FLOW_ACTION_TYPE_SET_MAC_SRC:
+			current_action_flag = MLX5_FLOW_ACTION_SET_MAC_SRC;
+			break;
+		case RTE_FLOW_ACTION_TYPE_SET_MAC_DST:
+			current_action_flag = MLX5_FLOW_ACTION_SET_MAC_DST;
+			break;
 		default:
 			return rte_flow_error_set(error, ENOTSUP,
 						  RTE_FLOW_ERROR_TYPE_ACTION,
@@ -1082,7 +1291,7 @@ flow_tcf_validate(struct rte_eth_dev *dev,
 						"action configuration not set");
 		}
 		if ((current_action_flag & MLX5_TCF_PEDIT_ACTIONS) &&
-				pedit_validated)
+		    pedit_validated)
 			return rte_flow_error_set(error, ENOTSUP,
 						  RTE_FLOW_ERROR_TYPE_ACTION,
 						  actions,
@@ -1091,6 +1300,13 @@ flow_tcf_validate(struct rte_eth_dev *dev,
 		if ((current_action_flag & ~MLX5_TCF_PEDIT_ACTIONS) &&
 		    (action_flags & MLX5_TCF_PEDIT_ACTIONS))
 			pedit_validated = 1;
+		if ((current_action_flag & MLX5_TCF_FATE_ACTIONS) &&
+		    (action_flags & MLX5_TCF_FATE_ACTIONS))
+			return rte_flow_error_set(error, EINVAL,
+						  RTE_FLOW_ERROR_TYPE_ACTION,
+						  actions,
+						  "can't have multiple fate"
+						  " actions");
 		action_flags |= current_action_flag;
 	}
 	if ((action_flags & MLX5_TCF_PEDIT_ACTIONS) &&
@@ -1163,6 +1379,25 @@ flow_tcf_validate(struct rte_eth_dev *dev,
 		return rte_flow_error_set(error, EINVAL,
 					  RTE_FLOW_ERROR_TYPE_ACTION, actions,
 					  "no fate action is found");
+	if (action_flags &
+	   (MLX5_FLOW_ACTION_SET_TTL | MLX5_FLOW_ACTION_DEC_TTL)) {
+		if (!(item_flags &
+		     (MLX5_FLOW_LAYER_OUTER_L3_IPV4 |
+		      MLX5_FLOW_LAYER_OUTER_L3_IPV6)))
+			return rte_flow_error_set(error, EINVAL,
+						  RTE_FLOW_ERROR_TYPE_ACTION,
+						  actions,
+						  "no IP found in pattern");
+	}
+	if (action_flags &
+	    (MLX5_FLOW_ACTION_SET_MAC_SRC | MLX5_FLOW_ACTION_SET_MAC_DST)) {
+		if (!(item_flags & MLX5_FLOW_LAYER_OUTER_L2))
+			return rte_flow_error_set(error, ENOTSUP,
+						  RTE_FLOW_ERROR_TYPE_ACTION,
+						  actions,
+						  "no ethernet found in"
+						  " pattern");
+	}
 	return 0;
 }
 
@@ -1179,7 +1414,8 @@ flow_tcf_validate(struct rte_eth_dev *dev,
  *   Maximum size of memory for items.
  */
 static int
-flow_tcf_get_items_and_size(const struct rte_flow_item items[],
+flow_tcf_get_items_and_size(const struct rte_flow_attr *attr,
+			    const struct rte_flow_item items[],
 			    uint64_t *item_flags)
 {
 	int size = 0;
@@ -1188,6 +1424,8 @@ flow_tcf_get_items_and_size(const struct rte_flow_item items[],
 	size += SZ_NLATTR_STRZ_OF("flower") +
 		SZ_NLATTR_NEST + /* TCA_OPTIONS. */
 		SZ_NLATTR_TYPE_OF(uint32_t); /* TCA_CLS_FLAGS_SKIP_SW. */
+	if (attr->group > 0)
+		size += SZ_NLATTR_TYPE_OF(uint32_t); /* TCA_CHAIN. */
 	for (; items->type != RTE_FLOW_ITEM_TYPE_END; items++) {
 		switch (items->type) {
 		case RTE_FLOW_ITEM_TYPE_VOID:
@@ -1277,12 +1515,21 @@ flow_tcf_get_actions_and_size(const struct rte_flow_action actions[],
 				SZ_NLATTR_TYPE_OF(struct tc_mirred);
 			flags |= MLX5_FLOW_ACTION_PORT_ID;
 			break;
+		case RTE_FLOW_ACTION_TYPE_JUMP:
+			size += SZ_NLATTR_NEST + /* na_act_index. */
+				SZ_NLATTR_STRZ_OF("gact") +
+				SZ_NLATTR_NEST + /* TCA_ACT_OPTIONS. */
+				SZ_NLATTR_TYPE_OF(struct tc_gact);
+			flags |= MLX5_FLOW_ACTION_JUMP;
+			break;
 		case RTE_FLOW_ACTION_TYPE_DROP:
 			size += SZ_NLATTR_NEST + /* na_act_index. */
 				SZ_NLATTR_STRZ_OF("gact") +
 				SZ_NLATTR_NEST + /* TCA_ACT_OPTIONS. */
 				SZ_NLATTR_TYPE_OF(struct tc_gact);
 			flags |= MLX5_FLOW_ACTION_DROP;
+			break;
+		case RTE_FLOW_ACTION_TYPE_COUNT:
 			break;
 		case RTE_FLOW_ACTION_TYPE_OF_POP_VLAN:
 			flags |= MLX5_FLOW_ACTION_OF_POP_VLAN;
@@ -1312,6 +1559,10 @@ action_of_vlan:
 		case RTE_FLOW_ACTION_TYPE_SET_IPV6_DST:
 		case RTE_FLOW_ACTION_TYPE_SET_TP_SRC:
 		case RTE_FLOW_ACTION_TYPE_SET_TP_DST:
+		case RTE_FLOW_ACTION_TYPE_SET_TTL:
+		case RTE_FLOW_ACTION_TYPE_DEC_TTL:
+		case RTE_FLOW_ACTION_TYPE_SET_MAC_SRC:
+		case RTE_FLOW_ACTION_TYPE_SET_MAC_DST:
 			size += flow_tcf_get_pedit_actions_size(&actions,
 								&flags);
 			break;
@@ -1371,7 +1622,7 @@ flow_tcf_nl_brand(struct nlmsghdr *nlh, uint32_t handle)
  *   otherwise NULL and rte_ernno is set.
  */
 static struct mlx5_flow *
-flow_tcf_prepare(const struct rte_flow_attr *attr __rte_unused,
+flow_tcf_prepare(const struct rte_flow_attr *attr,
 		 const struct rte_flow_item items[],
 		 const struct rte_flow_action actions[],
 		 uint64_t *item_flags, uint64_t *action_flags,
@@ -1384,7 +1635,7 @@ flow_tcf_prepare(const struct rte_flow_attr *attr __rte_unused,
 	struct nlmsghdr *nlh;
 	struct tcmsg *tcm;
 
-	size += flow_tcf_get_items_and_size(items, item_flags);
+	size += flow_tcf_get_items_and_size(attr, items, item_flags);
 	size += flow_tcf_get_actions_and_size(actions, action_flags);
 	dev_flow = rte_zmalloc(__func__, size, MNL_ALIGNTO);
 	if (!dev_flow) {
@@ -1416,6 +1667,38 @@ flow_tcf_prepare(const struct rte_flow_attr *attr __rte_unused,
 		flow_tcf_nl_brand(nlh, (uintptr_t)dev_flow >>
 				       rte_log2_u32(rte_align32prevpow2(size)));
 	return dev_flow;
+}
+
+/**
+ * Make adjustments for supporting count actions.
+ *
+ * @param[in] dev
+ *   Pointer to the Ethernet device structure.
+ * @param[in] dev_flow
+ *   Pointer to mlx5_flow.
+ * @param[out] error
+ *   Pointer to error structure.
+ *
+ * @return
+ *   0 On success else a negative errno value is returned and rte_errno is set.
+ */
+static int
+flow_tcf_translate_action_count(struct rte_eth_dev *dev __rte_unused,
+				  struct mlx5_flow *dev_flow,
+				  struct rte_flow_error *error)
+{
+	struct rte_flow *flow = dev_flow->flow;
+
+	if (!flow->counter) {
+		flow->counter = flow_tcf_counter_new();
+		if (!flow->counter)
+			return rte_flow_error_set(error, rte_errno,
+						  RTE_FLOW_ERROR_TYPE_ACTION,
+						  NULL,
+						  "cannot get counter"
+						  " context.");
+	}
+	return 0;
 }
 
 /**
@@ -1455,6 +1738,7 @@ flow_tcf_translate(struct rte_eth_dev *dev, struct mlx5_flow *dev_flow,
 	} spec, mask;
 	union {
 		const struct rte_flow_action_port_id *port_id;
+		const struct rte_flow_action_jump *jump;
 		const struct rte_flow_action_of_push_vlan *of_push_vlan;
 		const struct rte_flow_action_of_set_vlan_vid *
 			of_set_vlan_vid;
@@ -1474,6 +1758,7 @@ flow_tcf_translate(struct rte_eth_dev *dev, struct mlx5_flow *dev_flow,
 	struct nlattr *na_vlan_id = NULL;
 	struct nlattr *na_vlan_priority = NULL;
 	uint64_t item_flags = 0;
+	int ret;
 
 	claim_nonzero(flow_tcf_build_ptoi_table(dev, ptoi,
 						PTOI_TABLE_SZ_MAX(dev)));
@@ -1490,6 +1775,8 @@ flow_tcf_translate(struct rte_eth_dev *dev, struct mlx5_flow *dev_flow,
 	 */
 	tcm->tcm_info = TC_H_MAKE((attr->priority + 1) << 16,
 				  RTE_BE16(ETH_P_ALL));
+	if (attr->group > 0)
+		mnl_attr_put_u32(nlh, TCA_CHAIN, attr->group);
 	mnl_attr_put_strz(nlh, TCA_KIND, "flower");
 	na_flower = mnl_attr_nest_start(nlh, TCA_OPTIONS);
 	mnl_attr_put_u32(nlh, TCA_FLOWER_FLAGS, TCA_CLS_FLAGS_SKIP_SW);
@@ -1782,6 +2069,23 @@ flow_tcf_translate(struct rte_eth_dev *dev, struct mlx5_flow *dev_flow,
 			mnl_attr_nest_end(nlh, na_act);
 			mnl_attr_nest_end(nlh, na_act_index);
 			break;
+		case RTE_FLOW_ACTION_TYPE_JUMP:
+			conf.jump = actions->conf;
+			na_act_index =
+				mnl_attr_nest_start(nlh, na_act_index_cur++);
+			assert(na_act_index);
+			mnl_attr_put_strz(nlh, TCA_ACT_KIND, "gact");
+			na_act = mnl_attr_nest_start(nlh, TCA_ACT_OPTIONS);
+			assert(na_act);
+			mnl_attr_put(nlh, TCA_GACT_PARMS,
+				     sizeof(struct tc_gact),
+				     &(struct tc_gact){
+					.action = TC_ACT_GOTO_CHAIN |
+						  conf.jump->group,
+				     });
+			mnl_attr_nest_end(nlh, na_act);
+			mnl_attr_nest_end(nlh, na_act_index);
+			break;
 		case RTE_FLOW_ACTION_TYPE_DROP:
 			na_act_index =
 				mnl_attr_nest_start(nlh, na_act_index_cur++);
@@ -1796,6 +2100,16 @@ flow_tcf_translate(struct rte_eth_dev *dev, struct mlx5_flow *dev_flow,
 				     });
 			mnl_attr_nest_end(nlh, na_act);
 			mnl_attr_nest_end(nlh, na_act_index);
+			break;
+		case RTE_FLOW_ACTION_TYPE_COUNT:
+			/*
+			 * Driver adds the count action implicitly for
+			 * each rule it creates.
+			 */
+			ret = flow_tcf_translate_action_count(dev,
+							      dev_flow, error);
+			if (ret < 0)
+				return ret;
 			break;
 		case RTE_FLOW_ACTION_TYPE_OF_POP_VLAN:
 			conf.of_push_vlan = NULL;
@@ -1868,6 +2182,10 @@ override_na_vlan_priority:
 		case RTE_FLOW_ACTION_TYPE_SET_IPV6_DST:
 		case RTE_FLOW_ACTION_TYPE_SET_TP_SRC:
 		case RTE_FLOW_ACTION_TYPE_SET_TP_DST:
+		case RTE_FLOW_ACTION_TYPE_SET_TTL:
+		case RTE_FLOW_ACTION_TYPE_DEC_TTL:
+		case RTE_FLOW_ACTION_TYPE_SET_MAC_SRC:
+		case RTE_FLOW_ACTION_TYPE_SET_MAC_DST:
 			na_act_index =
 				mnl_attr_nest_start(nlh, na_act_index_cur++);
 			flow_tcf_create_pedit_mnl_msg(nlh,
@@ -1891,8 +2209,8 @@ override_na_vlan_priority:
 /**
  * Send Netlink message with acknowledgment.
  *
- * @param nl
- *   Libmnl socket to use.
+ * @param ctx
+ *   Flow context to use.
  * @param nlh
  *   Message to send. This function always raises the NLM_F_ACK flag before
  *   sending.
@@ -1901,12 +2219,13 @@ override_na_vlan_priority:
  *   0 on success, a negative errno value otherwise and rte_errno is set.
  */
 static int
-flow_tcf_nl_ack(struct mnl_socket *nl, struct nlmsghdr *nlh)
+flow_tcf_nl_ack(struct mlx5_flow_tcf_context *ctx, struct nlmsghdr *nlh)
 {
 	alignas(struct nlmsghdr)
 	uint8_t ans[mnl_nlmsg_size(sizeof(struct nlmsgerr)) +
 		    nlh->nlmsg_len - sizeof(*nlh)];
-	uint32_t seq = random();
+	uint32_t seq = ctx->seq++;
+	struct mnl_socket *nl = ctx->nl;
 	int ret;
 
 	nlh->nlmsg_flags |= NLM_F_ACK;
@@ -1941,7 +2260,7 @@ flow_tcf_apply(struct rte_eth_dev *dev, struct rte_flow *flow,
 	       struct rte_flow_error *error)
 {
 	struct priv *priv = dev->data->dev_private;
-	struct mnl_socket *nl = priv->mnl_socket;
+	struct mlx5_flow_tcf_context *ctx = priv->tcf_context;
 	struct mlx5_flow *dev_flow;
 	struct nlmsghdr *nlh;
 
@@ -1951,7 +2270,7 @@ flow_tcf_apply(struct rte_eth_dev *dev, struct rte_flow *flow,
 	nlh = dev_flow->tcf.nlh;
 	nlh->nlmsg_type = RTM_NEWTFILTER;
 	nlh->nlmsg_flags = NLM_F_REQUEST | NLM_F_CREATE | NLM_F_EXCL;
-	if (!flow_tcf_nl_ack(nl, nlh))
+	if (!flow_tcf_nl_ack(ctx, nlh))
 		return 0;
 	return rte_flow_error_set(error, rte_errno,
 				  RTE_FLOW_ERROR_TYPE_UNSPECIFIED, NULL,
@@ -1970,12 +2289,18 @@ static void
 flow_tcf_remove(struct rte_eth_dev *dev, struct rte_flow *flow)
 {
 	struct priv *priv = dev->data->dev_private;
-	struct mnl_socket *nl = priv->mnl_socket;
+	struct mlx5_flow_tcf_context *ctx = priv->tcf_context;
 	struct mlx5_flow *dev_flow;
 	struct nlmsghdr *nlh;
 
 	if (!flow)
 		return;
+	if (flow->counter) {
+		if (--flow->counter->ref_cnt == 0) {
+			rte_free(flow->counter);
+			flow->counter = NULL;
+		}
+	}
 	dev_flow = LIST_FIRST(&flow->dev_flows);
 	if (!dev_flow)
 		return;
@@ -1984,7 +2309,7 @@ flow_tcf_remove(struct rte_eth_dev *dev, struct rte_flow *flow)
 	nlh = dev_flow->tcf.nlh;
 	nlh->nlmsg_type = RTM_DELTFILTER;
 	nlh->nlmsg_flags = NLM_F_REQUEST;
-	flow_tcf_nl_ack(nl, nlh);
+	flow_tcf_nl_ack(ctx, nlh);
 }
 
 /**
@@ -2012,6 +2337,432 @@ flow_tcf_destroy(struct rte_eth_dev *dev, struct rte_flow *flow)
 	rte_free(dev_flow);
 }
 
+/**
+ * Helper routine for figuring the space size required for a parse buffer.
+ *
+ * @param array
+ *   array of values to use.
+ * @param idx
+ *   Current location in array.
+ * @param value
+ *   Value to compare with.
+ *
+ * @return
+ *   The maximum between the given value and the array value on index.
+ */
+static uint16_t
+flow_tcf_arr_val_max(uint16_t array[], int idx, uint16_t value)
+{
+	return idx < 0 ? (value) : RTE_MAX((array)[idx], value);
+}
+
+/**
+ * Parse rtnetlink message attributes filling the attribute table with the info
+ * retrieved.
+ *
+ * @param tb
+ *   Attribute table to be filled.
+ * @param[out] max
+ *   Maxinum entry in the attribute table.
+ * @param rte
+ *   The attributes section in the message to be parsed.
+ * @param len
+ *   The length of the attributes section in the message.
+ */
+static void
+flow_tcf_nl_parse_rtattr(struct rtattr *tb[], int max,
+			 struct rtattr *rta, int len)
+{
+	unsigned short type;
+	memset(tb, 0, sizeof(struct rtattr *) * (max + 1));
+	while (RTA_OK(rta, len)) {
+		type = rta->rta_type;
+		if (type <= max && !tb[type])
+			tb[type] = rta;
+		rta = RTA_NEXT(rta, len);
+	}
+}
+
+/**
+ * Extract flow counters from flower action.
+ *
+ * @param rta
+ *   flower action stats properties in the Netlink message received.
+ * @param rta_type
+ *   The backward sequence of rta_types, as written in the attribute table,
+ *   we need to traverse in order to get to the requested object.
+ * @param idx
+ *   Current location in rta_type table.
+ * @param[out] data
+ *   data holding the count statistics of the rte_flow retrieved from
+ *   the message.
+ *
+ * @return
+ *   0 if data was found and retrieved, -1 otherwise.
+ */
+static int
+flow_tcf_nl_action_stats_parse_and_get(struct rtattr *rta,
+				       uint16_t rta_type[], int idx,
+				       struct gnet_stats_basic *data)
+{
+	int tca_stats_max = flow_tcf_arr_val_max(rta_type, idx,
+						 TCA_STATS_BASIC);
+	struct rtattr *tbs[tca_stats_max + 1];
+
+	if (rta == NULL || idx < 0)
+		return -1;
+	flow_tcf_nl_parse_rtattr(tbs, tca_stats_max,
+				 RTA_DATA(rta), RTA_PAYLOAD(rta));
+	switch (rta_type[idx]) {
+	case TCA_STATS_BASIC:
+		if (tbs[TCA_STATS_BASIC]) {
+			memcpy(data, RTA_DATA(tbs[TCA_STATS_BASIC]),
+			       RTE_MIN(RTA_PAYLOAD(tbs[TCA_STATS_BASIC]),
+			       sizeof(*data)));
+			return 0;
+		}
+		break;
+	default:
+		break;
+	}
+	return -1;
+}
+
+/**
+ * Parse flower single action retrieving the requested action attribute,
+ * if found.
+ *
+ * @param arg
+ *   flower action properties in the Netlink message received.
+ * @param rta_type
+ *   The backward sequence of rta_types, as written in the attribute table,
+ *   we need to traverse in order to get to the requested object.
+ * @param idx
+ *   Current location in rta_type table.
+ * @param[out] data
+ *   Count statistics retrieved from the message query.
+ *
+ * @return
+ *   0 if data was found and retrieved, -1 otherwise.
+ */
+static int
+flow_tcf_nl_parse_one_action_and_get(struct rtattr *arg,
+				     uint16_t rta_type[], int idx, void *data)
+{
+	int tca_act_max = flow_tcf_arr_val_max(rta_type, idx, TCA_ACT_STATS);
+	struct rtattr *tb[tca_act_max + 1];
+
+	if (arg == NULL || idx < 0)
+		return -1;
+	flow_tcf_nl_parse_rtattr(tb, tca_act_max,
+				 RTA_DATA(arg), RTA_PAYLOAD(arg));
+	if (tb[TCA_ACT_KIND] == NULL)
+		return -1;
+	switch (rta_type[idx]) {
+	case TCA_ACT_STATS:
+		if (tb[TCA_ACT_STATS])
+			return flow_tcf_nl_action_stats_parse_and_get
+					(tb[TCA_ACT_STATS],
+					 rta_type, --idx,
+					 (struct gnet_stats_basic *)data);
+		break;
+	default:
+		break;
+	}
+	return -1;
+}
+
+/**
+ * Parse flower action section in the message retrieving the requested
+ * attribute from the first action that provides it.
+ *
+ * @param opt
+ *   flower section in the Netlink message received.
+ * @param rta_type
+ *   The backward sequence of rta_types, as written in the attribute table,
+ *   we need to traverse in order to get to the requested object.
+ * @param idx
+ *   Current location in rta_type table.
+ * @param[out] data
+ *   data retrieved from the message query.
+ *
+ * @return
+ *   0 if data was found and retrieved, -1 otherwise.
+ */
+static int
+flow_tcf_nl_action_parse_and_get(struct rtattr *arg,
+				 uint16_t rta_type[], int idx, void *data)
+{
+	struct rtattr *tb[TCA_ACT_MAX_PRIO + 1];
+	int i;
+
+	if (arg == NULL || idx < 0)
+		return -1;
+	flow_tcf_nl_parse_rtattr(tb, TCA_ACT_MAX_PRIO,
+				 RTA_DATA(arg), RTA_PAYLOAD(arg));
+	switch (rta_type[idx]) {
+	/*
+	 * flow counters are stored in the actions defined by the flow
+	 * and not in the flow itself, therefore we need to traverse the
+	 * flower chain of actions in search for them.
+	 *
+	 * Note that the index is not decremented here.
+	 */
+	case TCA_ACT_STATS:
+		for (i = 0; i <= TCA_ACT_MAX_PRIO; i++) {
+			if (tb[i] &&
+			!flow_tcf_nl_parse_one_action_and_get(tb[i],
+							      rta_type,
+							      idx, data))
+				return 0;
+		}
+		break;
+	default:
+		break;
+	}
+	return -1;
+}
+
+/**
+ * Parse flower classifier options in the message, retrieving the requested
+ * attribute if found.
+ *
+ * @param opt
+ *   flower section in the Netlink message received.
+ * @param rta_type
+ *   The backward sequence of rta_types, as written in the attribute table,
+ *   we need to traverse in order to get to the requested object.
+ * @param idx
+ *   Current location in rta_type table.
+ * @param[out] data
+ *   data retrieved from the message query.
+ *
+ * @return
+ *   0 if data was found and retrieved, -1 otherwise.
+ */
+static int
+flow_tcf_nl_opts_parse_and_get(struct rtattr *opt,
+			       uint16_t rta_type[], int idx, void *data)
+{
+	int tca_flower_max = flow_tcf_arr_val_max(rta_type, idx,
+						  TCA_FLOWER_ACT);
+	struct rtattr *tb[tca_flower_max + 1];
+
+	if (!opt || idx < 0)
+		return -1;
+	flow_tcf_nl_parse_rtattr(tb, tca_flower_max,
+				 RTA_DATA(opt), RTA_PAYLOAD(opt));
+	switch (rta_type[idx]) {
+	case TCA_FLOWER_ACT:
+		if (tb[TCA_FLOWER_ACT])
+			return flow_tcf_nl_action_parse_and_get
+							(tb[TCA_FLOWER_ACT],
+							 rta_type, --idx, data);
+		break;
+	default:
+		break;
+	}
+	return -1;
+}
+
+/**
+ * Parse Netlink reply on filter query, retrieving the flow counters.
+ *
+ * @param nlh
+ *   Message received from Netlink.
+ * @param rta_type
+ *   The backward sequence of rta_types, as written in the attribute table,
+ *   we need to traverse in order to get to the requested object.
+ * @param idx
+ *   Current location in rta_type table.
+ * @param[out] data
+ *   data retrieved from the message query.
+ *
+ * @return
+ *   0 if data was found and retrieved, -1 otherwise.
+ */
+static int
+flow_tcf_nl_filter_parse_and_get(struct nlmsghdr *cnlh,
+				 uint16_t rta_type[], int idx, void *data)
+{
+	struct nlmsghdr *nlh = cnlh;
+	struct tcmsg *t = NLMSG_DATA(nlh);
+	int len = nlh->nlmsg_len;
+	int tca_max = flow_tcf_arr_val_max(rta_type, idx, TCA_OPTIONS);
+	struct rtattr *tb[tca_max + 1];
+
+	if (idx < 0)
+		return -1;
+	if (nlh->nlmsg_type != RTM_NEWTFILTER &&
+	    nlh->nlmsg_type != RTM_GETTFILTER &&
+	    nlh->nlmsg_type != RTM_DELTFILTER)
+		return -1;
+	len -= NLMSG_LENGTH(sizeof(*t));
+	if (len < 0)
+		return -1;
+	flow_tcf_nl_parse_rtattr(tb, tca_max, TCA_RTA(t), len);
+	/* Not a TC flower flow - bail out */
+	if (!tb[TCA_KIND] ||
+	    strcmp(RTA_DATA(tb[TCA_KIND]), "flower"))
+		return -1;
+	switch (rta_type[idx]) {
+	case TCA_OPTIONS:
+		if (tb[TCA_OPTIONS])
+			return flow_tcf_nl_opts_parse_and_get(tb[TCA_OPTIONS],
+							      rta_type,
+							      --idx, data);
+		break;
+	default:
+		break;
+	}
+	return -1;
+}
+
+/**
+ * A callback to parse Netlink reply on TC flower query.
+ *
+ * @param nlh
+ *   Message received from Netlink.
+ * @param[out] data
+ *   Pointer to data area to be filled by the parsing routine.
+ *   assumed to be a pinter to struct flow_tcf_stats_basic.
+ *
+ * @return
+ *   MNL_CB_OK value.
+ */
+static int
+flow_tcf_nl_message_get_stats_basic(const struct nlmsghdr *nlh, void *data)
+{
+	/*
+	 * The backward sequence of rta_types to pass in order to get
+	 *  to the counters.
+	 */
+	uint16_t rta_type[] = { TCA_STATS_BASIC, TCA_ACT_STATS,
+				TCA_FLOWER_ACT, TCA_OPTIONS };
+	struct flow_tcf_stats_basic *sb_data = data;
+	union {
+		const struct nlmsghdr *c;
+		struct nlmsghdr *nc;
+	} tnlh = { .c = nlh };
+
+	if (!flow_tcf_nl_filter_parse_and_get(tnlh.nc, rta_type,
+					      RTE_DIM(rta_type) - 1,
+					      (void *)&sb_data->counters))
+		sb_data->valid = true;
+	return MNL_CB_OK;
+}
+
+/**
+ * Query a TC flower rule for its statistics via netlink.
+ *
+ * @param[in] dev
+ *   Pointer to Ethernet device.
+ * @param[in] flow
+ *   Pointer to the sub flow.
+ * @param[out] data
+ *   data retrieved by the query.
+ * @param[out] error
+ *   Perform verbose error reporting if not NULL.
+ *
+ * @return
+ *   0 on success, a negative errno value otherwise and rte_errno is set.
+ */
+static int
+flow_tcf_query_count(struct rte_eth_dev *dev,
+			  struct rte_flow *flow,
+			  void *data,
+			  struct rte_flow_error *error)
+{
+	struct flow_tcf_stats_basic sb_data = { 0 };
+	struct rte_flow_query_count *qc = data;
+	struct priv *priv = dev->data->dev_private;
+	struct mlx5_flow_tcf_context *ctx = priv->tcf_context;
+	struct mnl_socket *nl = ctx->nl;
+	struct mlx5_flow *dev_flow;
+	struct nlmsghdr *nlh;
+	uint32_t seq = priv->tcf_context->seq++;
+	ssize_t ret;
+	assert(qc);
+
+	dev_flow = LIST_FIRST(&flow->dev_flows);
+	/* E-Switch flow can't be expanded. */
+	assert(!LIST_NEXT(dev_flow, next));
+	if (!dev_flow->flow->counter)
+		goto notsup_exit;
+	nlh = dev_flow->tcf.nlh;
+	nlh->nlmsg_type = RTM_GETTFILTER;
+	nlh->nlmsg_flags = NLM_F_REQUEST | NLM_F_ECHO;
+	nlh->nlmsg_seq = seq;
+	if (mnl_socket_sendto(nl, nlh, nlh->nlmsg_len) == -1)
+		goto error_exit;
+	do {
+		ret = mnl_socket_recvfrom(nl, ctx->buf, ctx->buf_size);
+		if (ret <= 0)
+			break;
+		ret = mnl_cb_run(ctx->buf, ret, seq,
+				 mnl_socket_get_portid(nl),
+				 flow_tcf_nl_message_get_stats_basic,
+				 (void *)&sb_data);
+	} while (ret > 0);
+	/* Return the delta from last reset. */
+	if (sb_data.valid) {
+		/* Return the delta from last reset. */
+		qc->hits_set = 1;
+		qc->bytes_set = 1;
+		qc->hits = sb_data.counters.packets - flow->counter->hits;
+		qc->bytes = sb_data.counters.bytes - flow->counter->bytes;
+		if (qc->reset) {
+			flow->counter->hits = sb_data.counters.packets;
+			flow->counter->bytes = sb_data.counters.bytes;
+		}
+		return 0;
+	}
+	return rte_flow_error_set(error, EINVAL,
+				  RTE_FLOW_ERROR_TYPE_UNSPECIFIED,
+				  NULL,
+				  "flow does not have counter");
+error_exit:
+	return rte_flow_error_set
+			(error, errno, RTE_FLOW_ERROR_TYPE_UNSPECIFIED,
+			 NULL, "netlink: failed to read flow rule counters");
+notsup_exit:
+	return rte_flow_error_set
+			(error, ENOTSUP, RTE_FLOW_ERROR_TYPE_UNSPECIFIED,
+			 NULL, "counters are not available.");
+}
+
+/**
+ * Query a flow.
+ *
+ * @see rte_flow_query()
+ * @see rte_flow_ops
+ */
+static int
+flow_tcf_query(struct rte_eth_dev *dev,
+	       struct rte_flow *flow,
+	       const struct rte_flow_action *actions,
+	       void *data,
+	       struct rte_flow_error *error)
+{
+	int ret = -EINVAL;
+
+	for (; actions->type != RTE_FLOW_ACTION_TYPE_END; actions++) {
+		switch (actions->type) {
+		case RTE_FLOW_ACTION_TYPE_VOID:
+			break;
+		case RTE_FLOW_ACTION_TYPE_COUNT:
+			ret = flow_tcf_query_count(dev, flow, data, error);
+			break;
+		default:
+			return rte_flow_error_set(error, ENOTSUP,
+						  RTE_FLOW_ERROR_TYPE_ACTION,
+						  actions,
+						  "action not supported");
+		}
+	}
+	return ret;
+}
+
 const struct mlx5_flow_driver_ops mlx5_flow_tcf_drv_ops = {
 	.validate = flow_tcf_validate,
 	.prepare = flow_tcf_prepare,
@@ -2019,63 +2770,8 @@ const struct mlx5_flow_driver_ops mlx5_flow_tcf_drv_ops = {
 	.apply = flow_tcf_apply,
 	.remove = flow_tcf_remove,
 	.destroy = flow_tcf_destroy,
+	.query = flow_tcf_query,
 };
-
-/**
- * Initialize ingress qdisc of a given network interface.
- *
- * @param nl
- *   Libmnl socket of the @p NETLINK_ROUTE kind.
- * @param ifindex
- *   Index of network interface to initialize.
- * @param[out] error
- *   Perform verbose error reporting if not NULL.
- *
- * @return
- *   0 on success, a negative errno value otherwise and rte_errno is set.
- */
-int
-mlx5_flow_tcf_init(struct mnl_socket *nl, unsigned int ifindex,
-		   struct rte_flow_error *error)
-{
-	struct nlmsghdr *nlh;
-	struct tcmsg *tcm;
-	alignas(struct nlmsghdr)
-	uint8_t buf[mnl_nlmsg_size(sizeof(*tcm) + 128)];
-
-	/* Destroy existing ingress qdisc and everything attached to it. */
-	nlh = mnl_nlmsg_put_header(buf);
-	nlh->nlmsg_type = RTM_DELQDISC;
-	nlh->nlmsg_flags = NLM_F_REQUEST;
-	tcm = mnl_nlmsg_put_extra_header(nlh, sizeof(*tcm));
-	tcm->tcm_family = AF_UNSPEC;
-	tcm->tcm_ifindex = ifindex;
-	tcm->tcm_handle = TC_H_MAKE(TC_H_INGRESS, 0);
-	tcm->tcm_parent = TC_H_INGRESS;
-	/* Ignore errors when qdisc is already absent. */
-	if (flow_tcf_nl_ack(nl, nlh) &&
-	    rte_errno != EINVAL && rte_errno != ENOENT)
-		return rte_flow_error_set(error, rte_errno,
-					  RTE_FLOW_ERROR_TYPE_UNSPECIFIED, NULL,
-					  "netlink: failed to remove ingress"
-					  " qdisc");
-	/* Create fresh ingress qdisc. */
-	nlh = mnl_nlmsg_put_header(buf);
-	nlh->nlmsg_type = RTM_NEWQDISC;
-	nlh->nlmsg_flags = NLM_F_REQUEST | NLM_F_CREATE | NLM_F_EXCL;
-	tcm = mnl_nlmsg_put_extra_header(nlh, sizeof(*tcm));
-	tcm->tcm_family = AF_UNSPEC;
-	tcm->tcm_ifindex = ifindex;
-	tcm->tcm_handle = TC_H_MAKE(TC_H_INGRESS, 0);
-	tcm->tcm_parent = TC_H_INGRESS;
-	mnl_attr_put_strz_check(nlh, sizeof(buf), TCA_KIND, "ingress");
-	if (flow_tcf_nl_ack(nl, nlh))
-		return rte_flow_error_set(error, rte_errno,
-					  RTE_FLOW_ERROR_TYPE_UNSPECIFIED, NULL,
-					  "netlink: failed to create ingress"
-					  " qdisc");
-	return 0;
-}
 
 /**
  * Create and configure a libmnl socket for Netlink flow rules.
@@ -2084,8 +2780,8 @@ mlx5_flow_tcf_init(struct mnl_socket *nl, unsigned int ifindex,
  *   A valid libmnl socket object pointer on success, NULL otherwise and
  *   rte_errno is set.
  */
-struct mnl_socket *
-mlx5_flow_tcf_socket_create(void)
+static struct mnl_socket *
+flow_tcf_mnl_socket_create(void)
 {
 	struct mnl_socket *nl = mnl_socket_open(NETLINK_ROUTE);
 
@@ -2107,8 +2803,111 @@ mlx5_flow_tcf_socket_create(void)
  * @param nl
  *   Libmnl socket of the @p NETLINK_ROUTE kind.
  */
-void
-mlx5_flow_tcf_socket_destroy(struct mnl_socket *nl)
+static void
+flow_tcf_mnl_socket_destroy(struct mnl_socket *nl)
 {
-	mnl_socket_close(nl);
+	if (nl)
+		mnl_socket_close(nl);
+}
+
+/**
+ * Initialize ingress qdisc of a given network interface.
+ *
+ * @param ctx
+ *   Pointer to tc-flower context to use.
+ * @param ifindex
+ *   Index of network interface to initialize.
+ * @param[out] error
+ *   Perform verbose error reporting if not NULL.
+ *
+ * @return
+ *   0 on success, a negative errno value otherwise and rte_errno is set.
+ */
+int
+mlx5_flow_tcf_init(struct mlx5_flow_tcf_context *ctx,
+		   unsigned int ifindex, struct rte_flow_error *error)
+{
+	struct nlmsghdr *nlh;
+	struct tcmsg *tcm;
+	alignas(struct nlmsghdr)
+	uint8_t buf[mnl_nlmsg_size(sizeof(*tcm) + 128)];
+
+	/* Destroy existing ingress qdisc and everything attached to it. */
+	nlh = mnl_nlmsg_put_header(buf);
+	nlh->nlmsg_type = RTM_DELQDISC;
+	nlh->nlmsg_flags = NLM_F_REQUEST;
+	tcm = mnl_nlmsg_put_extra_header(nlh, sizeof(*tcm));
+	tcm->tcm_family = AF_UNSPEC;
+	tcm->tcm_ifindex = ifindex;
+	tcm->tcm_handle = TC_H_MAKE(TC_H_INGRESS, 0);
+	tcm->tcm_parent = TC_H_INGRESS;
+	/* Ignore errors when qdisc is already absent. */
+	if (flow_tcf_nl_ack(ctx, nlh) &&
+	    rte_errno != EINVAL && rte_errno != ENOENT)
+		return rte_flow_error_set(error, rte_errno,
+					  RTE_FLOW_ERROR_TYPE_UNSPECIFIED, NULL,
+					  "netlink: failed to remove ingress"
+					  " qdisc");
+	/* Create fresh ingress qdisc. */
+	nlh = mnl_nlmsg_put_header(buf);
+	nlh->nlmsg_type = RTM_NEWQDISC;
+	nlh->nlmsg_flags = NLM_F_REQUEST | NLM_F_CREATE | NLM_F_EXCL;
+	tcm = mnl_nlmsg_put_extra_header(nlh, sizeof(*tcm));
+	tcm->tcm_family = AF_UNSPEC;
+	tcm->tcm_ifindex = ifindex;
+	tcm->tcm_handle = TC_H_MAKE(TC_H_INGRESS, 0);
+	tcm->tcm_parent = TC_H_INGRESS;
+	mnl_attr_put_strz_check(nlh, sizeof(buf), TCA_KIND, "ingress");
+	if (flow_tcf_nl_ack(ctx, nlh))
+		return rte_flow_error_set(error, rte_errno,
+					  RTE_FLOW_ERROR_TYPE_UNSPECIFIED, NULL,
+					  "netlink: failed to create ingress"
+					  " qdisc");
+	return 0;
+}
+
+/**
+ * Create libmnl context for Netlink flow rules.
+ *
+ * @return
+ *   A valid libmnl socket object pointer on success, NULL otherwise and
+ *   rte_errno is set.
+ */
+struct mlx5_flow_tcf_context *
+mlx5_flow_tcf_context_create(void)
+{
+	struct mlx5_flow_tcf_context *ctx = rte_zmalloc(__func__,
+							sizeof(*ctx),
+							sizeof(uint32_t));
+	if (!ctx)
+		goto error;
+	ctx->nl = flow_tcf_mnl_socket_create();
+	if (!ctx->nl)
+		goto error;
+	ctx->buf_size = MNL_SOCKET_BUFFER_SIZE;
+	ctx->buf = rte_zmalloc(__func__,
+			       ctx->buf_size, sizeof(uint32_t));
+	if (!ctx->buf)
+		goto error;
+	ctx->seq = random();
+	return ctx;
+error:
+	mlx5_flow_tcf_context_destroy(ctx);
+	return NULL;
+}
+
+/**
+ * Destroy a libmnl context.
+ *
+ * @param ctx
+ *   Libmnl socket of the @p NETLINK_ROUTE kind.
+ */
+void
+mlx5_flow_tcf_context_destroy(struct mlx5_flow_tcf_context *ctx)
+{
+	if (!ctx)
+		return;
+	flow_tcf_mnl_socket_destroy(ctx->nl);
+	rte_free(ctx->buf);
+	rte_free(ctx);
 }

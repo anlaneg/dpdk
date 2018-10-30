@@ -21,9 +21,10 @@ sources = files('cmdline.c',
 	'parameters.c',
 	'rxonly.c',
 	'testpmd.c',
-	'txonly.c')
+	'txonly.c',
+	'util.c')
 
-deps = ['ethdev', 'gro', 'gso', 'cmdline', 'metrics', 'meter', 'bus_pci']
+deps += ['ethdev', 'gro', 'gso', 'cmdline', 'metrics', 'meter', 'bus_pci']
 if dpdk_conf.has('RTE_LIBRTE_PDUMP')
 	deps += 'pdump'
 endif

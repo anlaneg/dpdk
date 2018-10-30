@@ -79,6 +79,7 @@ static const struct rte_flow_desc_data rte_flow_desc_item[] = {
 	MK_FLOW_ITEM(ICMP6_ND_OPT_TLA_ETH,
 		     sizeof(struct rte_flow_item_icmp6_nd_opt_tla_eth)),
 	MK_FLOW_ITEM(MARK, sizeof(struct rte_flow_item_mark)),
+	MK_FLOW_ITEM(META, sizeof(struct rte_flow_item_meta)),
 };
 
 /** Generate flow_action[] entry. */
@@ -129,6 +130,8 @@ static const struct rte_flow_desc_data rte_flow_desc_action[] = {
 	MK_FLOW_ACTION(VXLAN_DECAP, 0),
 	MK_FLOW_ACTION(NVGRE_ENCAP, sizeof(struct rte_flow_action_vxlan_encap)),
 	MK_FLOW_ACTION(NVGRE_DECAP, 0),
+	MK_FLOW_ACTION(RAW_ENCAP, sizeof(struct rte_flow_action_raw_encap)),
+	MK_FLOW_ACTION(RAW_DECAP, sizeof(struct rte_flow_action_raw_decap)),
 	MK_FLOW_ACTION(SET_IPV4_SRC,
 		       sizeof(struct rte_flow_action_set_ipv4)),
 	MK_FLOW_ACTION(SET_IPV4_DST,
@@ -142,6 +145,10 @@ static const struct rte_flow_desc_data rte_flow_desc_action[] = {
 	MK_FLOW_ACTION(SET_TP_DST,
 		       sizeof(struct rte_flow_action_set_tp)),
 	MK_FLOW_ACTION(MAC_SWAP, 0),
+	MK_FLOW_ACTION(DEC_TTL, 0),
+	MK_FLOW_ACTION(SET_TTL, sizeof(struct rte_flow_action_set_ttl)),
+	MK_FLOW_ACTION(SET_MAC_SRC, sizeof(struct rte_flow_action_set_mac)),
+	MK_FLOW_ACTION(SET_MAC_DST, sizeof(struct rte_flow_action_set_mac)),
 };
 
 static int

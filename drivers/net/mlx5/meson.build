@@ -79,8 +79,10 @@ if build
 	has_member_args = [
 		[ 'HAVE_IBV_MLX5_MOD_SWP', 'infiniband/mlx5dv.h',
 		'struct mlx5dv_sw_parsing_caps', 'sw_parsing_offloads' ],
-		[ 'HAVE_IBV_DEVICE_COUNTERS_SET_SUPPORT', 'infiniband/verbs.h',
+		[ 'HAVE_IBV_DEVICE_COUNTERS_SET_V42', 'infiniband/verbs.h',
 		'struct ibv_counter_set_init_attr', 'counter_set_id' ],
+		[ 'HAVE_IBV_DEVICE_COUNTERS_SET_V45', 'infiniband/verbs.h',
+		'struct ibv_counters_init_attr', 'comp_mask' ],
 	]
 	# input array for meson symbol search:
 	# [ "MACRO to define if found", "header for the search",
@@ -126,6 +128,8 @@ if build
 		'IFLA_PHYS_SWITCH_ID' ],
 		[ 'HAVE_IFLA_PHYS_PORT_NAME', 'linux/if_link.h',
 		'IFLA_PHYS_PORT_NAME' ],
+		[ 'HAVE_TCA_CHAIN', 'linux/rtnetlink.h',
+		'TCA_CHAIN' ],
 		[ 'HAVE_TCA_FLOWER_ACT', 'linux/pkt_cls.h',
 		'TCA_FLOWER_ACT' ],
 		[ 'HAVE_TCA_FLOWER_FLAGS', 'linux/pkt_cls.h',
@@ -184,6 +188,8 @@ if build
 		'TCA_FLOWER_KEY_TCP_FLAGS' ],
 		[ 'HAVE_TCA_FLOWER_KEY_TCP_FLAGS_MASK', 'linux/pkt_cls.h',
 		'TCA_FLOWER_KEY_TCP_FLAGS_MASK' ],
+		[ 'HAVE_TC_ACT_GOTO_CHAIN', 'linux/pkt_cls.h',
+		'TC_ACT_GOTO_CHAIN' ],
 		[ 'HAVE_TC_ACT_VLAN', 'linux/tc_act/tc_vlan.h',
 		'TCA_VLAN_PUSH_VLAN_PRIORITY' ],
 		[ 'HAVE_TC_ACT_PEDIT', 'linux/tc_act/tc_pedit.h',
