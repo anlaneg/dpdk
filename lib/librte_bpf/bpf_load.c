@@ -27,11 +27,14 @@ bpf_load(const struct rte_bpf_prm *prm)
 	struct rte_bpf *bpf;
 	size_t sz, bsz, insz, xsz;
 
+	//符号表大小
 	xsz =  prm->nb_xsym * sizeof(prm->xsym[0]);
+	//指令表大小
 	insz = prm->nb_ins * sizeof(prm->ins[0]);
 	bsz = sizeof(bpf[0]);
 	sz = insz + xsz + bsz;
 
+	//申请sz字节内存
 	buf = mmap(NULL, sz, PROT_READ | PROT_WRITE,
 		MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
 	if (buf == MAP_FAILED)
@@ -42,9 +45,12 @@ bpf_load(const struct rte_bpf_prm *prm)
 
 	memcpy(&bpf->prm, prm, sizeof(bpf->prm));
 
+	//设置符号表
 	memcpy(buf + bsz, prm->xsym, xsz);
+	//设置指令
 	memcpy(buf + bsz + xsz, prm->ins, insz);
 
+	//指向符号表，及指令
 	bpf->prm.xsym = (void *)(buf + bsz);
 	bpf->prm.ins = (void *)(buf + bsz + xsz);
 
@@ -63,14 +69,16 @@ bpf_check_xsym(const struct rte_bpf_xsym *xsym)
 		return -EINVAL;
 
 	if (xsym->type == RTE_BPF_XTYPE_VAR) {
+		//符号为变量
 		if (xsym->var.desc.type == RTE_BPF_ARG_UNDEF)
 			return -EINVAL;
 	} else if (xsym->type == RTE_BPF_XTYPE_FUNC) {
-
+		//符号为函数
 		if (xsym->func.nb_args > EBPF_FUNC_MAX_ARGS)
 			return -EINVAL;
 
 		/* check function arguments */
+		//确保所有参数均给出
 		for (i = 0; i != xsym->func.nb_args; i++) {
 			if (xsym->func.args[i].type == RTE_BPF_ARG_UNDEF)
 				return -EINVAL;
@@ -99,6 +107,7 @@ rte_bpf_load(const struct rte_bpf_prm *prm)
 		return NULL;
 	}
 
+	//符号检查
 	rc = 0;
 	for (i = 0; i != prm->nb_xsym && rc == 0; i++)
 		rc = bpf_check_xsym(prm->xsym + i);
@@ -109,6 +118,7 @@ rte_bpf_load(const struct rte_bpf_prm *prm)
 		return NULL;
 	}
 
+	//加载prm中的符号表及指令
 	bpf = bpf_load(prm);
 	if (bpf == NULL) {
 		rte_errno = ENOMEM;

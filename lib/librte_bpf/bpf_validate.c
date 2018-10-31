@@ -83,7 +83,7 @@ struct bpf_ins_check {
 	struct {
 		uint16_t dreg;
 		uint16_t sreg;
-	} mask;
+	} mask;//可用哪些目的寄存器，可用哪些源寄存器
 	struct {
 		uint16_t min;
 		uint16_t max;
@@ -91,7 +91,7 @@ struct bpf_ins_check {
 	struct {
 		uint32_t min;
 		uint32_t max;
-	} imm;
+	} imm;//立即数取值
 	const char * (*check)(const struct ebpf_insn *);
 	const char * (*eval)(struct bpf_verifier *, const struct ebpf_insn *);
 };
@@ -591,6 +591,7 @@ eval_defined(const struct bpf_reg_val *dst, const struct bpf_reg_val *src)
 	return NULL;
 }
 
+//alu执行检查
 static const char *
 eval_alu(struct bpf_verifier *bvf, const struct ebpf_insn *ins)
 {
@@ -601,6 +602,7 @@ eval_alu(struct bpf_verifier *bvf, const struct ebpf_insn *ins)
 	struct bpf_eval_state *st;
 	struct bpf_reg_val *rd, rs;
 
+	//区分是32位操作数，还是64位操作数
 	opsz = (BPF_CLASS(ins->code) == BPF_ALU) ?
 		sizeof(uint32_t) : sizeof(uint64_t);
 	opsz = opsz * CHAR_BIT;
@@ -617,6 +619,7 @@ eval_alu(struct bpf_verifier *bvf, const struct ebpf_insn *ins)
 
 	eval_apply_mask(rd, msk);
 
+	//取指令对应的操作码
 	op = BPF_OP(ins->code);
 
 	err = eval_defined((op != EBPF_MOV) ? rd : NULL,
@@ -624,6 +627,7 @@ eval_alu(struct bpf_verifier *bvf, const struct ebpf_insn *ins)
 	if (err != NULL)
 		return err;
 
+	//执行算术运算指令
 	if (op == BPF_ADD)
 		eval_add(rd, &rs, msk);
 	else if (op == BPF_SUB)
@@ -1658,20 +1662,25 @@ check_syntax(const struct ebpf_insn *ins)
 	if (ins_chk[op].mask.dreg == 0)
 		return "invalid opcode";
 
+	//指令op不能操作指定指出的寄存器（目的寄存器）
 	if ((ins_chk[op].mask.dreg & 1 << ins->dst_reg) == 0)
 		return "invalid dst-reg field";
 
+	//指令op不能操作指定指出的寄存器（源寄存器）
 	if ((ins_chk[op].mask.sreg & 1 << ins->src_reg) == 0)
 		return "invalid src-reg field";
 
+	//偏移取值是否合法
 	off = ins->off;
 	if (ins_chk[op].off.min > off || ins_chk[op].off.max < off)
 		return "invalid off field";
 
+	//立即数取值是否合法
 	imm = ins->imm;
 	if (ins_chk[op].imm.min > imm || ins_chk[op].imm.max < imm)
 		return "invalid imm field";
 
+	//采用check回调检查
 	if (ins_chk[op].check != NULL)
 		return ins_chk[op].check(ins);
 
@@ -1886,12 +1895,14 @@ validate(struct bpf_verifier *bvf)
 	const struct ebpf_insn *ins;
 	const char *err;
 
+	//遍历每条指令
 	rc = 0;
 	for (i = 0; i < bvf->prm->nb_ins; i++) {
 
 		ins = bvf->prm->ins + i;
 		node = bvf->in + i;
 
+		//检查指令语法
 		err = check_syntax(ins);
 		if (err != 0) {
 			RTE_BPF_LOG(ERR, "%s: %s at pc: %u\n",
@@ -2215,6 +2226,7 @@ bpf_validate(struct rte_bpf *bpf)
 	struct bpf_verifier bvf;
 
 	/* check input argument type, don't allow mbuf ptr on 32-bit */
+	//程序参数类型检查
 	if (bpf->prm.prog_arg.type != RTE_BPF_ARG_RAW &&
 			bpf->prm.prog_arg.type != RTE_BPF_ARG_PTR &&
 			(sizeof(uint64_t) != sizeof(uintptr_t) ||
@@ -2232,6 +2244,7 @@ bpf_validate(struct rte_bpf *bpf)
 	rc = validate(&bvf);
 
 	if (rc == 0) {
+		//校验通过
 		rc = evst_pool_init(&bvf);
 		if (rc == 0)
 			rc = evaluate(&bvf);

@@ -516,6 +516,7 @@ rte_log2_u32(uint32_t v)
 #define RTE_FMT_TAIL(fmt, ...) __VA_ARGS__
 
 /** Mask value of type "tp" for the first "ln" bit set. */
+//使类型tp的前ln个bit置为０
 #define	RTE_LEN2MASK(ln, tp)	\
 	((tp)((uint64_t)-1 >> (sizeof(uint64_t) * CHAR_BIT - (ln))))
 

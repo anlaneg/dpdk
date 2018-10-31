@@ -17,7 +17,7 @@ extern "C" {
 struct rte_bpf {
 	struct rte_bpf_prm prm;
 	struct rte_bpf_jit jit;
-	size_t sz;
+	size_t sz;//size,大小
 	uint32_t stack_sz;
 };
 

@@ -26,6 +26,7 @@
 		(ins)->off : 0)
 
 #define BPF_JMP_CND_IMM(reg, ins, op, type)	\
+	/*针对目的寄存器与立即数，执行op操作，结果为真时，指令跳到off处继续执行，否则继续执行*/\
 	((ins) += \
 		((type)(reg)[(ins)->dst_reg] op (type)(ins)->imm) ? \
 		(ins)->off : 0)
@@ -34,16 +35,20 @@
 	((reg)[(ins)->dst_reg] = (type)(-(reg)[(ins)->dst_reg]))
 
 #define EBPF_MOV_ALU_REG(reg, ins, type)	\
+	/*目的寄存器中载入源寄存器的值*/\
 	((reg)[(ins)->dst_reg] = (type)(reg)[(ins)->src_reg])
 
 #define BPF_OP_ALU_REG(reg, ins, op, type)	\
+	/*逻辑运算，目的寄存器与源寄存器执行op操作，结果存入目的寄存器*/\
 	((reg)[(ins)->dst_reg] = \
 		(type)(reg)[(ins)->dst_reg] op (type)(reg)[(ins)->src_reg])
 
 #define EBPF_MOV_ALU_IMM(reg, ins, type)	\
+	/*目的寄存器中载入立即数*/\
 	((reg)[(ins)->dst_reg] = (type)(ins)->imm)
 
 #define BPF_OP_ALU_IMM(reg, ins, op, type)	\
+	/*逻辑运算，目的寄存器与立即数操作，再存入到目的寄存器*/\
 	((reg)[(ins)->dst_reg] = \
 		(type)(reg)[(ins)->dst_reg] op (type)(ins)->imm)
 
@@ -58,6 +63,7 @@
 } while (0)
 
 #define BPF_LD_REG(reg, ins, type)	\
+	/*将源寄存器中存放的指针地址偏移off后，将其内容赋给目的寄存器*/\
 	((reg)[(ins)->dst_reg] = \
 		*(type *)(uintptr_t)((reg)[(ins)->src_reg] + (ins)->off))
 
@@ -112,15 +118,18 @@ bpf_alu_le(uint64_t reg[EBPF_REG_NUM], const struct ebpf_insn *ins)
 	}
 }
 
+//bpf程序执行
 static inline uint64_t
-bpf_exec(const struct rte_bpf *bpf, uint64_t reg[EBPF_REG_NUM])
+bpf_exec(const struct rte_bpf *bpf, uint64_t reg[EBPF_REG_NUM]/*寄存器*/)
 {
 	const struct ebpf_insn *ins;
 
+	//遍历执行所有指令（jump指令控制指定的跳跃，即控制ins指针移动）
 	for (ins = bpf->prm.ins; ; ins++) {
 		switch (ins->code) {
 		/* 32 bit ALU IMM operations */
 		case (BPF_ALU | BPF_ADD | BPF_K):
+			//有key标记，按加立即数操作
 			BPF_OP_ALU_IMM(reg, ins, +, uint32_t);
 			break;
 		case (BPF_ALU | BPF_SUB | BPF_K):
@@ -199,6 +208,7 @@ bpf_exec(const struct rte_bpf *bpf, uint64_t reg[EBPF_REG_NUM])
 			bpf_alu_le(reg, ins);
 			break;
 		/* 64 bit ALU IMM operations */
+			//64位指令
 		case (EBPF_ALU64 | BPF_ADD | BPF_K):
 			BPF_OP_ALU_IMM(reg, ins, +, uint64_t);
 			break;
@@ -401,6 +411,8 @@ bpf_exec(const struct rte_bpf *bpf, uint64_t reg[EBPF_REG_NUM])
 			BPF_JMP_CND_REG(reg, ins, &, uint64_t);
 			break;
 		/* call instructions */
+			//call指令，调用ins->imm指定的符号，并传入1,2,3,4,5号寄存器值，执行结果保存在0号寄存器中
+			//call指令结束后，继续执行
 		case (BPF_JMP | EBPF_CALL):
 			reg[EBPF_REG_0] = bpf->prm.xsym[ins->imm].func.val(
 				reg[EBPF_REG_1], reg[EBPF_REG_2],
@@ -408,9 +420,11 @@ bpf_exec(const struct rte_bpf *bpf, uint64_t reg[EBPF_REG_NUM])
 				reg[EBPF_REG_5]);
 			break;
 		/* return instruction */
+			//退出执行，返回0号寄存器
 		case (BPF_JMP | EBPF_EXIT):
 			return reg[EBPF_REG_0];
 		default:
+			//遇到非法执令，报错
 			RTE_BPF_LOG(ERR,
 				"%s(%p): invalid opcode %#x at pc: %#zx;\n",
 				__func__, bpf, ins->code,
@@ -432,10 +446,11 @@ rte_bpf_exec_burst(const struct rte_bpf *bpf, void *ctx[], uint64_t rc[],
 	uint64_t reg[EBPF_REG_NUM];
 	uint64_t stack[MAX_BPF_STACK_SIZE / sizeof(uint64_t)];
 
+	//执行num个bpf程序
 	for (i = 0; i != num; i++) {
 
-		reg[EBPF_REG_1] = (uintptr_t)ctx[i];
-		reg[EBPF_REG_10] = (uintptr_t)(stack + RTE_DIM(stack));
+		reg[EBPF_REG_1] = (uintptr_t)ctx[i];//参数
+		reg[EBPF_REG_10] = (uintptr_t)(stack + RTE_DIM(stack));//栈底指针（没有指出栈顶，故栈是定长的）
 
 		rc[i] = bpf_exec(bpf, reg);
 	}

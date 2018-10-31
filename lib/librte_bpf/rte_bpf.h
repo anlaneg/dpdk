@@ -73,8 +73,8 @@ struct rte_bpf_xsym {
 		struct {
 			uint64_t (*val)(uint64_t, uint64_t, uint64_t,
 				uint64_t, uint64_t);
-			uint32_t nb_args;
-			struct rte_bpf_arg args[EBPF_FUNC_MAX_ARGS];
+			uint32_t nb_args;//函数参数数目
+			struct rte_bpf_arg args[EBPF_FUNC_MAX_ARGS];//参数
 			/**< Function arguments descriptions. */
 			struct rte_bpf_arg ret; /**< function return value. */
 		} func;
@@ -89,11 +89,14 @@ struct rte_bpf_xsym {
  * Input parameters for loading eBPF code.
  */
 struct rte_bpf_prm {
+	//指令
 	const struct ebpf_insn *ins; /**< array of eBPF instructions */
+	//指令数
 	uint32_t nb_ins;            /**< number of instructions in ins */
-	const struct rte_bpf_xsym *xsym;
 	/**< array of external symbols that eBPF code is allowed to reference */
-	uint32_t nb_xsym; /**< number of elements in xsym */
+	const struct rte_bpf_xsym *xsym;//外部符号表
+	uint32_t nb_xsym; /**< number of elements in xsym */ //符号表大小
+	//程序参数
 	struct rte_bpf_arg prog_arg; /**< eBPF program input arg description */
 };
 

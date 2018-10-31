@@ -183,25 +183,31 @@ apply_filter(struct rte_mbuf *mb[], const uint64_t rc[], uint32_t num,
 
 		/* filter matches */
 		if (rc[i] != 0)
+			//返回非０，认为mbuf匹配成功
 			mb[j++] = mb[i];
 		/* no match */
 		else
+			//mbuf没有匹配
 			dr[k++] = mb[i];
 	}
 
 	if (drop != 0) {
+		//如果指定需要drop,则释放dr数组中的mbuf
 		/* free filtered out mbufs */
 		for (i = 0; i != k; i++)
 			rte_pktmbuf_free(dr[i]);
 	} else {
+		//未指定drop,则将其copy到mb的后面
 		/* copy filtered out mbufs beyond good ones */
 		for (i = 0; i != k; i++)
 			mb[j + i] = dr[i];
 	}
 
+	//返回有多少mbuf被匹配
 	return j;
 }
 
+//执行bpf虚机，过滤num个mbuf
 static inline uint32_t
 pkt_filter_vm(const struct rte_bpf *bpf, struct rte_mbuf *mb[], uint32_t num,
 	uint32_t drop)
@@ -244,7 +250,9 @@ pkt_filter_mb_vm(const struct rte_bpf *bpf, struct rte_mbuf *mb[], uint32_t num,
 {
 	uint64_t rc[num];
 
+	//针对num个mbuf执行bpf,各mbuf情况返回值为rc
 	rte_bpf_exec_burst(bpf, (void **)mb, rc, num);
+	//按rc结果filter
 	return apply_filter(mb, rc, num, drop);
 }
 
@@ -353,6 +361,7 @@ bpf_rx_callback_mb_vm(__rte_unused uint16_t port, __rte_unused uint16_t queue,
 	cbi = user_param;
 	bpf_eth_cbi_inuse(cbi);
 	rc = (cbi->cb != NULL) ?
+		//bpf方式过滤，不匹配的直接drop
 		pkt_filter_mb_vm(cbi->bpf, pkt, nb_pkts, 1) :
 		nb_pkts;
 	bpf_eth_cbi_unuse(cbi);
@@ -386,6 +395,7 @@ bpf_tx_callback_mb_vm(__rte_unused uint16_t port, __rte_unused uint16_t queue,
 	cbi = user_param;
 	bpf_eth_cbi_inuse(cbi);
 	rc = (cbi->cb != NULL) ?
+			//bpf方式过滤，不匹配的不drop
 		pkt_filter_mb_vm(cbi->bpf, pkt, nb_pkts, 0) :
 		nb_pkts;
 	bpf_eth_cbi_unuse(cbi);
@@ -521,6 +531,7 @@ bpf_eth_elf_load(struct bpf_eth_cbh *cbh, uint16_t port, uint16_t queue,
 			queue >= RTE_MAX_QUEUES_PER_PORT)
 		return -EINVAL;
 
+	//按rx,tx　返回不同的回调
 	if (cbh->type == BPF_ETH_RX)
 		frx = select_rx_callback(prm->prog_arg.type, flags);
 	else
@@ -557,6 +568,7 @@ bpf_eth_elf_load(struct bpf_eth_cbh *cbh, uint16_t port, uint16_t queue,
 	bc->bpf = bpf;
 	bc->jit = jit;
 
+	//为接口队列挂载回调，在报文收到时，可以执行
 	if (cbh->type == BPF_ETH_RX)
 		bc->cb = rte_eth_add_rx_callback(port, queue, frx, bc);
 	else

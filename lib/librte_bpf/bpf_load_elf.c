@@ -81,6 +81,7 @@ resolve_xsym(const char *sn, size_t ofs, struct ebpf_insn *ins, size_t ins_sz,
 		ins[idx].imm = fidx;
 	/* for variable we need to store its absolute address */
 	else {
+		//针对符号，载入其地址对应值，做为立即数（这个用起来需要在bpf代码编写时就知道此符号的固定地址）
 		ins[idx].imm = (uintptr_t)prm->xsym[fidx].var.val;
 		ins[idx + 1].imm =
 			(uint64_t)(uintptr_t)prm->xsym[fidx].var.val >> 32;
@@ -265,6 +266,7 @@ bpf_load_elf(const struct rte_bpf_prm *prm, int32_t fd, const char *section)
 	elf_version(EV_CURRENT);
 	elf = elf_begin(fd, ELF_C_READ, NULL);
 
+	//查找段名称
 	rc = find_elf_code(elf, section, &sd, &sidx);
 	if (rc == 0)
 		rc = elf_reloc_code(elf, sd, sidx, prm);
@@ -290,6 +292,7 @@ rte_bpf_elf_load(const struct rte_bpf_prm *prm, const char *fname,
 	int32_t fd, rc;
 	struct rte_bpf *bpf;
 
+	//参数检查
 	if (prm == NULL || fname == NULL || sname == NULL) {
 		rte_errno = EINVAL;
 		return NULL;

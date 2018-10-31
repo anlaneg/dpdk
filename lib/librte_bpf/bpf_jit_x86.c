@@ -1301,6 +1301,7 @@ emit(struct bpf_jit_state *st, const struct rte_bpf *bpf)
 /*
  * produce a native ISA version of the given BPF code.
  */
+//将bpf代码转换为x86指令
 int
 bpf_jit_x86(struct rte_bpf *bpf)
 {
