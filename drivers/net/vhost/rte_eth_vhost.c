@@ -1296,15 +1296,9 @@ eth_dev_vhost_create(struct rte_vdev_device *dev, char *iface_name,
 	rte_spinlock_init(&vring_state->lock);
 	vring_states[eth_dev->data->port_id] = vring_state;
 
-<<<<<<< HEAD
-	data = eth_dev->data;
 	//收发队列数保证相同
 	data->nb_rx_queues = queues;//收队列数
 	data->nb_tx_queues = queues;//发队列数
-=======
-	data->nb_rx_queues = queues;
-	data->nb_tx_queues = queues;
->>>>>>> upstream/master
 	internal->max_queues = queues;
 	internal->vid = -1;
 	data->dev_link = pmd_link;
@@ -1475,9 +1469,6 @@ rte_pmd_vhost_probe(struct rte_vdev_device *dev)
 			flags |= RTE_VHOST_USER_IOMMU_SUPPORT;
 	}
 
-<<<<<<< HEAD
-	//设置numa_node(如果any,则取当前core对应socket)
-=======
 	if (rte_kvargs_count(kvlist, ETH_VHOST_POSTCOPY_SUPPORT) == 1) {
 		ret = rte_kvargs_process(kvlist, ETH_VHOST_POSTCOPY_SUPPORT,
 					 &open_int, &postcopy_support);
@@ -1488,7 +1479,7 @@ rte_pmd_vhost_probe(struct rte_vdev_device *dev)
 			flags |= RTE_VHOST_USER_POSTCOPY_SUPPORT;
 	}
 
->>>>>>> upstream/master
+	//设置numa_node(如果any,则取当前core对应socket)
 	if (dev->device.numa_node == SOCKET_ID_ANY)
 		dev->device.numa_node = rte_socket_id();
 
@@ -1517,13 +1508,10 @@ rte_pmd_vhost_remove(struct rte_vdev_device *dev)
 	if (eth_dev == NULL)
 		return -ENODEV;
 
-<<<<<<< HEAD
-	//停止设备
-=======
 	if (rte_eal_process_type() != RTE_PROC_PRIMARY)
 		return rte_eth_dev_release_port(eth_dev);
 
->>>>>>> upstream/master
+	//停止设备
 	eth_dev_close(eth_dev);
 
 	rte_free(vring_states[eth_dev->data->port_id]);
