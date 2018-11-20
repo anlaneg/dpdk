@@ -59,20 +59,14 @@ struct rte_mbuf *ipv6_frag_reassemble(struct ip_frag_pkt *fp);
 static inline int
 ip_frag_key_is_empty(const struct ip_frag_key * key)
 {
-	uint32_t i;
-	for (i = 0; i < RTE_MIN(key->key_len, RTE_DIM(key->src_dst)); i++)
-		if (key->src_dst[i] != 0)
-			return 0;
-	return 1;
+	return (key->key_len == 0);
 }
 
-/* empty the key */
+/* invalidate the key */
 static inline void
 ip_frag_key_invalidate(struct ip_frag_key * key)
 {
-	uint32_t i;
-	for (i = 0; i < key->key_len; i++)
-		key->src_dst[i] = 0;
+	key->key_len = 0;
 }
 
 /* compare two keys */
@@ -81,9 +75,9 @@ ip_frag_key_cmp(const struct ip_frag_key * k1, const struct ip_frag_key * k2)
 {
 	uint32_t i;
 	uint64_t val;
-	val = k1->id ^ k2->id;//id相等
+	val = k1->id_key_len ^ k2->id_key_len;//key长度相等
 	for (i = 0; i < k1->key_len; i++)
-		val |= k1->src_dst[i] ^ k2->src_dst[i];//且源目的地址相等时，认为匹配
+		val |= k1->src_dst[i] ^ k2->src_dst[i];//且key长度内所有值相等时，认为匹配
 	return val;
 }
 

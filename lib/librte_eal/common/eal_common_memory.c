@@ -49,7 +49,7 @@ static uint64_t system_page_sz;
  * Current known limitations are 39 or 40 bits. Setting the starting address
  * at 4GB implies there are 508GB or 1020GB for mapping the available
  * hugepages. This is likely enough for most systems, although a device with
- * addressing limitations should call rte_eal_check_dma_mask for ensuring all
+ * addressing limitations should call rte_mem_check_dma_mask for ensuring all
  * memory is within supported range.
  */
 static uint64_t baseaddr = 0x100000000;
@@ -439,20 +439,18 @@ check_iova(const struct rte_memseg_list *msl __rte_unused,
 	return 1;
 }
 
-#if defined(RTE_ARCH_64)
 #define MAX_DMA_MASK_BITS 63
-#else
-#define MAX_DMA_MASK_BITS 31
-#endif
 
 /* check memseg iovas are within the required range based on dma mask */
-int __rte_experimental
-rte_eal_check_dma_mask(uint8_t maskbits)
+static int __rte_experimental
+check_dma_mask(uint8_t maskbits, bool thread_unsafe)
 {
 	struct rte_mem_config *mcfg = rte_eal_get_configuration()->mem_config;
 	uint64_t mask;
+	int ret;
 
-	/* sanity check */
+	/* Sanity check. We only check width can be managed with 64 bits
+	 * variables. Indeed any higher value is likely wrong. */
 	if (maskbits > MAX_DMA_MASK_BITS) {
 		RTE_LOG(ERR, EAL, "wrong dma mask size %u (Max: %u)\n",
 				   maskbits, MAX_DMA_MASK_BITS);
@@ -462,7 +460,12 @@ rte_eal_check_dma_mask(uint8_t maskbits)
 	/* create dma mask */
 	mask = ~((1ULL << maskbits) - 1);
 
-	if (rte_memseg_walk(check_iova, &mask))
+	if (thread_unsafe)
+		ret = rte_memseg_walk_thread_unsafe(check_iova, &mask);
+	else
+		ret = rte_memseg_walk(check_iova, &mask);
+
+	if (ret)
 		/*
 		 * Dma mask precludes hugepage usage.
 		 * This device can not be used and we do not need to keep
@@ -478,6 +481,34 @@ rte_eal_check_dma_mask(uint8_t maskbits)
 			     RTE_MIN(mcfg->dma_maskbits, maskbits);
 
 	return 0;
+}
+
+int __rte_experimental
+rte_mem_check_dma_mask(uint8_t maskbits)
+{
+	return check_dma_mask(maskbits, false);
+}
+
+int __rte_experimental
+rte_mem_check_dma_mask_thread_unsafe(uint8_t maskbits)
+{
+	return check_dma_mask(maskbits, true);
+}
+
+/*
+ * Set dma mask to use when memory initialization is done.
+ *
+ * This function should ONLY be used by code executed before the memory
+ * initialization. PMDs should use rte_mem_check_dma_mask if addressing
+ * limitations by the device.
+ */
+void __rte_experimental
+rte_mem_set_dma_mask(uint8_t maskbits)
+{
+	struct rte_mem_config *mcfg = rte_eal_get_configuration()->mem_config;
+
+	mcfg->dma_maskbits = mcfg->dma_maskbits == 0 ? maskbits :
+			     RTE_MIN(mcfg->dma_maskbits, maskbits);
 }
 
 /* return the number of memory channels */

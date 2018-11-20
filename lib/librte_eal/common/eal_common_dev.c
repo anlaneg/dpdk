@@ -151,10 +151,11 @@ local_dev_probe(const char *devargs, struct rte_device **new_dev)
 		goto err_devarg;
 	}
 
-	ret = rte_devargs_insert(da);
+	ret = rte_devargs_insert(&da);
 	if (ret)
 		goto err_devarg;
 
+	/* the rte_devargs will be referenced in the matching rte_device */
 	ret = da->bus->scan();
 	if (ret)
 		goto err_devarg;
@@ -187,7 +188,7 @@ err_devarg:
 	return ret;
 }
 
-int __rte_experimental
+int
 rte_dev_probe(const char *devargs)
 {
 	struct eal_dev_mp_req req;
@@ -323,7 +324,7 @@ local_dev_remove(struct rte_device *dev)
 	return 0;
 }
 
-int __rte_experimental
+int
 rte_dev_remove(struct rte_device *dev)
 {
 	struct eal_dev_mp_req req;

@@ -63,11 +63,21 @@ New Features
 * **Added check for ensuring allocated memory addressable by devices.**
 
   Some devices can have addressing limitations so a new function,
-  ``rte_eal_check_dma_mask``, has been added for checking allocated memory is
+  ``rte_mem_check_dma_mask``, has been added for checking allocated memory is
   not out of the device range. Because now memory can be dynamically allocated
   after initialization, a dma mask is kept and any new allocated memory will be
   checked out against that dma mask and rejected if out of range. If more than
   one device has addressing limitations, the dma mask is the more restricted one.
+
+* **Updated the C11 memory model version of ring library.**
+
+  The latency is decreased for architectures using the C11 memory model
+  version of the ring library.
+
+  On Cavium ThunderX2 platform, the changes decreased latency by 27~29%
+  and 3~15% for MPMC and SPSC cases respectively (with 2 lcores). The
+  real improvements may vary with the number of contending lcores and
+  the size of ring.
 
 * **Added hot-unplug handle mechanism.**
 
@@ -269,6 +279,25 @@ New Features
   their telemetry via a UNIX socket in JSON. The JSON can be consumed by any
   Service Assurance agent, such as CollectD.
 
+* **Updated KNI kernel module, rte_kni library, and KNI sample application.**
+
+  Updated the KNI kernel module with a new kernel module parameter,
+  ``carrier=[on|off]`` to allow the user to control the default carrier
+  state of KNI kernel network interfaces.  The default carrier state
+  is now set to ``off``, so the interfaces cannot be used until the
+  carrier state is set to ``on`` via ``rte_kni_update_link`` or
+  by writing ``1`` to ``/sys/devices/virtual/net/<iface>/carrier``.
+  In previous versions the default carrier state was left undefined.
+  See :doc:`../prog_guide/kernel_nic_interface` for more information.
+
+  Added the new API function ``rte_kni_update_link`` to allow the user
+  to set the carrier state of the KNI kernel network interface.
+
+  Added a new command line flag ``-m`` to the KNI sample application to
+  monitor and automatically reflect the physical NIC carrier state to the
+  KNI kernel network interface with the new ``rte_kni_update_link`` API.
+  See :doc:`../sample_app_ug/kernel_nic_interface` for more information.
+
 * **Added ability to switch queue deferred start flag on testpmd app.**
 
   Added a console command to testpmd app, giving ability to switch
@@ -284,6 +313,20 @@ New Features
   datapath acceleration. As vDPA driver can help to set up vhost datapath,
   this application doesn't need to launch dedicated worker threads for vhost
   enqueue/dequeue operations.
+
+* **Added cryptodev FIPS validation example application.**
+
+  Added an example application to parse and perform symmetric cryptography
+  computation to the NIST Cryptographic Algorithm Validation Program (CAVP)
+  test vectors.
+
+* **Allow unit test binary to take parameters from the environment**
+
+  The unit test "test", or "dpdk-test", binary is often called from scripts,
+  which can make passing additional parameters, such as a coremask, to it more
+  awkward. Support has been added to the application to allow it to take
+  additional command-line parameter values from the "DPDK_TEST_PARAMS"
+  environment variable to make this application easier to use.
 
 
 API Changes
@@ -360,6 +403,20 @@ API Changes
 
 * eventdev: Type of 2nd parameter to ``rte_event_eth_rx_adapter_caps_get()``
   has been changed from uint8_t to uint16_t.
+
+* kni: By default, interface carrier status is ``off`` which means there won't
+  be any traffic. It can be set to ``on`` via ``rte_kni_update_link()`` API
+  or via ``sysfs`` interface:
+  ``echo 1 > /sys/class/net/vEth0/carrier``.
+  Note interface should be ``up`` to be able to read/write sysfs interface.
+  When KNI sample application is used, ``-m`` parameter can be used to
+  automatically update the carrier status for the interface.
+
+* kni: When ethtool support enabled (``CONFIG_RTE_KNI_KMOD_ETHTOOL=y``)
+  ethtool commands ``ETHTOOL_GSET & ETHTOOL_SSET`` are no more supported for the
+  kernels that has ``ETHTOOL_GLINKSETTINGS & ETHTOOL_SLINKSETTINGS`` support.
+  This means ``ethtool "-a|--show-pause", "-s|--change"`` won't work, and
+  ``ethtool <iface>`` output will have less information.
 
 
 ABI Changes
@@ -507,6 +564,8 @@ Known Issues
 * When using SR-IOV (VF) support with netvsc PMD and the Mellanox mlx5 bifurcated
   driver; the Linux netvsc device must be brought up before the netvsc device is
   unbound and passed to the DPDK.
+
+* IBM Power8 is not supported by this release of DPDK. IBM Power9 is supported.
 
 
 Tested Platforms

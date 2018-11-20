@@ -2209,9 +2209,14 @@ bond_ethdev_stop(struct rte_eth_dev *eth_dev)
 
 	internals->link_status_polling_enabled = 0;
 	for (i = 0; i < internals->slave_count; i++) {
-		internals->slaves[i].last_link_status = 0;
-		rte_eth_dev_stop(internals->slaves[i].port_id);
-		deactivate_slave(eth_dev, internals->slaves[i].port_id);
+		uint16_t slave_id = internals->slaves[i].port_id;
+		if (find_slave_by_id(internals->active_slaves,
+				internals->active_slave_count, slave_id) !=
+						internals->active_slave_count) {
+			internals->slaves[i].last_link_status = 0;
+			rte_eth_dev_stop(slave_id);
+			deactivate_slave(eth_dev, slave_id);
+		}
 	}
 }
 
@@ -3250,8 +3255,6 @@ bond_probe(struct rte_vdev_device *dev)
 	internals = rte_eth_devices[port_id].data->dev_private;
 	internals->kvlist = kvlist;
 
-	rte_eth_dev_probing_finish(&rte_eth_devices[port_id]);
-
 	if (rte_kvargs_count(kvlist, PMD_BOND_AGG_MODE_KVARG) == 1) {
 		if (rte_kvargs_process(kvlist,
 				PMD_BOND_AGG_MODE_KVARG,
@@ -3264,12 +3267,12 @@ bond_probe(struct rte_vdev_device *dev)
 		}
 
 		if (internals->mode == BONDING_MODE_8023AD)
-			rte_eth_bond_8023ad_agg_selection_set(port_id,
-					agg_mode);
+			internals->mode4.agg_selection = agg_mode;
 	} else {
-		rte_eth_bond_8023ad_agg_selection_set(port_id, AGG_STABLE);
+		internals->mode4.agg_selection = AGG_STABLE;
 	}
 
+	rte_eth_dev_probing_finish(&rte_eth_devices[port_id]);
 	RTE_BOND_LOG(INFO, "Create bonded device %s on port %d in mode %u on "
 			"socket %u.",	name, port_id, bonding_mode, socket_id);
 	return 0;
@@ -3454,9 +3457,16 @@ bond_ethdev_configure(struct rte_eth_dev *dev)
 				     "Failed to parse agg selection mode for bonded device %s",
 				     name);
 		}
-		if (internals->mode == BONDING_MODE_8023AD)
-			rte_eth_bond_8023ad_agg_selection_set(port_id,
-							      agg_mode);
+		if (internals->mode == BONDING_MODE_8023AD) {
+			int ret = rte_eth_bond_8023ad_agg_selection_set(port_id,
+					agg_mode);
+			if (ret < 0) {
+				RTE_BOND_LOG(ERR,
+					"Invalid args for agg selection set for bonded device %s",
+					name);
+				return -1;
+			}
+		}
 	}
 
 	/* Parse/add slave ports to bonded device */

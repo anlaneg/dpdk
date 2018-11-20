@@ -67,6 +67,9 @@ rte_vdpa_register_device(struct rte_vdpa_dev_addr *addr,
 			break;
 	}
 
+	if (i == MAX_VHOST_DEVICE)
+		return -1;
+
 	//设置vdap设备
 	sprintf(device_name, "vdpa-dev-%d", i);
 	dev = rte_zmalloc(device_name, sizeof(struct rte_vdpa_device),

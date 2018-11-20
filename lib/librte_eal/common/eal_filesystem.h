@@ -25,10 +25,6 @@
 int
 eal_create_runtime_dir(void);
 
-/* returns runtime dir */
-const char *
-rte_eal_get_runtime_dir(void);
-
 #define RUNTIME_CONFIG_FNAME "config"
 //获取runtime配置路径
 static inline const char *

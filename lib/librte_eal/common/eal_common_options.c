@@ -230,7 +230,7 @@ eal_plugin_add(const char *path)
 	}
 	memset(solib, 0, sizeof(*solib));
 	//将path名称写入
-	strncpy(solib->name, path, PATH_MAX-1);
+	strlcpy(solib->name, path, PATH_MAX-1);
 	solib->name[PATH_MAX-1] = 0;
 	TAILQ_INSERT_TAIL(&solib_list, solib, next);//生成一个solib,并加入
 
