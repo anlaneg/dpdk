@@ -506,6 +506,9 @@ qva_to_vva(struct virtio_net *dev, uint64_t qva, uint64_t *len)
 	struct rte_vhost_mem_region *r;
 	uint32_t i;
 
+	if (unlikely(!dev || !dev->mem))
+		goto out_error;
+
 	/* Find the region where the address lives. */
 	for (i = 0; i < dev->mem->nregions; i++) {
 		r = &dev->mem->regions[i];
@@ -525,6 +528,7 @@ qva_to_vva(struct virtio_net *dev, uint64_t qva, uint64_t *len)
 			       r->host_user_addr;
 		}
 	}
+out_error:
 	*len = 0;
 
 	return 0;
@@ -568,7 +572,7 @@ translate_ring_addresses(struct virtio_net *dev, int vq_index)
 	struct vhost_virtqueue *vq = dev->virtqueue[vq_index];
 	//取此虚对队对应的ring地址
 	struct vhost_vring_addr *addr = &vq->ring_addrs;
-	uint64_t len;
+	uint64_t len, expected_len;
 
 	if (vq_is_packed(dev)) {
 		len = sizeof(struct vring_packed_desc) * vq->size;
@@ -636,11 +640,12 @@ translate_ring_addresses(struct virtio_net *dev, int vq_index)
 
 	//转换avail的地址
 	len = sizeof(struct vring_avail) + sizeof(uint16_t) * vq->size;
+	if (dev->features & (1ULL << VIRTIO_RING_F_EVENT_IDX))
+		len += sizeof(uint16_t);
+	expected_len = len;
 	vq->avail = (struct vring_avail *)(uintptr_t)ring_addr_to_vva(dev,
 			vq, addr->avail_user_addr, &len);
-	if (vq->avail == 0 ||
-			len != sizeof(struct vring_avail) +
-			sizeof(uint16_t) * vq->size) {
+	if (vq->avail == 0 || len != expected_len) {
 		RTE_LOG(DEBUG, VHOST_CONFIG,
 			"(%d) failed to map avail ring.\n",
 			dev->vid);
@@ -650,10 +655,12 @@ translate_ring_addresses(struct virtio_net *dev, int vq_index)
 	//转换used地址
 	len = sizeof(struct vring_used) +
 		sizeof(struct vring_used_elem) * vq->size;
+	if (dev->features & (1ULL << VIRTIO_RING_F_EVENT_IDX))
+		len += sizeof(uint16_t);
+	expected_len = len;
 	vq->used = (struct vring_used *)(uintptr_t)ring_addr_to_vva(dev,
 			vq, addr->used_user_addr, &len);
-	if (vq->used == 0 || len != sizeof(struct vring_used) +
-			sizeof(struct vring_used_elem) * vq->size) {
+	if (vq->used == 0 || len != expected_len) {
 		RTE_LOG(DEBUG, VHOST_CONFIG,
 			"(%d) failed to map used ring.\n",
 			dev->vid);
@@ -763,13 +770,16 @@ add_one_guest_page(struct virtio_net *dev, uint64_t guest_phys_addr,
 		   uint64_t host_phys_addr, uint64_t size)
 {
 	struct guest_page *page, *last_page;
+	struct guest_page *old_pages;
 
 	if (dev->nr_guest_pages == dev->max_guest_pages) {
 		dev->max_guest_pages *= 2;
+		old_pages = dev->guest_pages;
 		dev->guest_pages = realloc(dev->guest_pages,
 					dev->max_guest_pages * sizeof(*page));
 		if (!dev->guest_pages) {
 			RTE_LOG(ERR, VHOST_CONFIG, "cannot realloc guest_pages\n");
+			free(old_pages);
 			return -1;
 		}
 	}
@@ -2259,16 +2269,11 @@ skip_to_reply:
 	vdpa_dev = rte_vdpa_get_device(did);
 	if (vdpa_dev && virtio_is_ready(dev) &&
 			!(dev->flags & VIRTIO_DEV_VDPA_CONFIGURED) &&
-			msg.request.master == VHOST_USER_SET_VRING_ENABLE) {
+			msg.request.master == VHOST_USER_SET_VRING_CALL) {
 		//置vdap_dev　ready
 		if (vdpa_dev->ops->dev_conf)
 			vdpa_dev->ops->dev_conf(dev->vid);
 		dev->flags |= VIRTIO_DEV_VDPA_CONFIGURED;
-		if (vhost_user_host_notifier_ctrl(dev->vid, true) != 0) {
-			RTE_LOG(INFO, VHOST_CONFIG,
-				"(%d) software relay is used for vDPA, performance may be low.\n",
-				dev->vid);
-		}
 	}
 
 	return 0;
@@ -2363,7 +2368,7 @@ static int vhost_user_slave_set_vring_host_notifier(struct virtio_net *dev,
 	return process_slave_message_reply(dev, &msg);
 }
 
-int vhost_user_host_notifier_ctrl(int vid, bool enable)
+int rte_vhost_host_notifier_ctrl(int vid, bool enable)
 {
 	struct virtio_net *dev;
 	struct rte_vdpa_device *vdpa_dev;

@@ -420,19 +420,6 @@ vhost_attach_vdpa_device(int vid, int did)
 	dev->vdpa_dev_id = did;
 }
 
-void
-vhost_detach_vdpa_device(int vid)
-{
-	struct virtio_net *dev = get_device(vid);
-
-	if (dev == NULL)
-		return;
-
-	vhost_user_host_notifier_ctrl(vid, false);
-
-	dev->vdpa_dev_id = -1;
-}
-
 //设置virtio_net设备名称
 void
 vhost_set_ifname(int vid, const char *if_name, unsigned int if_len)

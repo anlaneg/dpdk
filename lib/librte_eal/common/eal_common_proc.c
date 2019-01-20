@@ -37,6 +37,7 @@ static int mp_fd = -1;
 static char mp_filter[PATH_MAX];   /* Filter for secondary process sockets */
 static char mp_dir_path[PATH_MAX]; /* The directory path for all mp sockets */
 static pthread_mutex_t mp_mutex_action = PTHREAD_MUTEX_INITIALIZER;
+static char peer_name[PATH_MAX];
 
 struct action_entry {
 	TAILQ_ENTRY(action_entry) next;
@@ -527,9 +528,9 @@ async_reply_handle(void *arg)
 static int
 open_socket_fd(void)
 {
-	char peer_name[PATH_MAX] = {0};//此变量可以移除
 	struct sockaddr_un un;
 
+	peer_name[0] = '\0';
 	if (rte_eal_process_type() == RTE_PROC_SECONDARY)
 		snprintf(peer_name, sizeof(peer_name),
 				"%d_%"PRIx64, getpid(), rte_rdtsc());
@@ -560,29 +561,17 @@ open_socket_fd(void)
 	return mp_fd;
 }
 
-static int
-unlink_sockets(const char *filter)
+static void
+close_socket_fd(void)
 {
-	int dir_fd;
-	DIR *mp_dir;
-	struct dirent *ent;
+	char path[PATH_MAX];
 
-	//打开mp目录
-	mp_dir = opendir(mp_dir_path);
-	if (!mp_dir) {
-		RTE_LOG(ERR, EAL, "Unable to open directory %s\n", mp_dir_path);
-		return -1;
-	}
-	dir_fd = dirfd(mp_dir);//dir转fd
+	if (mp_fd < 0)
+		return;
 
-	//读取mp_dir目录，如果此目录中存匹配filter,则将其移除
-	while ((ent = readdir(mp_dir))) {
-		if (fnmatch(filter, ent->d_name, 0) == 0)
-			unlinkat(dir_fd, ent->d_name, 0);
-	}
-
-	closedir(mp_dir);
-	return 0;
+	close(mp_fd);
+	create_socket_path(peer_name, path, sizeof(path));
+	unlink(path);
 }
 
 //mp通道初始化（主从进程均会进来）
@@ -630,14 +619,6 @@ rte_mp_channel_init(void)
 		return -1;
 	}
 
-	if (rte_eal_process_type() == RTE_PROC_PRIMARY &&
-			unlink_sockets(mp_filter)) {
-		//移除mp_dir_path下所有文件
-		RTE_LOG(ERR, EAL, "failed to unlink mp sockets\n");
-		close(dir_fd);
-		return -1;
-	}
-
 	//创建mp socket
 	if (open_socket_fd() < 0) {
 		close(dir_fd);
@@ -660,6 +641,12 @@ rte_mp_channel_init(void)
 	close(dir_fd);
 
 	return 0;
+}
+
+void
+rte_mp_channel_cleanup(void)
+{
+	close_socket_fd();
 }
 
 /**
@@ -857,28 +844,6 @@ mp_request_async(const char *dst, struct rte_mp_msg *req,
 		goto fail;
 	}
 
-	/*
-	 * set the alarm before sending message. there are two possible error
-	 * scenarios to consider here:
-	 *
-	 * - if the alarm set fails, we free the memory right there
-	 * - if the alarm set succeeds but sending message fails, then the alarm
-	 *   will trigger and clean up the memory
-	 *
-	 * Even if the alarm triggers too early (i.e. immediately), we're still
-	 * holding the lock to pending requests queue, so the interrupt thread
-	 * will just spin until we release the lock, and either release the
-	 * memory, or doesn't find any pending requests in the queue because we
-	 * never added any due to send message failure.
-	 */
-	if (rte_eal_alarm_set(ts->tv_sec * 1000000 + ts->tv_nsec / 1000,
-			      async_reply_handle, pending_req) < 0) {
-		RTE_LOG(ERR, EAL, "Fail to set alarm for request %s:%s\n",
-			dst, req->name);
-		ret = -1;
-		goto fail;
-	}
-
 	ret = send_msg(dst, req, MP_REQ);
 	if (ret < 0) {
 		RTE_LOG(ERR, EAL, "Fail to send request %s:%s\n",
@@ -889,9 +854,17 @@ mp_request_async(const char *dst, struct rte_mp_msg *req,
 		ret = 0;
 		goto fail;
 	}
-	TAILQ_INSERT_TAIL(&pending_requests.requests, pending_req, next);
-
 	param->user_reply.nb_sent++;
+
+	/* if alarm set fails, we simply ignore the reply */
+	if (rte_eal_alarm_set(ts->tv_sec * 1000000 + ts->tv_nsec / 1000,
+			      async_reply_handle, pending_req) < 0) {
+		RTE_LOG(ERR, EAL, "Fail to set alarm for request %s:%s\n",
+			dst, req->name);
+		ret = -1;
+		goto fail;
+	}
+	TAILQ_INSERT_TAIL(&pending_requests.requests, pending_req, next);
 
 	return 0;
 fail:

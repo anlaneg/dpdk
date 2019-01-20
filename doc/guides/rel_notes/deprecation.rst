@@ -11,6 +11,15 @@ API and ABI deprecation notices are to be posted here.
 Deprecation Notices
 -------------------
 
+* linux: Linux kernel version 3.2 (which is the current minimum required
+  version for the DPDK) is not maintained anymore. Therefore the planned
+  minimum required kernel version for DPDK 19.02 will be the next oldest
+  Long Term Stable (LTS) version which is 3.16, but compatibility for
+  recent distribution kernels will be kept.
+
+* kvargs: The function ``rte_kvargs_process`` will get a new parameter
+  for returning key match count. It will ease handling of no-match case.
+
 * eal: both declaring and identifying devices will be streamlined in v18.11.
   New functions will appear to query a specific port from buses, classes of
   device and device drivers. Device declaration will be made coherent with the
@@ -29,17 +38,11 @@ Deprecation Notices
   - ``eal_parse_pci_DomBDF`` replaced by ``rte_pci_addr_parse``
   - ``rte_eal_compare_pci_addr`` replaced by ``rte_pci_addr_cmp``
 
-* mbuf: The opaque ``mbuf->hash.sched`` field will be updated to support generic
-  definition in line with the ethdev TM and MTR APIs. Currently, this field
-  is defined in librte_sched in a non-generic way. The new generic format
-  will contain: queue ID, traffic class, color. Field size will not change.
-
-* mbuf: the macro ``RTE_MBUF_INDIRECT()`` will be removed in v18.08 or later and
-  replaced with ``RTE_MBUF_CLONED()`` which is already added in v18.05. As
-  ``EXT_ATTACHED_MBUF`` is newly introduced in v18.05, ``RTE_MBUF_INDIRECT()``
-  can no longer be mutually exclusive with ``RTE_MBUF_DIRECT()`` if the new
-  experimental API ``rte_pktmbuf_attach_extbuf()`` is used. Removal of the macro
-  is to fix this semantic inconsistency.
+* dpaa2: removal of ``rte_dpaa2_memsegs`` structure which has been replaced
+  by a pa-va search library. This structure was earlier being used for holding
+  memory segments used by dpaa2 driver for faster pa->va translation. This
+  structure would be made internal (or removed if all dependencies are cleared)
+  in future releases.
 
 * ethdev: the legacy filter API, including
   ``rte_eth_dev_filter_supported()``, ``rte_eth_dev_filter_ctrl()`` as well
@@ -49,9 +52,17 @@ Deprecation Notices
   Target release for removal of the legacy API will be defined once most
   PMDs have switched to rte_flow.
 
-* pdump: As we changed to use generic IPC, some changes in APIs and structure
-  are expected in subsequent release.
+* ethdev: Maximum and minimum MTU values vary between hardware devices. In
+  hardware agnostic DPDK applications access to such information would allow
+  a more accurate way of validating and setting supported MTU values on a per
+  device basis rather than using a defined default for all devices. To
+  resolve this, the following members will be added to ``rte_eth_dev_info``.
+  Note: these can be added to fit a hole in the existing structure for amd64
+  but not for 32-bit, as such ABI change will occur as size of the structure
+  will increase.
 
-  - ``rte_pdump_set_socket_dir`` will be removed;
-  - The parameter, ``path``, of ``rte_pdump_init`` will be removed;
-  - The enum ``rte_pdump_socktype`` will be removed.
+  - Member ``uint16_t min_mtu`` the minimum MTU allowed.
+  - Member ``uint16_t max_mtu`` the maximum MTU allowed.
+
+* crypto/aesni_mb: the minimum supported intel-ipsec-mb library version will be
+  changed from 0.49.0 to 0.52.0.

@@ -87,7 +87,7 @@ __handle_secondary_request(void *param)
 	const struct eal_dev_mp_req *req =
 		(const struct eal_dev_mp_req *)msg->param;
 	struct eal_dev_mp_req tmp_req;
-	struct rte_devargs *da;
+	struct rte_devargs da;
 	struct rte_device *dev;
 	struct rte_bus *bus;
 	int ret = 0;
@@ -114,15 +114,11 @@ __handle_secondary_request(void *param)
 				goto rollback;
 		}
 	} else if (req->t == EAL_DEV_REQ_TYPE_DETACH) {
-		da = calloc(1, sizeof(*da));
-		if (da == NULL) {
-			ret = -ENOMEM;
-			goto finish;
-		}
-
-		ret = rte_devargs_parse(da, req->devargs);
+		ret = rte_devargs_parse(&da, req->devargs);
 		if (ret != 0)
 			goto finish;
+		free(da.args); /* we don't need those */
+		da.args = NULL;
 
 		ret = eal_dev_hotplug_request_to_secondary(&tmp_req);
 		if (ret != 0) {
@@ -131,16 +127,16 @@ __handle_secondary_request(void *param)
 			goto rollback;
 		}
 
-		bus = rte_bus_find_by_name(da->bus->name);
+		bus = rte_bus_find_by_name(da.bus->name);
 		if (bus == NULL) {
-			RTE_LOG(ERR, EAL, "Cannot find bus (%s)\n", da->bus->name);
+			RTE_LOG(ERR, EAL, "Cannot find bus (%s)\n", da.bus->name);
 			ret = -ENOENT;
 			goto finish;
 		}
 
-		dev = bus->find_device(NULL, cmp_dev_name, da->name);
+		dev = bus->find_device(NULL, cmp_dev_name, da.name);
 		if (dev == NULL) {
-			RTE_LOG(ERR, EAL, "Cannot find plugged device (%s)\n", da->name);
+			RTE_LOG(ERR, EAL, "Cannot find plugged device (%s)\n", da.name);
 			ret = -ENOENT;
 			goto finish;
 		}
@@ -204,6 +200,11 @@ handle_secondary_request(const struct rte_mp_msg *msg, const void *peer)
 	 * when it is ready.
 	 */
 	bundle->peer = strdup(peer);
+	if (bundle->peer == NULL) {
+		free(bundle);
+		RTE_LOG(ERR, EAL, "not enough memory\n");
+		return send_response_to_secondary(req, -ENOMEM, peer);
+	}
 
 	/**
 	 * We are at IPC callback thread, sync IPC is not allowed due to
@@ -212,6 +213,8 @@ handle_secondary_request(const struct rte_mp_msg *msg, const void *peer)
 	ret = rte_eal_alarm_set(1, __handle_secondary_request, bundle);
 	if (ret != 0) {
 		RTE_LOG(ERR, EAL, "failed to add mp task\n");
+		free(bundle->peer);
+		free(bundle);
 		return send_response_to_secondary(req, ret, peer);
 	}
 	return 0;
@@ -264,6 +267,19 @@ static void __handle_primary_request(void *param)
 			goto quit;
 		}
 
+		if (!rte_dev_is_probed(dev)) {
+			if (req->t == EAL_DEV_REQ_TYPE_ATTACH_ROLLBACK) {
+				/**
+				 * Don't fail the rollback just because there's
+				 * nothing to do.
+				 */
+				ret = 0;
+			} else
+				ret = -ENODEV;
+
+			goto quit;
+		}
+
 		ret = local_dev_remove(dev);
 quit:
 		free(da->args);
@@ -302,6 +318,7 @@ handle_primary_request(const struct rte_mp_msg *msg, const void *peer)
 
 	bundle = calloc(1, sizeof(*bundle));
 	if (bundle == NULL) {
+		RTE_LOG(ERR, EAL, "not enough memory\n");
 		resp->result = -ENOMEM;
 		ret = rte_mp_reply(&mp_resp, peer);
 		if (ret)
@@ -316,6 +333,15 @@ handle_primary_request(const struct rte_mp_msg *msg, const void *peer)
 	 * when it is ready.
 	 */
 	bundle->peer = (void *)strdup(peer);
+	if (bundle->peer == NULL) {
+		RTE_LOG(ERR, EAL, "not enough memory\n");
+		free(bundle);
+		resp->result = -ENOMEM;
+		ret = rte_mp_reply(&mp_resp, peer);
+		if (ret)
+			RTE_LOG(ERR, EAL, "failed to send reply to primary request\n");
+		return ret;
+	}
 
 	/**
 	 * We are at IPC callback thread, sync IPC is not allowed due to
@@ -323,6 +349,8 @@ handle_primary_request(const struct rte_mp_msg *msg, const void *peer)
 	 */
 	ret = rte_eal_alarm_set(1, __handle_primary_request, bundle);
 	if (ret != 0) {
+		free(bundle->peer);
+		free(bundle);
 		resp->result = ret;
 		ret = rte_mp_reply(&mp_resp, peer);
 		if  (ret != 0) {
@@ -391,13 +419,13 @@ int eal_dev_hotplug_request_to_secondary(struct eal_dev_mp_req *req)
 		struct eal_dev_mp_req *resp =
 			(struct eal_dev_mp_req *)mp_reply.msgs[i].param;
 		if (resp->result != 0) {
-			req->result = resp->result;
 			if (req->t == EAL_DEV_REQ_TYPE_ATTACH &&
-				req->result != -EEXIST)
-				break;
+				resp->result == -EEXIST)
+				continue;
 			if (req->t == EAL_DEV_REQ_TYPE_DETACH &&
-				req->result != -ENOENT)
-				break;
+				resp->result == -ENOENT)
+				continue;
+			req->result = resp->result;
 		}
 	}
 

@@ -24,7 +24,9 @@ struct fdset {
 	struct pollfd rwfds[MAX_FDS];//poll参数
 	struct fdentry fd[MAX_FDS];//注册所有fd用于轮询
 	pthread_mutex_t fd_mutex;//保护rwfds,fd数组
-	int num;	/* current fd number of this fdset *///rwfds,fd数组的有效长度
+	pthread_mutex_t fd_pooling_mutex;
+    //rwfds,fd数组的有效长度
+	int num;	/* current fd number of this fdset */
 
 	union pipefds {
 		struct {

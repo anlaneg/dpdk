@@ -248,25 +248,17 @@ timer_get_prev_entries_for_node(struct rte_timer *tim, unsigned tim_lcore,
 	}
 }
 
-/*
- * add in list, lock if needed
+/* call with lock held as necessary
+ * add in list
  * timer must be in config state
  * timer must not be in a list
  */
 //将timer加入到tim_lcore上，按跳表方式插入
 static void
-timer_add(struct rte_timer *tim, unsigned tim_lcore, int local_is_locked)
+timer_add(struct rte_timer *tim, unsigned int tim_lcore)
 {
-	unsigned lcore_id = rte_lcore_id();
 	unsigned lvl;
 	struct rte_timer *prev[MAX_SKIPLIST_DEPTH+1];
-
-	/* if timer needs to be scheduled on another core, we need to
-	 * lock the list; if it is on local core, we need to lock if
-	 * we are not called from rte_timer_manage() */
-	//如timer要求存放的core没有加锁，则加锁（当前core可能与tim_lcore不同）
-	if (tim_lcore != lcore_id || !local_is_locked)
-		rte_spinlock_lock(&priv_timer[tim_lcore].list_lock);
 
 	/* find where exactly this element goes in the list of elements
 	 * for each depth. */
@@ -291,9 +283,6 @@ timer_add(struct rte_timer *tim, unsigned tim_lcore, int local_is_locked)
 	 * NOTE: this is not atomic on 32-bit*/
 	priv_timer[tim_lcore].pending_head.expire = priv_timer[tim_lcore].\
 			pending_head.sl_next[0]->expire;
-
-	if (tim_lcore != lcore_id || !local_is_locked)
-		rte_spinlock_unlock(&priv_timer[tim_lcore].list_lock);
 }
 
 /*
@@ -393,8 +382,15 @@ __rte_timer_reset(struct rte_timer *tim, uint64_t expire,//timer及过期时间
 	tim->f = fct;
 	tim->arg = arg;
 
+	/* if timer needs to be scheduled on another core, we need to
+	 * lock the destination list; if it is on local core, we need to lock if
+	 * we are not called from rte_timer_manage()
+	 */
+	if (tim_lcore != lcore_id || !local_is_locked)
+		rte_spinlock_lock(&priv_timer[tim_lcore].list_lock);
+
 	__TIMER_STAT_ADD(pending, 1);
-	timer_add(tim, tim_lcore, local_is_locked);
+	timer_add(tim, tim_lcore);
 
 	/* update state: as we are in CONFIG state, only us can modify
 	 * the state so we don't need to use cmpset() here */
@@ -402,6 +398,9 @@ __rte_timer_reset(struct rte_timer *tim, uint64_t expire,//timer及过期时间
 	status.state = RTE_TIMER_PENDING;//修改为pending状态
 	status.owner = (int16_t)tim_lcore;
 	tim->status.u32 = status.u32;
+
+	if (tim_lcore != lcore_id || !local_is_locked)
+		rte_spinlock_unlock(&priv_timer[tim_lcore].list_lock);
 
 	return 0;
 }

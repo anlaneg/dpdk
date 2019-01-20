@@ -1307,8 +1307,6 @@ enum rte_eth_dev_state {
 	RTE_ETH_DEV_UNUSED = 0,
 	/** Device is attached when allocated in probing. */
 	RTE_ETH_DEV_ATTACHED,
-	/** The deferred state is useless and replaced by ownership. */
-	RTE_ETH_DEV_DEFERRED,
 	/** Device is in removed state when plug-out is detected. */
 	RTE_ETH_DEV_REMOVED,
 };
@@ -4168,9 +4166,6 @@ rte_eth_tx_burst(uint16_t port_id, uint16_t queue_id,
 }
 
 /**
- * @warning
- * @b EXPERIMENTAL: this API may change without prior notice
- *
  * Process a burst of output packets on a transmit queue of an Ethernet device.
  *
  * The rte_eth_tx_prepare() function is invoked to prepare output packets to be

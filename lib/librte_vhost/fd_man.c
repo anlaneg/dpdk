@@ -148,7 +148,9 @@ fdset_add(struct fdset *pfdset, int fd, fd_cb rcb, fd_cb wcb, void *dat)
 	//尽量给分配一个空闲的位置
 	i = pfdset->num < MAX_FDS ? pfdset->num++ : -1;
 	if (i == -1) {
+		pthread_mutex_lock(&pfdset->fd_pooling_mutex);
 		fdset_shrink_nolock(pfdset);
+		pthread_mutex_unlock(&pfdset->fd_pooling_mutex);
 		i = pfdset->num < MAX_FDS ? pfdset->num++ : -1;
 		if (i == -1) {
 			//没有空闲的位置了，失败返回
@@ -271,7 +273,9 @@ fdset_event_dispatch(void *arg)
 		numfds = pfdset->num;
 		pthread_mutex_unlock(&pfdset->fd_mutex);
 
+		pthread_mutex_lock(&pfdset->fd_pooling_mutex);
 		val = poll(pfdset->rwfds, numfds, 1000 /* millisecs */);
+		pthread_mutex_unlock(&pfdset->fd_pooling_mutex);
 		if (val < 0)
 			continue;
 

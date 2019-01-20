@@ -141,6 +141,97 @@ static const struct rte_virtio_xstats_name_off rte_virtio_txq_stat_strings[] = {
 
 struct virtio_hw_internal virtio_hw_internal[RTE_MAX_ETHPORTS];
 
+static struct virtio_pmd_ctrl *
+virtio_pq_send_command(struct virtnet_ctl *cvq, struct virtio_pmd_ctrl *ctrl,
+		       int *dlen, int pkt_num)
+{
+	struct virtqueue *vq = cvq->vq;
+	int head;
+	struct vring_packed_desc *desc = vq->ring_packed.desc_packed;
+	struct virtio_pmd_ctrl *result;
+	bool avail_wrap_counter, used_wrap_counter;
+	uint16_t flags;
+	int sum = 0;
+	int k;
+
+	/*
+	 * Format is enforced in qemu code:
+	 * One TX packet for header;
+	 * At least one TX packet per argument;
+	 * One RX packet for ACK.
+	 */
+	head = vq->vq_avail_idx;
+	avail_wrap_counter = vq->avail_wrap_counter;
+	used_wrap_counter = vq->used_wrap_counter;
+	desc[head].flags = VRING_DESC_F_NEXT;
+	desc[head].addr = cvq->virtio_net_hdr_mem;
+	desc[head].len = sizeof(struct virtio_net_ctrl_hdr);
+	vq->vq_free_cnt--;
+	if (++vq->vq_avail_idx >= vq->vq_nentries) {
+		vq->vq_avail_idx -= vq->vq_nentries;
+		vq->avail_wrap_counter ^= 1;
+	}
+
+	for (k = 0; k < pkt_num; k++) {
+		desc[vq->vq_avail_idx].addr = cvq->virtio_net_hdr_mem
+			+ sizeof(struct virtio_net_ctrl_hdr)
+			+ sizeof(ctrl->status) + sizeof(uint8_t) * sum;
+		desc[vq->vq_avail_idx].len = dlen[k];
+		flags = VRING_DESC_F_NEXT;
+		sum += dlen[k];
+		vq->vq_free_cnt--;
+		flags |= VRING_DESC_F_AVAIL(vq->avail_wrap_counter) |
+			 VRING_DESC_F_USED(!vq->avail_wrap_counter);
+		desc[vq->vq_avail_idx].flags = flags;
+		rte_smp_wmb();
+		vq->vq_free_cnt--;
+		if (++vq->vq_avail_idx >= vq->vq_nentries) {
+			vq->vq_avail_idx -= vq->vq_nentries;
+			vq->avail_wrap_counter ^= 1;
+		}
+	}
+
+
+	desc[vq->vq_avail_idx].addr = cvq->virtio_net_hdr_mem
+		+ sizeof(struct virtio_net_ctrl_hdr);
+	desc[vq->vq_avail_idx].len = sizeof(ctrl->status);
+	flags = VRING_DESC_F_WRITE;
+	flags |= VRING_DESC_F_AVAIL(vq->avail_wrap_counter) |
+		 VRING_DESC_F_USED(!vq->avail_wrap_counter);
+	desc[vq->vq_avail_idx].flags = flags;
+	flags = VRING_DESC_F_NEXT;
+	flags |= VRING_DESC_F_AVAIL(avail_wrap_counter) |
+		 VRING_DESC_F_USED(!avail_wrap_counter);
+	desc[head].flags = flags;
+	rte_smp_wmb();
+
+	vq->vq_free_cnt--;
+	if (++vq->vq_avail_idx >= vq->vq_nentries) {
+		vq->vq_avail_idx -= vq->vq_nentries;
+		vq->avail_wrap_counter ^= 1;
+	}
+
+	virtqueue_notify(vq);
+
+	/* wait for used descriptors in virtqueue */
+	do {
+		rte_rmb();
+		usleep(100);
+	} while (!__desc_is_used(&desc[head], used_wrap_counter));
+
+	/* now get used descriptors */
+	while (desc_is_used(&desc[vq->vq_used_cons_idx], vq)) {
+		vq->vq_free_cnt++;
+		if (++vq->vq_used_cons_idx >= vq->vq_nentries) {
+			vq->vq_used_cons_idx -= vq->vq_nentries;
+			vq->used_wrap_counter ^= 1;
+		}
+	}
+
+	result = cvq->virtio_net_hdr_mz->addr;
+	return result;
+}
+
 static int
 virtio_send_command(struct virtnet_ctl *cvq, struct virtio_pmd_ctrl *ctrl,
 		int *dlen, int pkt_num)
@@ -173,6 +264,11 @@ virtio_send_command(struct virtnet_ctl *cvq, struct virtio_pmd_ctrl *ctrl,
 
 	memcpy(cvq->virtio_net_hdr_mz->addr, ctrl,
 		sizeof(struct virtio_pmd_ctrl));
+
+	if (vtpci_packed_queue(vq->hw)) {
+		result = virtio_pq_send_command(cvq, ctrl, dlen, pkt_num);
+		goto out_unlock;
+	}
 
 	/*
 	 * Format is enforced in qemu code:
@@ -245,6 +341,7 @@ virtio_send_command(struct virtnet_ctl *cvq, struct virtio_pmd_ctrl *ctrl,
 
 	result = cvq->virtio_net_hdr_mz->addr;
 
+out_unlock:
 	rte_spinlock_unlock(&cvq->lock);
 	return result->status;
 }
@@ -300,20 +397,22 @@ virtio_init_vring(struct virtqueue *vq)
 
 	PMD_INIT_FUNC_TRACE();
 
-	/*
-	 * Reinitialise since virtio port might have been stopped and restarted
-	 */
 	memset(ring_mem, 0, vq->vq_ring_size);
-	vring_init(vr, size, ring_mem, VIRTIO_PCI_VRING_ALIGN);
+
 	vq->vq_used_cons_idx = 0;
 	vq->vq_desc_head_idx = 0;
 	vq->vq_avail_idx = 0;
 	vq->vq_desc_tail_idx = (uint16_t)(vq->vq_nentries - 1);
 	vq->vq_free_cnt = vq->vq_nentries;
 	memset(vq->vq_descx, 0, sizeof(struct vq_desc_extra) * vq->vq_nentries);
-
-	vring_desc_init(vr->desc, size);
-
+	if (vtpci_packed_queue(vq->hw)) {
+		vring_init_packed(&vq->ring_packed, ring_mem,
+				  VIRTIO_PCI_VRING_ALIGN, size);
+		vring_desc_init_packed(vq, size);
+	} else {
+		vring_init_split(vr, ring_mem, VIRTIO_PCI_VRING_ALIGN, size);
+		vring_desc_init_split(vr->desc, size);
+	}
 	/*
 	 * Disable device(host) interrupting guest
 	 */
@@ -336,8 +435,10 @@ virtio_init_queue(struct rte_eth_dev *dev, uint16_t vtpci_queue_idx)
 	void *sw_ring = NULL;
 	int queue_type = virtio_get_queue_type(hw, vtpci_queue_idx);
 	int ret;
+	int numa_node = dev->device->numa_node;
 
-	PMD_INIT_LOG(DEBUG, "setting up queue: %u", vtpci_queue_idx);
+	PMD_INIT_LOG(INFO, "setting up queue: %u on NUMA node %d",
+			vtpci_queue_idx, numa_node);
 
 	/*
 	 * Read the virtqueue size from the Queue Size field
@@ -373,7 +474,7 @@ virtio_init_queue(struct rte_eth_dev *dev, uint16_t vtpci_queue_idx)
 	}
 
 	vq = rte_zmalloc_socket(vq_name, size, RTE_CACHE_LINE_SIZE,
-				SOCKET_ID_ANY);
+				numa_node);
 	if (vq == NULL) {
 		PMD_INIT_LOG(ERR, "can not allocate vq");
 		return -ENOMEM;
@@ -383,17 +484,25 @@ virtio_init_queue(struct rte_eth_dev *dev, uint16_t vtpci_queue_idx)
 	vq->hw = hw;
 	vq->vq_queue_index = vtpci_queue_idx;
 	vq->vq_nentries = vq_size;
+	vq->event_flags_shadow = 0;
+	if (vtpci_packed_queue(hw)) {
+		vq->avail_wrap_counter = 1;
+		vq->used_wrap_counter = 1;
+		vq->avail_used_flags =
+			VRING_DESC_F_AVAIL(vq->avail_wrap_counter) |
+			VRING_DESC_F_USED(!vq->avail_wrap_counter);
+	}
 
 	/*
 	 * Reserve a memzone for vring elements
 	 */
-	size = vring_size(vq_size, VIRTIO_PCI_VRING_ALIGN);
+	size = vring_size(hw, vq_size, VIRTIO_PCI_VRING_ALIGN);
 	vq->vq_ring_size = RTE_ALIGN_CEIL(size, VIRTIO_PCI_VRING_ALIGN);
 	PMD_INIT_LOG(DEBUG, "vring_size: %d, rounded_vring_size: %d",
 		     size, vq->vq_ring_size);
 
 	mz = rte_memzone_reserve_aligned(vq_name, vq->vq_ring_size,
-			SOCKET_ID_ANY, RTE_MEMZONE_IOVA_CONTIG,
+			numa_node, RTE_MEMZONE_IOVA_CONTIG,
 			VIRTIO_PCI_VRING_ALIGN);
 	if (mz == NULL) {
 		if (rte_errno == EEXIST)
@@ -419,7 +528,7 @@ virtio_init_queue(struct rte_eth_dev *dev, uint16_t vtpci_queue_idx)
 		snprintf(vq_hdr_name, sizeof(vq_hdr_name), "port%d_vq%d_hdr",
 			 dev->data->port_id, vtpci_queue_idx);
 		hdr_mz = rte_memzone_reserve_aligned(vq_hdr_name, sz_hdr_mz,
-				SOCKET_ID_ANY, RTE_MEMZONE_IOVA_CONTIG,
+				numa_node, RTE_MEMZONE_IOVA_CONTIG,
 				RTE_CACHE_LINE_SIZE);
 		if (hdr_mz == NULL) {
 			if (rte_errno == EEXIST)
@@ -436,7 +545,7 @@ virtio_init_queue(struct rte_eth_dev *dev, uint16_t vtpci_queue_idx)
 			       sizeof(vq->sw_ring[0]);
 
 		sw_ring = rte_zmalloc_socket("sw_ring", sz_sw,
-				RTE_CACHE_LINE_SIZE, SOCKET_ID_ANY);
+				RTE_CACHE_LINE_SIZE, numa_node);
 		if (!sw_ring) {
 			PMD_INIT_LOG(ERR, "can not allocate RX soft ring");
 			ret = -ENOMEM;
@@ -489,16 +598,26 @@ virtio_init_queue(struct rte_eth_dev *dev, uint16_t vtpci_queue_idx)
 		memset(txr, 0, vq_size * sizeof(*txr));
 		for (i = 0; i < vq_size; i++) {
 			struct vring_desc *start_dp = txr[i].tx_indir;
-
-			vring_desc_init(start_dp, RTE_DIM(txr[i].tx_indir));
+			struct vring_packed_desc *start_dp_packed =
+				txr[i].tx_indir_pq;
 
 			/* first indirect descriptor is always the tx header */
-			start_dp->addr = txvq->virtio_net_hdr_mem
-				+ i * sizeof(*txr)
-				+ offsetof(struct virtio_tx_region, tx_hdr);
-
-			start_dp->len = hw->vtnet_hdr_size;
-			start_dp->flags = VRING_DESC_F_NEXT;
+			if (vtpci_packed_queue(hw)) {
+				start_dp_packed->addr = txvq->virtio_net_hdr_mem
+					+ i * sizeof(*txr)
+					+ offsetof(struct virtio_tx_region,
+						   tx_hdr);
+				start_dp_packed->len = hw->vtnet_hdr_size;
+			} else {
+				vring_desc_init_split(start_dp,
+						      RTE_DIM(txr[i].tx_indir));
+				start_dp->addr = txvq->virtio_net_hdr_mem
+					+ i * sizeof(*txr)
+					+ offsetof(struct virtio_tx_region,
+						   tx_hdr);
+				start_dp->len = hw->vtnet_hdr_size;
+				start_dp->flags = VRING_DESC_F_NEXT;
+			}
 		}
 	}
 
@@ -1328,37 +1447,59 @@ set_rxtx_funcs(struct rte_eth_dev *eth_dev)
 {
 	struct virtio_hw *hw = eth_dev->data->dev_private;
 
-	if (hw->use_simple_rx) {
-		PMD_INIT_LOG(INFO, "virtio: using simple Rx path on port %u",
-			eth_dev->data->port_id);
-		eth_dev->rx_pkt_burst = virtio_recv_pkts_vec;
-	} else if (hw->use_inorder_rx) {
+	if (vtpci_packed_queue(hw)) {
 		PMD_INIT_LOG(INFO,
-			"virtio: using inorder mergeable buffer Rx path on port %u",
+			"virtio: using packed ring standard Tx path on port %u",
 			eth_dev->data->port_id);
-		eth_dev->rx_pkt_burst = &virtio_recv_mergeable_pkts_inorder;
-	} else if (vtpci_with_feature(hw, VIRTIO_NET_F_MRG_RXBUF)) {
-		PMD_INIT_LOG(INFO,
-			"virtio: using mergeable buffer Rx path on port %u",
-			eth_dev->data->port_id);
-		eth_dev->rx_pkt_burst = &virtio_recv_mergeable_pkts;
+		eth_dev->tx_pkt_burst = virtio_xmit_pkts_packed;
 	} else {
-		PMD_INIT_LOG(INFO, "virtio: using standard Rx path on port %u",
-			eth_dev->data->port_id);
-		//如果virtio_net_f_mrg_rxbuf未被协商，则默认一个包占一个buf
-		eth_dev->rx_pkt_burst = &virtio_recv_pkts;
+		if (hw->use_inorder_tx) {
+			PMD_INIT_LOG(INFO, "virtio: using inorder Tx path on port %u",
+				eth_dev->data->port_id);
+			eth_dev->tx_pkt_burst = virtio_xmit_pkts_inorder;
+		} else {
+			PMD_INIT_LOG(INFO, "virtio: using standard Tx path on port %u",
+				eth_dev->data->port_id);
+			eth_dev->tx_pkt_burst = virtio_xmit_pkts;
+		}
 	}
 
-	if (hw->use_inorder_tx) {
-		PMD_INIT_LOG(INFO, "virtio: using inorder Tx path on port %u",
-			eth_dev->data->port_id);
-		eth_dev->tx_pkt_burst = virtio_xmit_pkts_inorder;
+	if (vtpci_packed_queue(hw)) {
+		if (vtpci_with_feature(hw, VIRTIO_NET_F_MRG_RXBUF)) {
+			PMD_INIT_LOG(INFO,
+				"virtio: using packed ring mergeable buffer Rx path on port %u",
+				eth_dev->data->port_id);
+			eth_dev->rx_pkt_burst =
+				&virtio_recv_mergeable_pkts_packed;
+		} else {
+			PMD_INIT_LOG(INFO,
+				"virtio: using packed ring standard Rx path on port %u",
+				eth_dev->data->port_id);
+			eth_dev->rx_pkt_burst = &virtio_recv_pkts_packed;
+		}
 	} else {
-		PMD_INIT_LOG(INFO, "virtio: using standard Tx path on port %u",
-			eth_dev->data->port_id);
 		//设置virtio设备的发包函数
-		eth_dev->tx_pkt_burst = virtio_xmit_pkts;
+		if (hw->use_simple_rx) {
+			PMD_INIT_LOG(INFO, "virtio: using simple Rx path on port %u",
+				eth_dev->data->port_id);
+			eth_dev->rx_pkt_burst = virtio_recv_pkts_vec;
+		} else if (hw->use_inorder_rx) {
+			PMD_INIT_LOG(INFO,
+				"virtio: using inorder Rx path on port %u",
+				eth_dev->data->port_id);
+			eth_dev->rx_pkt_burst =	&virtio_recv_pkts_inorder;
+		} else if (vtpci_with_feature(hw, VIRTIO_NET_F_MRG_RXBUF)) {
+			PMD_INIT_LOG(INFO,
+				"virtio: using mergeable buffer Rx path on port %u",
+				eth_dev->data->port_id);
+			eth_dev->rx_pkt_burst = &virtio_recv_mergeable_pkts;
+		} else {
+			PMD_INIT_LOG(INFO, "virtio: using standard Rx path on port %u",
+				eth_dev->data->port_id);
+			eth_dev->rx_pkt_burst = &virtio_recv_pkts;
+		}
 	}
+
 }
 
 /* Only support 1:1 queue/interrupt mapping so far.
@@ -1476,6 +1617,8 @@ virtio_init_device(struct rte_eth_dev *eth_dev, uint64_t req_features)
 	if (virtio_negotiate_features(hw, req_features) < 0)
 		return -1;
 
+	hw->weak_barriers = !vtpci_with_feature(hw, VIRTIO_F_ORDER_PLATFORM);
+
 	if (!hw->virtio_user_dev) {
 		pci_dev = RTE_ETH_DEV_TO_PCI(eth_dev);
 		rte_eth_copy_pci_info(eth_dev, pci_dev);
@@ -1490,7 +1633,8 @@ virtio_init_device(struct rte_eth_dev *eth_dev, uint64_t req_features)
 
 	/* Setting up rx_header size for the device */
 	if (vtpci_with_feature(hw, VIRTIO_NET_F_MRG_RXBUF) ||
-	    vtpci_with_feature(hw, VIRTIO_F_VERSION_1))
+	    vtpci_with_feature(hw, VIRTIO_F_VERSION_1) ||
+	    vtpci_with_feature(hw, VIRTIO_F_RING_PACKED))
 		hw->vtnet_hdr_size = sizeof(struct virtio_net_hdr_mrg_rxbuf);
 	else
 		hw->vtnet_hdr_size = sizeof(struct virtio_net_hdr);
@@ -1772,6 +1916,11 @@ exit:
 static int eth_virtio_pci_probe(struct rte_pci_driver *pci_drv __rte_unused,
 	struct rte_pci_device *pci_dev)
 {
+	if (rte_eal_iopl_init() != 0) {
+		PMD_INIT_LOG(ERR, "IOPL call failed - cannot use virtio PMD");
+		return 1;
+	}
+
 	/* virtio pmd skips probe if device needs to work in vdpa mode */
 	if (vdpa_mode_selected(pci_dev->device.devargs))
 		return 1;
@@ -1797,11 +1946,7 @@ static struct rte_pci_driver rte_virtio_pmd = {
 
 RTE_INIT(rte_virtio_pmd_init)
 {
-	if (rte_eal_iopl_init() != 0) {
-		PMD_INIT_LOG(ERR, "IOPL call failed - cannot use virtio PMD");
-		return;
-	}
-
+	rte_eal_iopl_init();
 	//注册virtio pci驱动
 	rte_pci_register(&rte_virtio_pmd);
 }
@@ -1918,12 +2063,14 @@ virtio_dev_configure(struct rte_eth_dev *dev)
 
 	if (vtpci_with_feature(hw, VIRTIO_F_IN_ORDER)) {
 		hw->use_inorder_tx = 1;
-		if (vtpci_with_feature(hw, VIRTIO_NET_F_MRG_RXBUF)) {
-			hw->use_inorder_rx = 1;
-			hw->use_simple_rx = 0;
-		} else {
-			hw->use_inorder_rx = 0;
-		}
+		hw->use_inorder_rx = 1;
+		hw->use_simple_rx = 0;
+	}
+
+	if (vtpci_packed_queue(hw)) {
+		hw->use_simple_rx = 0;
+		hw->use_inorder_rx = 0;
+		hw->use_inorder_tx = 0;
 	}
 
 #if defined RTE_ARCH_ARM64 || defined RTE_ARCH_ARM

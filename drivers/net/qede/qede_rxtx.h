@@ -149,7 +149,9 @@
 				   PKT_TX_TCP_CKSUM             | \
 				   PKT_TX_UDP_CKSUM             | \
 				   PKT_TX_OUTER_IP_CKSUM        | \
-				   PKT_TX_TCP_SEG)
+				   PKT_TX_TCP_SEG		| \
+				   PKT_TX_IPV4			| \
+				   PKT_TX_IPV6)
 
 #define QEDE_TX_OFFLOAD_MASK (QEDE_TX_CSUM_OFFLOAD_MASK | \
 			      PKT_TX_VLAN_PKT		| \
@@ -190,6 +192,8 @@ struct qede_rx_queue {
 	uint16_t queue_id;
 	uint16_t port_id;
 	uint16_t rx_buf_size;
+	uint16_t rx_alloc_count;
+	uint16_t unused;
 	uint64_t rcv_pkts;
 	uint64_t rx_segs;
 	uint64_t rx_hw_errors;

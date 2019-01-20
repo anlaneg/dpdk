@@ -60,6 +60,8 @@ struct internal_config {
 	/**< true to enable legacy memory behavior (no dynamic allocation,
 	 * IOVA-contiguous segments).
 	 */
+	volatile unsigned match_allocations;
+	/**< true to free hugepages exactly as allocated */
 	volatile unsigned single_file_segments;
 	/**< true if storing all pages within single files (per-page-size,
 	 * per-node) non-legacy mode only.
@@ -68,11 +70,12 @@ struct internal_config {
 	volatile int syslog_facility;	  /**< facility passed to openlog() */
 	/** default interrupt mode for VFIO */
 	volatile enum rte_intr_mode vfio_intr_mode;
-	const char *hugefile_prefix;      /**< the base filename of hugetlbfs files *///大页文件前缀（默认rte)
-	const char *hugepage_dir;         /**< specific hugetlbfs directory to use *///采用那个大页目录
-
-	const char *user_mbuf_pool_ops_name;
-			/**< user defined mbuf pool ops name */
+    //大页文件前缀（默认rte)
+	char *hugefile_prefix;      /**< the base filename of hugetlbfs files */
+    //采用那个大页目录
+	char *hugepage_dir;         /**< specific hugetlbfs directory to use */
+	char *user_mbuf_pool_ops_name;
+	/**< user defined mbuf pool ops name */
 	unsigned num_hugepage_sizes;      /**< how many sizes on this system *///有多少种大页类型
 	struct hugepage_info hugepage_info[MAX_HUGEPAGE_SIZES];//每种大页的信息
 	enum rte_iova_mode iova_mode ;    /**< Set IOVA mode on this system  */

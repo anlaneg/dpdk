@@ -11,6 +11,7 @@ Network Interface Controller Drivers
     overview
     features
     build_and_test
+    af_packet
     ark
     atlantic
     avp
@@ -26,6 +27,7 @@ Network Interface Controller Drivers
     enic
     fm10k
     i40e
+    ice
     ifc
     igb
     ixgbe
@@ -51,23 +53,3 @@ Network Interface Controller Drivers
     vmxnet3
     pcap_ring
     fail_safe
-
-**Figures**
-
-:numref:`figure_single_port_nic` :ref:`figure_single_port_nic`
-
-:numref:`figure_perf_benchmark` :ref:`figure_perf_benchmark`
-
-:numref:`figure_fast_pkt_proc` :ref:`figure_fast_pkt_proc`
-
-:numref:`figure_inter_vm_comms` :ref:`figure_inter_vm_comms`
-
-:numref:`figure_host_vm_comms` :ref:`figure_host_vm_comms`
-
-:numref:`figure_host_vm_comms_qemu` :ref:`figure_host_vm_comms_qemu`
-
-:numref:`figure_vmxnet3_int` :ref:`figure_vmxnet3_int`
-
-:numref:`figure_vswitch_vm` :ref:`figure_vswitch_vm`
-
-:numref:`figure_vm_vm_comms` :ref:`figure_vm_vm_comms`
