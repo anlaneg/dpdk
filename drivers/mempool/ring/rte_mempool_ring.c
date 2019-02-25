@@ -72,6 +72,7 @@ common_ring_alloc(struct rte_mempool *mp)
 	 * running as a secondary process etc., so no checks made
 	 * in this function for that condition.
 	 */
+	//创建ring,ring大小大于mp->size一致
 	r = rte_ring_create(rg_name, rte_align32pow2(mp->size + 1),
 		mp->socket_id, rg_flags);
 	if (r == NULL)
@@ -123,6 +124,7 @@ static const struct rte_mempool_ops ops_mp_sc = {
 
 static const struct rte_mempool_ops ops_sp_mc = {
 	.name = "ring_sp_mc",
+	//创建ring
 	.alloc = common_ring_alloc,
 	.free = common_ring_free,
 	.enqueue = common_ring_sp_enqueue,
@@ -130,6 +132,7 @@ static const struct rte_mempool_ops ops_sp_mc = {
 	.get_count = common_ring_get_count,
 };
 
+//注册ring实现的mempool
 MEMPOOL_REGISTER_OPS(ops_mp_mc);
 MEMPOOL_REGISTER_OPS(ops_sp_sc);
 MEMPOOL_REGISTER_OPS(ops_mp_sc);

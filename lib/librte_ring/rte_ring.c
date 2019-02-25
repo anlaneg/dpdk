@@ -107,6 +107,7 @@ rte_ring_init(struct rte_ring *r, const char *name, unsigned count,
 }
 
 /* create the ring */
+//创建ring
 struct rte_ring *
 rte_ring_create(const char *name, unsigned count, int socket_id,
 		unsigned flags)

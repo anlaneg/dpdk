@@ -17,6 +17,7 @@ struct rte_mempool_ops_table rte_mempool_ops_table = {
 };
 
 /* add a new ops struct in rte_mempool_ops_table, return its index. */
+//操作集注册
 int
 rte_mempool_register_ops(const struct rte_mempool_ops *h)
 {
@@ -151,6 +152,7 @@ rte_mempool_ops_get_info(const struct rte_mempool *mp,
 
 
 /* sets mempool ops previously registered by rte_mempool_register_ops. */
+//通过名称查找操作集，并设置ops
 int
 rte_mempool_set_ops_byname(struct rte_mempool *mp, const char *name,
 	void *pool_config)

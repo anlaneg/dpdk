@@ -198,6 +198,7 @@ rte_mempool_mem_iter(struct rte_mempool *mp,
 }
 
 /* get the header, trailer and total size of a mempool element. */
+//确定实体总大小
 uint32_t
 rte_mempool_calc_obj_size(uint32_t elt_size, uint32_t flags,
 	struct rte_mempool_objsz *sz)
@@ -206,20 +207,24 @@ rte_mempool_calc_obj_size(uint32_t elt_size, uint32_t flags,
 
 	sz = (sz != NULL) ? sz : &lsz;
 
+	//确定header size的大小
 	sz->header_size = sizeof(struct rte_mempool_objhdr);
 	if ((flags & MEMPOOL_F_NO_CACHE_ALIGN) == 0)
 		sz->header_size = RTE_ALIGN_CEIL(sz->header_size,
 			RTE_MEMPOOL_ALIGN);
 
+	//确定trailer size预期大小
 #ifdef RTE_LIBRTE_MEMPOOL_DEBUG
 	sz->trailer_size = sizeof(struct rte_mempool_objtlr);
 #else
 	sz->trailer_size = 0;
 #endif
 
+	//确定实体大小
 	/* element size is 8 bytes-aligned at least */
 	sz->elt_size = RTE_ALIGN_CEIL(elt_size, sizeof(uint64_t));
 
+	//确定实体大小，尾部大小（对齐后）
 	/* expand trailer to next cache line */
 	if ((flags & MEMPOOL_F_NO_CACHE_ALIGN) == 0) {
 		sz->total_size = sz->header_size + sz->elt_size +
@@ -279,6 +284,7 @@ rte_mempool_free_memchunks(struct rte_mempool *mp)
 	}
 }
 
+//调用一次ops_alloc
 static int
 mempool_ops_alloc_once(struct rte_mempool *mp)
 {
@@ -780,9 +786,9 @@ rte_mempool_cache_free(struct rte_mempool_cache *cache)
 
 /* create an empty mempool */
 struct rte_mempool *
-rte_mempool_create_empty(const char *name, unsigned n, unsigned elt_size,
-	unsigned cache_size, unsigned private_data_size,
-	int socket_id, unsigned flags)
+rte_mempool_create_empty(const char *name/*名称*/, unsigned n/*元素数*/, unsigned elt_size/*实体大小*/,
+	unsigned cache_size/*缓存大小*/, unsigned private_data_size/*私有数据大小*/,
+	int socket_id/*节点编号*/, unsigned flags)
 {
 	char mz_name[RTE_MEMZONE_NAMESIZE];
 	struct rte_mempool_list *mempool_list;
@@ -796,8 +802,10 @@ rte_mempool_create_empty(const char *name, unsigned n, unsigned elt_size,
 	int ret;
 
 	/* compilation-time checks */
+	//结构体大小必须cacheline对齐
 	RTE_BUILD_BUG_ON((sizeof(struct rte_mempool) &
 			  RTE_CACHE_LINE_MASK) != 0);
+	//cache结构体大小必须cacheline对齐
 	RTE_BUILD_BUG_ON((sizeof(struct rte_mempool_cache) &
 			  RTE_CACHE_LINE_MASK) != 0);
 #ifdef RTE_LIBRTE_MEMPOOL_DEBUG
@@ -810,6 +818,7 @@ rte_mempool_create_empty(const char *name, unsigned n, unsigned elt_size,
 	mempool_list = RTE_TAILQ_CAST(rte_mempool_tailq.head, rte_mempool_list);
 
 	/* asked for zero items */
+	//不支持创建0个元素
 	if (n == 0) {
 		rte_errno = EINVAL;
 		return NULL;
@@ -827,6 +836,7 @@ rte_mempool_create_empty(const char *name, unsigned n, unsigned elt_size,
 		flags |= MEMPOOL_F_NO_SPREAD;
 
 	/* calculate mempool object sizes. */
+	//计算mempool元素大小
 	if (!rte_mempool_calc_obj_size(elt_size, flags, &objsz)) {
 		rte_errno = EINVAL;
 		return NULL;
@@ -838,6 +848,7 @@ rte_mempool_create_empty(const char *name, unsigned n, unsigned elt_size,
 	 * reserve a memory zone for this mempool: private data is
 	 * cache-aligned
 	 */
+	//记算私有数据大小（mempool私有数据)
 	private_data_size = (private_data_size +
 			     RTE_MEMPOOL_ALIGN_MASK) & (~RTE_MEMPOOL_ALIGN_MASK);
 
@@ -849,10 +860,12 @@ rte_mempool_create_empty(const char *name, unsigned n, unsigned elt_size,
 		goto exit_unlock;
 	}
 
+	//计算mempool结构体大小
 	mempool_size = MEMPOOL_HEADER_SIZE(mp, cache_size);
 	mempool_size += private_data_size;
 	mempool_size = RTE_ALIGN_CEIL(mempool_size, RTE_MEMPOOL_ALIGN);
 
+	//设置memzone名称
 	ret = snprintf(mz_name, sizeof(mz_name), RTE_MEMPOOL_MZ_FORMAT, name);
 	if (ret < 0 || ret >= (int)sizeof(mz_name)) {
 		rte_errno = ENAMETOOLONG;
@@ -893,7 +906,7 @@ rte_mempool_create_empty(const char *name, unsigned n, unsigned elt_size,
 		RTE_PTR_ADD(mp, MEMPOOL_HEADER_SIZE(mp, 0));
 
 	/* Init all default caches. */
-	//要求开始cache时，初始化cache
+	//要求开启cache时，初始化cache
 	if (cache_size != 0) {
 		for (lcore_id = 0; lcore_id < RTE_MAX_LCORE; lcore_id++)
 			mempool_cache_init(&mp->local_cache[lcore_id],
@@ -929,6 +942,7 @@ rte_mempool_create(const char *name, unsigned n, unsigned elt_size,
 	int ret;
 	struct rte_mempool *mp;
 
+	//创建空的mempool(不含实体,及ring)
 	mp = rte_mempool_create_empty(name, n, elt_size, cache_size,
 		private_data_size, socket_id, flags);
 	if (mp == NULL)

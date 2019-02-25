@@ -98,10 +98,15 @@ struct rte_mempool_cache {
 /**
  * A structure that stores the size of mempool elements.
  */
+//mempool元素大小
 struct rte_mempool_objsz {
+    //元素大小
 	uint32_t elt_size;     /**< Size of an element. */
+	//header的大小
 	uint32_t header_size;  /**< Size of header (before elt). */
+	//尾部大小
 	uint32_t trailer_size; /**< Size of trailer (after elt). */
+	//总大小
 	uint32_t total_size;
 	/**< Total size of an object (header + elt + trailer). */
 };
@@ -227,6 +232,7 @@ struct rte_mempool {
 		uint64_t pool_id;        /**< External mempool identifier. */
 	};
 	void *pool_config;               /**< optional args for ops alloc. */
+	//所属的memzone
 	const struct rte_memzone *mz;    /**< Memzone where pool is alloc'd. */
 	unsigned int flags;              /**< Flags of the mempool. */
 	int socket_id;                   /**< Socket id passed at create. */
@@ -235,8 +241,11 @@ struct rte_mempool {
 	uint32_t cache_size;
 	/**< Size of per-lcore default local cache. */
 
+	//实体大小
 	uint32_t elt_size;               /**< Size of an element. */
+	//实体头部大小
 	uint32_t header_size;            /**< Size of header (before elt). */
+	//实体尾部大小
 	uint32_t trailer_size;           /**< Size of trailer (after elt). */
 
 	unsigned private_data_size;      /**< Size of private data. */
@@ -563,6 +572,7 @@ typedef int (*rte_mempool_get_info_t)(const struct rte_mempool *mp,
 /** Structure defining mempool operations structure */
 struct rte_mempool_ops {
 	char name[RTE_MEMPOOL_OPS_NAMESIZE]; /**< Name of mempool ops struct. */
+	//初始化mempool的私有数据
 	rte_mempool_alloc_t alloc;       /**< Allocate private data. */
 	rte_mempool_free_t free;         /**< Free the external pool. */
 	rte_mempool_enqueue_t enqueue;   /**< Enqueue an object. */
