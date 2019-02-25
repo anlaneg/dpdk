@@ -239,6 +239,7 @@ struct rte_mempool {
 	int socket_id;                   /**< Socket id passed at create. */
 	//元素数
 	uint32_t size;                   /**< Max size of the mempool. */
+	//mempool　cache大小
 	uint32_t cache_size;
 	/**< Size of per-lcore default local cache. */
 
@@ -249,6 +250,7 @@ struct rte_mempool {
 	//实体尾部大小
 	uint32_t trailer_size;           /**< Size of trailer (after elt). */
 
+	//mpool私有数据大小
 	unsigned private_data_size;      /**< Size of private data. */
 	/**
 	 * Index into rte_mempool_ops_table array of mempool ops
@@ -257,7 +259,7 @@ struct rte_mempool {
 	 * to facilitate any secondary processes that may want to use
 	 * this mempool.
 	 */
-	int32_t ops_index;
+	int32_t ops_index;//操作集索引
 
 	//mp针对每个core的cache
 	struct rte_mempool_cache *local_cache; /**< Per-lcore local cache */
