@@ -141,6 +141,7 @@ struct rte_mempool_objsz {
  */
 struct rte_mempool_objhdr {
 	STAILQ_ENTRY(rte_mempool_objhdr) next; /**< Next in list. */
+	//元素属于那个mempool
 	struct rte_mempool *mp;          /**< The mempool owning the object. */
 	RTE_STD_C11
 	union {
@@ -262,6 +263,7 @@ struct rte_mempool {
 	struct rte_mempool_cache *local_cache; /**< Per-lcore local cache */
 
 	uint32_t populated_size;         /**< Number of populated objects. */
+	//将元素采用链表串起来
 	struct rte_mempool_objhdr_list elt_list; /**< List of objects in pool */
 	uint32_t nb_mem_chunks;          /**< Number of memory chunks */
 	struct rte_mempool_memhdr_list mem_list; /**< List of memory chunks */

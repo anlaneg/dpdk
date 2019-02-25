@@ -37,6 +37,7 @@
  * rte_mempool_create(), or called directly if using
  * rte_mempool_create_empty()/rte_mempool_populate()
  */
+//通过opaque_arg设置pktmbuf　pool私有数据
 void
 rte_pktmbuf_pool_init(struct rte_mempool *mp, void *opaque_arg)
 {
@@ -47,6 +48,7 @@ rte_pktmbuf_pool_init(struct rte_mempool *mp, void *opaque_arg)
 	RTE_ASSERT(mp->elt_size >= sizeof(struct rte_mbuf));
 
 	/* if no structure is provided, assume no mbuf private area */
+	//如果未提供opaque_arg,则默认计算mbuf空闲空间大小
 	user_mbp_priv = opaque_arg;
 	if (user_mbp_priv == NULL) {
 		default_mbp_priv.mbuf_priv_size = 0;
@@ -58,10 +60,12 @@ rte_pktmbuf_pool_init(struct rte_mempool *mp, void *opaque_arg)
 		user_mbp_priv = &default_mbp_priv;
 	}
 
+	//预留的空间大小校验
 	RTE_ASSERT(mp->elt_size >= sizeof(struct rte_mbuf) +
 		user_mbp_priv->mbuf_data_room_size +
 		user_mbp_priv->mbuf_priv_size);
 
+	//采用用户传入参数填充mempool的私有数据
 	mbp_priv = rte_mempool_get_priv(mp);
 	memcpy(mbp_priv, user_mbp_priv, sizeof(*mbp_priv));
 }

@@ -743,6 +743,7 @@ rte_eth_dev_count(void)
 	return rte_eth_dev_count_avail();
 }
 
+//获取系统中有效设备数
 uint16_t
 rte_eth_dev_count_avail(void)
 {
