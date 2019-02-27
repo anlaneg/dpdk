@@ -1230,6 +1230,7 @@ struct rte_eth_dcb_info {
 	} \
 } while (0)
 
+//检查给定的port_id是否为有效的port,如果不是有效port，则退出
 #define RTE_ETH_VALID_PORTID_OR_RET(port_id) do { \
 	if (!rte_eth_dev_is_valid_port(port_id)) { \
 		RTE_ETHDEV_LOG(ERR, "Invalid port_id=%u\n", port_id); \

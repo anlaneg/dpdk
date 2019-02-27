@@ -139,6 +139,7 @@ struct bond_dev_private {
 	uint16_t active_slave_count;		/**< Number of active slaves */
 	uint16_t active_slaves[RTE_MAX_ETHPORTS];    /**< Active slave list */
 
+	//bond口的成员数目
 	uint16_t slave_count;			/**< Number of bonded slaves */
 	struct bond_slave_details slaves[RTE_MAX_ETHPORTS];
 	/**< Arary of bonded slaves details */

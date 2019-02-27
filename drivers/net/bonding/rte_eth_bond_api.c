@@ -27,10 +27,11 @@ check_for_bonded_ethdev(const struct rte_eth_dev *eth_dev)
 		return -1;
 
 	/* return 0 if driver name matches */
+	//如果设备驱动采用的是pmd_bond_drv驱动，则认为此接口为bond口
 	return eth_dev->device->driver->name != pmd_bond_drv.driver.name;
 }
 
-int
+//检查port_id是否为bond口
 valid_bonded_port_id(uint16_t port_id)
 {
 	RTE_ETH_VALID_PORTID_OR_ERR_RET(port_id, -1);
@@ -794,6 +795,8 @@ rte_eth_bond_primary_get(uint16_t bonded_port_id)
 	return internals->current_primary_port;
 }
 
+//返回bonded_port_id对应的bond接口的成员数目，并将这些成员赋值到slaves数组中
+//如果len长度小于成员数目也将返回失败
 int
 rte_eth_bond_slaves_get(uint16_t bonded_port_id, uint16_t slaves[],
 			uint16_t len)
@@ -801,6 +804,7 @@ rte_eth_bond_slaves_get(uint16_t bonded_port_id, uint16_t slaves[],
 	struct bond_dev_private *internals;
 	uint8_t i;
 
+	//如果非bond类型port,则跳出
 	if (valid_bonded_port_id(bonded_port_id) != 0)
 		return -1;
 
@@ -809,9 +813,11 @@ rte_eth_bond_slaves_get(uint16_t bonded_port_id, uint16_t slaves[],
 
 	internals = rte_eth_devices[bonded_port_id].data->dev_private;
 
+	//成员数大于len，则返回失败
 	if (internals->slave_count > len)
 		return -1;
 
+	//填充其slave
 	for (i = 0; i < internals->slave_count; i++)
 		slaves[i] = internals->slaves[i].port_id;
 
@@ -848,9 +854,11 @@ rte_eth_bond_mac_address_set(uint16_t bonded_port_id,
 	struct rte_eth_dev *bonded_eth_dev;
 	struct bond_dev_private *internals;
 
+	//校验必须为bond口
 	if (valid_bonded_port_id(bonded_port_id) != 0)
 		return -1;
 
+	//设置此接口的mac地址（仅设备在结构体上）
 	bonded_eth_dev = &rte_eth_devices[bonded_port_id];
 	internals = bonded_eth_dev->data->dev_private;
 

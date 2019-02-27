@@ -1973,11 +1973,13 @@ rte_eth_link_get(uint16_t port_id, struct rte_eth_link *eth_link)
 	}
 }
 
+//返回接口的link状态
 void
 rte_eth_link_get_nowait(uint16_t port_id, struct rte_eth_link *eth_link)
 {
 	struct rte_eth_dev *dev;
 
+	//检查给定的port_id是否有效的接口，返回对应的dev
 	RTE_ETH_VALID_PORTID_OR_RET(port_id);
 	dev = &rte_eth_devices[port_id];
 
@@ -1986,6 +1988,7 @@ rte_eth_link_get_nowait(uint16_t port_id, struct rte_eth_link *eth_link)
 		rte_eth_linkstatus_get(dev, eth_link);
 	else {
 		RTE_FUNC_PTR_OR_RET(*dev->dev_ops->link_update);
+		//调用link_update后，获取link结果
 		(*dev->dev_ops->link_update)(dev, 0);
 		*eth_link = dev->data->dev_link;
 	}

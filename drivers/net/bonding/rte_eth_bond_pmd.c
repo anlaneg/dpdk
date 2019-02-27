@@ -1533,6 +1533,7 @@ mac_address_get(struct rte_eth_dev *eth_dev, struct ether_addr *dst_mac_addr)
 	return 0;
 }
 
+//设置mac地址，仅设置在结构体上
 int
 mac_address_set(struct rte_eth_dev *eth_dev, struct ether_addr *new_mac_addr)
 {
@@ -1626,6 +1627,7 @@ mac_address_slaves_update(struct rte_eth_dev *bonded_eth_dev)
 	case BONDING_MODE_ROUND_ROBIN:
 	case BONDING_MODE_BALANCE:
 	case BONDING_MODE_BROADCAST:
+		//设置成员接口的mac地址
 		for (i = 0; i < internals->slave_count; i++) {
 			if (rte_eth_dev_default_mac_addr_set(
 					internals->slaves[i].port_id,
@@ -3170,7 +3172,7 @@ err:
 	return -1;
 }
 
-//探测dev设备是否可用
+//bond设备probe,控测dev设备是否可用
 static int
 bond_probe(struct rte_vdev_device *dev)
 {
@@ -3626,7 +3628,9 @@ struct rte_vdev_driver pmd_bond_drv = {
 	.remove = bond_remove,
 };
 
+//指明pmd_bond_drv的驱动名称为net_bonding,注册pmd_bond_drv
 RTE_PMD_REGISTER_VDEV(net_bonding, pmd_bond_drv);
+//注册驱动另名
 RTE_PMD_REGISTER_ALIAS(net_bonding, eth_bond);
 
 RTE_PMD_REGISTER_PARAM_STRING(net_bonding,
