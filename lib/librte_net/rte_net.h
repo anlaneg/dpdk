@@ -109,6 +109,8 @@ uint32_t rte_net_get_ptype(const struct rte_mbuf *m,
  * @return
  *   0 if checksum is initialized properly
  */
+//为mbuf的内层ipv4,１，使ipv4头部checksum为０;2.udp,tcp计算假头部的checksum
+//注意，针对tso功能，不在假头checksum计算中包含len字段
 static inline int
 rte_net_intel_cksum_flags_prepare(struct rte_mbuf *m, uint64_t ol_flags)
 {
@@ -116,24 +118,31 @@ rte_net_intel_cksum_flags_prepare(struct rte_mbuf *m, uint64_t ol_flags)
 	struct ipv6_hdr *ipv6_hdr;
 	struct tcp_hdr *tcp_hdr;
 	struct udp_hdr *udp_hdr;
+	//到内层l3层的offset
 	uint64_t inner_l3_offset = m->l2_len;
 
+	//如果有outer_ip标记，则加上外层l2,l3头
 	if ((ol_flags & PKT_TX_OUTER_IP_CKSUM) ||
 		(ol_flags & PKT_TX_OUTER_IPV6))
 		inner_l3_offset += m->outer_l2_len + m->outer_l3_len;
 
+	//ipv4报文时，取内层ipv4头部
 	if (ol_flags & PKT_TX_IPV4) {
 		ipv4_hdr = rte_pktmbuf_mtod_offset(m, struct ipv4_hdr *,
 				inner_l3_offset);
 
+		//如果需要offload checksum,则将ip头部置为０
 		if (ol_flags & PKT_TX_IP_CKSUM)
 			ipv4_hdr->hdr_checksum = 0;
 	}
 
+	//如果需要做udp checksum
 	if ((ol_flags & PKT_TX_UDP_CKSUM) == PKT_TX_UDP_CKSUM) {
 		if (ol_flags & PKT_TX_IPV4) {
+		    //取出udp头部
 			udp_hdr = (struct udp_hdr *)((char *)ipv4_hdr +
 					m->l3_len);
+			//为udp填充ipv4层的假头部checksum
 			udp_hdr->dgram_cksum = rte_ipv4_phdr_cksum(ipv4_hdr,
 					ol_flags);
 		} else {
@@ -151,6 +160,7 @@ rte_net_intel_cksum_flags_prepare(struct rte_mbuf *m, uint64_t ol_flags)
 			/* non-TSO tcp or TSO */
 			tcp_hdr = (struct tcp_hdr *)((char *)ipv4_hdr +
 					m->l3_len);
+			//为tcp计算假头部
 			tcp_hdr->cksum = rte_ipv4_phdr_cksum(ipv4_hdr,
 					ol_flags);
 		} else {

@@ -274,6 +274,7 @@ rte_ipv4_cksum(const struct ipv4_hdr *ipv4_hdr)
  * @return
  *   The non-complemented checksum to set in the L4 header.
  */
+//计算ipv4假头部checksum
 static inline uint16_t
 rte_ipv4_phdr_cksum(const struct ipv4_hdr *ipv4_hdr, uint64_t ol_flags)
 {
@@ -289,6 +290,7 @@ rte_ipv4_phdr_cksum(const struct ipv4_hdr *ipv4_hdr, uint64_t ol_flags)
 	psd_hdr.dst_addr = ipv4_hdr->dst_addr;
 	psd_hdr.zero = 0;
 	psd_hdr.proto = ipv4_hdr->next_proto_id;
+	//注意，针对tso功能，不在假头checksum计算中包含len字段
 	if (ol_flags & PKT_TX_TCP_SEG) {
 		psd_hdr.len = 0;
 	} else {
