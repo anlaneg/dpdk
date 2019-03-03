@@ -67,7 +67,7 @@ Features
 - Hardware checksum offloads.
 - Flow director (RTE_FDIR_MODE_PERFECT, RTE_FDIR_MODE_PERFECT_MAC_VLAN and
   RTE_ETH_FDIR_REJECT).
-- Flow API.
+- Flow API, including :ref:`flow_isolated_mode`.
 - Multiple process.
 - KVM and VMware ESX SR-IOV modes are supported.
 - RSS hash result is supported.
@@ -220,6 +220,13 @@ These options can be modified in the ``.config`` file.
   Toggle debugging code and stricter compilation flags. Enabling this option
   adds additional run-time checks and debugging messages at the cost of
   lower performance.
+
+.. note::
+
+   For Bluefield, target should be set to ``arm64-bluefield-linuxapp-gcc``. This
+   will enable ``CONFIG_RTE_LIBRTE_MLX5_PMD`` and set ``RTE_CACHE_LINE_SIZE`` to
+   64. Default armv8a configuration of make build and meson build set it to 128
+   then brings performance degradation.
 
 Environment variables
 ~~~~~~~~~~~~~~~~~~~~~
@@ -552,7 +559,7 @@ DPDK and must be installed separately:
 
 - **Firmware update**
 
-  Mellanox OFED releases include firmware updates for
+  Mellanox OFED/EN releases include firmware updates for
   ConnectX-4/ConnectX-5/ConnectX-6/Bluefield adapters.
 
   Because each release provides new features, these updates must be applied to
@@ -567,7 +574,7 @@ Installation
 ~~~~~~~~~~~~
 
 Either RDMA Core library with a recent enough Linux kernel release
-(recommended) or Mellanox OFED, which provides compatibility with older
+(recommended) or Mellanox OFED/EN, which provides compatibility with older
 releases.
 
 RMDA Core with Linux Kernel
@@ -597,10 +604,10 @@ thanks to these environment variables:
    - ``EXTRA_LDFLAGS=-L/path/to/rdma-core/build/lib``
    - ``PKG_CONFIG_PATH=/path/to/rdma-core/build/lib/pkgconfig``
 
-Mellanox OFED
-^^^^^^^^^^^^^
+Mellanox OFED/EN
+^^^^^^^^^^^^^^^^
 
-- Mellanox OFED version: **4.4, 4.5**.
+- Mellanox OFED version: **4.4, 4.5** / Mellanox EN version: **4.5**
 - firmware version:
 
   - ConnectX-4: **12.21.1000** and above.
@@ -616,14 +623,16 @@ managers on most distributions, this PMD requires Ethernet extensions that
 may not be supported at the moment (this is a work in progress).
 
 `Mellanox OFED
-<http://www.mellanox.com/page/products_dyn?product_family=26&mtag=linux>`__
-includes the necessary support and should be used in the meantime. For DPDK,
+<http://www.mellanox.com/page/products_dyn?product_family=26&mtag=linux>`__ and
+`Mellanox EN
+<http://www.mellanox.com/page/products_dyn?product_family=27&mtag=linux>`__
+include the necessary support and should be used in the meantime. For DPDK,
 only libibverbs, libmlx5, mlnx-ofed-kernel packages and firmware updates are
 required from that distribution.
 
 .. note::
 
-   Several versions of Mellanox OFED are available. Installing the version
+   Several versions of Mellanox OFED/EN are available. Installing the version
    this DPDK release was developed and tested against is strongly
    recommended. Please check the `prerequisites`_.
 
@@ -663,14 +672,14 @@ Supported NICs
 * Mellanox(R) ConnectX(R)-5 100G MCX556A-ECAT (2x100G)
 * Mellanox(R) ConnectX(R)-5 Ex EN 100G MCX516A-CDAT (2x100G)
 
-Quick Start Guide on OFED
--------------------------
+Quick Start Guide on OFED/EN
+----------------------------
 
-1. Download latest Mellanox OFED. For more info check the  `prerequisites`_.
+1. Download latest Mellanox OFED/EN. For more info check the  `prerequisites`_.
 
 
 2. Install the required libraries and kernel modules either by installing
-   only the required set, or by installing the entire Mellanox OFED:
+   only the required set, or by installing the entire Mellanox OFED/EN:
 
    .. code-block:: console
 
@@ -847,8 +856,8 @@ ConnectX-4/ConnectX-5/ConnectX-6/Bluefield devices managed by librte_pmd_mlx5.
 
       modprobe -a ib_uverbs mlx5_core mlx5_ib
 
-   Alternatively if MLNX_OFED is fully installed, the following script can
-   be run:
+   Alternatively if MLNX_OFED/MLNX_EN is fully installed, the following script
+   can be run:
 
    .. code-block:: console
 

@@ -42,9 +42,6 @@ clean: $(CLEANDIRS)
 	$(Q)$(MAKE) -f $(RTE_SDK)/GNUmakefile gcovclean
 	@echo Clean complete
 
-.PHONY: test-build
-test-build: test
-
 .SECONDEXPANSION:
 .PHONY: $(ROOTDIRS-y) $(ROOTDIRS-)
 #各目标处理(源代码编译入口）

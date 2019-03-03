@@ -11,6 +11,39 @@
 extern "C" {
 #endif
 
+#define	EF10_EVQ_MAXNEVS	32768
+#define	EF10_EVQ_MINNEVS	512
+
+#define	EF10_RXQ_MAXNDESCS	4096
+#define	EF10_RXQ_MINNDESCS	512
+
+#define	EF10_TXQ_MINNDESCS	512
+
+#define	EF10_EVQ_DESC_SIZE	(sizeof (efx_qword_t))
+#define	EF10_RXQ_DESC_SIZE	(sizeof (efx_qword_t))
+#define	EF10_TXQ_DESC_SIZE	(sizeof (efx_qword_t))
+
+/* Number of hardware EVQ buffers (for compile-time resource dimensions) */
+#define	EF10_EVQ_MAXNBUFS	(64)
+
+/* Maximum independent of EFX_BUG35388_WORKAROUND. */
+#define	EF10_TXQ_MAXNBUFS	8
+
+#if EFSYS_OPT_HUNTINGTON
+# if (EF10_EVQ_MAXNBUFS < HUNT_EVQ_MAXNBUFS)
+#  error "EF10_EVQ_MAXNBUFS too small"
+# endif
+#endif /* EFSYS_OPT_HUNTINGTON */
+#if EFSYS_OPT_MEDFORD
+# if (EF10_EVQ_MAXNBUFS < MEDFORD_EVQ_MAXNBUFS)
+#  error "EF10_EVQ_MAXNBUFS too small"
+# endif
+#endif /* EFSYS_OPT_MEDFORD */
+#if EFSYS_OPT_MEDFORD2
+# if (EF10_EVQ_MAXNBUFS < MEDFORD2_EVQ_MAXNBUFS)
+#  error "EF10_EVQ_MAXNBUFS too small"
+# endif
+#endif /* EFSYS_OPT_MEDFORD2 */
 
 /* Number of hardware PIO buffers (for compile-time resource dimensions) */
 #define	EF10_MAX_PIOBUF_NBUFS	(16)
@@ -1012,7 +1045,7 @@ ef10_rx_qcreate(
 	__in		unsigned int index,
 	__in		unsigned int label,
 	__in		efx_rxq_type_t type,
-	__in		const union efx_rxq_type_data_u *type_data,
+	__in_opt	const union efx_rxq_type_data_u *type_data,
 	__in		efsys_mem_t *esmp,
 	__in		size_t ndescs,
 	__in		uint32_t id,

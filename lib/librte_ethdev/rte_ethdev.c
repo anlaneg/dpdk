@@ -49,7 +49,6 @@ int rte_eth_dev_logtype;
 static const char *MZ_RTE_ETH_DEV_DATA = "rte_eth_dev_data";
 //网络设备对象（用于管理按口编号等）
 struct rte_eth_dev rte_eth_devices[RTE_MAX_ETHPORTS];
-static uint16_t eth_dev_last_created_port;
 
 /* spinlock for eth device callbacks */
 static rte_spinlock_t rte_eth_dev_cb_lock = RTE_SPINLOCK_INITIALIZER;
@@ -436,8 +435,6 @@ eth_dev_get(uint16_t port_id)
 	struct rte_eth_dev *eth_dev = &rte_eth_devices[port_id];
 
 	eth_dev->data = &rte_eth_dev_shared_data->data[port_id];
-
-	eth_dev_last_created_port = port_id;
 
 	return eth_dev;
 }

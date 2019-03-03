@@ -71,7 +71,6 @@ static void virtio_mac_addr_remove(struct rte_eth_dev *dev, uint32_t index);
 static int virtio_mac_addr_set(struct rte_eth_dev *dev,
 				struct ether_addr *mac_addr);
 
-static int virtio_intr_enable(struct rte_eth_dev *dev);
 static int virtio_intr_disable(struct rte_eth_dev *dev);
 
 static int virtio_dev_queue_stats_mapping_set(
@@ -142,16 +141,17 @@ static const struct rte_virtio_xstats_name_off rte_virtio_txq_stat_strings[] = {
 struct virtio_hw_internal virtio_hw_internal[RTE_MAX_ETHPORTS];
 
 static struct virtio_pmd_ctrl *
-virtio_pq_send_command(struct virtnet_ctl *cvq, struct virtio_pmd_ctrl *ctrl,
-		       int *dlen, int pkt_num)
+virtio_send_command_packed(struct virtnet_ctl *cvq,
+			   struct virtio_pmd_ctrl *ctrl,
+			   int *dlen, int pkt_num)
 {
 	struct virtqueue *vq = cvq->vq;
 	int head;
 	struct vring_packed_desc *desc = vq->ring_packed.desc_packed;
 	struct virtio_pmd_ctrl *result;
-	bool avail_wrap_counter, used_wrap_counter;
-	uint16_t flags;
+	bool avail_wrap_counter;
 	int sum = 0;
+	int nb_descs = 0;
 	int k;
 
 	/*
@@ -162,11 +162,10 @@ virtio_pq_send_command(struct virtnet_ctl *cvq, struct virtio_pmd_ctrl *ctrl,
 	 */
 	head = vq->vq_avail_idx;
 	avail_wrap_counter = vq->avail_wrap_counter;
-	used_wrap_counter = vq->used_wrap_counter;
-	desc[head].flags = VRING_DESC_F_NEXT;
 	desc[head].addr = cvq->virtio_net_hdr_mem;
 	desc[head].len = sizeof(struct virtio_net_ctrl_hdr);
 	vq->vq_free_cnt--;
+	nb_descs++;
 	if (++vq->vq_avail_idx >= vq->vq_nentries) {
 		vq->vq_avail_idx -= vq->vq_nentries;
 		vq->avail_wrap_counter ^= 1;
@@ -177,56 +176,63 @@ virtio_pq_send_command(struct virtnet_ctl *cvq, struct virtio_pmd_ctrl *ctrl,
 			+ sizeof(struct virtio_net_ctrl_hdr)
 			+ sizeof(ctrl->status) + sizeof(uint8_t) * sum;
 		desc[vq->vq_avail_idx].len = dlen[k];
-		flags = VRING_DESC_F_NEXT;
+		desc[vq->vq_avail_idx].flags = VRING_DESC_F_NEXT |
+			VRING_DESC_F_AVAIL(vq->avail_wrap_counter) |
+			VRING_DESC_F_USED(!vq->avail_wrap_counter);
 		sum += dlen[k];
 		vq->vq_free_cnt--;
-		flags |= VRING_DESC_F_AVAIL(vq->avail_wrap_counter) |
-			 VRING_DESC_F_USED(!vq->avail_wrap_counter);
-		desc[vq->vq_avail_idx].flags = flags;
-		rte_smp_wmb();
-		vq->vq_free_cnt--;
+		nb_descs++;
 		if (++vq->vq_avail_idx >= vq->vq_nentries) {
 			vq->vq_avail_idx -= vq->vq_nentries;
 			vq->avail_wrap_counter ^= 1;
 		}
 	}
 
-
 	desc[vq->vq_avail_idx].addr = cvq->virtio_net_hdr_mem
 		+ sizeof(struct virtio_net_ctrl_hdr);
 	desc[vq->vq_avail_idx].len = sizeof(ctrl->status);
-	flags = VRING_DESC_F_WRITE;
-	flags |= VRING_DESC_F_AVAIL(vq->avail_wrap_counter) |
-		 VRING_DESC_F_USED(!vq->avail_wrap_counter);
-	desc[vq->vq_avail_idx].flags = flags;
-	flags = VRING_DESC_F_NEXT;
-	flags |= VRING_DESC_F_AVAIL(avail_wrap_counter) |
-		 VRING_DESC_F_USED(!avail_wrap_counter);
-	desc[head].flags = flags;
-	rte_smp_wmb();
-
+	desc[vq->vq_avail_idx].flags = VRING_DESC_F_WRITE |
+		VRING_DESC_F_AVAIL(vq->avail_wrap_counter) |
+		VRING_DESC_F_USED(!vq->avail_wrap_counter);
 	vq->vq_free_cnt--;
+	nb_descs++;
 	if (++vq->vq_avail_idx >= vq->vq_nentries) {
 		vq->vq_avail_idx -= vq->vq_nentries;
 		vq->avail_wrap_counter ^= 1;
 	}
 
+	virtio_wmb(vq->hw->weak_barriers);
+	desc[head].flags = VRING_DESC_F_NEXT |
+		VRING_DESC_F_AVAIL(avail_wrap_counter) |
+		VRING_DESC_F_USED(!avail_wrap_counter);
+
+	virtio_wmb(vq->hw->weak_barriers);
 	virtqueue_notify(vq);
 
 	/* wait for used descriptors in virtqueue */
-	do {
-		rte_rmb();
+	while (!desc_is_used(&desc[head], vq))
 		usleep(100);
-	} while (!__desc_is_used(&desc[head], used_wrap_counter));
+
+	virtio_rmb(vq->hw->weak_barriers);
 
 	/* now get used descriptors */
-	while (desc_is_used(&desc[vq->vq_used_cons_idx], vq)) {
-		vq->vq_free_cnt++;
-		if (++vq->vq_used_cons_idx >= vq->vq_nentries) {
-			vq->vq_used_cons_idx -= vq->vq_nentries;
-			vq->used_wrap_counter ^= 1;
-		}
+	vq->vq_free_cnt += nb_descs;
+	vq->vq_used_cons_idx += nb_descs;
+	if (vq->vq_used_cons_idx >= vq->vq_nentries) {
+		vq->vq_used_cons_idx -= vq->vq_nentries;
+		vq->used_wrap_counter ^= 1;
 	}
+
+	PMD_INIT_LOG(DEBUG, "vq->vq_free_cnt=%d\n"
+			"vq->vq_avail_idx=%d\n"
+			"vq->vq_used_cons_idx=%d\n"
+			"vq->avail_wrap_counter=%d\n"
+			"vq->used_wrap_counter=%d\n",
+			vq->vq_free_cnt,
+			vq->vq_avail_idx,
+			vq->vq_used_cons_idx,
+			vq->avail_wrap_counter,
+			vq->used_wrap_counter);
 
 	result = cvq->virtio_net_hdr_mz->addr;
 	return result;
@@ -266,7 +272,7 @@ virtio_send_command(struct virtnet_ctl *cvq, struct virtio_pmd_ctrl *ctrl,
 		sizeof(struct virtio_pmd_ctrl));
 
 	if (vtpci_packed_queue(vq->hw)) {
-		result = virtio_pq_send_command(cvq, ctrl, dlen, pkt_num);
+		result = virtio_send_command_packed(cvq, ctrl, dlen, pkt_num);
 		goto out_unlock;
 	}
 
@@ -1449,7 +1455,8 @@ set_rxtx_funcs(struct rte_eth_dev *eth_dev)
 
 	if (vtpci_packed_queue(hw)) {
 		PMD_INIT_LOG(INFO,
-			"virtio: using packed ring standard Tx path on port %u",
+			"virtio: using packed ring %s Tx path on port %u",
+			hw->use_inorder_tx ? "inorder" : "standard",
 			eth_dev->data->port_id);
 		eth_dev->tx_pkt_burst = virtio_xmit_pkts_packed;
 	} else {
@@ -1977,6 +1984,8 @@ virtio_dev_configure(struct rte_eth_dev *dev)
 	const struct rte_eth_rxmode *rxmode = &dev->data->dev_conf.rxmode;
 	const struct rte_eth_txmode *txmode = &dev->data->dev_conf.txmode;
 	struct virtio_hw *hw = dev->data->dev_private;
+	uint32_t ether_hdr_len = ETHER_HDR_LEN + VLAN_TAG_LEN +
+		hw->vtnet_hdr_size;
 	uint64_t rx_offloads = rxmode->offloads;
 	uint64_t tx_offloads = txmode->offloads;
 	uint64_t req_features;
@@ -1990,6 +1999,9 @@ virtio_dev_configure(struct rte_eth_dev *dev)
 		if (ret < 0)
 			return ret;
 	}
+
+	if (rxmode->max_rx_pkt_len > hw->max_mtu + ether_hdr_len)
+		req_features &= ~(1ULL << VIRTIO_NET_F_MTU);
 
 	if (rx_offloads & (DEV_RX_OFFLOAD_UDP_CKSUM |
 			   DEV_RX_OFFLOAD_TCP_CKSUM))
@@ -2070,7 +2082,6 @@ virtio_dev_configure(struct rte_eth_dev *dev)
 	if (vtpci_packed_queue(hw)) {
 		hw->use_simple_rx = 0;
 		hw->use_inorder_rx = 0;
-		hw->use_inorder_tx = 0;
 	}
 
 #if defined RTE_ARCH_ARM64 || defined RTE_ARCH_ARM
@@ -2344,6 +2355,7 @@ virtio_dev_info_get(struct rte_eth_dev *dev, struct rte_eth_dev_info *dev_info)
 
 	host_features = VTPCI_OPS(hw)->get_features(hw);
 	dev_info->rx_offload_capa = DEV_RX_OFFLOAD_VLAN_STRIP;
+	dev_info->rx_offload_capa |= DEV_RX_OFFLOAD_JUMBO_FRAME;
 	if (host_features & (1ULL << VIRTIO_NET_F_GUEST_CSUM)) {
 		dev_info->rx_offload_capa |=
 			DEV_RX_OFFLOAD_TCP_CKSUM |

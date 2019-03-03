@@ -131,6 +131,12 @@ deactivate_slave(struct rte_eth_dev *eth_dev, uint16_t port_id)
 	RTE_ASSERT(active_count < RTE_DIM(internals->active_slaves));
 	internals->active_slave_count = active_count;
 
+	/* Resetting active_slave when reaches to max
+	 * no of slaves in active list
+	 */
+	if (internals->active_slave >= active_count)
+		internals->active_slave = 0;
+
 	if (eth_dev->data->dev_started) {
 		if (internals->mode == BONDING_MODE_8023AD) {
 			bond_mode_8023ad_start(eth_dev);
@@ -488,10 +494,6 @@ __eth_bond_slave_add_lock_free(uint16_t bonded_port_id, uint16_t slave_port_id)
 				return -1;
 			}
 		}
-
-		/* Inherit eth dev link properties from first slave */
-		link_properties_set(bonded_eth_dev,
-				&(slave_eth_dev->data->dev_link));
 
 		/* Make primary slave */
 		internals->primary_port = slave_port_id;

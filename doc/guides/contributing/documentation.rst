@@ -22,7 +22,6 @@ The main directories that contain files related to documentation are shown below
    |-- librte_acl
    |-- librte_cfgfile
    |-- librte_cmdline
-   |-- librte_compat
    |-- librte_eal
    |   |-- ...
    ...
@@ -203,6 +202,19 @@ The main required packages can be installed as follows:
 
    # Red Hat/Fedora, selective install.
    sudo dnf     -y install texlive-collection-latexextra
+
+`Latexmk <http://personal.psu.edu/jcc8/software/latexmk-jcc/>`_ is a perl script
+for running LaTeX for resolving cross references,
+and it also runs auxiliary programs like bibtex, makeindex if necessary, and dvips.
+It has also a number of other useful capabilities (see man 1 latexmk).
+
+.. code-block:: console
+
+   # Ubuntu/Debian.
+   sudo apt-get -y install latexmk
+
+   # Red Hat/Fedora.
+   sudo dnf     -y install latexmk
 
 
 Build commands

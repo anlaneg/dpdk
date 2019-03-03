@@ -381,6 +381,9 @@ sfc_ef10_xmit_tso_pkt(struct sfc_ef10_txq * const txq, struct rte_mbuf *m_seg,
 		hdr_addr = rte_pktmbuf_mtod(m_seg, uint8_t *);
 		hdr_iova = rte_mbuf_data_iova(m_seg);
 		if (rte_pktmbuf_data_len(m_seg) == header_len) {
+			/* Cannot send a packet that consists only of header */
+			if (unlikely(m_seg->next == NULL))
+				return EMSGSIZE;
 			/*
 			 * Associate header mbuf with header descriptor
 			 * which is located after TSO descriptors.
@@ -408,6 +411,10 @@ sfc_ef10_xmit_tso_pkt(struct sfc_ef10_txq * const txq, struct rte_mbuf *m_seg,
 		hdr_iova = txq->tsoh_iova + hdr_addr_off;
 		copied_segs = sfc_tso_prepare_header(hdr_addr, header_len,
 						     &m_seg, &in_off);
+
+		/* Cannot send a packet that consists only of header */
+		if (unlikely(m_seg == NULL))
+			return EMSGSIZE;
 
 		m_seg_to_free_up_to = m_seg;
 		/*
@@ -775,6 +782,7 @@ sfc_ef10_get_dev_info(struct rte_eth_dev_info *dev_info)
 static sfc_dp_tx_qsize_up_rings_t sfc_ef10_tx_qsize_up_rings;
 static int
 sfc_ef10_tx_qsize_up_rings(uint16_t nb_tx_desc,
+			   struct sfc_dp_tx_hw_limits *limits,
 			   unsigned int *txq_entries,
 			   unsigned int *evq_entries,
 			   unsigned int *txq_max_fill_level)
@@ -783,8 +791,8 @@ sfc_ef10_tx_qsize_up_rings(uint16_t nb_tx_desc,
 	 * rte_ethdev API guarantees that the number meets min, max and
 	 * alignment requirements.
 	 */
-	if (nb_tx_desc <= EFX_TXQ_MINNDESCS)
-		*txq_entries = EFX_TXQ_MINNDESCS;
+	if (nb_tx_desc <= limits->txq_min_entries)
+		*txq_entries = limits->txq_min_entries;
 	else
 		*txq_entries = rte_align32pow2(nb_tx_desc);
 

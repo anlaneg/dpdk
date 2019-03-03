@@ -989,7 +989,7 @@ rte_mbuf_refcnt_update(struct rte_mbuf *m, int16_t value)
 {
 	/*
 	 * The atomic_add is an expensive operation, so we don't want to
-	 * call it in the case where we know we are the uniq holder of
+	 * call it in the case where we know we are the unique holder of
 	 * this mbuf (i.e. ref_cnt == 1). Otherwise, an atomic
 	 * operation has to be used because concurrent accesses on the
 	 * reference counter can occur.
@@ -2484,6 +2484,7 @@ rte_mbuf_sched_set(struct rte_mbuf *m, uint32_t queue_id,
 				.queue_id = queue_id,
 				.traffic_class = traffic_class,
 				.color = color,
+				.reserved = 0,
 			};
 }
 

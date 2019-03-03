@@ -1,12 +1,16 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright(c) 2017 Intel Corporation
 
-apps = ['pdump',
+apps = [
+	'pdump',
 	'proc-info',
+	'test-acl',
 	'test-bbdev',
+	'test-cmdline',
 	'test-compress-perf',
 	'test-crypto-perf',
 	'test-eventdev',
+	'test-pipeline',
 	'test-pmd']
 
 # for BSD only
@@ -61,3 +65,6 @@ foreach app:apps
 				install: true)
 	endif
 endforeach
+
+# special case the autotests
+subdir('test')

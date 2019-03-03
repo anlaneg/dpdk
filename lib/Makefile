@@ -6,9 +6,7 @@
 include $(RTE_SDK)/mk/rte.vars.mk
 
 #在rte.vars.mk中我们载入.config文件得到配置变量，通过这些配置变量我们知道那个目录需要被编译
-DIRS-y += librte_compat
 DIRS-$(CONFIG_RTE_LIBRTE_KVARGS) += librte_kvargs
-DEPDIRS-librte_kvargs := librte_compat
 DIRS-$(CONFIG_RTE_LIBRTE_EAL) += librte_eal
 DEPDIRS-librte_eal := librte_kvargs
 DIRS-$(CONFIG_RTE_LIBRTE_PCI) += librte_pci

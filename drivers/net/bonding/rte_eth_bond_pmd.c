@@ -85,7 +85,7 @@ bond_ethdev_rx_burst(void *queue, struct rte_mbuf **bufs, uint16_t nb_pkts)
 			active_slave = 0;
 	}
 
-	if (++internals->active_slave == slave_count)
+	if (++internals->active_slave >= slave_count)
 		internals->active_slave = 0;
 	return num_rx_total;
 }
@@ -291,7 +291,7 @@ bond_ethdev_rx_burst_8023ad_fast_queue(void *queue, struct rte_mbuf **bufs,
 			active_slave = 0;
 	}
 
-	if (++internals->active_slave == slave_count)
+	if (++internals->active_slave >= slave_count)
 		internals->active_slave = 0;
 
 	return num_rx_total;
@@ -479,7 +479,7 @@ bond_ethdev_rx_burst_8023ad(void *queue, struct rte_mbuf **bufs,
 			idx = 0;
 	}
 
-	if (++internals->active_slave == slave_count)
+	if (++internals->active_slave >= slave_count)
 		internals->active_slave = 0;
 
 	return num_rx_total;
@@ -1317,9 +1317,6 @@ bond_ethdev_tx_burst_8023ad(void *queue, struct rte_mbuf **bufs,
 
 	uint16_t i;
 
-	if (unlikely(nb_bufs == 0))
-		return 0;
-
 	/* Copy slave list to protect against slave up/down changes during tx
 	 * bursting */
 	slave_count = internals->active_slave_count;
@@ -1328,6 +1325,30 @@ bond_ethdev_tx_burst_8023ad(void *queue, struct rte_mbuf **bufs,
 
 	memcpy(slave_port_ids, internals->active_slaves,
 			sizeof(slave_port_ids[0]) * slave_count);
+
+	/* Check for LACP control packets and send if available */
+	for (i = 0; i < slave_count; i++) {
+		struct port *port = &bond_mode_8023ad_ports[slave_port_ids[i]];
+		struct rte_mbuf *ctrl_pkt = NULL;
+
+		if (likely(rte_ring_empty(port->tx_ring)))
+			continue;
+
+		if (rte_ring_dequeue(port->tx_ring,
+				     (void **)&ctrl_pkt) != -ENOENT) {
+			slave_tx_count = rte_eth_tx_burst(slave_port_ids[i],
+					bd_tx_q->queue_id, &ctrl_pkt, 1);
+			/*
+			 * re-enqueue LAG control plane packets to buffering
+			 * ring if transmission fails so the packet isn't lost.
+			 */
+			if (slave_tx_count != 1)
+				rte_ring_enqueue(port->tx_ring,	ctrl_pkt);
+		}
+	}
+
+	if (unlikely(nb_bufs == 0))
+		return 0;
 
 	dist_slave_count = 0;
 	for (i = 0; i < slave_count; i++) {
@@ -1338,7 +1359,7 @@ bond_ethdev_tx_burst_8023ad(void *queue, struct rte_mbuf **bufs,
 					slave_port_ids[i];
 	}
 
-	if (likely(dist_slave_count > 1)) {
+	if (likely(dist_slave_count > 0)) {
 
 		/*
 		 * Populate slaves mbuf with the packets which are to be sent
@@ -1381,27 +1402,6 @@ bond_ethdev_tx_burst_8023ad(void *queue, struct rte_mbuf **bufs,
 				       &slave_bufs[i][slave_tx_count],
 				       slave_tx_fail_count * sizeof(bufs[0]));
 			}
-		}
-	}
-
-	/* Check for LACP control packets and send if available */
-	for (i = 0; i < slave_count; i++) {
-		struct port *port = &bond_mode_8023ad_ports[slave_port_ids[i]];
-		struct rte_mbuf *ctrl_pkt = NULL;
-
-		if (likely(rte_ring_empty(port->tx_ring)))
-			continue;
-
-		if (rte_ring_dequeue(port->tx_ring,
-				     (void **)&ctrl_pkt) != -ENOENT) {
-			slave_tx_count = rte_eth_tx_burst(slave_port_ids[i],
-					bd_tx_q->queue_id, &ctrl_pkt, 1);
-			/*
-			 * re-enqueue LAG control plane packets to buffering
-			 * ring if transmission fails so the packet isn't lost.
-			 */
-			if (slave_tx_count != 1)
-				rte_ring_enqueue(port->tx_ring,	ctrl_pkt);
 		}
 	}
 
@@ -1469,7 +1469,7 @@ bond_ethdev_tx_burst_broadcast(void *queue, struct rte_mbuf **bufs,
 	return max_nb_of_tx_pkts;
 }
 
-void
+static void
 link_properties_set(struct rte_eth_dev *ethdev, struct rte_eth_link *slave_link)
 {
 	struct bond_dev_private *bond_ctx = ethdev->data->dev_private;
@@ -1494,7 +1494,7 @@ link_properties_set(struct rte_eth_dev *ethdev, struct rte_eth_link *slave_link)
 	}
 }
 
-int
+static int
 link_properties_valid(struct rte_eth_dev *ethdev,
 		struct rte_eth_link *slave_link)
 {
@@ -2258,6 +2258,8 @@ bond_ethdev_info(struct rte_eth_dev *dev, struct rte_eth_dev_info *dev_info)
 
 	uint16_t max_nb_rx_queues = UINT16_MAX;
 	uint16_t max_nb_tx_queues = UINT16_MAX;
+	uint16_t max_rx_desc_lim = UINT16_MAX;
+	uint16_t max_tx_desc_lim = UINT16_MAX;
 
 	dev_info->max_mac_addrs = BOND_MAX_MAC_ADDRS;
 
@@ -2282,6 +2284,12 @@ bond_ethdev_info(struct rte_eth_dev *dev, struct rte_eth_dev_info *dev_info)
 
 			if (slave_info.max_tx_queues < max_nb_tx_queues)
 				max_nb_tx_queues = slave_info.max_tx_queues;
+
+			if (slave_info.rx_desc_lim.nb_max < max_rx_desc_lim)
+				max_rx_desc_lim = slave_info.rx_desc_lim.nb_max;
+
+			if (slave_info.tx_desc_lim.nb_max < max_tx_desc_lim)
+				max_tx_desc_lim = slave_info.tx_desc_lim.nb_max;
 		}
 	}
 
@@ -2293,10 +2301,8 @@ bond_ethdev_info(struct rte_eth_dev *dev, struct rte_eth_dev_info *dev_info)
 	memcpy(&dev_info->default_txconf, &internals->default_txconf,
 	       sizeof(dev_info->default_txconf));
 
-	memcpy(&dev_info->rx_desc_lim, &internals->rx_desc_lim,
-	       sizeof(dev_info->rx_desc_lim));
-	memcpy(&dev_info->tx_desc_lim, &internals->tx_desc_lim,
-	       sizeof(dev_info->tx_desc_lim));
+	dev_info->rx_desc_lim.nb_max = max_rx_desc_lim;
+	dev_info->tx_desc_lim.nb_max = max_tx_desc_lim;
 
 	/**
 	 * If dedicated hw queues enabled for link bonding device in LACP mode
@@ -2623,6 +2629,9 @@ bond_ethdev_promiscuous_enable(struct rte_eth_dev *eth_dev)
 	case BONDING_MODE_TLB:
 	case BONDING_MODE_ALB:
 	default:
+		/* Do not touch promisc when there cannot be primary ports */
+		if (internals->slave_count == 0)
+			break;
 		rte_eth_promiscuous_enable(internals->current_primary_port);
 	}
 }
@@ -2651,6 +2660,9 @@ bond_ethdev_promiscuous_disable(struct rte_eth_dev *dev)
 	case BONDING_MODE_TLB:
 	case BONDING_MODE_ALB:
 	default:
+		/* Do not touch promisc when there cannot be primary ports */
+		if (internals->slave_count == 0)
+			break;
 		rte_eth_promiscuous_disable(internals->current_primary_port);
 	}
 }
@@ -2717,16 +2729,6 @@ bond_ethdev_lsc_event_callback(uint16_t port_id, enum rte_eth_event_type type,
 		if (active_pos < internals->active_slave_count)
 			goto link_update;
 
-		/* if no active slave ports then set this port to be primary port */
-		if (internals->active_slave_count < 1) {
-			/* If first active slave, then change link status */
-			bonded_eth_dev->data->dev_link.link_status = ETH_LINK_UP;
-			internals->current_primary_port = port_id;
-			lsc_flag = 1;
-
-			mac_address_slaves_update(bonded_eth_dev);
-		}
-
 		/* check link state properties if bonded link is up*/
 		if (bonded_eth_dev->data->dev_link.link_status == ETH_LINK_UP) {
 			if (link_properties_valid(bonded_eth_dev, &link) != 0)
@@ -2738,9 +2740,24 @@ bond_ethdev_lsc_event_callback(uint16_t port_id, enum rte_eth_event_type type,
 			link_properties_set(bonded_eth_dev, &link);
 		}
 
+		/* If no active slave ports then set this port to be
+		 * the primary port.
+		 */
+		if (internals->active_slave_count < 1) {
+			/* If first active slave, then change link status */
+			bonded_eth_dev->data->dev_link.link_status =
+								ETH_LINK_UP;
+			internals->current_primary_port = port_id;
+			lsc_flag = 1;
+
+			mac_address_slaves_update(bonded_eth_dev);
+		}
+
 		activate_slave(bonded_eth_dev, port_id);
 
-		/* If user has defined the primary port then default to using it */
+		/* If the user has defined the primary port then default to
+		 * using it.
+		 */
 		if (internals->user_defined_primary_port &&
 				internals->primary_port == port_id)
 			bond_ethdev_primary_set(internals, port_id);

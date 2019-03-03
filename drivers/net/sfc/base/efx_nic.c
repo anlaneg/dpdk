@@ -228,7 +228,8 @@ efx_nic_create(
 		    EFX_FEATURE_PIO_BUFFERS |
 		    EFX_FEATURE_FW_ASSISTED_TSO |
 		    EFX_FEATURE_FW_ASSISTED_TSO_V2 |
-		    EFX_FEATURE_PACKED_STREAM;
+		    EFX_FEATURE_PACKED_STREAM |
+		    EFX_FEATURE_TXQ_CKSUM_OP_DESC;
 		break;
 #endif	/* EFSYS_OPT_HUNTINGTON */
 
@@ -248,7 +249,8 @@ efx_nic_create(
 		    EFX_FEATURE_MCDI_DMA |
 		    EFX_FEATURE_PIO_BUFFERS |
 		    EFX_FEATURE_FW_ASSISTED_TSO_V2 |
-		    EFX_FEATURE_PACKED_STREAM;
+		    EFX_FEATURE_PACKED_STREAM |
+		    EFX_FEATURE_TXQ_CKSUM_OP_DESC;
 		break;
 #endif	/* EFSYS_OPT_MEDFORD */
 
@@ -264,7 +266,8 @@ efx_nic_create(
 		    EFX_FEATURE_MCDI_DMA |
 		    EFX_FEATURE_PIO_BUFFERS |
 		    EFX_FEATURE_FW_ASSISTED_TSO_V2 |
-		    EFX_FEATURE_PACKED_STREAM;
+		    EFX_FEATURE_PACKED_STREAM |
+		    EFX_FEATURE_TXQ_CKSUM_OP_DESC;
 		break;
 #endif	/* EFSYS_OPT_MEDFORD2 */
 
@@ -592,7 +595,7 @@ fail1:
 
 			const efx_nic_cfg_t *
 efx_nic_cfg_get(
-	__in		efx_nic_t *enp)
+	__in		const efx_nic_t *enp)
 {
 	EFSYS_ASSERT3U(enp->en_magic, ==, EFX_NIC_MAGIC);
 	EFSYS_ASSERT3U(enp->en_mod_flags, &, EFX_MOD_PROBE);

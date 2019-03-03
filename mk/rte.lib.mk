@@ -36,6 +36,8 @@ PREINSTALL = $(SYMLINK-FILES-y)
 _INSTALL = $(INSTALL-FILES-y) $(RTE_OUTPUT)/lib/$(LIB)
 _CLEAN = doclean
 
+LDLIBS += $(EXECENV_LDLIBS-y)
+
 #lib方式编译入口
 .PHONY: all
 all: install

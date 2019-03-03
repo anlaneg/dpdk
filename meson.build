@@ -2,10 +2,10 @@
 # Copyright(c) 2017 Intel Corporation
 
 project('DPDK', 'C',
-	version: '19.02.0-rc2',
+	version: '19.05.0-rc0',
 	license: 'BSD',
 	default_options: ['buildtype=release', 'default_library=static'],
-	meson_version: '>= 0.41'
+	meson_version: '>= 0.47.1'
 )
 
 # set up some global vars for compiler, platform, configuration, etc.
@@ -32,7 +32,7 @@ eal_pmd_path = join_paths(get_option('prefix'), driver_install_path)
 # configure the build, and make sure configs here and in config folder are
 # able to be included in any file. We also store a global array of include dirs
 # for passing to pmdinfogen scripts
-global_inc = include_directories('.', 'config')
+global_inc = include_directories('.', 'config', 'lib/librte_eal/common/include')
 subdir('config')
 
 # build libs and drivers
@@ -43,7 +43,6 @@ subdir('drivers')
 # build binaries and installable tools
 subdir('usertools')
 subdir('app')
-subdir('test')
 
 # build docs
 subdir('doc')
@@ -83,7 +82,9 @@ pkg.generate(name: meson.project_name(),
 	libraries: dpdk_libraries,
 	libraries_private: dpdk_drivers + dpdk_static_libraries +
 			['-Wl,-Bdynamic'] + dpdk_extra_ldflags,
-	description: 'The Data Plane Development Kit (DPDK)',
+	description: '''The Data Plane Development Kit (DPDK).
+Note that CFLAGS might contain an -march flag higher than typical baseline.
+This is required for a number of static inline functions in the public headers.''',
 	subdirs: [get_option('include_subdir_arch'), '.'],
 	extra_cflags: ['-include', 'rte_config.h'] + machine_args
 )
@@ -103,23 +104,18 @@ foreach lib:enabled_libs
 endforeach
 message(output_message + '\n')
 
-
-# prior to 0.47 set_variable didn't work with arrays, so we can't
-# track driver lists easily
-if meson.version().version_compare('>=0.47')
-	output_message = '\n===============\nDrivers Enabled\n===============\n'
-	foreach class:driver_classes
-		class_drivers = get_variable(class + '_drivers')
-		output_message += '\n' + class + ':\n\t'
-		output_count = 0
-		foreach drv:class_drivers
-			output_message += drv + ', '
-			output_count += 1
-			if output_count == 8
-				output_message += '\n\t'
-				output_count = 0
-			endif
-		endforeach
+output_message = '\n===============\nDrivers Enabled\n===============\n'
+foreach class:driver_classes
+	class_drivers = get_variable(class + '_drivers')
+	output_message += '\n' + class + ':\n\t'
+	output_count = 0
+	foreach drv:class_drivers
+		output_message += drv + ', '
+		output_count += 1
+		if output_count == 8
+			output_message += '\n\t'
+			output_count = 0
+		endif
 	endforeach
-	message(output_message + '\n')
-endif
+endforeach
+message(output_message + '\n')

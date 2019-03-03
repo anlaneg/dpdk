@@ -12,10 +12,12 @@ machine_args_generic = [
 	['native', ['-march=native']],
 	['0xd03', ['-mcpu=cortex-a53']],
 	['0xd04', ['-mcpu=cortex-a35']],
+	['0xd05', ['-mcpu=cortex-a55']],
 	['0xd07', ['-mcpu=cortex-a57']],
 	['0xd08', ['-mcpu=cortex-a72']],
 	['0xd09', ['-mcpu=cortex-a73']],
 	['0xd0a', ['-mcpu=cortex-a75']],
+	['0xd0b', ['-mcpu=cortex-a76']],
 ]
 machine_args_cavium = [
 	['default', ['-march=armv8-a+crc+crypto','-mcpu=thunderx']],
@@ -89,7 +91,7 @@ impl_dpaa2 = ['NXP DPAA2', flags_dpaa2, machine_args_generic]
 
 dpdk_conf.set('RTE_FORCE_INTRINSICS', 1)
 
-if cc.sizeof('void *') != 8
+if not dpdk_conf.get('RTE_ARCH_64')
 	dpdk_conf.set('RTE_CACHE_LINE_SIZE', 64)
 	dpdk_conf.set('RTE_ARCH_ARM', 1)
 	dpdk_conf.set('RTE_ARCH_ARMv7', 1)
@@ -99,7 +101,6 @@ if cc.sizeof('void *') != 8
 else
 	dpdk_conf.set('RTE_CACHE_LINE_SIZE', 128)
 	dpdk_conf.set('RTE_ARCH_ARM64', 1)
-	dpdk_conf.set('RTE_ARCH_64', 1)
 
 	machine = []
 	cmd_generic = ['generic', '', '', 'default', '']

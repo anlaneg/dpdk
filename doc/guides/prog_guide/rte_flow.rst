@@ -2,8 +2,6 @@
     Copyright 2016 6WIND S.A.
     Copyright 2016 Mellanox Technologies, Ltd
 
-.. _Generic_flow_API:
-
 Generic flow API (rte_flow)
 ===========================
 
@@ -2559,8 +2557,10 @@ Return values:
 
 - 0 on success, a negative errno value otherwise and ``rte_errno`` is set.
 
-Isolated mode
--------------
+.. _flow_isolated_mode:
+
+Flow isolated mode
+------------------
 
 The general expectation for ingress traffic is that flow rules process it
 first; the remaining unmatched or pass-through traffic usually ends up in a

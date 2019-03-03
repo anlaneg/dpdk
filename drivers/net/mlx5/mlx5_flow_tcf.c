@@ -28,6 +28,7 @@
 #include <rte_flow.h>
 #include <rte_malloc.h>
 #include <rte_common.h>
+#include <rte_cycles.h>
 
 #include "mlx5.h"
 #include "mlx5_flow.h"
@@ -354,6 +355,11 @@ struct tc_tunnel_key {
 /** Parameters of VXLAN devices created by driver. */
 #define MLX5_VXLAN_DEFAULT_VNI	1
 #define MLX5_VXLAN_DEVICE_PFX "vmlx_"
+/**
+ * Timeout in milliseconds to wait VXLAN UDP offloaded port
+ * registration  completed within the mlx5 driver.
+ */
+#define MLX5_VXLAN_WAIT_PORT_REG_MS 250
 
 /** Tunnel action type, used for @p type in header structure. */
 enum flow_tcf_tunact_type {
@@ -445,7 +451,8 @@ struct tcf_vtep {
 	uint32_t refcnt;
 	unsigned int ifindex; /**< Own interface index. */
 	uint16_t port;
-	uint8_t created;
+	uint32_t created:1; /**< Actually created by PMD. */
+	uint32_t waitreg:1; /**< Wait for VXLAN UDP port registration. */
 };
 
 /** Tunnel descriptor header, common for all tunnel types. */
@@ -2677,7 +2684,7 @@ flow_tcf_get_actions_and_size(const struct rte_flow_action actions[],
 			      uint64_t *action_flags)
 {
 	int size = 0;
-	uint64_t flags = 0;
+	uint64_t flags = *action_flags;
 
 	size += SZ_NLATTR_NEST; /* TCA_FLOWER_ACT. */
 	for (; actions->type != RTE_FLOW_ACTION_TYPE_END; actions++) {
@@ -2778,27 +2785,6 @@ action_of_vlan:
 }
 
 /**
- * Brand rtnetlink buffer with unique handle.
- *
- * This handle should be unique for a given network interface to avoid
- * collisions.
- *
- * @param nlh
- *   Pointer to Netlink message.
- * @param handle
- *   Unique 32-bit handle to use.
- */
-static void
-flow_tcf_nl_brand(struct nlmsghdr *nlh, uint32_t handle)
-{
-	struct tcmsg *tcm = mnl_nlmsg_get_payload(nlh);
-
-	tcm->tcm_handle = handle;
-	DRV_LOG(DEBUG, "Netlink msg %p is branded with handle %x",
-		(void *)nlh, handle);
-}
-
-/**
  * Prepare a flow object for Linux TC flower. It calculates the maximum size of
  * memory required, allocates the memory, initializes Netlink message headers
  * and set unique TC message handle.
@@ -2888,20 +2874,6 @@ flow_tcf_prepare(const struct rte_flow_attr *attr,
 		dev_flow->tcf.tunnel->type = FLOW_TCF_TUNACT_VXLAN_DECAP;
 	else if (action_flags & MLX5_FLOW_ACTION_VXLAN_ENCAP)
 		dev_flow->tcf.tunnel->type = FLOW_TCF_TUNACT_VXLAN_ENCAP;
-	/*
-	 * Generate a reasonably unique handle based on the address of the
-	 * target buffer.
-	 *
-	 * This is straightforward on 32-bit systems where the flow pointer can
-	 * be used directly. Otherwise, its least significant part is taken
-	 * after shifting it by the previous power of two of the pointed buffer
-	 * size.
-	 */
-	if (sizeof(dev_flow) <= 4)
-		flow_tcf_nl_brand(nlh, (uintptr_t)dev_flow);
-	else
-		flow_tcf_nl_brand(nlh, (uintptr_t)dev_flow >>
-				       rte_log2_u32(rte_align32prevpow2(size)));
 	return dev_flow;
 }
 
@@ -3808,6 +3780,10 @@ flow_tcf_translate(struct rte_eth_dev *dev, struct mlx5_flow *dev_flow,
 					mnl_attr_get_payload
 					(mnl_nlmsg_get_payload_tail
 						(nlh)))->ifindex;
+			} else if (decap.hdr) {
+				assert(dev_flow->tcf.tunnel);
+				dev_flow->tcf.tunnel->ifindex_ptr =
+					(unsigned int *)&tcm->tcm_ifindex;
 			}
 			mnl_attr_put(nlh, TCA_MIRRED_PARMS,
 				     sizeof(struct tc_mirred),
@@ -5202,6 +5178,7 @@ flow_tcf_vtep_create(struct mlx5_flow_tcf_context *tcf,
 		 * when we do not need it anymore.
 		 */
 		vtep->created = 1;
+		vtep->waitreg = 1;
 	}
 	/* Try to get ifindex of created of pre-existing device. */
 	ret = if_nametoindex(name);
@@ -5593,6 +5570,7 @@ flow_tcf_remove(struct rte_eth_dev *dev, struct rte_flow *flow)
 	struct mlx5_flow_tcf_context *ctx = priv->tcf_context;
 	struct mlx5_flow *dev_flow;
 	struct nlmsghdr *nlh;
+	struct tcmsg *tcm;
 
 	if (!flow)
 		return;
@@ -5613,10 +5591,53 @@ flow_tcf_remove(struct rte_eth_dev *dev, struct rte_flow *flow)
 				dev_flow);
 			dev_flow->tcf.tunnel->vtep = NULL;
 		}
+		/* Cleanup the rule handle value. */
+		tcm = mnl_nlmsg_get_payload(nlh);
+		tcm->tcm_handle = 0;
 		dev_flow->tcf.applied = 0;
 	}
 }
 
+/**
+ * Fetch the applied rule handle. This is callback routine called by
+ * libmnl mnl_cb_run() in loop for every message in received packet.
+ * When the NLM_F_ECHO flag i sspecified the kernel sends the created
+ * rule descriptor back to the application and we can retrieve the
+ * actual rule handle from updated descriptor.
+ *
+ * @param[in] nlh
+ *   Pointer to reply header.
+ * @param[in, out] arg
+ *   Context pointer for this callback.
+ *
+ * @return
+ *   A positive, nonzero value on success (required by libmnl
+ *   to continue messages processing).
+ */
+static int
+flow_tcf_collect_apply_cb(const struct nlmsghdr *nlh, void *arg)
+{
+	struct nlmsghdr *nlhrq = arg;
+	struct tcmsg *tcmrq = mnl_nlmsg_get_payload(nlhrq);
+	struct tcmsg *tcm = mnl_nlmsg_get_payload(nlh);
+	struct nlattr *na;
+
+	if (nlh->nlmsg_type != RTM_NEWTFILTER ||
+	    nlh->nlmsg_seq != nlhrq->nlmsg_seq)
+		return 1;
+	mnl_attr_for_each(na, nlh, sizeof(*tcm)) {
+		switch (mnl_attr_get_type(na)) {
+		case TCA_KIND:
+			if (strcmp(mnl_attr_get_payload(na), "flower")) {
+				/* Not flower filter, drop entire message. */
+				return 1;
+			}
+			tcmrq->tcm_handle = tcm->tcm_handle;
+			return 1;
+		}
+	}
+	return 1;
+}
 /**
  * Apply flow to E-Switch by sending Netlink message.
  *
@@ -5638,6 +5659,10 @@ flow_tcf_apply(struct rte_eth_dev *dev, struct rte_flow *flow,
 	struct mlx5_flow_tcf_context *ctx = priv->tcf_context;
 	struct mlx5_flow *dev_flow;
 	struct nlmsghdr *nlh;
+	struct tcmsg *tcm;
+	uint64_t start = 0;
+	uint64_t twait = 0;
+	int ret;
 
 	dev_flow = LIST_FIRST(&flow->dev_flows);
 	/* E-Switch flow can't be expanded. */
@@ -5646,7 +5671,11 @@ flow_tcf_apply(struct rte_eth_dev *dev, struct rte_flow *flow,
 		return 0;
 	nlh = dev_flow->tcf.nlh;
 	nlh->nlmsg_type = RTM_NEWTFILTER;
-	nlh->nlmsg_flags = NLM_F_REQUEST | NLM_F_CREATE | NLM_F_EXCL;
+	nlh->nlmsg_flags = NLM_F_REQUEST | NLM_F_CREATE |
+			   NLM_F_EXCL | NLM_F_ECHO;
+	tcm = mnl_nlmsg_get_payload(nlh);
+	/* Allow kernel to assign handle on its own. */
+	tcm->tcm_handle = 0;
 	if (dev_flow->tcf.tunnel) {
 		/*
 		 * Replace the interface index, target for
@@ -5666,8 +5695,52 @@ flow_tcf_apply(struct rte_eth_dev *dev, struct rte_flow *flow,
 				dev_flow->tcf.tunnel->ifindex_org);
 		*dev_flow->tcf.tunnel->ifindex_ptr =
 			dev_flow->tcf.tunnel->vtep->ifindex;
+		if (dev_flow->tcf.tunnel->vtep->waitreg) {
+			/* Clear wait flag for VXLAN port registration. */
+			dev_flow->tcf.tunnel->vtep->waitreg = 0;
+			twait = rte_get_timer_hz();
+			assert(twait > MS_PER_S);
+			twait = twait * MLX5_VXLAN_WAIT_PORT_REG_MS;
+			twait = twait / MS_PER_S;
+			start = rte_get_timer_cycles();
+		}
 	}
-	if (!flow_tcf_nl_ack(ctx, nlh, NULL, NULL)) {
+	/*
+	 * Kernel creates the VXLAN devices and registers UDP ports to
+	 * be hardware offloaded within the NIC kernel drivers. The
+	 * registration process is being performed into context of
+	 * working kernel thread and the race conditions might happen.
+	 * The VXLAN device is created and success is returned to
+	 * calling application, but the UDP port registration process
+	 * is not completed yet. The next applied rule may be rejected
+	 * by the driver with ENOSUP code. We are going to wait a bit,
+	 * allowing registration process to be completed. The waiting
+	 * is performed once after device been created.
+	 */
+	do {
+		struct timespec onems;
+
+		ret = flow_tcf_nl_ack(ctx, nlh,
+				      flow_tcf_collect_apply_cb, nlh);
+		if (!ret || ret != -ENOTSUP || !twait)
+			break;
+		/* Wait one millisecond and try again till timeout. */
+		onems.tv_sec = 0;
+		onems.tv_nsec = NS_PER_S / MS_PER_S;
+		nanosleep(&onems, 0);
+		if ((rte_get_timer_cycles() - start) > twait) {
+			/* Timeout elapsed, try once more and exit. */
+			twait = 0;
+		}
+	} while (true);
+	if (!ret) {
+		if (!tcm->tcm_handle) {
+			flow_tcf_remove(dev, flow);
+			return rte_flow_error_set
+				(error, ENOENT,
+				 RTE_FLOW_ERROR_TYPE_UNSPECIFIED, NULL,
+				 "netlink: rule zero handle returned");
+		}
 		dev_flow->tcf.applied = 1;
 		if (*dev_flow->tcf.ptc_flags & TCA_CLS_FLAGS_SKIP_SW)
 			return 0;

@@ -1039,6 +1039,7 @@ rte_vhost_driver_unregister(const char *path)
 	int count;
 	struct vhost_user_connection *conn, *next;
 
+again:
 	pthread_mutex_lock(&vhost_user.mutex);
 
 	//先找到path对应的vsocket
@@ -1046,7 +1047,6 @@ rte_vhost_driver_unregister(const char *path)
 		struct vhost_user_socket *vsocket = vhost_user.vsockets[i];
 
 		if (!strcmp(vsocket->path, path)) {
-again:
 			pthread_mutex_lock(&vsocket->conn_mutex);
 			for (conn = TAILQ_FIRST(&vsocket->conn_list);
 			     conn != NULL;
@@ -1062,6 +1062,7 @@ again:
 						  conn->connfd) == -1) {
 					pthread_mutex_unlock(
 							&vsocket->conn_mutex);
+					pthread_mutex_unlock(&vhost_user.mutex);
 					goto again;
 				}
 

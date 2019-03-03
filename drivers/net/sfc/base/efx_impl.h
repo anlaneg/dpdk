@@ -10,6 +10,9 @@
 #include "efx.h"
 #include "efx_regs.h"
 #include "efx_regs_ef10.h"
+#if EFSYS_OPT_MCDI
+#include "efx_mcdi.h"
+#endif	/* EFSYS_OPT_MCDI */
 
 /* FIXME: Add definition for driver generated software events */
 #ifndef	ESE_DZ_EV_CODE_DRV_GEN_EV
@@ -33,9 +36,9 @@
 #include "medford2_impl.h"
 #endif	/* EFSYS_OPT_MEDFORD2 */
 
-#if (EFSYS_OPT_HUNTINGTON || EFSYS_OPT_MEDFORD || EFSYS_OPT_MEDFORD2)
+#if EFX_OPTS_EF10()
 #include "ef10_impl.h"
-#endif	/* (EFSYS_OPT_HUNTINGTON || EFSYS_OPT_MEDFORD || EFSYS_OPT_MEDFORD2) */
+#endif	/* EFX_OPTS_EF10() */
 
 #ifdef	__cplusplus
 extern "C" {
@@ -131,8 +134,9 @@ typedef struct efx_tx_ops_s {
 } efx_tx_ops_t;
 
 typedef union efx_rxq_type_data_u {
-	/* Dummy member to have non-empty union if no options are enabled */
-	uint32_t	ertd_dummy;
+	struct {
+		size_t		ed_buf_size;
+	} ertd_default;
 #if EFSYS_OPT_RX_PACKED_STREAM
 	struct {
 		uint32_t	eps_buf_size;
@@ -430,9 +434,9 @@ typedef struct efx_filter_s {
 #if EFSYS_OPT_SIENA
 	siena_filter_t		*ef_siena_filter;
 #endif /* EFSYS_OPT_SIENA */
-#if EFSYS_OPT_HUNTINGTON || EFSYS_OPT_MEDFORD || EFSYS_OPT_MEDFORD2
+#if EFX_OPTS_EF10()
 	ef10_filter_table_t	*ef_ef10_filter_table;
-#endif /* EFSYS_OPT_HUNTINGTON || EFSYS_OPT_MEDFORD || EFSYS_OPT_MEDFORD2 */
+#endif /* EFX_OPTS_EF10() */
 } efx_filter_t;
 
 #if EFSYS_OPT_SIENA
@@ -716,7 +720,7 @@ struct efx_nic_s {
 #endif	/* EFSYS_OPT_SIENA */
 		int	enu_unused;
 	} en_u;
-#if (EFSYS_OPT_HUNTINGTON || EFSYS_OPT_MEDFORD || EFSYS_OPT_MEDFORD2)
+#if EFX_OPTS_EF10()
 	union en_arch {
 		struct {
 			int			ena_vi_base;
@@ -737,8 +741,13 @@ struct efx_nic_s {
 			size_t			ena_wc_mem_map_size;
 		} ef10;
 	} en_arch;
-#endif	/* (EFSYS_OPT_HUNTINGTON || EFSYS_OPT_MEDFORD || EFSYS_OPT_MEDFORD2) */
+#endif	/* EFX_OPTS_EF10() */
 };
+
+#define	EFX_FAMILY_IS_EF10(_enp) \
+	((_enp)->en_family == EFX_FAMILY_MEDFORD2 || \
+	 (_enp)->en_family == EFX_FAMILY_MEDFORD || \
+	 (_enp)->en_family == EFX_FAMILY_HUNTINGTON)
 
 
 #define	EFX_NIC_MAGIC	0x02121996
@@ -760,6 +769,7 @@ typedef struct efx_evq_rxq_state_s {
 
 struct efx_evq_s {
 	uint32_t			ee_magic;
+	uint32_t			ee_flags;
 	efx_nic_t			*ee_enp;
 	unsigned int			ee_index;
 	unsigned int			ee_mask;
@@ -778,13 +788,21 @@ struct efx_evq_s {
 #endif	/* EFSYS_OPT_MCDI */
 
 	efx_evq_rxq_state_t		ee_rxq_state[EFX_EV_RX_NLABELS];
-
-	uint32_t			ee_flags;
 };
 
 #define	EFX_EVQ_MAGIC	0x08081997
 
 #define	EFX_EVQ_SIENA_TIMER_QUANTUM_NS	6144 /* 768 cycles */
+
+#if EFSYS_OPT_QSTATS
+#define	EFX_EV_QSTAT_INCR(_eep, _stat)					\
+	do {								\
+		(_eep)->ee_stat[_stat]++;				\
+	_NOTE(CONSTANTCONDITION)					\
+	} while (B_FALSE)
+#else
+#define	EFX_EV_QSTAT_INCR(_eep, _stat)
+#endif
 
 struct efx_rxq_s {
 	uint32_t			er_magic;
@@ -793,6 +811,7 @@ struct efx_rxq_s {
 	unsigned int			er_index;
 	unsigned int			er_label;
 	unsigned int			er_mask;
+	size_t				er_buf_size;
 	efsys_mem_t			*er_esmp;
 	efx_evq_rxq_state_t		*er_ev_qstate;
 };

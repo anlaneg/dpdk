@@ -43,6 +43,8 @@ toolchain = cc.get_id()
 dpdk_conf.set_quoted('RTE_TOOLCHAIN', toolchain)
 dpdk_conf.set('RTE_TOOLCHAIN_' + toolchain.to_upper(), 1)
 
+dpdk_conf.set('RTE_ARCH_64', cc.sizeof('void *') == 8)
+
 add_project_link_arguments('-Wl,--no-as-needed', language: 'c')
 dpdk_extra_ldflags += '-Wl,--no-as-needed'
 
@@ -74,11 +76,11 @@ if numa_dep.found() and cc.has_header('numaif.h')
 endif
 
 # check for strlcpy
-if host_machine.system() == 'linux' and cc.find_library('bsd',
-		required: false).found() and cc.has_header('bsd/string.h')
-	dpdk_conf.set('RTE_USE_LIBBSD', 1)
-	add_project_link_arguments('-lbsd', language: 'c')
-	dpdk_extra_ldflags += '-lbsd'
+if host_machine.system() == 'linux'
+	libbsd = dependency('libbsd', required: false)
+	if libbsd.found()
+		dpdk_conf.set('RTE_USE_LIBBSD', 1)
+	endif
 endif
 
 # add -include rte_config to cflags
@@ -90,7 +92,7 @@ warning_flags = [
 	'-Wcast-qual',
 	'-Wno-address-of-packed-member'
 ]
-if cc.sizeof('void *') == 4
+if not dpdk_conf.get('RTE_ARCH_64')
 # for 32-bit, don't warn about casting a 32-bit pointer to 64-bit int - it's fine!!
 	warning_flags += '-Wno-pointer-to-int-cast'
 endif
@@ -103,12 +105,14 @@ endforeach
 # set other values pulled from the build options
 dpdk_conf.set('RTE_MAX_LCORE', get_option('max_lcores'))
 dpdk_conf.set('RTE_MAX_NUMA_NODES', get_option('max_numa_nodes'))
+dpdk_conf.set('RTE_MAX_ETHPORTS', get_option('max_ethports'))
 dpdk_conf.set('RTE_LIBEAL_USE_HPET', get_option('use_hpet'))
 dpdk_conf.set('RTE_EAL_ALLOW_INV_SOCKET_ID', get_option('allow_invalid_socket_id'))
 # values which have defaults which may be overridden
 dpdk_conf.set('RTE_MAX_VFIO_GROUPS', 64)
 dpdk_conf.set('RTE_DRIVER_MEMPOOL_BUCKET_SIZE_KB', 64)
 dpdk_conf.set('RTE_LIBRTE_DPAA2_USE_PHYS_IOVA', true)
+
 
 compile_time_cpuflags = []
 if host_machine.cpu_family().startswith('x86')

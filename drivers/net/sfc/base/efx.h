@@ -209,8 +209,8 @@ efx_nic_check_pcie_link_speed(
 
 #if EFSYS_OPT_MCDI
 
-#if EFSYS_OPT_HUNTINGTON || EFSYS_OPT_MEDFORD || EFSYS_OPT_MEDFORD2
-/* Huntington and Medford require MCDIv2 commands */
+#if EFX_OPTS_EF10()
+/* EF10 architecture NICs require MCDIv2 commands */
 #define	WITH_MCDI_V2 1
 #endif
 
@@ -300,7 +300,7 @@ extern	__checkReturn	efx_rc_t
 efx_intr_init(
 	__in		efx_nic_t *enp,
 	__in		efx_intr_type_t type,
-	__in		efsys_mem_t *esmp);
+	__in_opt	efsys_mem_t *esmp);
 
 extern			void
 efx_intr_enable(
@@ -1233,6 +1233,7 @@ efx_bist_stop(
 #define	EFX_FEATURE_FW_ASSISTED_TSO	0x00001000
 #define	EFX_FEATURE_FW_ASSISTED_TSO_V2	0x00002000
 #define	EFX_FEATURE_PACKED_STREAM	0x00004000
+#define	EFX_FEATURE_TXQ_CKSUM_OP_DESC	0x00008000
 
 typedef enum efx_tunnel_protocol_e {
 	EFX_TUNNEL_PROTOCOL_NONE = 0,
@@ -1270,7 +1271,12 @@ typedef struct efx_nic_cfg_s {
 	uint32_t		enc_evq_limit;
 	uint32_t		enc_txq_limit;
 	uint32_t		enc_rxq_limit;
+	uint32_t		enc_evq_max_nevs;
+	uint32_t		enc_evq_min_nevs;
+	uint32_t		enc_rxq_max_ndescs;
+	uint32_t		enc_rxq_min_ndescs;
 	uint32_t		enc_txq_max_ndescs;
+	uint32_t		enc_txq_min_ndescs;
 	uint32_t		enc_buftbl_limit;
 	uint32_t		enc_piobuf_limit;
 	uint32_t		enc_piobuf_size;
@@ -1278,6 +1284,9 @@ typedef struct efx_nic_cfg_s {
 	uint32_t		enc_evq_timer_quantum_ns;
 	uint32_t		enc_evq_timer_max_us;
 	uint32_t		enc_clk_mult;
+	uint32_t		enc_ev_desc_size;
+	uint32_t		enc_rx_desc_size;
+	uint32_t		enc_tx_desc_size;
 	uint32_t		enc_rx_prefix_size;
 	uint32_t		enc_rx_buf_align_start;
 	uint32_t		enc_rx_buf_align_end;
@@ -1320,11 +1329,11 @@ typedef struct efx_nic_cfg_s {
 #if EFSYS_OPT_BIST
 	uint32_t		enc_bist_mask;
 #endif	/* EFSYS_OPT_BIST */
-#if EFSYS_OPT_HUNTINGTON || EFSYS_OPT_MEDFORD || EFSYS_OPT_MEDFORD2
+#if EFX_OPTS_EF10()
 	uint32_t		enc_pf;
 	uint32_t		enc_vf;
 	uint32_t		enc_privilege_mask;
-#endif /* EFSYS_OPT_HUNTINGTON || EFSYS_OPT_MEDFORD || EFSYS_OPT_MEDFORD2 */
+#endif /* EFX_OPTS_EF10() */
 	boolean_t		enc_bug26807_workaround;
 	boolean_t		enc_bug35388_workaround;
 	boolean_t		enc_bug41750_workaround;
@@ -1361,6 +1370,8 @@ typedef struct efx_nic_cfg_s {
 	boolean_t		enc_allow_set_mac_with_installed_filters;
 	boolean_t		enc_enhanced_set_mac_supported;
 	boolean_t		enc_init_evq_v2_supported;
+	boolean_t		enc_no_cont_ev_mode_supported;
+	boolean_t		enc_init_rxq_with_buffer_size;
 	boolean_t		enc_rx_packed_stream_supported;
 	boolean_t		enc_rx_var_packed_stream_supported;
 	boolean_t		enc_rx_es_super_buffer_supported;
@@ -1403,7 +1414,7 @@ typedef struct efx_nic_cfg_s {
 
 extern			const efx_nic_cfg_t *
 efx_nic_cfg_get(
-	__in		efx_nic_t *enp);
+	__in		const efx_nic_t *enp);
 
 /* RxDPCPU firmware id values by which FW variant can be identified */
 #define	EFX_RXDP_FULL_FEATURED_FW_ID	0x0
@@ -1575,6 +1586,7 @@ typedef enum efx_nvram_type_e {
 	EFX_NVRAM_MUM_FIRMWARE,
 	EFX_NVRAM_DYNCONFIG_DEFAULTS,
 	EFX_NVRAM_ROMCONFIG_DEFAULTS,
+	EFX_NVRAM_BUNDLE,
 	EFX_NVRAM_NTYPES,
 } efx_nvram_type_t;
 
@@ -1918,7 +1930,7 @@ typedef struct efx_evq_s	efx_evq_t;
 
 #if EFSYS_OPT_QSTATS
 
-/* START MKCONFIG GENERATED EfxHeaderEventQueueBlock 6f3843f5fe7cc843 */
+/* START MKCONFIG GENERATED EfxHeaderEventQueueBlock 0a147ace40844969 */
 typedef enum efx_ev_qstat_e {
 	EV_ALL,
 	EV_RX,
@@ -1957,6 +1969,7 @@ typedef enum efx_ev_qstat_e {
 	EV_DRIVER_TX_DSC_ERROR,
 	EV_DRV_GEN,
 	EV_MCDI_RESPONSE,
+	EV_RX_PARSE_INCOMPLETE,
 	EV_NQSTATS
 } efx_ev_qstat_t;
 
@@ -1972,11 +1985,15 @@ extern		void
 efx_ev_fini(
 	__in		efx_nic_t *enp);
 
-#define	EFX_EVQ_MAXNEVS		32768
-#define	EFX_EVQ_MINNEVS		512
+extern	__checkReturn	size_t
+efx_evq_size(
+	__in	const efx_nic_t *enp,
+	__in	unsigned int ndescs);
 
-#define	EFX_EVQ_SIZE(_nevs)	((_nevs) * sizeof (efx_qword_t))
-#define	EFX_EVQ_NBUFS(_nevs)	(EFX_EVQ_SIZE(_nevs) / EFX_BUF_SIZE)
+extern	__checkReturn	unsigned int
+efx_evq_nbufs(
+	__in	const efx_nic_t *enp,
+	__in	unsigned int ndescs);
 
 #define	EFX_EVQ_FLAGS_TYPE_MASK		(0x3)
 #define	EFX_EVQ_FLAGS_TYPE_AUTO		(0x0)
@@ -1986,6 +2003,16 @@ efx_ev_fini(
 #define	EFX_EVQ_FLAGS_NOTIFY_MASK	(0xC)
 #define	EFX_EVQ_FLAGS_NOTIFY_INTERRUPT	(0x0)	/* Interrupting (default) */
 #define	EFX_EVQ_FLAGS_NOTIFY_DISABLED	(0x4)	/* Non-interrupting */
+
+/*
+ * Use the NO_CONT_EV RX event format, which allows the firmware to operate more
+ * efficiently at high data rates. See SF-109306-TC 5.11 "Events for RXQs in
+ * NO_CONT_EV mode".
+ *
+ * NO_CONT_EV requires EVQ_RX_MERGE and RXQ_FORCED_EV_MERGING to both be set,
+ * which is the case when an event queue is set to THROUGHPUT mode.
+ */
+#define	EFX_EVQ_FLAGS_NO_CONT_EV	(0x10)
 
 extern	__checkReturn	efx_rc_t
 efx_ev_qcreate(
@@ -2460,13 +2487,17 @@ efx_pseudo_hdr_pkt_length_get(
 	__in		uint8_t *buffer,
 	__out		uint16_t *pkt_lengthp);
 
-#define	EFX_RXQ_MAXNDESCS		4096
-#define	EFX_RXQ_MINNDESCS		512
+extern	__checkReturn	size_t
+efx_rxq_size(
+	__in	const efx_nic_t *enp,
+	__in	unsigned int ndescs);
 
-#define	EFX_RXQ_SIZE(_ndescs)		((_ndescs) * sizeof (efx_qword_t))
-#define	EFX_RXQ_NBUFS(_ndescs)		(EFX_RXQ_SIZE(_ndescs) / EFX_BUF_SIZE)
+extern	__checkReturn	unsigned int
+efx_rxq_nbufs(
+	__in	const efx_nic_t *enp,
+	__in	unsigned int ndescs);
+
 #define	EFX_RXQ_LIMIT(_ndescs)		((_ndescs) - 16)
-#define	EFX_RXQ_DC_NDESCS(_dcsize)	(8 << _dcsize)
 
 typedef enum efx_rxq_type_e {
 	EFX_RXQ_TYPE_DEFAULT,
@@ -2497,6 +2528,7 @@ efx_rx_qcreate(
 	__in		unsigned int index,
 	__in		unsigned int label,
 	__in		efx_rxq_type_t type,
+	__in		size_t buf_size,
 	__in		efsys_mem_t *esmp,
 	__in		size_t ndescs,
 	__in		uint32_t id,
@@ -2626,13 +2658,17 @@ extern		void
 efx_tx_fini(
 	__in	efx_nic_t *enp);
 
-#define	EFX_TXQ_MINNDESCS		512
+extern	__checkReturn	size_t
+efx_txq_size(
+	__in	const efx_nic_t *enp,
+	__in	unsigned int ndescs);
 
-#define	EFX_TXQ_SIZE(_ndescs)		((_ndescs) * sizeof (efx_qword_t))
-#define	EFX_TXQ_NBUFS(_ndescs)		(EFX_TXQ_SIZE(_ndescs) / EFX_BUF_SIZE)
+extern	__checkReturn	unsigned int
+efx_txq_nbufs(
+	__in	const efx_nic_t *enp,
+	__in	unsigned int ndescs);
+
 #define	EFX_TXQ_LIMIT(_ndescs)		((_ndescs) - 16)
-
-#define	EFX_TXQ_MAX_BUFS 8 /* Maximum independent of EFX_BUG35388_WORKAROUND. */
 
 #define	EFX_TXQ_CKSUM_IPV4		0x0001
 #define	EFX_TXQ_CKSUM_TCPUDP		0x0002

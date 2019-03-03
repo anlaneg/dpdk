@@ -11,7 +11,7 @@
 #include "efx_regs_mcdi.h"
 
 #if EFSYS_OPT_NAMES
-#include "mc_driver_pcol_strs.h"
+#include "efx_regs_mcdi_strs.h"
 #endif /* EFSYS_OPT_NAMES */
 
 #ifdef	__cplusplus
@@ -170,11 +170,11 @@ efx_mcdi_mac_spoofing_supported(
 
 
 #if EFSYS_OPT_BIST
-#if EFSYS_OPT_HUNTINGTON || EFSYS_OPT_MEDFORD || EFSYS_OPT_MEDFORD2
+#if EFX_OPTS_EF10()
 extern	__checkReturn		efx_rc_t
 efx_mcdi_bist_enable_offline(
 	__in			efx_nic_t *enp);
-#endif /* EFSYS_OPT_HUNTINGTON || EFSYS_OPT_MEDFORD || EFSYS_OPT_MEDFORD2 */
+#endif /* EFX_OPTS_EF10() */
 extern	__checkReturn		efx_rc_t
 efx_mcdi_bist_start(
 	__in			efx_nic_t *enp,

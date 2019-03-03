@@ -11,14 +11,18 @@ API and ABI deprecation notices are to be posted here.
 Deprecation Notices
 -------------------
 
-* linux: Linux kernel version 3.2 (which is the current minimum required
-  version for the DPDK) is not maintained anymore. Therefore the planned
-  minimum required kernel version for DPDK 19.02 will be the next oldest
-  Long Term Stable (LTS) version which is 3.16, but compatibility for
-  recent distribution kernels will be kept.
+* meson: The minimum supported version of meson for configuring and building
+  DPDK will be increased to v0.47.1 (from 0.41) from DPDK 19.05 onwards. For
+  those users with a version earlier than 0.47.1, an updated copy of meson
+  can be got using the ``pip``, or ``pip3``, tool for downloading python
+  packages.
 
 * kvargs: The function ``rte_kvargs_process`` will get a new parameter
   for returning key match count. It will ease handling of no-match case.
+
+* eal: The ``attr_value`` parameter of ``rte_service_attr_get()``
+  will be changed from ``uint32_t *`` to ``uint64_t *``
+  as the attributes are of type ``uint64_t``.
 
 * eal: both declaring and identifying devices will be streamlined in v18.11.
   New functions will appear to query a specific port from buses, classes of
@@ -63,6 +67,11 @@ Deprecation Notices
 
   - Member ``uint16_t min_mtu`` the minimum MTU allowed.
   - Member ``uint16_t max_mtu`` the maximum MTU allowed.
+
+* meter: New ``rte_color`` definition will be added in 19.02 and that will
+  replace ``enum rte_meter_color`` in meter library in 19.05. This will help
+  to consolidate color definition, which is currently replicated in many places,
+  such as: rte_meter.h, rte_mtr.h, rte_tm.h.
 
 * crypto/aesni_mb: the minimum supported intel-ipsec-mb library version will be
   changed from 0.49.0 to 0.52.0.

@@ -62,8 +62,8 @@ export BUILDDIR
 export ROOTDIRS-y ROOTDIRS- ROOTDIRS-n
 
 #定义首目标default,其依赖于all
-.PHONY: default
-default: all
+.PHONY: default test-build
+default test-build: all
 
 #
 # 下面的代码对目标进行分类
@@ -83,8 +83,6 @@ cscope gtags tags etags:
 .PHONY: test test-fast test-perf coverage test-drivers test-dump
 test test-fast test-perf coverage test-drivers test-dump:
 	$(Q)$(MAKE) -f $(RTE_SDK)/mk/rte.sdktest.mk $@
-
-test: test-build
 
 #安装相关
 .PHONY: install
