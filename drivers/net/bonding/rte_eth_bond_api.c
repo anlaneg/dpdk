@@ -32,6 +32,7 @@ check_for_bonded_ethdev(const struct rte_eth_dev *eth_dev)
 }
 
 //检查port_id是否为bond口
+int
 valid_bonded_port_id(uint16_t port_id)
 {
 	RTE_ETH_VALID_PORTID_OR_ERR_RET(port_id, -1);

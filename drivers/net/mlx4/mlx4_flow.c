@@ -71,7 +71,7 @@ struct mlx4_flow_proc_item {
 struct mlx4_drop {
 	struct ibv_qp *qp; /**< QP target. */
 	struct ibv_cq *cq; /**< CQ associated with above QP. */
-	struct priv *priv; /**< Back pointer to private data. */
+	struct mlx4_priv *priv; /**< Back pointer to private data. */
 	uint32_t refcnt; /**< Reference count. */
 };
 
@@ -96,7 +96,7 @@ struct mlx4_drop {
  */
 //将dpdk的rss_type转换为mlx4对应的rss_type或者相反的转换
 uint64_t
-mlx4_conv_rss_types(struct priv *priv, uint64_t types, int verbs_to_dpdk)
+mlx4_conv_rss_types(struct mlx4_priv *priv, uint64_t types, int verbs_to_dpdk)
 {
 	enum {
 		INNER,
@@ -675,7 +675,7 @@ static const struct mlx4_flow_proc_item mlx4_flow_proc_item_list[] = {
  *   0 on success, a negative errno value otherwise and rte_errno is set.
  */
 static int
-mlx4_flow_prepare(struct priv *priv,
+mlx4_flow_prepare(struct mlx4_priv *priv,
 		  const struct rte_flow_attr *attr,//flow属性
 		  const struct rte_flow_item pattern[],//flow匹配项
 		  const struct rte_flow_action actions[],//flow 动作项
@@ -980,7 +980,7 @@ mlx4_flow_validate(struct rte_eth_dev *dev,
 		   const struct rte_flow_action actions[],
 		   struct rte_flow_error *error)
 {
-	struct priv *priv = dev->data->dev_private;
+	struct mlx4_priv *priv = dev->data->dev_private;
 
 	return mlx4_flow_prepare(priv, attr, pattern, actions, error, NULL);
 }
@@ -996,7 +996,7 @@ mlx4_flow_validate(struct rte_eth_dev *dev,
  *   is set.
  */
 static struct mlx4_drop *
-mlx4_drop_get(struct priv *priv)
+mlx4_drop_get(struct mlx4_priv *priv)
 {
 	struct mlx4_drop *drop = priv->drop;
 
@@ -1073,7 +1073,7 @@ mlx4_drop_put(struct mlx4_drop *drop)
  */
 //触发流配置
 static int
-mlx4_flow_toggle(struct priv *priv,
+mlx4_flow_toggle(struct mlx4_priv *priv,
 		 struct rte_flow *flow,
 		 int enable,
 		 struct rte_flow_error *error)
@@ -1195,7 +1195,7 @@ mlx4_flow_create(struct rte_eth_dev *dev,
 		 const struct rte_flow_action actions[],
 		 struct rte_flow_error *error)
 {
-	struct priv *priv = dev->data->dev_private;
+	struct mlx4_priv *priv = dev->data->dev_private;
 	struct rte_flow *flow;
 	int err;
 
@@ -1238,7 +1238,7 @@ mlx4_flow_isolate(struct rte_eth_dev *dev,
 		  int enable,
 		  struct rte_flow_error *error)
 {
-	struct priv *priv = dev->data->dev_private;
+	struct mlx4_priv *priv = dev->data->dev_private;
 
 	if (!!enable == !!priv->isolated)
 		return 0;//已开启或已关闭，直接返回，用于支持重复调用
@@ -1263,7 +1263,7 @@ mlx4_flow_destroy(struct rte_eth_dev *dev,
 		  struct rte_flow *flow,
 		  struct rte_flow_error *error)
 {
-	struct priv *priv = dev->data->dev_private;
+	struct mlx4_priv *priv = dev->data->dev_private;
 	int err = mlx4_flow_toggle(priv, flow, 0, error);
 
 	if (err)
@@ -1287,7 +1287,7 @@ static int
 mlx4_flow_flush(struct rte_eth_dev *dev,
 		struct rte_flow_error *error)
 {
-	struct priv *priv = dev->data->dev_private;
+	struct mlx4_priv *priv = dev->data->dev_private;
 	struct rte_flow *flow = LIST_FIRST(&priv->flows);
 
 	while (flow) {
@@ -1312,7 +1312,7 @@ mlx4_flow_flush(struct rte_eth_dev *dev,
  *   Next configured VLAN ID or a high value (>= 4096) if there is none.
  */
 static uint16_t
-mlx4_flow_internal_next_vlan(struct priv *priv, uint16_t vlan)
+mlx4_flow_internal_next_vlan(struct mlx4_priv *priv, uint16_t vlan)
 {
 	while (vlan < 4096) {
 		if (priv->dev->data->vlan_filter_conf.ids[vlan / 64] &
@@ -1352,7 +1352,7 @@ mlx4_flow_internal_next_vlan(struct priv *priv, uint16_t vlan)
  *   0 on success, a negative errno value otherwise and rte_errno is set.
  */
 static int
-mlx4_flow_internal(struct priv *priv, struct rte_flow_error *error)
+mlx4_flow_internal(struct mlx4_priv *priv, struct rte_flow_error *error)
 {
 	struct rte_flow_attr attr = {
 		.priority = MLX4_FLOW_PRIORITY_LAST,
@@ -1584,7 +1584,7 @@ error:
  *   0 on success, a negative errno value otherwise and rte_errno is set.
  */
 int
-mlx4_flow_sync(struct priv *priv, struct rte_flow_error *error)
+mlx4_flow_sync(struct mlx4_priv *priv, struct rte_flow_error *error)
 {
 	struct rte_flow *flow;
 	int ret;
@@ -1628,7 +1628,7 @@ mlx4_flow_sync(struct priv *priv, struct rte_flow_error *error)
  *   Pointer to private structure.
  */
 void
-mlx4_flow_clean(struct priv *priv)
+mlx4_flow_clean(struct mlx4_priv *priv)
 {
 	struct rte_flow *flow;
 

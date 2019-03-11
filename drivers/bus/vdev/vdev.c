@@ -151,11 +151,12 @@ vdev_probe_all_drivers(struct rte_vdev_device *dev)
 	struct rte_vdev_driver *driver;
 	int ret;
 
+	if (rte_dev_is_probed(&dev->device))
+		return -EEXIST;
+
 	//取出device名称
 	name = rte_vdev_device_name(dev);
-
-	VDEV_LOG(DEBUG, "Search driver %s to probe device %s", name,
-		rte_vdev_device_name(dev));
+	VDEV_LOG(DEBUG, "Search driver to probe device %s", name);
 
 	//查找此设备对应的驱动，如果失配，返回-1
 	if (vdev_parse(name, &driver))
@@ -510,7 +511,7 @@ static int
 vdev_probe(void)
 {
 	struct rte_vdev_device *dev;
-	int ret = 0;
+	int r, ret = 0;
 
 	/* call the init function for each virtual device */
 	//遍历所有的vdev设备
@@ -520,12 +521,11 @@ vdev_probe(void)
 		 * we call each driver probe.
 		 */
 
-		//如果其已绑定驱动，则跳过
-		if (rte_dev_is_probed(&dev->device))
-			continue;
-
 		//为dev查找合适的驱动
-		if (vdev_probe_all_drivers(dev)) {
+		r = vdev_probe_all_drivers(dev);
+		if (r != 0) {
+			if (r == -EEXIST)
+				continue;
 			VDEV_LOG(ERR, "failed to initialize %s device",
 				rte_vdev_device_name(dev));
 			ret = -1;

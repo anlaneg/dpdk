@@ -1137,12 +1137,6 @@ vhost_dequeue_offload(struct virtio_net_hdr *hdr, struct rte_mbuf *m)
 	}
 }
 
-static __rte_always_inline void
-put_zmbuf(struct zcopy_mbuf *zmbuf)
-{
-	zmbuf->in_use = 0;
-}
-
 //将描述符中指明的报文内存放置在mbuf中，目前支持两种放置方式:1。内存copy；2。zero copy
 static __rte_always_inline int
 copy_desc_to_mbuf(struct virtio_net *dev, struct vhost_virtqueue *vq,
@@ -1402,34 +1396,6 @@ again:
 	}
 
 	return NULL;
-}
-
-static __rte_always_inline bool
-mbuf_is_consumed(struct rte_mbuf *m)
-{
-	while (m) {
-		if (rte_mbuf_refcnt_read(m) > 1)
-			return false;
-		m = m->next;
-	}
-
-	return true;
-}
-
-static __rte_always_inline void
-restore_mbuf(struct rte_mbuf *m)
-{
-	uint32_t mbuf_size, priv_size;
-
-	while (m) {
-		priv_size = rte_pktmbuf_priv_size(m->pool);
-		mbuf_size = sizeof(struct rte_mbuf) + priv_size;
-		/* start of buffer is after mbuf structure and priv data */
-
-		m->buf_addr = (char *)m + mbuf_size;
-		m->buf_iova = rte_mempool_virt2iova(m) + mbuf_size;
-		m = m->next;
-	}
 }
 
 //自队列vq中收包，首先检查队列中是否entries，vq->avail->ring队列里存放的是描述符索引
