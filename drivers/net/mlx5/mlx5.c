@@ -785,7 +785,7 @@ mlx5_dev_spawn(struct rte_device *dpdk_dev,
 	}
 	/* Build device name. */
 	if (!switch_info->representor)
-		rte_strlcpy(name, dpdk_dev->name, sizeof(name));
+		strlcpy(name, dpdk_dev->name, sizeof(name));
 	else
 		snprintf(name, sizeof(name), "%s_representor_%u",
 			 dpdk_dev->name, switch_info->port_name);
@@ -1243,8 +1243,10 @@ mlx5_dev_spawn(struct rte_device *dpdk_dev,
 	priv->config = config;
 	/* Supported Verbs flow priority number detection. */
 	err = mlx5_flow_discover_priorities(eth_dev);
-	if (err < 0)
+	if (err < 0) {
+		err = -err;
 		goto error;
+	}
 	priv->config.flow_prio = err;
 	/*
 	 * Once the device is added to the list of memory event

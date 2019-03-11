@@ -77,6 +77,20 @@ New Features
   which includes the directory name, lib name, filenames, makefile, docs,
   macros, functions, structs and any other strings in the code.
 
+* **Updated the enic driver.**
+
+  * Fixed several flow (director) bugs related to MARK, SCTP, VLAN, VXLAN, and
+    inner packet matching.
+  * Added limited support for RAW.
+  * Added limited support for RSS.
+  * Added limited support for PASSTHRU.
+
+* **Updated the ixgbe driver.**
+
+  New features for VF:
+
+  * Added promiscuous mode support.
+
 
 Removed Items
 -------------

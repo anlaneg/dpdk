@@ -491,7 +491,7 @@ check_cqe(volatile struct mlx5_cqe *cqe,
 				op_code, op_code, syndrome);
 			rte_hexdump(stderr, "MLX5 Error CQE:",
 				    (const void *)((uintptr_t)err_cqe),
-				    sizeof(*err_cqe));
+				    sizeof(*cqe));
 		}
 		return 1;
 	} else if ((op_code != MLX5_CQE_RESP_SEND) &&
@@ -568,6 +568,7 @@ mlx5_tx_complete(struct mlx5_txq_data *txq)
 	}
 #endif /* NDEBUG */
 	++cq_ci;
+	rte_cio_rmb();
 	txq->wqe_pi = rte_be_to_cpu_16(cqe->wqe_counter);
 	ctrl = (volatile struct mlx5_wqe_ctrl *)
 		tx_mlx5_wqe(txq, txq->wqe_pi);
