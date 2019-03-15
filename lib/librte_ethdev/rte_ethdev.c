@@ -564,7 +564,8 @@ rte_eth_is_valid_owner_id(uint64_t owner_id)
 	return 1;
 }
 
-//从port_id端口开始，查找第一个非RTE_ETH_DEV_ATTACHED,非RTE_ETH_DEV_REMOVED(即未使用的port)，owner.id不等于ower_id的port
+//从port_id端口开始，查找第一个非RTE_ETH_DEV_ATTACHED,
+//非RTE_ETH_DEV_REMOVED(即未使用的port)，owner.id不等于ower_id的port
 uint64_t
 rte_eth_find_next_owned_by(uint16_t port_id, const uint64_t owner_id)
 {
@@ -2565,7 +2566,7 @@ rte_eth_dev_fw_version_get(uint16_t port_id, char *fw_version, size_t fw_size)
 							fw_version, fw_size));
 }
 
-//取设备信息（获得：收描述符最大值，发措述符最大值）
+//通过port编号获取取设备信息（获得：收描述符最大值，发措述符最大值）
 void
 rte_eth_dev_info_get(uint16_t port_id, struct rte_eth_dev_info *dev_info)
 {
