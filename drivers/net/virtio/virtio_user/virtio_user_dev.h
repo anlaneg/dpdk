@@ -9,7 +9,6 @@
 #include <stdbool.h>
 #include "../virtio_pci.h"
 #include "../virtio_ring.h"
-#include "vhost.h"
 
 struct virtio_user_queue {
 	uint16_t used_idx;
@@ -46,7 +45,7 @@ struct virtio_user_dev {
 	uint64_t	unsupported_features; /* unsupported features mask */
 	uint8_t		status;
 	uint16_t	port_id;
-	uint8_t		mac_addr[ETHER_ADDR_LEN];//设备的mac地址
+	uint8_t		mac_addr[RTE_ETHER_ADDR_LEN];//设备的mac地址
 	char		path[PATH_MAX];//unix socet位置
 	union {
 		struct vring		vrings[VIRTIO_MAX_VIRTQUEUES];
@@ -64,7 +63,8 @@ int virtio_user_start_device(struct virtio_user_dev *dev);
 int virtio_user_stop_device(struct virtio_user_dev *dev);
 int virtio_user_dev_init(struct virtio_user_dev *dev, char *path, int queues,
 			 int cq, int queue_size, const char *mac, char **ifname,
-			 int mrg_rxbuf, int in_order, int packed_vq);
+			 int server, int mrg_rxbuf, int in_order,
+			 int packed_vq);
 void virtio_user_dev_uninit(struct virtio_user_dev *dev);
 void virtio_user_handle_cq(struct virtio_user_dev *dev, uint16_t queue_idx);
 void virtio_user_handle_cq_packed(struct virtio_user_dev *dev,

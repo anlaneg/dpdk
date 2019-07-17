@@ -20,9 +20,8 @@ Deprecation Notices
 * kvargs: The function ``rte_kvargs_process`` will get a new parameter
   for returning key match count. It will ease handling of no-match case.
 
-* eal: The ``attr_value`` parameter of ``rte_service_attr_get()``
-  will be changed from ``uint32_t *`` to ``uint64_t *``
-  as the attributes are of type ``uint64_t``.
+* eal: The function ``rte_eal_remote_launch`` will return new error codes
+  after read or write error on the pipe, instead of calling ``rte_panic``.
 
 * eal: both declaring and identifying devices will be streamlined in v18.11.
   New functions will appear to query a specific port from buses, classes of
@@ -34,6 +33,10 @@ Deprecation Notices
   - Functions previously deprecated will change or disappear:
 
     + ``rte_eal_devargs_type_count``
+
+* vfio: removal of ``rte_vfio_dma_map`` and ``rte_vfio_dma_unmap`` APIs which
+  have been replaced with ``rte_dev_dma_map`` and ``rte_dev_dma_unmap``
+  functions.  The due date for the removal targets DPDK 20.02.
 
 * pci: Several exposed functions are misnamed.
   The following functions are deprecated starting from v17.11 and are replaced:
@@ -56,22 +59,26 @@ Deprecation Notices
   Target release for removal of the legacy API will be defined once most
   PMDs have switched to rte_flow.
 
-* ethdev: Maximum and minimum MTU values vary between hardware devices. In
-  hardware agnostic DPDK applications access to such information would allow
-  a more accurate way of validating and setting supported MTU values on a per
-  device basis rather than using a defined default for all devices. To
-  resolve this, the following members will be added to ``rte_eth_dev_info``.
-  Note: these can be added to fit a hole in the existing structure for amd64
-  but not for 32-bit, as such ABI change will occur as size of the structure
-  will increase.
+* cryptodev: the ``uint8_t *data`` member of ``key`` structure in the xforms
+  structure (``rte_crypto_cipher_xform``, ``rte_crypto_auth_xform``, and
+  ``rte_crypto_aead_xform``) will be changed to ``const uint8_t *data``.
 
-  - Member ``uint16_t min_mtu`` the minimum MTU allowed.
-  - Member ``uint16_t max_mtu`` the maximum MTU allowed.
+* cryptodev: support for using IV with all sizes is added, J0 still can
+  be used but only when IV length in following structs ``rte_crypto_auth_xform``,
+  ``rte_crypto_aead_xform`` is set to zero. When IV length is greater or equal
+  to one it means it represents IV, when is set to zero it means J0 is used
+  directly, in this case 16 bytes of J0 need to be passed.
 
-* meter: New ``rte_color`` definition will be added in 19.02 and that will
-  replace ``enum rte_meter_color`` in meter library in 19.05. This will help
-  to consolidate color definition, which is currently replicated in many places,
-  such as: rte_meter.h, rte_mtr.h, rte_tm.h.
+* sched: To allow more traffic classes, flexible mapping of pipe queues to
+  traffic classes, and subport level configuration of pipes and queues
+  changes will be made to macros, data structures and API functions defined
+  in "rte_sched.h". These changes are aligned to improvements suggested in the
+  RFC https://mails.dpdk.org/archives/dev/2018-November/120035.html.
 
-* crypto/aesni_mb: the minimum supported intel-ipsec-mb library version will be
-  changed from 0.49.0 to 0.52.0.
+* metrics: The function ``rte_metrics_init`` will have a non-void return
+  in order to notify errors instead of calling ``rte_exit``.
+
+* power: ``rte_power_set_env`` function will no longer return 0 on attempt
+  to set new power environment if power environment was already initialized.
+  In this case the function will return -1 unless the environment is unset first
+  (using ``rte_power_unset_env``). Other function usage scenarios will not change.

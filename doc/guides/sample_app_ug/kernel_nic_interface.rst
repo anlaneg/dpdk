@@ -87,7 +87,7 @@ The application is located in the ``examples/kni`` sub-directory.
 
 .. note::
 
-        This application is intended as a linuxapp only.
+        This application is intended as a linux only.
 
 Running the kni Example Application
 -----------------------------------
@@ -261,16 +261,6 @@ Change the MTU size:
 .. code-block:: console
 
     # ifconfig vEth0_0 mtu 1450
-
-If DPDK is compiled with ``CONFIG_RTE_KNI_KMOD_ETHTOOL=y`` and an Intel
-NIC is used, the user can use ``ethtool`` on the KNI interface as if it
-were a normal Linux kernel interface.
-
-Displaying the NIC registers:
-
-.. code-block:: console
-
-    # ethtool -d vEth0_0
 
 When the ``kni`` application is closed, all the KNI interfaces are deleted
 from the Linux kernel.

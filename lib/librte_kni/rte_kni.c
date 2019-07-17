@@ -2,7 +2,7 @@
  * Copyright(c) 2010-2014 Intel Corporation
  */
 
-#ifndef RTE_EXEC_ENV_LINUXAPP
+#ifndef RTE_EXEC_ENV_LINUX
 #error "KNI is not supported"
 #endif
 
@@ -21,7 +21,7 @@
 #include <rte_tailq.h>
 #include <rte_rwlock.h>
 #include <rte_eal_memconfig.h>
-#include <exec-env/rte_kni_common.h>
+#include <rte_kni_common.h>
 #include "rte_kni_fifo.h"
 
 #define MAX_MBUF_BURST_NUM            32
@@ -97,6 +97,11 @@ static volatile int kni_fd = -1;
 int
 rte_kni_init(unsigned int max_kni_ifaces __rte_unused)
 {
+	if (rte_eal_iova_mode() != RTE_IOVA_PA) {
+		RTE_LOG(ERR, KNI, "KNI requires IOVA as PA\n");
+		return -1;
+	}
+
 	/* Check FD and open */
 	if (kni_fd < 0) {
 		kni_fd = open("/dev/" KNI_DEVICE, O_RDWR);
@@ -215,7 +220,7 @@ rte_kni_alloc(struct rte_mempool *pktmbuf_pool,
 		return NULL;
 	}
 
-	rte_rwlock_write_lock(RTE_EAL_TAILQ_RWLOCK);
+	rte_mcfg_tailq_write_lock();
 
 	kni = __rte_kni_get(conf->name);
 	if (kni != NULL) {
@@ -235,7 +240,7 @@ rte_kni_alloc(struct rte_mempool *pktmbuf_pool,
 		goto kni_fail;
 	}
 
-	snprintf(kni->name, RTE_KNI_NAMESIZE, "%s", conf->name);
+	strlcpy(kni->name, conf->name, RTE_KNI_NAMESIZE);
 
 	if (ops)
 		memcpy(&kni->ops, ops, sizeof(struct rte_kni_ops));
@@ -243,24 +248,15 @@ rte_kni_alloc(struct rte_mempool *pktmbuf_pool,
 		kni->ops.port_id = UINT16_MAX;
 
 	memset(&dev_info, 0, sizeof(dev_info));
-	dev_info.bus = conf->addr.bus;
-	dev_info.devid = conf->addr.devid;
-	dev_info.function = conf->addr.function;
-	dev_info.vendor_id = conf->id.vendor_id;
-	dev_info.device_id = conf->id.device_id;
 	dev_info.core_id = conf->core_id;
 	dev_info.force_bind = conf->force_bind;
 	dev_info.group_id = conf->group_id;
 	dev_info.mbuf_size = conf->mbuf_size;
 	dev_info.mtu = conf->mtu;
 
-	memcpy(dev_info.mac_addr, conf->mac_addr, ETHER_ADDR_LEN);
+	memcpy(dev_info.mac_addr, conf->mac_addr, RTE_ETHER_ADDR_LEN);
 
-	snprintf(dev_info.name, RTE_KNI_NAMESIZE, "%s", conf->name);
-
-	RTE_LOG(INFO, KNI, "pci: %02x:%02x:%02x \t %02x:%02x\n",
-		dev_info.bus, dev_info.devid, dev_info.function,
-			dev_info.vendor_id, dev_info.device_id);
+	strlcpy(dev_info.name, conf->name, RTE_KNI_NAMESIZE);
 
 	ret = kni_reserve_mz(kni);
 	if (ret < 0)
@@ -315,7 +311,7 @@ rte_kni_alloc(struct rte_mempool *pktmbuf_pool,
 	kni_list = RTE_TAILQ_CAST(rte_kni_tailq.head, rte_kni_list);
 	TAILQ_INSERT_TAIL(kni_list, te, next);
 
-	rte_rwlock_write_unlock(RTE_EAL_TAILQ_RWLOCK);
+	rte_mcfg_tailq_write_unlock();
 
 	/* Allocate mbufs and then put them into alloc_q */
 	kni_allocate_mbufs(kni);
@@ -329,7 +325,7 @@ mz_fail:
 kni_fail:
 	rte_free(te);
 unlock:
-	rte_rwlock_write_unlock(RTE_EAL_TAILQ_RWLOCK);
+	rte_mcfg_tailq_write_unlock();
 
 	return NULL;
 }
@@ -392,7 +388,7 @@ rte_kni_release(struct rte_kni *kni)
 
 	kni_list = RTE_TAILQ_CAST(rte_kni_tailq.head, rte_kni_list);
 
-	rte_rwlock_write_lock(RTE_EAL_TAILQ_RWLOCK);
+	rte_mcfg_tailq_write_lock();
 
 	TAILQ_FOREACH(te, kni_list, next) {
 		if (te->data == kni)
@@ -402,7 +398,7 @@ rte_kni_release(struct rte_kni *kni)
 	if (te == NULL)
 		goto unlock;
 
-	snprintf(dev_info.name, sizeof(dev_info.name), "%s", kni->name);
+	strlcpy(dev_info.name, kni->name, sizeof(dev_info.name));
 	if (ioctl(kni_fd, RTE_KNI_IOCTL_RELEASE, &dev_info) < 0) {
 		RTE_LOG(ERR, KNI, "Fail to release kni device\n");
 		goto unlock;
@@ -410,7 +406,7 @@ rte_kni_release(struct rte_kni *kni)
 
 	TAILQ_REMOVE(kni_list, te, next);
 
-	rte_rwlock_write_unlock(RTE_EAL_TAILQ_RWLOCK);
+	rte_mcfg_tailq_write_unlock();
 
 	/* mbufs in all fifo should be released, except request/response */
 
@@ -434,7 +430,7 @@ rte_kni_release(struct rte_kni *kni)
 	return 0;
 
 unlock:
-	rte_rwlock_write_unlock(RTE_EAL_TAILQ_RWLOCK);
+	rte_mcfg_tailq_write_unlock();
 
 	return -1;
 }
@@ -453,7 +449,7 @@ kni_config_mac_address(uint16_t port_id, uint8_t mac_addr[])
 	RTE_LOG(INFO, KNI, "Configure mac address of %d", port_id);
 
 	ret = rte_eth_dev_default_mac_addr_set(port_id,
-					       (struct ether_addr *)mac_addr);
+					(struct rte_ether_addr *)mac_addr);
 	if (ret < 0)
 		RTE_LOG(ERR, KNI, "Failed to config mac_addr for port %d\n",
 			port_id);
@@ -654,11 +650,11 @@ rte_kni_get(const char *name)
 	if (name == NULL || name[0] == '\0')
 		return NULL;
 
-	rte_rwlock_read_lock(RTE_EAL_TAILQ_RWLOCK);
+	rte_mcfg_tailq_read_lock();
 
 	kni = __rte_kni_get(name);
 
-	rte_rwlock_read_unlock(RTE_EAL_TAILQ_RWLOCK);
+	rte_mcfg_tailq_read_unlock();
 
 	return kni;
 }
@@ -723,7 +719,7 @@ rte_kni_unregister_handlers(struct rte_kni *kni)
 	return 0;
 }
 
-int __rte_experimental
+int
 rte_kni_update_link(struct rte_kni *kni, unsigned int linkup)
 {
 	char path[64];

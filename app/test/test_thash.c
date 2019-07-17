@@ -59,15 +59,15 @@ struct test_thash_v6 {
 
 /*From 82599 Datasheet 7.1.2.8.3 RSS Verification Suite*/
 struct test_thash_v4 v4_tbl[] = {
-{IPv4(161, 142, 100, 80), IPv4(66, 9, 149, 187),
+{RTE_IPV4(161, 142, 100, 80), RTE_IPV4(66, 9, 149, 187),
 	1766, 2794, 0x323e8fc2, 0x51ccc178},
-{IPv4(65, 69, 140, 83), IPv4(199, 92, 111, 2),
+{RTE_IPV4(65, 69, 140, 83), RTE_IPV4(199, 92, 111, 2),
 	4739, 14230, 0xd718262a, 0xc626b0ea},
-{IPv4(12, 22, 207, 184), IPv4(24, 19, 198, 95),
+{RTE_IPV4(12, 22, 207, 184), RTE_IPV4(24, 19, 198, 95),
 	38024, 12898, 0xd2d0a5de, 0x5c2b394a},
-{IPv4(209, 142, 163, 6), IPv4(38, 27, 205, 30),
+{RTE_IPV4(209, 142, 163, 6), RTE_IPV4(38, 27, 205, 30),
 	2217, 48228, 0x82989176, 0xafc7327f},
-{IPv4(202, 188, 127, 2), IPv4(153, 39, 163, 191),
+{RTE_IPV4(202, 188, 127, 2), RTE_IPV4(153, 39, 163, 191),
 	1303, 44251, 0x5d1809c5, 0x10e828a2},
 };
 
@@ -110,7 +110,7 @@ test_thash(void)
 	union rte_thash_tuple tuple;
 	uint32_t rss_l3, rss_l3l4;
 	uint8_t rss_key_be[RTE_DIM(default_rss_key)];
-	struct ipv6_hdr ipv6_hdr;
+	struct rte_ipv6_hdr ipv6_hdr;
 
 	/* Convert RSS key*/
 	rte_convert_rss_key((uint32_t *)&default_rss_key,

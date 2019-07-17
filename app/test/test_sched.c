@@ -78,25 +78,29 @@ create_mempool(void)
 static void
 prepare_pkt(struct rte_sched_port *port, struct rte_mbuf *mbuf)
 {
-	struct ether_hdr *eth_hdr;
-	struct vlan_hdr *vlan1, *vlan2;
-	struct ipv4_hdr *ip_hdr;
+	struct rte_ether_hdr *eth_hdr;
+	struct rte_vlan_hdr *vlan1, *vlan2;
+	struct rte_ipv4_hdr *ip_hdr;
 
 	/* Simulate a classifier */
-	eth_hdr = rte_pktmbuf_mtod(mbuf, struct ether_hdr *);
-	vlan1 = (struct vlan_hdr *)(&eth_hdr->ether_type );
-	vlan2 = (struct vlan_hdr *)((uintptr_t)&eth_hdr->ether_type + sizeof(struct vlan_hdr));
-	eth_hdr = (struct ether_hdr *)((uintptr_t)&eth_hdr->ether_type + 2 *sizeof(struct vlan_hdr));
-	ip_hdr = (struct ipv4_hdr *)((uintptr_t)eth_hdr +  sizeof(eth_hdr->ether_type));
+	eth_hdr = rte_pktmbuf_mtod(mbuf, struct rte_ether_hdr *);
+	vlan1 = (struct rte_vlan_hdr *)(&eth_hdr->ether_type);
+	vlan2 = (struct rte_vlan_hdr *)(
+		(uintptr_t)&eth_hdr->ether_type + sizeof(struct rte_vlan_hdr));
+	eth_hdr = (struct rte_ether_hdr *)(
+		(uintptr_t)&eth_hdr->ether_type +
+		2 * sizeof(struct rte_vlan_hdr));
+	ip_hdr = (struct rte_ipv4_hdr *)(
+		(uintptr_t)eth_hdr + sizeof(eth_hdr->ether_type));
 
 	vlan1->vlan_tci = rte_cpu_to_be_16(SUBPORT);
 	vlan2->vlan_tci = rte_cpu_to_be_16(PIPE);
-	eth_hdr->ether_type =  rte_cpu_to_be_16(ETHER_TYPE_IPv4);
-	ip_hdr->dst_addr = IPv4(0,0,TC,QUEUE);
+	eth_hdr->ether_type =  rte_cpu_to_be_16(RTE_ETHER_TYPE_IPV4);
+	ip_hdr->dst_addr = RTE_IPV4(0,0,TC,QUEUE);
 
 
 	rte_sched_port_pkt_write(port, mbuf, SUBPORT, PIPE, TC, QUEUE,
-					e_RTE_METER_YELLOW);
+					RTE_COLOR_YELLOW);
 
 	/* 64 byte packet */
 	mbuf->pkt_len  = 60;
@@ -150,11 +154,11 @@ test_sched(void)
 	TEST_ASSERT_EQUAL(err, 10, "Wrong dequeue, err=%d\n", err);
 
 	for (i = 0; i < 10; i++) {
-		enum rte_meter_color color;
+		enum rte_color color;
 		uint32_t subport, traffic_class, queue;
 
 		color = rte_sched_port_pkt_read_color(out_mbufs[i]);
-		TEST_ASSERT_EQUAL(color, e_RTE_METER_YELLOW, "Wrong color\n");
+		TEST_ASSERT_EQUAL(color, RTE_COLOR_YELLOW, "Wrong color\n");
 
 		rte_sched_port_pkt_read_tree_path(port, out_mbufs[i],
 				&subport, &pipe, &traffic_class, &queue);

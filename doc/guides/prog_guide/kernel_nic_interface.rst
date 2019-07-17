@@ -187,6 +187,8 @@ The ``struct rte_kni_conf`` structure contains fields which allow the
 user to specify the interface name, set the MTU size, set an explicit or
 random MAC address and control the affinity of the kernel Rx thread(s)
 (both single and multi-threaded modes).
+By default the KNI sample example gets the MTU from the matching device,
+and in case of KNI PMD it is derived from mbuf buffer length.
 
 The ``struct rte_kni_ops`` structure contains pointers to functions to
 handle requests from the ``rte_kni`` kernel module.  These functions
@@ -225,7 +227,7 @@ application functions:
 
 ``config_promiscusity``:
 
-    Called when the user changes the promiscusity state of the KNI
+    Called when the user changes the promiscuity state of the KNI
     interface.  For example, when the user runs ``ip link set promisc
     [on|off] dev <ifaceX>``. If the user sets this callback function to
     NULL, but sets the ``port_id`` field to a value other than -1, a default

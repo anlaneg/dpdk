@@ -18,6 +18,17 @@
 
 #include <rte_build_config.h>
 
+/* legacy defines */
+#ifdef RTE_EXEC_ENV_LINUX
+#define RTE_EXEC_ENV_LINUXAPP 1
+#endif
+#ifdef RTE_EXEC_ENV_FREEBSD
+#define RTE_EXEC_ENV_BSDAPP 1
+#endif
+
+/* String that appears before the version number */
+#define RTE_VER_PREFIX "DPDK"
+
 /****** library defines ********/
 
 /* compat defines */
@@ -71,7 +82,7 @@
 #define RTE_EVENT_ETH_TX_ADAPTER_MAX_INSTANCE 32
 
 /* rawdev defines */
-#define RTE_RAWDEV_MAX_DEVS 10
+#define RTE_RAWDEV_MAX_DEVS 64
 
 /* ip_fragmentation defines */
 #define RTE_LIBRTE_IP_FRAG_MAX_FRAG 4

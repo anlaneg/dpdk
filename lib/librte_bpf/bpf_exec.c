@@ -438,7 +438,7 @@ bpf_exec(const struct rte_bpf *bpf, uint64_t reg[EBPF_REG_NUM]/*寄存器*/)
 	return 0;
 }
 
-__rte_experimental uint32_t
+uint32_t
 rte_bpf_exec_burst(const struct rte_bpf *bpf, void *ctx[], uint64_t rc[],
 	uint32_t num)
 {
@@ -458,7 +458,7 @@ rte_bpf_exec_burst(const struct rte_bpf *bpf, void *ctx[], uint64_t rc[],
 	return i;
 }
 
-__rte_experimental uint64_t
+uint64_t
 rte_bpf_exec(const struct rte_bpf *bpf, void *ctx)
 {
 	uint64_t rc;

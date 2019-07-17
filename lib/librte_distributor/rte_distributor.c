@@ -14,6 +14,7 @@
 #include <rte_string_fns.h>
 #include <rte_eal_memconfig.h>
 #include <rte_pause.h>
+#include <rte_tailq.h>
 
 #include "rte_distributor_private.h"
 #include "rte_distributor.h"
@@ -625,7 +626,7 @@ rte_distributor_create_v1705(const char *name,
 	}
 
 	d = mz->addr;
-	snprintf(d->name, sizeof(d->name), "%s", name);
+	strlcpy(d->name, name, sizeof(d->name));
 	d->num_workers = num_workers;
 	d->alg_type = alg_type;
 
@@ -645,9 +646,9 @@ rte_distributor_create_v1705(const char *name,
 					  rte_dist_burst_list);
 
 
-	rte_rwlock_write_lock(RTE_EAL_TAILQ_RWLOCK);
+	rte_mcfg_tailq_write_lock();
 	TAILQ_INSERT_TAIL(dist_burst_list, d, next);
-	rte_rwlock_write_unlock(RTE_EAL_TAILQ_RWLOCK);
+	rte_mcfg_tailq_write_unlock();
 
 	return d;
 }

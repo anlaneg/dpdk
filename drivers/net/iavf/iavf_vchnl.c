@@ -153,7 +153,7 @@ iavf_handle_pf_event_msg(struct rte_eth_dev *dev, uint8_t *msg,
 	case VIRTCHNL_EVENT_LINK_CHANGE:
 		PMD_DRV_LOG(DEBUG, "VIRTCHNL_EVENT_LINK_CHANGE event");
 		vf->link_up = pf_msg->event_data.link_event.link_status;
-		vf->link_speed = pf_msg->event_data.link_event.link_speed;
+		vf->link_speed = pf_msg->event_data.link_event_adv.link_speed;
 		iavf_dev_link_update(dev, 0);
 		_rte_eth_dev_callback_process(dev, RTE_ETH_EVENT_INTR_LSC,
 					      NULL);
@@ -344,7 +344,7 @@ iavf_get_vf_resource(struct iavf_adapter *adapter)
 	 * add advanced/optional offload capabilities
 	 */
 
-	caps = IAVF_BASIC_OFFLOAD_CAPS;
+	caps = IAVF_BASIC_OFFLOAD_CAPS | VIRTCHNL_VF_CAP_ADV_LINK_SPEED;
 
 	args.in_args = (uint8_t *)&caps;
 	args.in_args_size = sizeof(caps);
@@ -636,7 +636,7 @@ iavf_add_del_all_mac_addr(struct iavf_adapter *adapter, bool add)
 {
 	struct virtchnl_ether_addr_list *list;
 	struct iavf_info *vf = IAVF_DEV_PRIVATE_TO_VF(adapter);
-	struct ether_addr *addr;
+	struct rte_ether_addr *addr;
 	struct iavf_cmd_info args;
 	int len, err, i, j;
 	int next_begin = 0;
@@ -647,7 +647,7 @@ iavf_add_del_all_mac_addr(struct iavf_adapter *adapter, bool add)
 		len = sizeof(struct virtchnl_ether_addr_list);
 		for (i = begin; i < IAVF_NUM_MACADDR_MAX; i++, next_begin++) {
 			addr = &adapter->eth_dev->data->mac_addrs[i];
-			if (is_zero_ether_addr(addr))
+			if (rte_is_zero_ether_addr(addr))
 				continue;
 			len += sizeof(struct virtchnl_ether_addr);
 			if (len >= IAVF_AQ_BUF_SZ) {
@@ -664,7 +664,7 @@ iavf_add_del_all_mac_addr(struct iavf_adapter *adapter, bool add)
 
 		for (i = begin; i < next_begin; i++) {
 			addr = &adapter->eth_dev->data->mac_addrs[i];
-			if (is_zero_ether_addr(addr))
+			if (rte_is_zero_ether_addr(addr))
 				continue;
 			rte_memcpy(list->list[j].addr, addr->addr_bytes,
 				   sizeof(addr->addr_bytes));
@@ -753,7 +753,7 @@ iavf_config_promisc(struct iavf_adapter *adapter,
 }
 
 int
-iavf_add_del_eth_addr(struct iavf_adapter *adapter, struct ether_addr *addr,
+iavf_add_del_eth_addr(struct iavf_adapter *adapter, struct rte_ether_addr *addr,
 		     bool add)
 {
 	struct virtchnl_ether_addr_list *list;

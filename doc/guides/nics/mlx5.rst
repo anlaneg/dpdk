@@ -7,7 +7,7 @@ MLX5 poll mode driver
 
 The MLX5 poll mode driver library (**librte_pmd_mlx5**) provides support
 for **Mellanox ConnectX-4**, **Mellanox ConnectX-4 Lx** , **Mellanox
-ConnectX-5**, **Mellanox ConnectX-6** and **Mellanox Bluefield** families
+ConnectX-5**, **Mellanox ConnectX-6** and **Mellanox BlueField** families
 of 10/25/40/50/100/200 Gb/s adapters as well as their virtual functions (VF)
 in SR-IOV context.
 
@@ -62,8 +62,8 @@ Features
 - RX VLAN stripping.
 - TX VLAN insertion.
 - RX CRC stripping configuration.
-- Promiscuous mode.
-- Multicast promiscuous mode.
+- Promiscuous mode on PF and VF.
+- Multicast promiscuous mode on PF and VF.
 - Hardware checksum offloads.
 - Flow director (RTE_FDIR_MODE_PERFECT, RTE_FDIR_MODE_PERFECT_MAC_VLAN and
   RTE_ETH_FDIR_REJECT).
@@ -78,6 +78,10 @@ Features
 - Rx HW timestamp.
 - Tunnel types: VXLAN, L3 VXLAN, VXLAN-GPE, GRE, MPLSoGRE, MPLSoUDP.
 - Tunnel HW offloads: packet type, inner/outer RSS, IP and UDP checksum verification.
+- NIC HW offloads: encapsulation (vxlan, gre, mplsoudp, mplsogre), NAT, routing, TTL
+  increment/decrement, count, drop, mark. For details please see :ref:`Supported hardware offloads using rte_flow API`.
+- Flow insertion rate of more then million flows per second, when using Direct Rules.
+- Support for multiple rte_flow groups.
 
 Limitations
 -----------
@@ -85,7 +89,11 @@ Limitations
 - For secondary process:
 
   - Forked secondary process not supported.
-  - All mempools must be initialized before rte_eth_dev_start().
+  - External memory unregistered in EAL memseg list cannot be used for DMA
+    unless such memory has been registered by ``mlx5_mr_update_ext_mp()`` in
+    primary process and remapped to the same virtual address in secondary
+    process. If the external memory is registered by primary process but has
+    different virtual address in secondary process, unexpected error may happen.
 
 - Flow pattern without any specific vlan will match for vlan packets as well:
 
@@ -107,8 +115,6 @@ Limitations
 - A multi segment packet must have less than 6 segments in case the Tx burst function
   is set to multi-packet send or Enhanced multi-packet send. Otherwise it must have
   less than 50 segments.
-
-- Count action for RTE flow is **only supported in Mellanox OFED**.
 
 - Flows with a VXLAN Network Identifier equal (or ends to be equal)
   to 0 are not supported.
@@ -143,30 +149,16 @@ Limitations
   To receive IPv6 Multicast messages on VM, explicitly set the relevant
   MAC address using rte_eth_dev_mac_addr_add() API.
 
-- E-Switch VXLAN tunnel is not supported together with outer VLAN.
+- E-Switch decapsulation Flow:
 
-- E-Switch Flows with VNI pattern must include the VXLAN decapsulation action.
-
-- E-Switch VXLAN decapsulation Flow:
-
-  - can be appiled to PF port only.
+  - can be applied to PF port only.
   - must specify VF port action (packet redirection from PF to VF).
-  - must specify tunnel outer UDP local (destination) port, wildcards not allowed.
-  - must specify tunnel outer VNI, wildcards not allowed.
-  - must specify tunnel outer local (destination)  IPv4 or IPv6 address, wildcards not allowed.
-  - optionally may specify tunnel outer remote (source) IPv4 or IPv6, wildcards or group IPs allowed.
   - optionally may specify tunnel inner source and destination MAC addresses.
 
-- E-Switch VXLAN encapsulation Flow:
+- E-Switch  encapsulation Flow:
 
   - can be applied to VF ports only.
   - must specify PF port action (packet redirection from VF to PF).
-  - must specify the VXLAN item with tunnel outer parameters.
-  - must specify the tunnel outer VNI in the VXLAN item.
-  - must specify the tunnel outer remote (destination) UDP port in the VXLAN item.
-  - must specify the tunnel outer local (source) IPv4 or IPv6 in the , this address will locally (with scope link) assigned to the outer network interace, wildcards not allowed.
-  - must specify the tunnel outer remote (destination) IPv4 or IPv6 in the VXLAN item, group IPs allowed.
-  - must specify the tunnel outer destination MAC address in the VXLAN item, this address will be used to create neigh rule.
 
 Statistics
 ----------
@@ -212,7 +204,7 @@ These options can be modified in the ``.config`` file.
 
 - ``CONFIG_RTE_IBVERBS_LINK_STATIC`` (default **n**)
 
-  Embed static flavour of the dependencies **libibverbs** and **libmlx5**
+  Embed static flavor of the dependencies **libibverbs** and **libmlx5**
   in the PMD shared library or the executable static binary.
 
 - ``CONFIG_RTE_LIBRTE_MLX5_DEBUG`` (default **n**)
@@ -223,7 +215,7 @@ These options can be modified in the ``.config`` file.
 
 .. note::
 
-   For Bluefield, target should be set to ``arm64-bluefield-linuxapp-gcc``. This
+   For BlueField, target should be set to ``arm64-bluefield-linux-gcc``. This
    will enable ``CONFIG_RTE_LIBRTE_MLX5_PMD`` and set ``RTE_CACHE_LINE_SIZE`` to
    64. Default armv8a configuration of make build and meson build set it to 128
    then brings performance degradation.
@@ -273,8 +265,8 @@ Run-time configuration
 
   Supported on:
 
-  - x86_64 with ConnectX-4, ConnectX-4 LX, ConnectX-5, ConnectX-6 and Bluefield.
-  - POWER8 and ARMv8 with ConnectX-4 LX, ConnectX-5, ConnectX-6 and Bluefield.
+  - x86_64 with ConnectX-4, ConnectX-4 LX, ConnectX-5, ConnectX-6 and BlueField.
+  - POWER9 and ARMv8 with ConnectX-4 LX, ConnectX-5, ConnectX-6 and BlueField.
 
 - ``rxq_cqe_pad_en`` parameter [int]
 
@@ -292,7 +284,7 @@ Run-time configuration
 
   Supported on:
 
-  - CPU having 128B cacheline with ConnectX-5 and Bluefield.
+  - CPU having 128B cacheline with ConnectX-5 and BlueField.
 
 - ``rxq_pkt_pad_en`` parameter [int]
 
@@ -304,8 +296,8 @@ Run-time configuration
 
   Supported on:
 
-  - x86_64 with ConnectX-4, ConnectX-4 LX, ConnectX-5, ConnectX-6 and Bluefield.
-  - POWER8 and ARMv8 with ConnectX-4 LX, ConnectX-5, ConnectX-6 and Bluefield.
+  - x86_64 with ConnectX-4, ConnectX-4 LX, ConnectX-5, ConnectX-6 and BlueField.
+  - POWER8 and ARMv8 with ConnectX-4 LX, ConnectX-5, ConnectX-6 and BlueField.
 
 - ``mprq_en`` parameter [int]
 
@@ -319,7 +311,7 @@ Run-time configuration
   buffers per a packet, one large buffer is posted in order to receive multiple
   packets on the buffer. A MPRQ buffer consists of multiple fixed-size strides
   and each stride receives one packet. MPRQ can improve throughput for
-  small-packet tarffic.
+  small-packet traffic.
 
   When MPRQ is enabled, max_rx_pkt_len can be larger than the size of
   user-provided mbuf even if DEV_RX_OFFLOAD_SCATTER isn't enabled. PMD will
@@ -330,7 +322,7 @@ Run-time configuration
 - ``mprq_log_stride_num`` parameter [int]
 
   Log 2 of the number of strides for Multi-Packet Rx queue. Configuring more
-  strides can reduce PCIe tarffic further. If configured value is not in the
+  strides can reduce PCIe traffic further. If configured value is not in the
   range of device capability, the default value will be set with a warning
   message. The default value is 4 which is 16 strides per a buffer, valid only
   if ``mprq_en`` is set.
@@ -371,13 +363,13 @@ Run-time configuration
 
   This option should be used in combination with ``txq_inline`` above.
 
-  On ConnectX-4, ConnectX-4 LX, ConnectX-5, ConnectX-6 and Bluefield without
+  On ConnectX-4, ConnectX-4 LX, ConnectX-5, ConnectX-6 and BlueField without
   Enhanced MPW:
 
         - Disabled by default.
         - In case ``txq_inline`` is set recommendation is 4.
 
-  On ConnectX-5, ConnectX-6 and Bluefield with Enhanced MPW:
+  On ConnectX-5, ConnectX-6 and BlueField with Enhanced MPW:
 
         - Set to 8 by default.
 
@@ -391,14 +383,14 @@ Run-time configuration
         - Set to 8 by default on ARMv8.
         - Set to 4 by default otherwise.
 
-  On Bluefield
+  On BlueField
 
         - Set to 16 by default.
 
 - ``txq_mpw_en`` parameter [int]
 
   A nonzero value enables multi-packet send (MPS) for ConnectX-4 Lx and
-  enhanced multi-packet send (Enhanced MPS) for ConnectX-5, ConnectX-6 and Bluefield.
+  enhanced multi-packet send (Enhanced MPS) for ConnectX-5, ConnectX-6 and BlueField.
   MPS allows the TX burst function to pack up multiple packets in a
   single descriptor session in order to save PCI bandwidth and improve
   performance at the cost of a slightly higher CPU usage. When
@@ -413,13 +405,13 @@ Run-time configuration
   DEV_TX_OFFLOAD_VXLAN_TNL_TSO, DEV_TX_OFFLOAD_GRE_TNL_TSO, DEV_TX_OFFLOAD_VLAN_INSERT``.
   When those offloads are requested the MPS send function will not be used.
 
-  It is currently only supported on the ConnectX-4 Lx, ConnectX-5, ConnectX-6 and Bluefield
+  It is currently only supported on the ConnectX-4 Lx, ConnectX-5, ConnectX-6 and BlueField
   families of adapters.
   On ConnectX-4 Lx the MPW is considered un-secure hence disabled by default.
   Users which enable the MPW should be aware that application which provides incorrect
   mbuf descriptors in the Tx burst can lead to serious errors in the host including, on some cases,
   NIC to get stuck.
-  On ConnectX-5, ConnectX-6 and Bluefield the MPW is secure and enabled by default.
+  On ConnectX-5, ConnectX-6 and BlueField the MPW is secure and enabled by default.
 
 - ``txq_mpw_hdr_dseg_en`` parameter [int]
 
@@ -439,14 +431,14 @@ Run-time configuration
 
 - ``tx_vec_en`` parameter [int]
 
-  A nonzero value enables Tx vector on ConnectX-5, ConnectX-6 and Bluefield NICs if the number of
+  A nonzero value enables Tx vector on ConnectX-5, ConnectX-6 and BlueField NICs if the number of
   global Tx queues on the port is less than ``txqs_max_vec``.
 
   This option cannot be used with certain offloads such as ``DEV_TX_OFFLOAD_TCP_TSO,
   DEV_TX_OFFLOAD_VXLAN_TNL_TSO, DEV_TX_OFFLOAD_GRE_TNL_TSO, DEV_TX_OFFLOAD_VLAN_INSERT``.
   When those offloads are requested the MPS send function will not be used.
 
-  Enabled by default on ConnectX-5, ConnectX-6 and Bluefield.
+  Enabled by default on ConnectX-5, ConnectX-6 and BlueField.
 
 - ``rx_vec_en`` parameter [int]
 
@@ -476,9 +468,25 @@ Run-time configuration
 
   A nonzero value enables the DV flow steering assuming it is supported
   by the driver.
-  The DV flow steering is not supported on switchdev mode.
 
   Disabled by default.
+
+- ``dv_esw_en`` parameter [int]
+
+  A nonzero value enables E-Switch using Direct Rules.
+
+  Enabled by default if supported.
+
+- ``mr_ext_memseg_en`` parameter [int]
+
+  A nonzero value enables extending memseg when registering DMA memory. If
+  enabled, the number of entries in MR (Memory Region) lookup table on datapath
+  is minimized and it benefits performance. On the other hand, it worsens memory
+  utilization because registered memory is pinned by kernel driver. Even if a
+  page in the extended chunk is freed, that doesn't become reusable until the
+  entire memory is freed.
+
+  Enabled by default.
 
 - ``representor`` parameter [list]
 
@@ -491,6 +499,13 @@ Run-time configuration
   For instance, to probe port representors 0 through 2::
 
     representor=[0-2]
+
+- ``max_dump_files_num`` parameter [int]
+
+  The maximum number of files per PMD entity that may be created for debug information.
+  The files will be created in /var/log directory or in current directory.
+
+  set to 128 by default.
 
 Firmware configuration
 ~~~~~~~~~~~~~~~~~~~~~~
@@ -530,17 +545,11 @@ DPDK and must be installed separately:
 - **libmlx5**
 
   Low-level user space driver library for Mellanox
-  ConnectX-4/ConnectX-5/ConnectX-6/Bluefield devices, it is automatically loaded
+  ConnectX-4/ConnectX-5/ConnectX-6/BlueField devices, it is automatically loaded
   by libibverbs.
 
   This library basically implements send/receive calls to the hardware
   queues.
-
-- **libmnl**
-
-  Minimalistic Netlink library mainly relied on to manage E-Switch flow
-  rules (i.e. those with the "transfer" attribute and typically involving
-  port representors).
 
 - **Kernel modules**
 
@@ -552,7 +561,7 @@ DPDK and must be installed separately:
   their devices:
 
   - mlx5_core: hardware driver managing Mellanox
-    ConnectX-4/ConnectX-5/ConnectX-6/Bluefield devices and related Ethernet kernel
+    ConnectX-4/ConnectX-5/ConnectX-6/BlueField devices and related Ethernet kernel
     network devices.
   - mlx5_ib: InifiniBand device driver.
   - ib_uverbs: user space driver for Verbs (entry point for libibverbs).
@@ -560,7 +569,7 @@ DPDK and must be installed separately:
 - **Firmware update**
 
   Mellanox OFED/EN releases include firmware updates for
-  ConnectX-4/ConnectX-5/ConnectX-6/Bluefield adapters.
+  ConnectX-4/ConnectX-5/ConnectX-6/BlueField adapters.
 
   Because each release provides new features, these updates must be applied to
   match the kernel modules and libraries they come with.
@@ -577,7 +586,7 @@ Either RDMA Core library with a recent enough Linux kernel release
 (recommended) or Mellanox OFED/EN, which provides compatibility with older
 releases.
 
-RMDA Core with Linux Kernel
+RDMA Core with Linux Kernel
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 - Minimal kernel version : v4.14 or the most recent 4.14-rc (see `Linux installation documentation`_)
@@ -607,7 +616,8 @@ thanks to these environment variables:
 Mellanox OFED/EN
 ^^^^^^^^^^^^^^^^
 
-- Mellanox OFED version: **4.4, 4.5** / Mellanox EN version: **4.5**
+- Mellanox OFED version: ** 4.5, 4.6** /
+  Mellanox EN version: **4.5, 4.6**
 - firmware version:
 
   - ConnectX-4: **12.21.1000** and above.
@@ -615,7 +625,7 @@ Mellanox OFED/EN
   - ConnectX-5: **16.21.1000** and above.
   - ConnectX-5 Ex: **16.21.1000** and above.
   - ConnectX-6: **20.99.5374** and above.
-  - Bluefield: **18.99.3950** and above.
+  - BlueField: **18.25.1010** and above.
 
 While these libraries and kernel modules are available on OpenFabrics
 Alliance's `website <https://www.openfabrics.org/>`__ and provided by package
@@ -635,19 +645,6 @@ required from that distribution.
    Several versions of Mellanox OFED/EN are available. Installing the version
    this DPDK release was developed and tested against is strongly
    recommended. Please check the `prerequisites`_.
-
-Libmnl
-^^^^^^
-
-Minimal version for libmnl is **1.0.3**.
-
-As a dependency of the **iproute2** suite, this library is often installed
-by default. It is otherwise readily available through standard system
-packages.
-
-Its development headers must be installed in order to compile this PMD.
-These packages are usually named **libmnl-dev** or **libmnl-devel**
-depending on the Linux distribution.
 
 Supported NICs
 --------------
@@ -751,6 +748,56 @@ Quick Start Guide on OFED/EN
 6. Compile DPDK and you are ready to go. See instructions on
    :ref:`Development Kit Build System <Development_Kit_Build_System>`
 
+Enable switchdev mode
+---------------------
+
+Switchdev mode is a mode in E-Switch, that binds between representor and VF.
+Representor is a port in DPDK that is connected to a VF in such a way
+that assuming there are no offload flows, each packet that is sent from the VF
+will be received by the corresponding representor. While each packet that is
+sent to a representor will be received by the VF.
+This is very useful in case of SRIOV mode, where the first packet that is sent
+by the VF will be received by the DPDK application which will decide if this
+flow should be offloaded to the E-Switch. After offloading the flow packet
+that the VF that are matching the flow will not be received any more by
+the DPDK application.
+
+1. Enable SRIOV mode:
+
+  .. code-block:: console
+
+        mlxconfig -d <mst device> set SRIOV_EN=true
+
+2. Configure the max number of VFs:
+
+  .. code-block:: console
+
+        mlxconfig -d <mst device> set NUM_OF_VFS=<num of vfs>
+
+3. Reset the FW:
+
+  .. code-block:: console
+
+        mlxfwreset -d <mst device> reset
+
+3. Configure the actual number of VFs:
+
+  .. code-block:: console
+
+        echo <num of vfs > /sys/class/net/<net device>/device/sriov_numvfs
+
+4. Unbind the device (can be rebind after the switchdev mode):
+
+  .. code-block:: console
+
+        echo -n "<device pci address" > /sys/bus/pci/drivers/mlx5_core/unbind
+
+5. Enbale switchdev mode:
+
+  .. code-block:: console
+
+        echo switchdev > /sys/class/net/<net device>/compat/devlink/mode
+
 Performance tuning
 ------------------
 
@@ -827,6 +874,62 @@ Performance tuning
    - Configure per-lcore cache when creating Mempools for packet buffer.
    - Refrain from dynamically allocating/freeing memory in run-time.
 
+Supported hardware offloads using rte_flow API
+----------------------------------------------
+
+.. _Supported hardware offloads using rte_flow API:
+
+.. table:: Supported hardware offloads using rte_flow API
+
+   +-----------------------+-----------------+-----------------+
+   | Offload               | E-Switch        | NIC             |
+   |                       |                 |                 |
+   +=======================+=================+=================+
+   | Count                 | | DPDK 19.05    | | DPDK 19.02    |
+   |                       | | OFED 4.6      | | OFED 4.6      |
+   |                       | | RDMA-CORE V24 | | RDMA-CORE V23 |
+   |                       | | ConnectX-5    | | ConnectX-5    |
+   +-----------------------+-----------------+-----------------+
+   | Drop / Queue / RSS    | | DPDK 19.05    | | DPDK 18.11    |
+   |                       | | OFED 4.6      | | OFED 4.5      |
+   |                       | | RDMA-CORE V24 | | RDMA-CORE V23 |
+   |                       | | ConnectX-5    | | ConnectX-4    |
+   +-----------------------+-----------------+-----------------+
+   | Encapsulation         | | DPDK 19.05    | | DPDK 19.02    |
+   | (VXLAN / NVGRE / RAW) | | OFED 4.6.2    | | OFED 4.6      |
+   |                       | | RDMA-CORE V24 | | RDMA-CORE V23 |
+   |                       | | ConnectX-5    | | ConnectX-5    |
+   +-----------------------+-----------------+-----------------+
+   | Header rewrite        | | DPDK 19.05    | | DPDK 19.02    |
+   | (set_ipv4_src /       | | OFED 4.6.2    | | OFED 4.6.2    |
+   | set_ipv4_dst /        | | RDMA-CORE V24 | | RDMA-CORE V23 |
+   | set_ipv6_src /        | | ConnectX-5    | | ConnectX-5    |
+   | set_ipv6_dst /        |                 |                 |
+   | set_tp_src /          |                 |                 |
+   | set_tp_dst /          |                 |                 |
+   | dec_ttl /             |                 |                 |
+   | set_ttl /             |                 |                 |
+   | set_mac_src /         |                 |                 |
+   | set_mac_dst)          |                 |                 |
+   +-----------------------+-----------------+-----------------+
+   | Jump                  | | DPDK 19.05    | | DPDK 19.02    |
+   |                       | | OFED 4.6.2    | | OFED 4.6.2    |
+   |                       | | RDMA-CORE V24 | | N/A           |
+   |                       | | ConnectX-5    | | ConnectX-5    |
+   +-----------------------+-----------------+-----------------+
+   | Mark / Flag           | | DPDK 19.05    | | DPDK 18.11    |
+   |                       | | OFED 4.6      | | OFED 4.5      |
+   |                       | | RDMA-CORE V24 | | RDMA-CORE V23 |
+   |                       | | ConnectX-5    | | ConnectX-4    |
+   +-----------------------+-----------------+-----------------+
+   | Port ID               | | DPDK 19.05    |     | N/A       |
+   |                       | | OFED 4.6      |     | N/A       |
+   |                       | | RDMA-CORE V24 |     | N/A       |
+   |                       | | ConnectX-5    |     | N/A       |
+   +-----------------------+-----------------+-----------------+
+
+* Minimum version for each component and nic.
+
 Notes for testpmd
 -----------------
 
@@ -848,7 +951,7 @@ Usage example
 -------------
 
 This section demonstrates how to launch **testpmd** with Mellanox
-ConnectX-4/ConnectX-5/ConnectX-6/Bluefield devices managed by librte_pmd_mlx5.
+ConnectX-4/ConnectX-5/ConnectX-6/BlueField devices managed by librte_pmd_mlx5.
 
 #. Load the kernel modules:
 

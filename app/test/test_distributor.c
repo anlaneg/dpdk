@@ -11,6 +11,7 @@
 #include <rte_mempool.h>
 #include <rte_mbuf.h>
 #include <rte_distributor.h>
+#include <rte_string_fns.h>
 
 #define ITER_POWER 20 /* log 2 of how many iterations we do when timing. */
 #define BURST 32
@@ -593,8 +594,8 @@ test_distributor(void)
 	int i;
 
 	if (rte_lcore_count() < 2) {
-		printf("ERROR: not enough cores to test distributor\n");
-		return -1;
+		printf("Not enough cores for distributor_autotest, expecting at least 2\n");
+		return TEST_SKIPPED;
 	}
 
 	if (db == NULL) {
@@ -642,9 +643,11 @@ test_distributor(void)
 
 		worker_params.dist = dist[i];
 		if (i)
-			sprintf(worker_params.name, "burst");
+			strlcpy(worker_params.name, "burst",
+					sizeof(worker_params.name));
 		else
-			sprintf(worker_params.name, "single");
+			strlcpy(worker_params.name, "single",
+					sizeof(worker_params.name));
 
 		rte_eal_mp_remote_launch(handle_work,
 				&worker_params, SKIP_MASTER);

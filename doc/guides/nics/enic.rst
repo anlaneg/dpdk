@@ -224,7 +224,7 @@ the use of SR-IOV.
     passthrough devices do not require libvirt, port profiles, and VM-FEX.
 
 
-.. _enic-genic-flow-api:
+.. _enic-generic-flow-api:
 
 Generic Flow API support
 ------------------------
@@ -259,12 +259,6 @@ Generic Flow API is supported. The baseline support is:
   - Actions: queue, mark, drop, flag, rss, passthru, and void
   - Selectors: 'is', 'spec' and 'mask'. 'last' is not supported
   - In total, up to 64 bytes of mask is allowed across all headers
-
-- **1400 and later series VICS with advanced filters enabled**
-
-  All the above plus:
-
-  - Action: count
 
 The VIC performs packet matching after applying VLAN strip. If VLAN
 stripping is enabled, EtherType in the ETH item corresponds to the
@@ -584,7 +578,7 @@ PMD.  Typically, the limit has to be raised to higher than 2GB.
 e.g., 2621440
 
 The compilation of any unused drivers can be disabled using the
-configuration file in config/ directory (e.g., config/common_linuxapp).
+configuration file in config/ directory (e.g., config/common_linux).
 This would help in bringing down the time taken for building the
 libraries and the initialization time of the application.
 

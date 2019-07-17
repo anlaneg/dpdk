@@ -1025,17 +1025,17 @@ iavf_recv_scattered_pkts(void *rx_queue, struct rte_mbuf **rx_pkts,
 		 */
 		rxm->next = NULL;
 		if (unlikely(rxq->crc_len > 0)) {
-			first_seg->pkt_len -= ETHER_CRC_LEN;
-			if (rx_packet_len <= ETHER_CRC_LEN) {
+			first_seg->pkt_len -= RTE_ETHER_CRC_LEN;
+			if (rx_packet_len <= RTE_ETHER_CRC_LEN) {
 				rte_pktmbuf_free_seg(rxm);
 				first_seg->nb_segs--;
 				last_seg->data_len =
 					(uint16_t)(last_seg->data_len -
-					(ETHER_CRC_LEN - rx_packet_len));
+					(RTE_ETHER_CRC_LEN - rx_packet_len));
 				last_seg->next = NULL;
 			} else
 				rxm->data_len = (uint16_t)(rx_packet_len -
-								ETHER_CRC_LEN);
+							RTE_ETHER_CRC_LEN);
 		}
 
 		first_seg->port = rxq->port_id;
@@ -1417,17 +1417,17 @@ iavf_txd_enable_checksum(uint64_t ol_flags,
 	switch (ol_flags & PKT_TX_L4_MASK) {
 	case PKT_TX_TCP_CKSUM:
 		*td_cmd |= IAVF_TX_DESC_CMD_L4T_EOFT_TCP;
-		*td_offset |= (sizeof(struct tcp_hdr) >> 2) <<
+		*td_offset |= (sizeof(struct rte_tcp_hdr) >> 2) <<
 			      IAVF_TX_DESC_LENGTH_L4_FC_LEN_SHIFT;
 		break;
 	case PKT_TX_SCTP_CKSUM:
 		*td_cmd |= IAVF_TX_DESC_CMD_L4T_EOFT_SCTP;
-		*td_offset |= (sizeof(struct sctp_hdr) >> 2) <<
+		*td_offset |= (sizeof(struct rte_sctp_hdr) >> 2) <<
 			      IAVF_TX_DESC_LENGTH_L4_FC_LEN_SHIFT;
 		break;
 	case PKT_TX_UDP_CKSUM:
 		*td_cmd |= IAVF_TX_DESC_CMD_L4T_EOFT_UDP;
-		*td_offset |= (sizeof(struct udp_hdr) >> 2) <<
+		*td_offset |= (sizeof(struct rte_udp_hdr) >> 2) <<
 			      IAVF_TX_DESC_LENGTH_L4_FC_LEN_SHIFT;
 		break;
 	default:
@@ -1449,9 +1449,6 @@ iavf_set_tso_ctx(struct rte_mbuf *mbuf, union iavf_tx_offload tx_offload)
 		return ctx_desc;
 	}
 
-	/* in case of non tunneling packet, the outer_l2_len and
-	 * outer_l3_len must be 0.
-	 */
 	hdr_len = tx_offload.l2_len +
 		  tx_offload.l3_len +
 		  tx_offload.l4_len;
@@ -1698,31 +1695,31 @@ iavf_prep_pkts(__rte_unused void *tx_queue, struct rte_mbuf **tx_pkts,
 		/* Check condition for nb_segs > IAVF_TX_MAX_MTU_SEG. */
 		if (!(ol_flags & PKT_TX_TCP_SEG)) {
 			if (m->nb_segs > IAVF_TX_MAX_MTU_SEG) {
-				rte_errno = -EINVAL;
+				rte_errno = EINVAL;
 				return i;
 			}
 		} else if ((m->tso_segsz < IAVF_MIN_TSO_MSS) ||
 			   (m->tso_segsz > IAVF_MAX_TSO_MSS)) {
 			/* MSS outside the range are considered malicious */
-			rte_errno = -EINVAL;
+			rte_errno = EINVAL;
 			return i;
 		}
 
 		if (ol_flags & IAVF_TX_OFFLOAD_NOTSUP_MASK) {
-			rte_errno = -ENOTSUP;
+			rte_errno = ENOTSUP;
 			return i;
 		}
 
 #ifdef RTE_LIBRTE_ETHDEV_DEBUG
 		ret = rte_validate_tx_offload(m);
 		if (ret != 0) {
-			rte_errno = ret;
+			rte_errno = -ret;
 			return i;
 		}
 #endif
 		ret = rte_net_intel_cksum_prepare(m);
 		if (ret != 0) {
-			rte_errno = ret;
+			rte_errno = -ret;
 			return i;
 		}
 	}

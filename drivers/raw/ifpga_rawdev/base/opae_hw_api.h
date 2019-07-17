@@ -11,6 +11,8 @@
 #include <sys/queue.h>
 
 #include "opae_osdep.h"
+#include "opae_intel_max10.h"
+#include "opae_eth_group.h"
 
 #ifndef PCI_MAX_RESOURCE
 #define PCI_MAX_RESOURCE 6
@@ -25,6 +27,7 @@ enum opae_adapter_type {
 
 /* OPAE Manager Data Structure */
 struct opae_manager_ops;
+struct opae_manager_networking_ops;
 
 /*
  * opae_manager has pointer to its parent adapter, as it could be able to manage
@@ -35,21 +38,46 @@ struct opae_manager {
 	const char *name;
 	struct opae_adapter *adapter;
 	struct opae_manager_ops *ops;
+	struct opae_manager_networking_ops *network_ops;
 	void *data;
 };
 
 /* FIXME: add more management ops, e.g power/thermal and etc */
 struct opae_manager_ops {
-	int (*flash)(struct opae_manager *mgr, int id, void *buffer,
+	int (*flash)(struct opae_manager *mgr, int id, const char *buffer,
 		     u32 size, u64 *status);
+	int (*get_eth_group_region_info)(struct opae_manager *mgr,
+			struct opae_eth_group_region_info *info);
+};
+
+/* networking management ops in FME */
+struct opae_manager_networking_ops {
+	int (*read_mac_rom)(struct opae_manager *mgr, int offset, void *buf,
+			int size);
+	int (*write_mac_rom)(struct opae_manager *mgr, int offset, void *buf,
+			int size);
+	int (*get_eth_group_nums)(struct opae_manager *mgr);
+	int (*get_eth_group_info)(struct opae_manager *mgr,
+			u8 group_id, struct opae_eth_group_info *info);
+	int (*eth_group_reg_read)(struct opae_manager *mgr, u8 group_id,
+			u8 type, u8 index, u16 addr, u32 *data);
+	int (*eth_group_reg_write)(struct opae_manager *mgr, u8 group_id,
+			u8 type, u8 index, u16 addr, u32 data);
+	int (*get_retimer_info)(struct opae_manager *mgr,
+			struct opae_retimer_info *info);
+	int (*get_retimer_status)(struct opae_manager *mgr,
+			struct opae_retimer_status *status);
 };
 
 /* OPAE Manager APIs */
 struct opae_manager *
-opae_manager_alloc(const char *name, struct opae_manager_ops *ops, void *data);
+opae_manager_alloc(const char *name, struct opae_manager_ops *ops,
+		struct opae_manager_networking_ops *network_ops, void *data);
 #define opae_manager_free(mgr) opae_free(mgr)
-int opae_manager_flash(struct opae_manager *mgr, int acc_id, void *buf,
+int opae_manager_flash(struct opae_manager *mgr, int acc_id, const char *buf,
 		       u32 size, u64 *status);
+int opae_manager_get_eth_group_region_info(struct opae_manager *mgr,
+		u8 group_id, struct opae_eth_group_region_info *info);
 
 /* OPAE Bridge Data Structure */
 struct opae_bridge_ops;
@@ -251,4 +279,28 @@ static inline void opae_adapter_remove_acc(struct opae_adapter *adapter,
 {
 	TAILQ_REMOVE(&adapter->acc_list, acc, node);
 }
+
+/* OPAE vBNG network datastruct */
+#define OPAE_ETHER_ADDR_LEN 6
+
+struct opae_ether_addr {
+	unsigned char addr_bytes[OPAE_ETHER_ADDR_LEN];
+} __attribute__((__packed__));
+
+/* OPAE vBNG network API*/
+int opae_manager_read_mac_rom(struct opae_manager *mgr, int port,
+		struct opae_ether_addr *addr);
+int opae_manager_write_mac_rom(struct opae_manager *mgr, int port,
+		struct opae_ether_addr *addr);
+int opae_manager_get_retimer_info(struct opae_manager *mgr,
+		struct opae_retimer_info *info);
+int opae_manager_get_retimer_status(struct opae_manager *mgr,
+		struct opae_retimer_status *status);
+int opae_manager_get_eth_group_nums(struct opae_manager *mgr);
+int opae_manager_get_eth_group_info(struct opae_manager *mgr,
+		u8 group_id, struct opae_eth_group_info *info);
+int opae_manager_eth_group_write_reg(struct opae_manager *mgr, u8 group_id,
+		u8 type, u8 index, u16 addr, u32 data);
+int opae_manager_eth_group_read_reg(struct opae_manager *mgr, u8 group_id,
+		u8 type, u8 index, u16 addr, u32 *data);
 #endif /* _OPAE_HW_API_H_*/

@@ -25,8 +25,8 @@ The application classifies the ports as *Protected* and *Unprotected*.
 Thus, traffic received on an Unprotected or Protected port is consider
 Inbound or Outbound respectively.
 
-The application also supports complete IPSec protocol offload to hardware
-(Look aside crypto accelarator or using ethernet device). It also support
+The application also supports complete IPsec protocol offload to hardware
+(Look aside crypto accelerator or using ethernet device). It also support
 inline ipsec processing by the supported ethernet device during transmission.
 These modes can be selected during the SA creation configuration.
 
@@ -69,7 +69,6 @@ Constraints
 *  No AH mode.
 *  Supported algorithms: AES-CBC, AES-CTR, AES-GCM, 3DES-CBC, HMAC-SHA1 and NULL.
 *  Each SA must be handle by a unique lcore (*1 RX queue per port*).
-*  No chained mbufs.
 
 Compiling the Application
 -------------------------
@@ -98,6 +97,8 @@ The application has a number of command line options::
                         --single-sa SAIDX
                         --rxoffload MASK
                         --txoffload MASK
+                        --mtu MTU
+                        --reassemble NUM
                         -f CONFIG_FILE_PATH
 
 Where:
@@ -111,9 +112,13 @@ Where:
 
 *   ``-u PORTMASK``: hexadecimal bitmask of unprotected ports
 
-*   ``-j FRAMESIZE``: *optional*. Enables jumbo frames with the maximum size
-    specified as FRAMESIZE. If an invalid value is provided as FRAMESIZE
-    then the default value 9000 is used.
+*   ``-j FRAMESIZE``: *optional*. data buffer size (in bytes),
+    in other words maximum data size for one segment.
+    Packets with length bigger then FRAMESIZE still can be received,
+    but will be segmented.
+    Default value: RTE_MBUF_DEFAULT_BUF_SIZE (2176)
+    Minimum value: RTE_MBUF_DEFAULT_BUF_SIZE (2176)
+    Maximum value: UINT16_MAX (65535).
 
 *   ``-l``: enables code-path that uses librte_ipsec.
 
@@ -124,7 +129,7 @@ Where:
 *   ``-e``: enables Security Association extended sequence number processing
     (available only with librte_ipsec code path).
 
-*   ``-a``: enables Security Association sequence number atomic behaviour
+*   ``-a``: enables Security Association sequence number atomic behavior
     (available only with librte_ipsec code path).
 
 *   ``--config (port,queue,lcore)[,(port,queue,lcore)]``: determines which queues
@@ -143,6 +148,15 @@ Where:
     (bitmask of DEV_TX_OFFLOAD_* values). It is an optional parameter and
     allows user to disable some of the TX HW offload capabilities.
     By default all HW TX offloads are enabled.
+
+*   ``--mtu MTU``: MTU value (in bytes) on all attached ethernet ports.
+    Outgoing packets with length bigger then MTU will be fragmented.
+    Incoming packets with length bigger then MTU will be discarded.
+    Default value: 1500.
+
+*   ``--reassemble NUM``: max number of entries in reassemble fragment table.
+    Zero value disables reassembly functionality.
+    Default value: 0.
 
 *   ``-f CONFIG_FILE_PATH``: the full path of text-based file containing all
     configuration items for running the application (See Configuration file
@@ -752,7 +766,7 @@ DUT OS(NIC1)--(IPsec)-->(NIC1)ipsec-secgw(TAP)--(plain)-->(TAP)SUT OS
 
 SUT OS(TAP)--(plain)-->(TAP)psec-secgw(NIC1)--(IPsec)-->(NIC1)DUT OS
 
-It then tries to perform some data transfer using the scheme decribed above.
+It then tries to perform some data transfer using the scheme described above.
 
 usage
 ~~~~~

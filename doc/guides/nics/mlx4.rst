@@ -83,7 +83,7 @@ These options can be modified in the ``.config`` file.
 
 - ``CONFIG_RTE_IBVERBS_LINK_STATIC`` (default **n**)
 
-  Embed static flavour of the dependencies **libibverbs** and **libmlx4**
+  Embed static flavor of the dependencies **libibverbs** and **libmlx4**
   in the PMD shared library or the executable static binary.
 
 - ``CONFIG_RTE_LIBRTE_MLX4_DEBUG`` (default **n**)
@@ -119,6 +119,17 @@ Run-time configuration
   times for additional ports. All ports are probed by default if left
   unspecified.
 
+- ``mr_ext_memseg_en`` parameter [int]
+
+  A nonzero value enables extending memseg when registering DMA memory. If
+  enabled, the number of entries in MR (Memory Region) lookup table on datapath
+  is minimized and it benefits performance. On the other hand, it worsens memory
+  utilization because registered memory is pinned by kernel driver. Even if a
+  page in the extended chunk is freed, that doesn't become reusable until the
+  entire memory is freed.
+
+  Enabled by default.
+
 Kernel module parameters
 ~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -144,6 +155,15 @@ below.
 
 Limitations
 -----------
+
+- For secondary process:
+
+  - Forked secondary process not supported.
+  - External memory unregistered in EAL memseg list cannot be used for DMA
+    unless such memory has been registered by ``mlx4_mr_update_ext_mp()`` in
+    primary process and remapped to the same virtual address in secondary
+    process. If the external memory is registered by primary process but has
+    different virtual address in secondary process, unexpected error may happen.
 
 - CRC stripping is supported by default and always reported as "true".
   The ability to enable/disable CRC stripping requires OFED version
@@ -233,7 +253,7 @@ thanks to these environment variables:
 Mellanox OFED as a fallback
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-- `Mellanox OFED`_ version: **4.4, 4.5**.
+- `Mellanox OFED`_ version: **4.4, 4.5, 4.6**.
 - firmware version: **2.42.5000** and above.
 
 .. _`Mellanox OFED`: http://www.mellanox.com/page/products_dyn?product_family=26&mtag=linux_sw_drivers

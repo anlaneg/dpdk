@@ -52,8 +52,8 @@ rte_vdpa_register_device(struct rte_vdpa_dev_addr *addr,
 	char device_name[MAX_VDPA_NAME_LEN];
 	int i;
 
-	if (vdpa_device_num >= MAX_VHOST_DEVICE)
-		return -1;//超限
+	if (vdpa_device_num >= MAX_VHOST_DEVICE || addr == NULL || ops == NULL)
+		return -1;
 
 	for (i = 0; i < MAX_VHOST_DEVICE; i++) {
 		dev = vdpa_devices[i];
@@ -106,6 +106,9 @@ rte_vdpa_find_device_id(struct rte_vdpa_dev_addr *addr)
 	struct rte_vdpa_device *dev;
 	int i;
 
+	if (addr == NULL)
+		return -1;
+
 	for (i = 0; i < MAX_VHOST_DEVICE; ++i) {
 		dev = vdpa_devices[i];
 		if (dev && is_same_vdpa_device(&dev->addr, addr))
@@ -131,7 +134,7 @@ rte_vdpa_get_device_num(void)
 	return vdpa_device_num;
 }
 
-int __rte_experimental
+int
 rte_vdpa_relay_vring_used(int vid, uint16_t qid, void *vring_m)
 {
 	struct virtio_net *dev = get_device(vid);
@@ -186,7 +189,7 @@ rte_vdpa_relay_vring_used(int vid, uint16_t qid, void *vring_m)
 				return -1;
 
 			if (unlikely(dlen < vq->desc[desc_id].len)) {
-				idesc = alloc_copy_ind_table(dev, vq,
+				idesc = vhost_alloc_copy_ind_table(dev, vq,
 						vq->desc[desc_id].addr,
 						vq->desc[desc_id].len);
 				if (unlikely(!idesc))

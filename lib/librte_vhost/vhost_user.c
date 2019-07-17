@@ -1294,8 +1294,12 @@ vhost_user_set_vring_kick(struct virtio_net **pdev, struct VhostUserMsg *msg,
 	 * the ring starts already enabled. Otherwise, it is enabled via
 	 * the SET_VRING_ENABLE message.
 	 */
-	if (!(dev->features & (1ULL << VHOST_USER_F_PROTOCOL_FEATURES)))
+	if (!(dev->features & (1ULL << VHOST_USER_F_PROTOCOL_FEATURES))) {
 		vq->enabled = 1;
+		if (dev->notify_ops->vring_state_changed)
+			dev->notify_ops->vring_state_changed(
+				dev->vid, file.index, 1);
+	}
 
 	if (vq->kickfd >= 0)
 		close(vq->kickfd);
@@ -1362,6 +1366,8 @@ vhost_user_get_vring_base(struct virtio_net **pdev,
 
 	vq->callfd = VIRTIO_UNINITIALIZED_EVENTFD;
 
+	vq->signalled_used_valid = false;
+
 	if (dev->dequeue_zero_copy)
 		free_zmbufs(vq);
 	if (vq_is_packed(dev)) {
@@ -1409,6 +1415,10 @@ vhost_user_set_vring_enable(struct virtio_net **pdev,
 		//通知vring状态发生变化
 		dev->notify_ops->vring_state_changed(dev->vid,
 				index, enable);
+
+	/* On disable, rings have to be stopped being processed. */
+	if (!enable && dev->dequeue_zero_copy)
+		drain_zmbuf_list(dev->virtqueue[index]);
 
 	dev->virtqueue[index]->enabled = enable;
 
@@ -1997,7 +2007,7 @@ vhost_user_msg_handler(int vid, int fd)
 	int did = -1;
 	int ret;
 	int unlock_required = 0;
-	uint32_t skip_master = 0;
+	bool handled;
 	int request;
 
 	//获得virtio_net
@@ -2018,28 +2028,31 @@ vhost_user_msg_handler(int vid, int fd)
 
 	//读取vhost消息
 	ret = read_vhost_message(fd, &msg);
-	if (ret <= 0 || msg.request.master >= VHOST_USER_MAX) {
+	if (ret <= 0) {
 		//读取失败或者发送的请求不认识，或者对端关闭，返回失败
 		if (ret < 0)
 			RTE_LOG(ERR, VHOST_CONFIG,
 				"vhost read message failed\n");
-		else if (ret == 0)
+		else
 			RTE_LOG(INFO, VHOST_CONFIG,
 				"vhost peer closed\n");
-		else
-			RTE_LOG(ERR, VHOST_CONFIG,
-				"vhost read incorrect message\n");
 
 		return -1;
 	}
 
 	ret = 0;
-	if (msg.request.master != VHOST_USER_IOTLB_MSG)
-		RTE_LOG(INFO, VHOST_CONFIG, "read message %s\n",
-			vhost_message_str[msg.request.master]);
-	else
-		RTE_LOG(DEBUG, VHOST_CONFIG, "read message %s\n",
-			vhost_message_str[msg.request.master]);
+	request = msg.request.master;
+	if (request > VHOST_USER_NONE && request < VHOST_USER_MAX &&
+			vhost_message_str[request]) {
+		if (request != VHOST_USER_IOTLB_MSG)
+			RTE_LOG(INFO, VHOST_CONFIG, "read message %s\n",
+				vhost_message_str[request]);
+		else
+			RTE_LOG(DEBUG, VHOST_CONFIG, "read message %s\n",
+				vhost_message_str[request]);
+	} else {
+		RTE_LOG(DEBUG, VHOST_CONFIG, "External request %d\n", request);
+	}
 
 	//校验队列索引，如果未创建，则创建它
 	ret = vhost_user_check_and_alloc_queue_pair(dev, &msg);
@@ -2057,7 +2070,7 @@ vhost_user_msg_handler(int vid, int fd)
 	 * would cause a dead lock.
 	 */
 	//对所有队列加锁
-	switch (msg.request.master) {
+	switch (request) {
 	case VHOST_USER_SET_FEATURES:
 	case VHOST_USER_SET_PROTOCOL_FEATURES:
 	case VHOST_USER_SET_OWNER:
@@ -2082,16 +2095,22 @@ vhost_user_msg_handler(int vid, int fd)
 
 	}
 
+	handled = false;
 	if (dev->extern_ops.pre_msg_handle) {
 		ret = (*dev->extern_ops.pre_msg_handle)(dev->vid,
-				(void *)&msg, &skip_master);
-		if (ret == RTE_VHOST_MSG_RESULT_ERR)
-			goto skip_to_reply;
-		else if (ret == RTE_VHOST_MSG_RESULT_REPLY)
+				(void *)&msg);
+		switch (ret) {
+		case RTE_VHOST_MSG_RESULT_REPLY:
 			send_vhost_reply(fd, &msg);
-
-		if (skip_master)
+			/* Fall-through */
+		case RTE_VHOST_MSG_RESULT_ERR:
+		case RTE_VHOST_MSG_RESULT_OK:
+			handled = true;
 			goto skip_to_post_handle;
+		case RTE_VHOST_MSG_RESULT_NOT_HANDLED:
+		default:
+			break;
+		}
 	}
 
 /**
@@ -2214,7 +2233,6 @@ vhost_user_msg_handler(int vid, int fd)
 		ret = vhost_user_iotlb_msg(&dev, &msg);
 		break;
 */
-	request = msg.request.master;
 	if (request > VHOST_USER_NONE && request < VHOST_USER_MAX) {
 		if (!vhost_message_handlers[request])
 			goto skip_to_post_handle;
@@ -2225,39 +2243,53 @@ vhost_user_msg_handler(int vid, int fd)
 			RTE_LOG(ERR, VHOST_CONFIG,
 				"Processing %s failed.\n",
 				vhost_message_str[request]);
+			handled = true;
 			break;
 		case RTE_VHOST_MSG_RESULT_OK:
 			RTE_LOG(DEBUG, VHOST_CONFIG,
 				"Processing %s succeeded.\n",
 				vhost_message_str[request]);
+			handled = true;
 			break;
 		case RTE_VHOST_MSG_RESULT_REPLY:
 			RTE_LOG(DEBUG, VHOST_CONFIG,
 				"Processing %s succeeded and needs reply.\n",
 				vhost_message_str[request]);
 			send_vhost_reply(fd, &msg);
+			handled = true;
+			break;
+		default:
 			break;
 		}
-	} else {
-		RTE_LOG(ERR, VHOST_CONFIG,
-			"Requested invalid message type %d.\n", request);
-		ret = RTE_VHOST_MSG_RESULT_ERR;
 	}
 
 skip_to_post_handle:
 	if (ret != RTE_VHOST_MSG_RESULT_ERR &&
 			dev->extern_ops.post_msg_handle) {
-		ret = (*dev->extern_ops.post_msg_handle)(
-				dev->vid, (void *)&msg);
-		if (ret == RTE_VHOST_MSG_RESULT_ERR)
-			goto skip_to_reply;
-		else if (ret == RTE_VHOST_MSG_RESULT_REPLY)
+		ret = (*dev->extern_ops.post_msg_handle)(dev->vid,
+				(void *)&msg);
+		switch (ret) {
+		case RTE_VHOST_MSG_RESULT_REPLY:
 			send_vhost_reply(fd, &msg);
+			/* Fall-through */
+		case RTE_VHOST_MSG_RESULT_ERR:
+		case RTE_VHOST_MSG_RESULT_OK:
+			handled = true;
+		case RTE_VHOST_MSG_RESULT_NOT_HANDLED:
+		default:
+			break;
+		}
 	}
 
-skip_to_reply:
 	if (unlock_required)
 		vhost_user_unlock_all_queue_pairs(dev);
+
+	/* If message was not handled at this stage, treat it as an error */
+	if (!handled) {
+		RTE_LOG(ERR, VHOST_CONFIG,
+			"vhost message (req: %d) was not handled.\n", request);
+		ret = RTE_VHOST_MSG_RESULT_ERR;
+	}
 
 	/*
 	 * If the request required a reply that was already sent,

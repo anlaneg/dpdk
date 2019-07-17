@@ -393,21 +393,6 @@ perf_event_rx_adapter_setup(struct evt_options *opt, uint8_t stride,
 				return ret;
 			}
 		}
-
-		ret = rte_eth_dev_start(prod);
-		if (ret) {
-			evt_err("Ethernet dev [%d] failed to start."
-					" Using synthetic producer", prod);
-			return ret;
-		}
-
-		ret = rte_event_eth_rx_adapter_start(prod);
-		if (ret) {
-			evt_err("Rx adapter[%d] start failed", prod);
-			return ret;
-		}
-		printf("%s: Port[%d] using Rx adapter[%d] started\n", __func__,
-				prod, prod);
 	}
 
 	return ret;
@@ -432,7 +417,7 @@ perf_event_timer_adapter_setup(struct test_perf *t)
 			.timer_adapter_id = i,
 			.timer_tick_ns = t->opt->timer_tick_nsec,
 			.max_tmo_ns = t->opt->max_tmo_nsec,
-			.nb_timers = 2 * 1024 * 1024,
+			.nb_timers = t->opt->pool_sz,
 			.flags = flags,
 		};
 
@@ -460,12 +445,6 @@ perf_event_timer_adapter_setup(struct test_perf *t)
 				return ret;
 			}
 			rte_service_runstate_set(service_id, 1);
-		}
-
-		ret = rte_event_timer_adapter_start(wl);
-		if (ret) {
-			evt_err("failed to Start event timer adapter %d", i);
-			return ret;
 		}
 		t->timer_adptr[i] = wl;
 	}
@@ -583,7 +562,8 @@ perf_opt_check(struct evt_options *opt, uint64_t nb_queues)
 		return -1;
 	}
 
-	if (opt->prod_type == EVT_PROD_TYPE_SYNT) {
+	if (opt->prod_type == EVT_PROD_TYPE_SYNT ||
+			opt->prod_type == EVT_PROD_TYPE_EVENT_TIMER_ADPTR) {
 		/* Validate producer lcores */
 		if (evt_lcores_has_overlap(opt->plcores,
 					rte_get_master_lcore())) {
@@ -679,7 +659,7 @@ perf_ethdev_setup(struct evt_test *test, struct evt_options *opt)
 	struct rte_eth_conf port_conf = {
 		.rxmode = {
 			.mq_mode = ETH_MQ_RX_RSS,
-			.max_rx_pkt_len = ETHER_MAX_LEN,
+			.max_rx_pkt_len = RTE_ETHER_MAX_LEN,
 			.split_hdr_size = 0,
 		},
 		.rx_adv_conf = {

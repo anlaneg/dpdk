@@ -108,10 +108,10 @@ const struct rss_type_info rss_type_table[] = {
 };
 
 static void
-print_ethaddr(const char *name, struct ether_addr *eth_addr)
+print_ethaddr(const char *name, struct rte_ether_addr *eth_addr)
 {
-	char buf[ETHER_ADDR_FMT_SIZE];
-	ether_format_addr(buf, ETHER_ADDR_FMT_SIZE, eth_addr);
+	char buf[RTE_ETHER_ADDR_FMT_SIZE];
+	rte_ether_format_addr(buf, RTE_ETHER_ADDR_FMT_SIZE, eth_addr);
 	printf("%s%s", name, buf);
 }
 
@@ -391,7 +391,7 @@ void
 port_infos_display(portid_t port_id)
 {
 	struct rte_port *port;
-	struct ether_addr mac_addr;
+	struct rte_ether_addr mac_addr;
 	struct rte_eth_link link;
 	struct rte_eth_dev_info dev_info;
 	int vlan_offload;
@@ -538,7 +538,7 @@ port_summary_header_display(void)
 void
 port_summary_display(portid_t port_id)
 {
-	struct ether_addr mac_addr;
+	struct rte_ether_addr mac_addr;
 	struct rte_eth_link link;
 	struct rte_eth_dev_info dev_info;
 	char name[RTE_ETH_NAME_MAX_LEN];
@@ -1063,9 +1063,16 @@ void
 port_mtu_set(portid_t port_id, uint16_t mtu)
 {
 	int diag;
+	struct rte_eth_dev_info dev_info;
 
 	if (port_id_is_invalid(port_id, ENABLED_WARN))
 		return;
+	rte_eth_dev_info_get(port_id, &dev_info);
+	if (mtu > dev_info.max_mtu || mtu < dev_info.min_mtu) {
+		printf("Set MTU failed. MTU:%u is not in valid range, min:%u - max:%u\n",
+			mtu, dev_info.min_mtu, dev_info.max_mtu);
+		return;
+	}
 	diag = rte_eth_dev_set_mtu(port_id, mtu);
 	if (diag == 0)
 		return;
@@ -2515,7 +2522,8 @@ set_tx_pkt_segments(unsigned *seg_lengths, unsigned nb_segs)
 	 * Check that each segment length is greater or equal than
 	 * the mbuf data sise.
 	 * Check also that the total packet length is greater or equal than the
-	 * size of an empty UDP/IP packet (sizeof(struct ether_hdr) + 20 + 8).
+	 * size of an empty UDP/IP packet (sizeof(struct rte_ether_hdr) +
+	 * 20 + 8).
 	 */
 	tx_pkt_len = 0;
 	for (i = 0; i < nb_segs; i++) {
@@ -2526,10 +2534,10 @@ set_tx_pkt_segments(unsigned *seg_lengths, unsigned nb_segs)
 		}
 		tx_pkt_len = (uint16_t)(tx_pkt_len + seg_lengths[i]);
 	}
-	if (tx_pkt_len < (sizeof(struct ether_hdr) + 20 + 8)) {
+	if (tx_pkt_len < (sizeof(struct rte_ether_hdr) + 20 + 8)) {
 		printf("total packet length=%u < %d - give up\n",
 				(unsigned) tx_pkt_len,
-				(int)(sizeof(struct ether_hdr) + 20 + 8));
+				(int)(sizeof(struct rte_ether_hdr) + 20 + 8));
 		return;
 	}
 
@@ -2961,7 +2969,6 @@ vlan_tpid_set(portid_t port_id, enum rte_vlan_type vlan_type, uint16_t tp_id)
 void
 tx_vlan_set(portid_t port_id, uint16_t vlan_id)
 {
-	int vlan_offload;
 	struct rte_eth_dev_info dev_info;
 
 	if (port_id_is_invalid(port_id, ENABLED_WARN))
@@ -2969,8 +2976,8 @@ tx_vlan_set(portid_t port_id, uint16_t vlan_id)
 	if (vlan_id_is_invalid(vlan_id))
 		return;
 
-	vlan_offload = rte_eth_dev_get_vlan_offload(port_id);
-	if (vlan_offload & ETH_VLAN_EXTEND_OFFLOAD) {
+	if (ports[port_id].dev_conf.txmode.offloads &
+	    DEV_TX_OFFLOAD_QINQ_INSERT) {
 		printf("Error, as QinQ has been enabled.\n");
 		return;
 	}
@@ -2989,7 +2996,6 @@ tx_vlan_set(portid_t port_id, uint16_t vlan_id)
 void
 tx_qinq_set(portid_t port_id, uint16_t vlan_id, uint16_t vlan_id_outer)
 {
-	int vlan_offload;
 	struct rte_eth_dev_info dev_info;
 
 	if (port_id_is_invalid(port_id, ENABLED_WARN))
@@ -2999,11 +3005,6 @@ tx_qinq_set(portid_t port_id, uint16_t vlan_id, uint16_t vlan_id_outer)
 	if (vlan_id_is_invalid(vlan_id_outer))
 		return;
 
-	vlan_offload = rte_eth_dev_get_vlan_offload(port_id);
-	if (!(vlan_offload & ETH_VLAN_EXTEND_OFFLOAD)) {
-		printf("Error, as QinQ hasn't been enabled.\n");
-		return;
-	}
 	rte_eth_dev_info_get(port_id, &dev_info);
 	if ((dev_info.tx_offload_capa & DEV_TX_OFFLOAD_QINQ_INSERT) == 0) {
 		printf("Error: qinq insert not supported by port %d\n",
@@ -3012,7 +3013,8 @@ tx_qinq_set(portid_t port_id, uint16_t vlan_id, uint16_t vlan_id_outer)
 	}
 
 	tx_vlan_reset(port_id);
-	ports[port_id].dev_conf.txmode.offloads |= DEV_TX_OFFLOAD_QINQ_INSERT;
+	ports[port_id].dev_conf.txmode.offloads |= (DEV_TX_OFFLOAD_VLAN_INSERT |
+						    DEV_TX_OFFLOAD_QINQ_INSERT);
 	ports[port_id].tx_vlan_id = vlan_id;
 	ports[port_id].tx_vlan_id_outer = vlan_id_outer;
 }
@@ -3458,7 +3460,7 @@ set_vf_rate_limit(portid_t port_id, uint16_t vf, uint16_t rate, uint64_t q_msk)
 static int
 mcast_addr_pool_extend(struct rte_port *port)
 {
-	struct ether_addr *mc_pool;
+	struct rte_ether_addr *mc_pool;
 	size_t mc_pool_size;
 
 	/*
@@ -3475,9 +3477,9 @@ mcast_addr_pool_extend(struct rte_port *port)
 	 * The previous test guarantees that port->mc_addr_nb is a multiple
 	 * of MCAST_POOL_INC.
 	 */
-	mc_pool_size = sizeof(struct ether_addr) * (port->mc_addr_nb +
+	mc_pool_size = sizeof(struct rte_ether_addr) * (port->mc_addr_nb +
 						    MCAST_POOL_INC);
-	mc_pool = (struct ether_addr *) realloc(port->mc_addr_pool,
+	mc_pool = (struct rte_ether_addr *) realloc(port->mc_addr_pool,
 						mc_pool_size);
 	if (mc_pool == NULL) {
 		printf("allocation of pool of %u multicast addresses failed\n",
@@ -3506,7 +3508,7 @@ mcast_addr_pool_remove(struct rte_port *port, uint32_t addr_idx)
 	}
 	memmove(&port->mc_addr_pool[addr_idx],
 		&port->mc_addr_pool[addr_idx + 1],
-		sizeof(struct ether_addr) * (port->mc_addr_nb - addr_idx));
+		sizeof(struct rte_ether_addr) * (port->mc_addr_nb - addr_idx));
 }
 
 static void
@@ -3525,7 +3527,7 @@ eth_port_multicast_addr_list_set(portid_t port_id)
 }
 
 void
-mcast_addr_add(portid_t port_id, struct ether_addr *mc_addr)
+mcast_addr_add(portid_t port_id, struct rte_ether_addr *mc_addr)
 {
 	struct rte_port *port;
 	uint32_t i;
@@ -3540,7 +3542,7 @@ mcast_addr_add(portid_t port_id, struct ether_addr *mc_addr)
 	 * in the pool of multicast addresses.
 	 */
 	for (i = 0; i < port->mc_addr_nb; i++) {
-		if (is_same_ether_addr(mc_addr, &port->mc_addr_pool[i])) {
+		if (rte_is_same_ether_addr(mc_addr, &port->mc_addr_pool[i])) {
 			printf("multicast address already filtered by port\n");
 			return;
 		}
@@ -3548,12 +3550,12 @@ mcast_addr_add(portid_t port_id, struct ether_addr *mc_addr)
 
 	if (mcast_addr_pool_extend(port) != 0)
 		return;
-	ether_addr_copy(mc_addr, &port->mc_addr_pool[i]);
+	rte_ether_addr_copy(mc_addr, &port->mc_addr_pool[i]);
 	eth_port_multicast_addr_list_set(port_id);
 }
 
 void
-mcast_addr_remove(portid_t port_id, struct ether_addr *mc_addr)
+mcast_addr_remove(portid_t port_id, struct rte_ether_addr *mc_addr)
 {
 	struct rte_port *port;
 	uint32_t i;
@@ -3567,7 +3569,7 @@ mcast_addr_remove(portid_t port_id, struct ether_addr *mc_addr)
 	 * Search the pool of multicast MAC addresses for the removed address.
 	 */
 	for (i = 0; i < port->mc_addr_nb; i++) {
-		if (is_same_ether_addr(mc_addr, &port->mc_addr_pool[i]))
+		if (rte_is_same_ether_addr(mc_addr, &port->mc_addr_pool[i]))
 			break;
 	}
 	if (i == port->mc_addr_nb) {

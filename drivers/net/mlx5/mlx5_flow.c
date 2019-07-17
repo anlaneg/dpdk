@@ -21,7 +21,6 @@
 
 #include <rte_common.h>
 #include <rte_ether.h>
-#include <rte_eth_ctrl.h>
 #include <rte_ethdev_driver.h>
 #include <rte_flow.h>
 #include <rte_flow_driver.h>
@@ -30,9 +29,10 @@
 
 #include "mlx5.h"
 #include "mlx5_defs.h"
-#include "mlx5_prm.h"
-#include "mlx5_glue.h"
 #include "mlx5_flow.h"
+#include "mlx5_glue.h"
+#include "mlx5_prm.h"
+#include "mlx5_rxtx.h"
 
 /* Dev ops structure defined in mlx5.c */
 extern const struct eth_dev_ops mlx5_dev_ops;
@@ -42,7 +42,6 @@ extern const struct eth_dev_ops mlx5_dev_ops_isolate;
 #ifdef HAVE_IBV_FLOW_DV_SUPPORT
 extern const struct mlx5_flow_driver_ops mlx5_flow_dv_drv_ops;
 #endif
-extern const struct mlx5_flow_driver_ops mlx5_flow_tcf_drv_ops;
 extern const struct mlx5_flow_driver_ops mlx5_flow_verbs_drv_ops;
 
 const struct mlx5_flow_driver_ops mlx5_flow_null_drv_ops;
@@ -52,7 +51,6 @@ const struct mlx5_flow_driver_ops *flow_drv_ops[] = {
 #ifdef HAVE_IBV_FLOW_DV_SUPPORT
 	[MLX5_FLOW_TYPE_DV] = &mlx5_flow_dv_drv_ops,
 #endif
-	[MLX5_FLOW_TYPE_TCF] = &mlx5_flow_tcf_drv_ops,
 	[MLX5_FLOW_TYPE_VERBS] = &mlx5_flow_verbs_drv_ops,
 	[MLX5_FLOW_TYPE_MAX] = &mlx5_flow_null_drv_ops
 };
@@ -315,6 +313,7 @@ static struct mlx5_flow_tunnel_info tunnels_info[] = {
 int
 mlx5_flow_discover_priorities(struct rte_eth_dev *dev)
 {
+	struct mlx5_priv *priv = dev->data->dev_private;
 	struct {
 		struct ibv_flow_attr attr;
 		struct ibv_flow_spec_eth eth;
@@ -322,6 +321,7 @@ mlx5_flow_discover_priorities(struct rte_eth_dev *dev)
 	} flow_attr = {
 		.attr = {
 			.num_of_specs = 2,
+			.port = (uint8_t)priv->ibv_port,
 		},
 		.eth = {
 			.type = IBV_FLOW_SPEC_ETH,
@@ -786,7 +786,7 @@ mlx5_flow_validate_action_mark(const struct rte_flow_action *action,
  *   Pointer to error structure.
  *
  * @return
- *   0 on success, a negative errno value otherwise and rte_ernno is set.
+ *   0 on success, a negative errno value otherwise and rte_errno is set.
  */
 int
 mlx5_flow_validate_action_drop(uint64_t action_flags,
@@ -829,7 +829,7 @@ mlx5_flow_validate_action_drop(uint64_t action_flags,
  *   Pointer to error structure.
  *
  * @return
- *   0 on success, a negative errno value otherwise and rte_ernno is set.
+ *   0 on success, a negative errno value otherwise and rte_errno is set.
  */
 int
 mlx5_flow_validate_action_queue(const struct rte_flow_action *action,
@@ -879,21 +879,25 @@ mlx5_flow_validate_action_queue(const struct rte_flow_action *action,
  *   Pointer to the Ethernet device structure.
  * @param[in] attr
  *   Attributes of flow that includes this action.
+ * @param[in] item_flags
+ *   Items that were detected.
  * @param[out] error
  *   Pointer to error structure.
  *
  * @return
- *   0 on success, a negative errno value otherwise and rte_ernno is set.
+ *   0 on success, a negative errno value otherwise and rte_errno is set.
  */
 int
 mlx5_flow_validate_action_rss(const struct rte_flow_action *action,
 			      uint64_t action_flags,
 			      struct rte_eth_dev *dev,
 			      const struct rte_flow_attr *attr,
+			      uint64_t item_flags,
 			      struct rte_flow_error *error)
 {
 	struct mlx5_priv *priv = dev->data->dev_private;
 	const struct rte_flow_action_rss *rss = action->conf;
+	int tunnel = !!(item_flags & MLX5_FLOW_LAYER_TUNNEL);
 	unsigned int i;
 
 	if (action_flags & MLX5_FLOW_FATE_ACTIONS)
@@ -962,6 +966,11 @@ mlx5_flow_validate_action_rss(const struct rte_flow_action *action,
 					  RTE_FLOW_ERROR_TYPE_ATTR_EGRESS, NULL,
 					  "rss action not supported for "
 					  "egress");
+	if (rss->level > 1 &&  !tunnel)
+		return rte_flow_error_set(error, EINVAL,
+					  RTE_FLOW_ERROR_TYPE_ACTION_CONF, NULL,
+					  "inner RSS is not supported for "
+					  "non-tunnel flows");
 	return 0;
 }
 
@@ -976,7 +985,7 @@ mlx5_flow_validate_action_rss(const struct rte_flow_action *action,
  *   Pointer to error structure.
  *
  * @return
- *   0 on success, a negative errno value otherwise and rte_ernno is set.
+ *   0 on success, a negative errno value otherwise and rte_errno is set.
  */
 int
 mlx5_flow_validate_action_count(struct rte_eth_dev *dev __rte_unused,
@@ -1026,7 +1035,7 @@ mlx5_flow_validate_attributes(struct rte_eth_dev *dev,
 		return rte_flow_error_set(error, ENOTSUP,
 					  RTE_FLOW_ERROR_TYPE_ATTR_EGRESS, NULL,
 					  "egress is not supported");
-	if (attributes->transfer)
+	if (attributes->transfer && !priv->config.dv_esw_en)
 		return rte_flow_error_set(error, ENOTSUP,
 					  RTE_FLOW_ERROR_TYPE_ATTR_TRANSFER,
 					  NULL, "transfer is not supported");
@@ -1283,7 +1292,7 @@ mlx5_flow_validate_item_ipv6(const struct rte_flow_item *item,
  * @param[in] target_protocol
  *   The next protocol in the previous item.
  * @param[in] flow_mask
- *   mlx5 flow-specific (TCF, DV, verbs, etc.) supported header fields mask.
+ *   mlx5 flow-specific (DV, verbs, etc.) supported header fields mask.
  * @param[out] error
  *   Pointer to error structure.
  *
@@ -1683,19 +1692,20 @@ flow_null_validate(struct rte_eth_dev *dev __rte_unused,
 		   const struct rte_flow_attr *attr __rte_unused,
 		   const struct rte_flow_item items[] __rte_unused,
 		   const struct rte_flow_action actions[] __rte_unused,
-		   struct rte_flow_error *error __rte_unused)
+		   struct rte_flow_error *error)
 {
-	rte_errno = ENOTSUP;
-	return -rte_errno;
+	return rte_flow_error_set(error, ENOTSUP,
+				  RTE_FLOW_ERROR_TYPE_UNSPECIFIED, NULL, NULL);
 }
 
 static struct mlx5_flow *
 flow_null_prepare(const struct rte_flow_attr *attr __rte_unused,
 		  const struct rte_flow_item items[] __rte_unused,
 		  const struct rte_flow_action actions[] __rte_unused,
-		  struct rte_flow_error *error __rte_unused)
+		  struct rte_flow_error *error)
 {
-	rte_errno = ENOTSUP;
+	rte_flow_error_set(error, ENOTSUP,
+			   RTE_FLOW_ERROR_TYPE_UNSPECIFIED, NULL, NULL);
 	return NULL;
 }
 
@@ -1705,19 +1715,19 @@ flow_null_translate(struct rte_eth_dev *dev __rte_unused,
 		    const struct rte_flow_attr *attr __rte_unused,
 		    const struct rte_flow_item items[] __rte_unused,
 		    const struct rte_flow_action actions[] __rte_unused,
-		    struct rte_flow_error *error __rte_unused)
+		    struct rte_flow_error *error)
 {
-	rte_errno = ENOTSUP;
-	return -rte_errno;
+	return rte_flow_error_set(error, ENOTSUP,
+				  RTE_FLOW_ERROR_TYPE_UNSPECIFIED, NULL, NULL);
 }
 
 static int
 flow_null_apply(struct rte_eth_dev *dev __rte_unused,
 		struct rte_flow *flow __rte_unused,
-		struct rte_flow_error *error __rte_unused)
+		struct rte_flow_error *error)
 {
-	rte_errno = ENOTSUP;
-	return -rte_errno;
+	return rte_flow_error_set(error, ENOTSUP,
+				  RTE_FLOW_ERROR_TYPE_UNSPECIFIED, NULL, NULL);
 }
 
 static void
@@ -1737,10 +1747,10 @@ flow_null_query(struct rte_eth_dev *dev __rte_unused,
 		struct rte_flow *flow __rte_unused,
 		const struct rte_flow_action *actions __rte_unused,
 		void *data __rte_unused,
-		struct rte_flow_error *error __rte_unused)
+		struct rte_flow_error *error)
 {
-	rte_errno = ENOTSUP;
-	return -rte_errno;
+	return rte_flow_error_set(error, ENOTSUP,
+				  RTE_FLOW_ERROR_TYPE_UNSPECIFIED, NULL, NULL);
 }
 
 /* Void driver to protect from null pointer reference. */
@@ -1772,9 +1782,9 @@ flow_get_drv_type(struct rte_eth_dev *dev, const struct rte_flow_attr *attr)
 	struct mlx5_priv *priv = dev->data->dev_private;
 	enum mlx5_flow_drv_type type = MLX5_FLOW_TYPE_MAX;
 
-	if (attr->transfer)
-		type = MLX5_FLOW_TYPE_TCF;
-	else
+	if (attr->transfer && priv->config.dv_esw_en)
+		type = MLX5_FLOW_TYPE_DV;
+	if (!attr->transfer)
 		type = priv->config.dv_flow_en ? MLX5_FLOW_TYPE_DV :
 						 MLX5_FLOW_TYPE_VERBS;
 	return type;
@@ -1798,7 +1808,7 @@ flow_get_drv_type(struct rte_eth_dev *dev, const struct rte_flow_attr *attr)
  *   Pointer to the error structure.
  *
  * @return
- *   0 on success, a negative errno value otherwise and rte_ernno is set.
+ *   0 on success, a negative errno value otherwise and rte_errno is set.
  */
 static inline int
 flow_drv_validate(struct rte_eth_dev *dev,
@@ -1821,7 +1831,7 @@ flow_drv_validate(struct rte_eth_dev *dev,
  * initializes the device flow and returns the pointer.
  *
  * @note
- *   This function initializes device flow structure such as dv, tcf or verbs in
+ *   This function initializes device flow structure such as dv or verbs in
  *   struct mlx5_flow. However, it is caller's responsibility to initialize the
  *   rest. For example, adding returning device flow to flow->dev_flow list and
  *   setting backward reference to the flow should be done out of this function.
@@ -1837,7 +1847,7 @@ flow_drv_validate(struct rte_eth_dev *dev,
  *   Pointer to the error structure.
  *
  * @return
- *   Pointer to device flow on success, otherwise NULL and rte_ernno is set.
+ *   Pointer to device flow on success, otherwise NULL and rte_errno is set.
  */
 static inline struct mlx5_flow *
 flow_drv_prepare(const struct rte_flow *flow,
@@ -1881,7 +1891,7 @@ flow_drv_prepare(const struct rte_flow *flow,
  *   Pointer to the error structure.
  *
  * @return
- *   0 on success, a negative errno value otherwise and rte_ernno is set.
+ *   0 on success, a negative errno value otherwise and rte_errno is set.
  */
 static inline int
 flow_drv_translate(struct rte_eth_dev *dev, struct mlx5_flow *dev_flow,
@@ -2081,7 +2091,13 @@ flow_list_create(struct rte_eth_dev *dev, struct mlx5_flows *list,
 	else
 		flow_size += RTE_ALIGN_CEIL(sizeof(uint16_t), sizeof(void *));
 	flow = rte_calloc(__func__, 1, flow_size, 0);
+	if (!flow) {
+		rte_errno = ENOMEM;
+		return NULL;
+	}
 	flow->drv_type = flow_get_drv_type(dev, attr);
+	flow->ingress = attr->ingress;
+	flow->transfer = attr->transfer;
 	assert(flow->drv_type > MLX5_FLOW_TYPE_MIN &&
 	       flow->drv_type < MLX5_FLOW_TYPE_MAX);
 	flow->queue = (void *)(flow + 1);
@@ -2143,7 +2159,7 @@ mlx5_flow_create(struct rte_eth_dev *dev,
 		 const struct rte_flow_action actions[],
 		 struct rte_flow_error *error)
 {
-	struct mlx5_priv *priv = (struct mlx5_priv *)dev->data->dev_private;
+	struct mlx5_priv *priv = dev->data->dev_private;
 
 	return flow_list_create(dev, &priv->flows,
 				attr, items, actions, error);
@@ -2536,13 +2552,13 @@ flow_fdir_filter_convert(struct rte_eth_dev *dev,
 	case RTE_ETH_FLOW_NONFRAG_IPV4_UDP:
 	case RTE_ETH_FLOW_NONFRAG_IPV4_TCP:
 	case RTE_ETH_FLOW_NONFRAG_IPV4_OTHER:
-		attributes->l3.ipv4.hdr = (struct ipv4_hdr){
+		attributes->l3.ipv4.hdr = (struct rte_ipv4_hdr){
 			.src_addr = input->flow.ip4_flow.src_ip,
 			.dst_addr = input->flow.ip4_flow.dst_ip,
 			.time_to_live = input->flow.ip4_flow.ttl,
 			.type_of_service = input->flow.ip4_flow.tos,
 		};
-		attributes->l3_mask.ipv4.hdr = (struct ipv4_hdr){
+		attributes->l3_mask.ipv4.hdr = (struct rte_ipv4_hdr){
 			.src_addr = mask->ipv4_mask.src_ip,
 			.dst_addr = mask->ipv4_mask.dst_ip,
 			.time_to_live = mask->ipv4_mask.ttl,
@@ -2558,7 +2574,7 @@ flow_fdir_filter_convert(struct rte_eth_dev *dev,
 	case RTE_ETH_FLOW_NONFRAG_IPV6_UDP:
 	case RTE_ETH_FLOW_NONFRAG_IPV6_TCP:
 	case RTE_ETH_FLOW_NONFRAG_IPV6_OTHER:
-		attributes->l3.ipv6.hdr = (struct ipv6_hdr){
+		attributes->l3.ipv6.hdr = (struct rte_ipv6_hdr){
 			.hop_limits = input->flow.ipv6_flow.hop_limits,
 			.proto = input->flow.ipv6_flow.proto,
 		};
@@ -2590,11 +2606,11 @@ flow_fdir_filter_convert(struct rte_eth_dev *dev,
 	/* Handle L4. */
 	switch (fdir_filter->input.flow_type) {
 	case RTE_ETH_FLOW_NONFRAG_IPV4_UDP:
-		attributes->l4.udp.hdr = (struct udp_hdr){
+		attributes->l4.udp.hdr = (struct rte_udp_hdr){
 			.src_port = input->flow.udp4_flow.src_port,
 			.dst_port = input->flow.udp4_flow.dst_port,
 		};
-		attributes->l4_mask.udp.hdr = (struct udp_hdr){
+		attributes->l4_mask.udp.hdr = (struct rte_udp_hdr){
 			.src_port = mask->src_port_mask,
 			.dst_port = mask->dst_port_mask,
 		};
@@ -2605,11 +2621,11 @@ flow_fdir_filter_convert(struct rte_eth_dev *dev,
 		};
 		break;
 	case RTE_ETH_FLOW_NONFRAG_IPV4_TCP:
-		attributes->l4.tcp.hdr = (struct tcp_hdr){
+		attributes->l4.tcp.hdr = (struct rte_tcp_hdr){
 			.src_port = input->flow.tcp4_flow.src_port,
 			.dst_port = input->flow.tcp4_flow.dst_port,
 		};
-		attributes->l4_mask.tcp.hdr = (struct tcp_hdr){
+		attributes->l4_mask.tcp.hdr = (struct rte_tcp_hdr){
 			.src_port = mask->src_port_mask,
 			.dst_port = mask->dst_port_mask,
 		};
@@ -2620,11 +2636,11 @@ flow_fdir_filter_convert(struct rte_eth_dev *dev,
 		};
 		break;
 	case RTE_ETH_FLOW_NONFRAG_IPV6_UDP:
-		attributes->l4.udp.hdr = (struct udp_hdr){
+		attributes->l4.udp.hdr = (struct rte_udp_hdr){
 			.src_port = input->flow.udp6_flow.src_port,
 			.dst_port = input->flow.udp6_flow.dst_port,
 		};
-		attributes->l4_mask.udp.hdr = (struct udp_hdr){
+		attributes->l4_mask.udp.hdr = (struct rte_udp_hdr){
 			.src_port = mask->src_port_mask,
 			.dst_port = mask->dst_port_mask,
 		};
@@ -2635,11 +2651,11 @@ flow_fdir_filter_convert(struct rte_eth_dev *dev,
 		};
 		break;
 	case RTE_ETH_FLOW_NONFRAG_IPV6_TCP:
-		attributes->l4.tcp.hdr = (struct tcp_hdr){
+		attributes->l4.tcp.hdr = (struct rte_tcp_hdr){
 			.src_port = input->flow.tcp6_flow.src_port,
 			.dst_port = input->flow.tcp6_flow.dst_port,
 		};
-		attributes->l4_mask.tcp.hdr = (struct tcp_hdr){
+		attributes->l4_mask.tcp.hdr = (struct rte_tcp_hdr){
 			.src_port = mask->src_port_mask,
 			.dst_port = mask->dst_port_mask,
 		};

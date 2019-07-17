@@ -16,6 +16,7 @@
 #include <sys/io.h>
 #endif
 
+#include <rte_string_fns.h>
 #include <rte_log.h>
 #include <rte_pci.h>
 #include <rte_bus_pci.h>
@@ -286,7 +287,7 @@ pci_uio_alloc_resource(struct rte_pci_device *dev,
 	}
 
 	//填充uio_res的path及pci_addr
-	snprintf((*uio_res)->path, sizeof((*uio_res)->path), "%s", devname);
+	strlcpy((*uio_res)->path, devname, sizeof((*uio_res)->path));
 	memcpy(&(*uio_res)->pci_addr, &dev->addr, sizeof((*uio_res)->pci_addr));
 
 	return 0;
@@ -332,12 +333,11 @@ pci_uio_map_resource_by_index(struct rte_pci_device *dev, int res_idx,
 			loc->domain, loc->bus, loc->devid,
 			loc->function, res_idx);
 
-		if (access(devname, R_OK|W_OK) != -1) {
-			fd = open(devname, O_RDWR);
-			if (fd < 0)
-				RTE_LOG(INFO, EAL, "%s cannot be mapped. "
-					"Fall-back to non prefetchable mode.\n",
-					devname);
+		fd = open(devname, O_RDWR);
+		if (fd < 0 && errno != ENOENT) {
+			RTE_LOG(INFO, EAL, "%s cannot be mapped. "
+				"Fall-back to non prefetchable mode.\n",
+				devname);
 		}
 	}
 

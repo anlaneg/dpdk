@@ -6,8 +6,13 @@ version = 1
 subdir('base')
 objs = [base_objs]
 
+dep = dependency('libfdt', required: false)
+if not dep.found()
+	build = false
+	reason = 'missing dependency, "libfdt"'
+endif
 deps += ['rawdev', 'pci', 'bus_pci', 'kvargs',
-	'bus_vdev', 'bus_ifpga']
+	'bus_vdev', 'bus_ifpga', 'net']
 sources = files('ifpga_rawdev.c')
 
 includes += include_directories('base')

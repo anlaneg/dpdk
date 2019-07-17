@@ -7,6 +7,7 @@
 #include <stdalign.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <stdlib.h>
 
 /*
  * Not needed by this file; included to work around the lack of off_t
@@ -84,6 +85,13 @@ mlx5_glue_query_device_ex(struct ibv_context *context,
 			  struct ibv_device_attr_ex *attr)
 {
 	return ibv_query_device_ex(context, input, attr);
+}
+
+static int
+mlx5_glue_query_rt_values_ex(struct ibv_context *context,
+			  struct ibv_values_ex *values)
+{
+	return ibv_query_rt_values_ex(context, values);
 }
 
 static int
@@ -175,10 +183,24 @@ mlx5_glue_destroy_flow(struct ibv_flow *flow_id)
 }
 
 static int
-mlx5_glue_destroy_flow_action(struct ibv_flow_action *action)
+mlx5_glue_destroy_flow_action(void *action)
 {
 #ifdef HAVE_IBV_FLOW_DV_SUPPORT
-	return ibv_destroy_flow_action(action);
+#ifdef HAVE_MLX5DV_DR
+	return mlx5dv_dr_action_destroy(action);
+#else
+	struct mlx5dv_flow_action_attr *attr = action;
+	int res = 0;
+	switch (attr->type) {
+	case MLX5DV_FLOW_ACTION_TAG:
+		break;
+	default:
+		res = ibv_destroy_flow_action(attr->action);
+		break;
+	}
+	free(action);
+	return res;
+#endif
 #else
 	(void)action;
 	return ENOTSUP;
@@ -281,6 +303,7 @@ mlx5_glue_create_counters(struct ibv_context *context,
 #ifndef HAVE_IBV_DEVICE_COUNTERS_SET_V45
 	(void)context;
 	(void)init_attr;
+	errno = ENOTSUP;
 	return NULL;
 #else
 	return ibv_create_counters(context, init_attr);
@@ -355,6 +378,93 @@ mlx5_glue_cq_ex_to_cq(struct ibv_cq_ex *cq)
 	return ibv_cq_ex_to_cq(cq);
 }
 
+static void *
+mlx5_glue_dr_create_flow_action_dest_flow_tbl(void *tbl)
+{
+#ifdef HAVE_MLX5DV_DR
+	return mlx5dv_dr_action_create_dest_table(tbl);
+#else
+	(void)tbl;
+	errno = ENOTSUP;
+	return NULL;
+#endif
+}
+
+static void *
+mlx5_glue_dr_create_flow_action_dest_vport(void *domain, uint32_t vport)
+{
+#ifdef HAVE_MLX5DV_DR_ESWITCH
+	return mlx5dv_dr_action_create_dest_vport(domain, vport);
+#else
+	(void)domain;
+	(void)vport;
+	errno = ENOTSUP;
+	return NULL;
+#endif
+}
+
+static void *
+mlx5_glue_dr_create_flow_action_drop(void)
+{
+#ifdef HAVE_MLX5DV_DR_ESWITCH
+	return mlx5dv_dr_action_create_drop();
+#else
+	errno = ENOTSUP;
+	return NULL;
+#endif
+}
+
+static void *
+mlx5_glue_dr_create_flow_tbl(void *domain, uint32_t level)
+{
+#ifdef HAVE_MLX5DV_DR
+	return mlx5dv_dr_table_create(domain, level);
+#else
+	(void)domain;
+	(void)level;
+	errno = ENOTSUP;
+	return NULL;
+#endif
+}
+
+static int
+mlx5_glue_dr_destroy_flow_tbl(void *tbl)
+{
+#ifdef HAVE_MLX5DV_DR
+	return mlx5dv_dr_table_destroy(tbl);
+#else
+	(void)tbl;
+	errno = ENOTSUP;
+	return errno;
+#endif
+}
+
+static void *
+mlx5_glue_dr_create_domain(struct ibv_context *ctx,
+			   enum  mlx5dv_dr_domain_type domain)
+{
+#ifdef HAVE_MLX5DV_DR
+	return mlx5dv_dr_domain_create(ctx, domain);
+#else
+	(void)ctx;
+	(void)domain;
+	errno = ENOTSUP;
+	return NULL;
+#endif
+}
+
+static int
+mlx5_glue_dr_destroy_domain(void *domain)
+{
+#ifdef HAVE_MLX5DV_DR
+	return mlx5dv_dr_domain_destroy(domain);
+#else
+	(void)domain;
+	errno = ENOTSUP;
+	return errno;
+#endif
+}
+
 static struct ibv_cq_ex *
 mlx5_glue_dv_create_cq(struct ibv_context *context,
 		       struct ibv_cq_init_attr_ex *cq_attr,
@@ -372,6 +482,7 @@ mlx5_glue_dv_create_wq(struct ibv_context *context,
 	(void)context;
 	(void)wq_attr;
 	(void)mlx5_wq_attr;
+	errno = ENOTSUP;
 	return NULL;
 #else
 	return mlx5dv_create_wq(context, wq_attr, mlx5_wq_attr);
@@ -409,92 +520,237 @@ mlx5_glue_dv_create_qp(struct ibv_context *context,
 	(void)context;
 	(void)qp_init_attr_ex;
 	(void)dv_qp_init_attr;
+	errno = ENOTSUP;
 	return NULL;
 #endif
 }
 
-static struct mlx5dv_flow_matcher *
+static void *
 mlx5_glue_dv_create_flow_matcher(struct ibv_context *context,
-				 struct mlx5dv_flow_matcher_attr *matcher_attr)
+				 struct mlx5dv_flow_matcher_attr *matcher_attr,
+				 void *tbl)
 {
 #ifdef HAVE_IBV_FLOW_DV_SUPPORT
+#ifdef HAVE_MLX5DV_DR
+	(void)context;
+	return mlx5dv_dr_matcher_create(tbl, matcher_attr->priority,
+					matcher_attr->match_criteria_enable,
+					matcher_attr->match_mask);
+#else
+	(void)tbl;
 	return mlx5dv_create_flow_matcher(context, matcher_attr);
+#endif
 #else
 	(void)context;
 	(void)matcher_attr;
+	(void)tbl;
+	errno = ENOTSUP;
 	return NULL;
 #endif
 }
 
-static struct ibv_flow *
-mlx5_glue_dv_create_flow(struct mlx5dv_flow_matcher *matcher,
-			 struct mlx5dv_flow_match_parameters *match_value,
+static void *
+mlx5_glue_dv_create_flow(void *matcher,
+			 void *match_value,
 			 size_t num_actions,
-			 struct mlx5dv_flow_action_attr *actions_attr)
+			 void *actions[])
 {
 #ifdef HAVE_IBV_FLOW_DV_SUPPORT
+#ifdef HAVE_MLX5DV_DR
+	return mlx5dv_dr_rule_create(matcher, match_value, num_actions,
+				     (struct mlx5dv_dr_action **)actions);
+#else
+	struct mlx5dv_flow_action_attr actions_attr[8];
+
+	if (num_actions > 8)
+		return NULL;
+	for (size_t i = 0; i < num_actions; i++)
+		actions_attr[i] =
+			*((struct mlx5dv_flow_action_attr *)(actions[i]));
 	return mlx5dv_create_flow(matcher, match_value,
 				  num_actions, actions_attr);
+#endif
 #else
 	(void)matcher;
 	(void)match_value;
 	(void)num_actions;
-	(void)actions_attr;
+	(void)actions;
 	return NULL;
+#endif
+}
+
+static void *
+mlx5_glue_dv_create_flow_action_counter(void *counter_obj, uint32_t offset)
+{
+#ifdef HAVE_IBV_FLOW_DV_SUPPORT
+#ifdef HAVE_MLX5DV_DR
+	return mlx5dv_dr_action_create_flow_counter(counter_obj, offset);
+#else
+	struct mlx5dv_flow_action_attr *action;
+
+	(void)offset;
+	action = malloc(sizeof(*action));
+	if (!action)
+		return NULL;
+	action->type = MLX5DV_FLOW_ACTION_COUNTERS_DEVX;
+	action->obj = counter_obj;
+	return action;
+#endif
+#else
+	(void)counter_obj;
+	(void)offset;
+	errno = ENOTSUP;
+	return NULL;
+#endif
+}
+
+static void *
+mlx5_glue_dv_create_flow_action_dest_ibv_qp(void *qp)
+{
+#ifdef HAVE_IBV_FLOW_DV_SUPPORT
+#ifdef HAVE_MLX5DV_DR
+	return mlx5dv_dr_action_create_dest_ibv_qp(qp);
+#else
+	struct mlx5dv_flow_action_attr *action;
+
+	action = malloc(sizeof(*action));
+	if (!action)
+		return NULL;
+	action->type = MLX5DV_FLOW_ACTION_DEST_IBV_QP;
+	action->obj = qp;
+	return action;
+#endif
+#else
+	(void)qp;
+	errno = ENOTSUP;
+	return NULL;
+#endif
+}
+
+static void *
+mlx5_glue_dv_create_flow_action_modify_header
+					(struct ibv_context *ctx,
+					 enum mlx5dv_flow_table_type ft_type,
+					 void *domain, uint64_t flags,
+					 size_t actions_sz,
+					 uint64_t actions[])
+{
+#ifdef HAVE_IBV_FLOW_DV_SUPPORT
+#ifdef HAVE_MLX5DV_DR
+	(void)ctx;
+	(void)ft_type;
+	return mlx5dv_dr_action_create_modify_header(domain, flags, actions_sz,
+						     (__be64 *)actions);
+#else
+	struct mlx5dv_flow_action_attr *action;
+
+	(void)domain;
+	(void)flags;
+	action = malloc(sizeof(*action));
+	if (!action)
+		return NULL;
+	action->type = MLX5DV_FLOW_ACTION_IBV_FLOW_ACTION;
+	action->action = mlx5dv_create_flow_action_modify_header
+		(ctx, actions_sz, actions, ft_type);
+	return action;
+#endif
+#else
+	(void)ctx;
+	(void)ft_type;
+	(void)domain;
+	(void)flags;
+	(void)actions_sz;
+	(void)actions;
+	errno = ENOTSUP;
+	return NULL;
+#endif
+}
+
+static void *
+mlx5_glue_dv_create_flow_action_packet_reformat
+		(struct ibv_context *ctx,
+		 enum mlx5dv_flow_action_packet_reformat_type reformat_type,
+		 enum mlx5dv_flow_table_type ft_type,
+		 struct mlx5dv_dr_domain *domain,
+		 uint32_t flags, size_t data_sz, void *data)
+{
+#ifdef HAVE_IBV_FLOW_DV_SUPPORT
+#ifdef HAVE_MLX5DV_DR
+	(void)ctx;
+	(void)ft_type;
+	return mlx5dv_dr_action_create_packet_reformat(domain, flags,
+						       reformat_type, data_sz,
+						       data);
+#else
+	(void)domain;
+	(void)flags;
+	struct mlx5dv_flow_action_attr *action;
+
+	action = malloc(sizeof(*action));
+	if (!action)
+		return NULL;
+	action->type = MLX5DV_FLOW_ACTION_IBV_FLOW_ACTION;
+	action->action = mlx5dv_create_flow_action_packet_reformat
+		(ctx, data_sz, data, reformat_type, ft_type);
+	return action;
+#endif
+#else
+	(void)ctx;
+	(void)reformat_type;
+	(void)ft_type;
+	(void)domain;
+	(void)flags;
+	(void)data_sz;
+	(void)data;
+	errno = ENOTSUP;
+	return NULL;
+#endif
+}
+
+static void *
+mlx5_glue_dv_create_flow_action_tag(uint32_t tag)
+{
+#ifdef HAVE_IBV_FLOW_DV_SUPPORT
+#ifdef HAVE_MLX5DV_DR
+	return mlx5dv_dr_action_create_tag(tag);
+#else
+	struct mlx5dv_flow_action_attr *action;
+	action = malloc(sizeof(*action));
+	if (!action)
+		return NULL;
+	action->type = MLX5DV_FLOW_ACTION_TAG;
+	action->tag_value = tag;
+	return action;
+#endif
+#endif
+	(void)tag;
+	errno = ENOTSUP;
+	return NULL;
+}
+
+static int
+mlx5_glue_dv_destroy_flow(void *flow_id)
+{
+#ifdef HAVE_MLX5DV_DR
+	return mlx5dv_dr_rule_destroy(flow_id);
+#else
+	return ibv_destroy_flow(flow_id);
 #endif
 }
 
 static int
-mlx5_glue_dv_destroy_flow_matcher(struct mlx5dv_flow_matcher *matcher)
+mlx5_glue_dv_destroy_flow_matcher(void *matcher)
 {
 #ifdef HAVE_IBV_FLOW_DV_SUPPORT
+#ifdef HAVE_MLX5DV_DR
+	return mlx5dv_dr_matcher_destroy(matcher);
+#else
 	return mlx5dv_destroy_flow_matcher(matcher);
+#endif
 #else
 	(void)matcher;
-	return 0;
-#endif
-}
-
-static struct ibv_flow_action *
-mlx5_glue_dv_create_flow_action_packet_reformat
-		(struct ibv_context *ctx,
-		 size_t data_sz,
-		 void *data,
-		 enum mlx5dv_flow_action_packet_reformat_type reformat_type,
-		 enum mlx5dv_flow_table_type ft_type)
-{
-#ifdef HAVE_IBV_FLOW_DV_SUPPORT
-	return mlx5dv_create_flow_action_packet_reformat(ctx,
-							 data_sz,
-							 data,
-							 reformat_type,
-							 ft_type);
-#else
-	(void)ctx;
-	(void)data_sz;
-	(void)data;
-	(void)reformat_type;
-	(void)ft_type;
-	return NULL;
-#endif
-}
-
-static struct ibv_flow_action *
-mlx5_glue_dv_create_flow_action_modify_header
-					(struct ibv_context *ctx,
-					 size_t actions_sz,
-					 uint64_t actions[],
-					 enum mlx5dv_flow_table_type ft_type)
-{
-#ifdef HAVE_IBV_FLOW_DV_SUPPORT
-	return mlx5dv_create_flow_action_modify_header(ctx, actions_sz,
-						       actions, ft_type);
-#else
-	(void)ctx;
-	(void)actions_sz;
-	(void)actions;
-	(void)ft_type;
-	return NULL;
+	errno = ENOTSUP;
+	return errno;
 #endif
 }
 
@@ -508,6 +764,7 @@ mlx5_glue_dv_open_device(struct ibv_device *device)
 				  });
 #else
 	(void)device;
+	errno = ENOTSUP;
 	return NULL;
 #endif
 }
@@ -525,6 +782,7 @@ mlx5_glue_devx_obj_create(struct ibv_context *ctx,
 	(void)inlen;
 	(void)out;
 	(void)outlen;
+	errno = ENOTSUP;
 	return NULL;
 #endif
 }
@@ -603,6 +861,7 @@ const struct mlx5_glue *mlx5_glue = &(const struct mlx5_glue){
 	.close_device = mlx5_glue_close_device,
 	.query_device = mlx5_glue_query_device,
 	.query_device_ex = mlx5_glue_query_device_ex,
+	.query_rt_values_ex = mlx5_glue_query_rt_values_ex,
 	.query_port = mlx5_glue_query_port,
 	.create_comp_channel = mlx5_glue_create_comp_channel,
 	.destroy_comp_channel = mlx5_glue_destroy_comp_channel,
@@ -636,6 +895,16 @@ const struct mlx5_glue *mlx5_glue = &(const struct mlx5_glue){
 	.get_async_event = mlx5_glue_get_async_event,
 	.port_state_str = mlx5_glue_port_state_str,
 	.cq_ex_to_cq = mlx5_glue_cq_ex_to_cq,
+	.dr_create_flow_action_dest_flow_tbl =
+		mlx5_glue_dr_create_flow_action_dest_flow_tbl,
+	.dr_create_flow_action_dest_vport =
+		mlx5_glue_dr_create_flow_action_dest_vport,
+	.dr_create_flow_action_drop =
+		mlx5_glue_dr_create_flow_action_drop,
+	.dr_create_flow_tbl = mlx5_glue_dr_create_flow_tbl,
+	.dr_destroy_flow_tbl = mlx5_glue_dr_destroy_flow_tbl,
+	.dr_create_domain = mlx5_glue_dr_create_domain,
+	.dr_destroy_domain = mlx5_glue_dr_destroy_domain,
 	.dv_create_cq = mlx5_glue_dv_create_cq,
 	.dv_create_wq = mlx5_glue_dv_create_wq,
 	.dv_query_device = mlx5_glue_dv_query_device,
@@ -643,12 +912,18 @@ const struct mlx5_glue *mlx5_glue = &(const struct mlx5_glue){
 	.dv_init_obj = mlx5_glue_dv_init_obj,
 	.dv_create_qp = mlx5_glue_dv_create_qp,
 	.dv_create_flow_matcher = mlx5_glue_dv_create_flow_matcher,
-	.dv_destroy_flow_matcher = mlx5_glue_dv_destroy_flow_matcher,
 	.dv_create_flow = mlx5_glue_dv_create_flow,
-	.dv_create_flow_action_packet_reformat =
-			mlx5_glue_dv_create_flow_action_packet_reformat,
+	.dv_create_flow_action_counter =
+		mlx5_glue_dv_create_flow_action_counter,
+	.dv_create_flow_action_dest_ibv_qp =
+		mlx5_glue_dv_create_flow_action_dest_ibv_qp,
 	.dv_create_flow_action_modify_header =
-			mlx5_glue_dv_create_flow_action_modify_header,
+		mlx5_glue_dv_create_flow_action_modify_header,
+	.dv_create_flow_action_packet_reformat =
+		mlx5_glue_dv_create_flow_action_packet_reformat,
+	.dv_create_flow_action_tag =  mlx5_glue_dv_create_flow_action_tag,
+	.dv_destroy_flow = mlx5_glue_dv_destroy_flow,
+	.dv_destroy_flow_matcher = mlx5_glue_dv_destroy_flow_matcher,
 	.dv_open_device = mlx5_glue_dv_open_device,
 	.devx_obj_create = mlx5_glue_devx_obj_create,
 	.devx_obj_destroy = mlx5_glue_devx_obj_destroy,

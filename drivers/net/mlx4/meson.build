@@ -13,15 +13,19 @@ if pmd_dlopen
 		'-DMLX4_GLUE_VERSION="@0@"'.format(LIB_GLUE_VERSION),
 	]
 endif
-libs = [
-	dependency('libmnl', required:false),
-	dependency('libmlx4', required:false),
-	dependency('libibverbs', required:false),
-]
+libnames = [ 'mnl', 'mlx4', 'ibverbs' ]
+libs = []
 build = true
-foreach lib:libs
+foreach libname:libnames
+	lib = dependency('lib' + libname, required:false)
 	if not lib.found()
+		lib = cc.find_library(libname, required:false)
+	endif
+	if lib.found()
+		libs += [ lib ]
+	else
 		build = false
+		reason = 'missing dependency, "' + libname + '"'
 	endif
 endforeach
 # Compile PMD
@@ -33,6 +37,7 @@ if build
 		'mlx4_ethdev.c',
 		'mlx4_flow.c',
 		'mlx4_intr.c',
+		'mlx4_mp.c',
 		'mlx4_mr.c',
 		'mlx4_rxq.c',
 		'mlx4_rxtx.c',
@@ -70,7 +75,19 @@ if build
 		[ 'HAVE_IBV_MLX4_WQE_LSO_SEG', 'infiniband/mlx4dv.h',
 		'struct mlx4_wqe_lso_seg', 'mss_hdr_size' ],
 	]
+	# input array for meson symbol search:
+	# [ "MACRO to define if found", "header for the search",
+	#   "symbol to search" ]
+	has_sym_args = [
+		[ 'HAVE_IBV_MLX4_BUF_ALLOCATORS', 'infiniband/mlx4dv.h',
+		'MLX4DV_SET_CTX_ATTR_BUF_ALLOCATORS' ],
+		[ 'HAVE_IBV_MLX4_UAR_MMAP_OFFSET', 'infiniband/mlx4dv.h',
+		'MLX4DV_QP_MASK_UAR_MMAP_OFFSET' ],
+	]
 	config = configuration_data()
+	foreach arg:has_sym_args
+		config.set(arg[0], cc.has_header_symbol(arg[1], arg[2]))
+	endforeach
 	foreach arg:has_member_args
 		file_prefix = '#include<' + arg[1] + '>'
 		config.set(arg[0], cc.has_member(arg[2], arg[3],

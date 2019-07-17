@@ -78,7 +78,7 @@ port_init_common(uint16_t port, const struct rte_eth_conf *port_conf,
 		return retval;
 
 	/* Display the port MAC address. */
-	struct ether_addr addr;
+	struct rte_ether_addr addr;
 	rte_eth_macaddr_get(port, &addr);
 	printf("Port %u MAC: %02" PRIx8 " %02" PRIx8 " %02" PRIx8
 			   " %02" PRIx8 " %02" PRIx8 " %02" PRIx8 "\n",
@@ -479,7 +479,8 @@ adapter_multi_eth_add_del(void)
 	/* add the max port for rx_adapter */
 	port_index = rte_eth_dev_count_total();
 	for (; port_index < RTE_MAX_ETHPORTS; port_index += 1) {
-		sprintf(driver_name, "%s%u", "net_null", drv_id);
+		snprintf(driver_name, sizeof(driver_name), "%s%u", "net_null",
+				drv_id);
 		err = rte_vdev_init(driver_name, NULL);
 		TEST_ASSERT(err == 0, "Failed driver %s got %d",
 		driver_name, err);

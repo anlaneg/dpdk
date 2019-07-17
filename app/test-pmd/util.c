@@ -14,10 +14,10 @@
 #include "testpmd.h"
 
 static inline void
-print_ether_addr(const char *what, struct ether_addr *eth_addr)
+print_ether_addr(const char *what, struct rte_ether_addr *eth_addr)
 {
-	char buf[ETHER_ADDR_FMT_SIZE];
-	ether_format_addr(buf, ETHER_ADDR_FMT_SIZE, eth_addr);
+	char buf[RTE_ETHER_ADDR_FMT_SIZE];
+	rte_ether_format_addr(buf, RTE_ETHER_ADDR_FMT_SIZE, eth_addr);
 	printf("%s%s", what, buf);
 }
 
@@ -26,7 +26,7 @@ dump_pkt_burst(uint16_t port_id, uint16_t queue, struct rte_mbuf *pkts[],
 	      uint16_t nb_pkts, int is_rx)
 {
 	struct rte_mbuf  *mb;
-	struct ether_hdr *eth_hdr;
+	struct rte_ether_hdr *eth_hdr;
 	uint16_t eth_type;
 	uint64_t ol_flags;
 	uint16_t i, packet_type;
@@ -46,7 +46,7 @@ dump_pkt_burst(uint16_t port_id, uint16_t queue, struct rte_mbuf *pkts[],
 	       (unsigned int) nb_pkts);
 	for (i = 0; i < nb_pkts; i++) {
 		mb = pkts[i];
-		eth_hdr = rte_pktmbuf_mtod(mb, struct ether_hdr *);
+		eth_hdr = rte_pktmbuf_mtod(mb, struct rte_ether_hdr *);
 		eth_type = RTE_BE_TO_CPU_16(eth_hdr->ether_type);
 		ol_flags = mb->ol_flags;
 		packet_type = mb->packet_type;
@@ -103,38 +103,38 @@ dump_pkt_burst(uint16_t port_id, uint16_t queue, struct rte_mbuf *pkts[],
 		if (sw_packet_type & RTE_PTYPE_INNER_L4_MASK)
 			printf(" - inner_l4_len=%d", hdr_lens.inner_l4_len);
 		if (is_encapsulation) {
-			struct ipv4_hdr *ipv4_hdr;
-			struct ipv6_hdr *ipv6_hdr;
-			struct udp_hdr *udp_hdr;
+			struct rte_ipv4_hdr *ipv4_hdr;
+			struct rte_ipv6_hdr *ipv6_hdr;
+			struct rte_udp_hdr *udp_hdr;
 			uint8_t l2_len;
 			uint8_t l3_len;
 			uint8_t l4_len;
 			uint8_t l4_proto;
-			struct  vxlan_hdr *vxlan_hdr;
+			struct  rte_vxlan_hdr *vxlan_hdr;
 
-			l2_len  = sizeof(struct ether_hdr);
+			l2_len  = sizeof(struct rte_ether_hdr);
 
 			/* Do not support ipv4 option field */
 			if (RTE_ETH_IS_IPV4_HDR(packet_type)) {
-				l3_len = sizeof(struct ipv4_hdr);
+				l3_len = sizeof(struct rte_ipv4_hdr);
 				ipv4_hdr = rte_pktmbuf_mtod_offset(mb,
-				struct ipv4_hdr *,
+				struct rte_ipv4_hdr *,
 				l2_len);
 				l4_proto = ipv4_hdr->next_proto_id;
 			} else {
-				l3_len = sizeof(struct ipv6_hdr);
+				l3_len = sizeof(struct rte_ipv6_hdr);
 				ipv6_hdr = rte_pktmbuf_mtod_offset(mb,
-				struct ipv6_hdr *,
+				struct rte_ipv6_hdr *,
 				l2_len);
 				l4_proto = ipv6_hdr->proto;
 			}
 			if (l4_proto == IPPROTO_UDP) {
 				udp_hdr = rte_pktmbuf_mtod_offset(mb,
-				struct udp_hdr *,
+				struct rte_udp_hdr *,
 				l2_len + l3_len);
-				l4_len = sizeof(struct udp_hdr);
+				l4_len = sizeof(struct rte_udp_hdr);
 				vxlan_hdr = rte_pktmbuf_mtod_offset(mb,
-				struct vxlan_hdr *,
+				struct rte_vxlan_hdr *,
 				l2_len + l3_len + l4_len);
 				udp_port = RTE_BE_TO_CPU_16(udp_hdr->dst_port);
 				vx_vni = rte_be_to_cpu_32(vxlan_hdr->vx_vni);

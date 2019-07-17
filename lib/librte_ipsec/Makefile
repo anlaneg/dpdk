@@ -9,13 +9,16 @@ LIB = librte_ipsec.a
 CFLAGS += -O3
 CFLAGS += $(WERROR_FLAGS) -I$(SRCDIR)
 CFLAGS += -DALLOW_EXPERIMENTAL_API
-LDLIBS += -lrte_eal -lrte_mbuf -lrte_net -lrte_cryptodev -lrte_security
+LDLIBS += -lrte_eal -lrte_mempool -lrte_mbuf -lrte_net
+LDLIBS += -lrte_cryptodev -lrte_security
 
 EXPORT_MAP := rte_ipsec_version.map
 
 LIBABIVER := 1
 
 # all source are stored in SRCS-y
+SRCS-$(CONFIG_RTE_LIBRTE_IPSEC) += esp_inb.c
+SRCS-$(CONFIG_RTE_LIBRTE_IPSEC) += esp_outb.c
 SRCS-$(CONFIG_RTE_LIBRTE_IPSEC) += sa.c
 SRCS-$(CONFIG_RTE_LIBRTE_IPSEC) += ses.c
 

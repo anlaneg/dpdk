@@ -17,6 +17,7 @@
 #include <sys/socket.h>
 #include <sys/select.h>
 
+#include <rte_string_fns.h>
 #include <rte_malloc.h>
 #include <rte_memory.h>
 #include <rte_mempool.h>
@@ -49,9 +50,9 @@ static bool global_hypervisor_available;
  */
 struct virtual_machine_info {
 	char name[CHANNEL_MGR_MAX_NAME_LEN];
-	uint16_t pcpu_map[CHANNEL_CMDS_MAX_CPUS];
-	struct channel_info *channels[CHANNEL_CMDS_MAX_VM_CHANNELS];
-	char channel_mask[POWER_MGR_MAX_CPUS];
+	uint16_t pcpu_map[RTE_MAX_LCORE];
+	struct channel_info *channels[RTE_MAX_LCORE];
+	char channel_mask[RTE_MAX_LCORE];
 	uint8_t num_channels;
 	enum vm_status status;
 	virDomainPtr domainPtr;
@@ -80,7 +81,7 @@ update_pcpus_mask(struct virtual_machine_info *vm_info)
 	unsigned i, j;
 	int n_vcpus;
 
-	memset(global_cpumaps, 0, CHANNEL_CMDS_MAX_CPUS*global_maplen);
+	memset(global_cpumaps, 0, RTE_MAX_LCORE*global_maplen);
 
 	if (!virDomainIsActive(vm_info->domainPtr)) {
 		n_vcpus = virDomainGetVcpuPinInfo(vm_info->domainPtr,
@@ -95,21 +96,21 @@ update_pcpus_mask(struct virtual_machine_info *vm_info)
 	}
 
 	memset(global_vircpuinfo, 0, sizeof(*global_vircpuinfo)*
-			CHANNEL_CMDS_MAX_CPUS);
+			RTE_MAX_LCORE);
 
 	cpuinfo = global_vircpuinfo;
 
 	n_vcpus = virDomainGetVcpus(vm_info->domainPtr, cpuinfo,
-			CHANNEL_CMDS_MAX_CPUS, global_cpumaps, global_maplen);
+			RTE_MAX_LCORE, global_cpumaps, global_maplen);
 	if (n_vcpus < 0) {
 		RTE_LOG(ERR, CHANNEL_MANAGER, "Error getting vCPU info for "
 				"active VM '%s'\n", vm_info->name);
 		return -1;
 	}
 update_pcpus:
-	if (n_vcpus >= CHANNEL_CMDS_MAX_CPUS) {
+	if (n_vcpus >= RTE_MAX_LCORE) {
 		RTE_LOG(ERR, CHANNEL_MANAGER, "Number of vCPUS(%u) is out of range "
-				"0...%d\n", n_vcpus, CHANNEL_CMDS_MAX_CPUS-1);
+				"0...%d\n", n_vcpus, RTE_MAX_LCORE-1);
 		return -1;
 	}
 	if (n_vcpus != vm_info->info.nrVirtCpu) {
@@ -137,9 +138,9 @@ set_pcpu(char *vm_name, unsigned int vcpu, unsigned int pcpu)
 	int flags = VIR_DOMAIN_AFFECT_LIVE|VIR_DOMAIN_AFFECT_CONFIG;
 	struct virtual_machine_info *vm_info;
 
-	if (vcpu >= CHANNEL_CMDS_MAX_CPUS) {
+	if (vcpu >= RTE_MAX_LCORE) {
 		RTE_LOG(ERR, CHANNEL_MANAGER, "vCPU(%u) exceeds max allowable(%d)\n",
-				vcpu, CHANNEL_CMDS_MAX_CPUS-1);
+				vcpu, RTE_MAX_LCORE-1);
 		return -1;
 	}
 
@@ -161,7 +162,7 @@ set_pcpu(char *vm_name, unsigned int vcpu, unsigned int pcpu)
 				"vCPUs(%u)\n", vcpu, vm_info->info.nrVirtCpu);
 		return -1;
 	}
-	memset(global_cpumaps, 0 , CHANNEL_CMDS_MAX_CPUS * global_maplen);
+	memset(global_cpumaps, 0, RTE_MAX_LCORE * global_maplen);
 
 	VIR_USE_CPU(global_cpumaps, pcpu);
 
@@ -224,7 +225,7 @@ open_non_blocking_channel(struct channel_info *info)
 	struct timeval tv;
 
 	info->fd = socket(AF_UNIX, SOCK_STREAM, 0);
-	if (info->fd == -1) {
+	if (info->fd < 0) {
 		RTE_LOG(ERR, CHANNEL_MANAGER, "Error(%s) creating socket for '%s'\n",
 				strerror(errno),
 				info->channel_path);
@@ -285,7 +286,7 @@ open_host_channel(struct channel_info *info)
 	int flags;
 
 	info->fd = open(info->channel_path, O_RDWR | O_RSYNC);
-	if (info->fd == -1) {
+	if (info->fd < 0) {
 		RTE_LOG(ERR, CHANNEL_MANAGER, "Error(%s) opening fifo for '%s'\n",
 				strerror(errno),
 				info->channel_path);
@@ -361,8 +362,6 @@ setup_host_channel_info(struct channel_info **chan_info_dptr,
 	chan_info->status = CHANNEL_MGR_CHANNEL_DISCONNECTED;
 	chan_info->type = CHANNEL_TYPE_JSON;
 
-	fifo_path(chan_info->channel_path, sizeof(chan_info->channel_path));
-
 	if (open_host_channel(chan_info) < 0) {
 		RTE_LOG(ERR, CHANNEL_MANAGER, "Could not open host channel: "
 				"'%s'\n",
@@ -415,7 +414,7 @@ add_all_channels(const char *vm_name)
 				!strncmp(dir->d_name, "..", 2))
 			continue;
 
-		snprintf(socket_name, sizeof(socket_name), "%s", dir->d_name);
+		strlcpy(socket_name, dir->d_name, sizeof(socket_name));
 		remaining = socket_name;
 		/* Extract vm_name from "<vm_name>.<channel_num>" */
 		token = strsep(&remaining, ".");
@@ -435,10 +434,10 @@ add_all_channels(const char *vm_name)
 					dir->d_name);
 			continue;
 		}
-		if (channel_num >= CHANNEL_CMDS_MAX_VM_CHANNELS) {
+		if (channel_num >= RTE_MAX_LCORE) {
 			RTE_LOG(WARNING, CHANNEL_MANAGER, "Channel number(%u) is "
 					"greater than max allowable: %d, skipping '%s%s'\n",
-					channel_num, CHANNEL_CMDS_MAX_VM_CHANNELS-1,
+					channel_num, RTE_MAX_LCORE-1,
 					CHANNEL_MGR_SOCKET_PATH, dir->d_name);
 			continue;
 		}
@@ -494,10 +493,10 @@ add_channels(const char *vm_name, unsigned *channel_list,
 
 	for (i = 0; i < len_channel_list; i++) {
 
-		if (channel_list[i] >= CHANNEL_CMDS_MAX_VM_CHANNELS) {
+		if (channel_list[i] >= RTE_MAX_LCORE) {
 			RTE_LOG(INFO, CHANNEL_MANAGER, "Channel(%u) is out of range "
 							"0...%d\n", channel_list[i],
-							CHANNEL_CMDS_MAX_VM_CHANNELS-1);
+							RTE_MAX_LCORE-1);
 			continue;
 		}
 		if (channel_exists(vm_info, channel_list[i])) {
@@ -562,8 +561,8 @@ add_host_channel(void)
 				"channel '%s'\n", socket_path);
 		return 0;
 	}
-	snprintf(chan_info->channel_path,
-			sizeof(chan_info->channel_path), "%s", socket_path);
+	rte_strlcpy(chan_info->channel_path, socket_path, UNIX_PATH_MAX);
+
 	if (setup_host_channel_info(&chan_info, 0) < 0) {
 		rte_free(chan_info);
 		return 0;
@@ -597,7 +596,7 @@ set_channel_status_all(const char *vm_name, enum channel_status status)
 {
 	struct virtual_machine_info *vm_info;
 	unsigned i;
-	char mask[POWER_MGR_MAX_CPUS];
+	char mask[RTE_MAX_LCORE];
 	int num_channels_changed = 0;
 
 	if (!(status == CHANNEL_MGR_CHANNEL_CONNECTED ||
@@ -613,8 +612,8 @@ set_channel_status_all(const char *vm_name, enum channel_status status)
 	}
 
 	rte_spinlock_lock(&(vm_info->config_spinlock));
-	memcpy(mask, (char *)vm_info->channel_mask, POWER_MGR_MAX_CPUS);
-	for (i = 0; i < POWER_MGR_MAX_CPUS; i++) {
+	memcpy(mask, (char *)vm_info->channel_mask, RTE_MAX_LCORE);
+	for (i = 0; i < RTE_MAX_LCORE; i++) {
 		if (mask[i] != 1)
 			continue;
 		vm_info->channels[i]->status = status;
@@ -671,7 +670,7 @@ get_all_vm(int *num_vm, int *num_vcpu)
 	if (!global_hypervisor_available)
 		return;
 
-	memset(global_cpumaps, 0, CHANNEL_CMDS_MAX_CPUS*global_maplen);
+	memset(global_cpumaps, 0, RTE_MAX_LCORE*global_maplen);
 	if (virNodeGetInfo(global_vir_conn_ptr, &node_info)) {
 		RTE_LOG(ERR, CHANNEL_MANAGER, "Unable to retrieve node Info\n");
 		return;
@@ -724,7 +723,7 @@ get_info_vm(const char *vm_name, struct vm_info *info)
 {
 	struct virtual_machine_info *vm_info;
 	unsigned i, channel_num = 0;
-	char mask[POWER_MGR_MAX_CPUS];
+	char mask[RTE_MAX_LCORE];
 
 	vm_info = find_domain_by_name(vm_name);
 	if (vm_info == NULL) {
@@ -737,8 +736,8 @@ get_info_vm(const char *vm_name, struct vm_info *info)
 
 	rte_spinlock_lock(&(vm_info->config_spinlock));
 
-	memcpy(mask, (char *)vm_info->channel_mask, POWER_MGR_MAX_CPUS);
-	for (i = 0; i < POWER_MGR_MAX_CPUS; i++) {
+	memcpy(mask, (char *)vm_info->channel_mask, RTE_MAX_LCORE);
+	for (i = 0; i < RTE_MAX_LCORE; i++) {
 		if (mask[i] != 1)
 			continue;
 		info->channels[channel_num].channel_num = i;
@@ -802,17 +801,17 @@ add_vm(const char *vm_name)
 		rte_free(new_domain);
 		return -1;
 	}
-	if (new_domain->info.nrVirtCpu > CHANNEL_CMDS_MAX_CPUS) {
+	if (new_domain->info.nrVirtCpu > RTE_MAX_LCORE) {
 		RTE_LOG(ERR, CHANNEL_MANAGER, "Error the number of virtual CPUs(%u) is "
 				"greater than allowable(%d)\n", new_domain->info.nrVirtCpu,
-				CHANNEL_CMDS_MAX_CPUS);
+				RTE_MAX_LCORE);
 		rte_free(new_domain);
 		return -1;
 	}
 
-	for (i = 0; i < CHANNEL_CMDS_MAX_CPUS; i++) {
+	for (i = 0; i < RTE_MAX_LCORE; i++)
 		new_domain->pcpu_map[i] = 0;
-	}
+
 	if (update_pcpus_mask(new_domain) < 0) {
 		RTE_LOG(ERR, CHANNEL_MANAGER, "Error getting physical CPU pinning\n");
 		rte_free(new_domain);
@@ -820,7 +819,7 @@ add_vm(const char *vm_name)
 	}
 	strncpy(new_domain->name, vm_name, sizeof(new_domain->name));
 	new_domain->name[sizeof(new_domain->name) - 1] = '\0';
-	memset(new_domain->channel_mask, 0, POWER_MGR_MAX_CPUS);
+	memset(new_domain->channel_mask, 0, RTE_MAX_LCORE);
 	new_domain->num_channels = 0;
 
 	if (!virDomainIsActive(dom_ptr))
@@ -895,17 +894,17 @@ channel_manager_init(const char *path __rte_unused)
 	} else {
 		global_hypervisor_available = 1;
 
-		global_maplen = VIR_CPU_MAPLEN(CHANNEL_CMDS_MAX_CPUS);
+		global_maplen = VIR_CPU_MAPLEN(RTE_MAX_LCORE);
 
 		global_vircpuinfo = rte_zmalloc(NULL,
 				sizeof(*global_vircpuinfo) *
-				CHANNEL_CMDS_MAX_CPUS, RTE_CACHE_LINE_SIZE);
+				RTE_MAX_LCORE, RTE_CACHE_LINE_SIZE);
 		if (global_vircpuinfo == NULL) {
 			RTE_LOG(ERR, CHANNEL_MANAGER, "Error allocating memory for CPU Info\n");
 			goto error;
 		}
 		global_cpumaps = rte_zmalloc(NULL,
-				CHANNEL_CMDS_MAX_CPUS * global_maplen,
+				RTE_MAX_LCORE * global_maplen,
 				RTE_CACHE_LINE_SIZE);
 		if (global_cpumaps == NULL)
 			goto error;
@@ -919,12 +918,12 @@ channel_manager_init(const char *path __rte_unused)
 
 
 
-	if (global_n_host_cpus > CHANNEL_CMDS_MAX_CPUS) {
+	if (global_n_host_cpus > RTE_MAX_LCORE) {
 		RTE_LOG(WARNING, CHANNEL_MANAGER, "The number of host CPUs(%u) exceeds the "
 				"maximum of %u. No cores over %u should be used.\n",
-				global_n_host_cpus, CHANNEL_CMDS_MAX_CPUS,
-				CHANNEL_CMDS_MAX_CPUS - 1);
-		global_n_host_cpus = CHANNEL_CMDS_MAX_CPUS;
+				global_n_host_cpus, RTE_MAX_LCORE,
+				RTE_MAX_LCORE - 1);
+		global_n_host_cpus = RTE_MAX_LCORE;
 	}
 
 	return 0;
@@ -938,15 +937,15 @@ void
 channel_manager_exit(void)
 {
 	unsigned i;
-	char mask[POWER_MGR_MAX_CPUS];
+	char mask[RTE_MAX_LCORE];
 	struct virtual_machine_info *vm_info;
 
 	LIST_FOREACH(vm_info, &vm_list_head, vms_info) {
 
 		rte_spinlock_lock(&(vm_info->config_spinlock));
 
-		memcpy(mask, (char *)vm_info->channel_mask, POWER_MGR_MAX_CPUS);
-		for (i = 0; i < POWER_MGR_MAX_CPUS; i++) {
+		memcpy(mask, (char *)vm_info->channel_mask, RTE_MAX_LCORE);
+		for (i = 0; i < RTE_MAX_LCORE; i++) {
 			if (mask[i] != 1)
 				continue;
 			remove_channel_from_monitor(

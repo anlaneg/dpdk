@@ -89,14 +89,15 @@ static int eth_em_led_on(struct rte_eth_dev *dev);
 static int eth_em_led_off(struct rte_eth_dev *dev);
 
 static int em_get_rx_buffer_size(struct e1000_hw *hw);
-static int eth_em_rar_set(struct rte_eth_dev *dev, struct ether_addr *mac_addr,
-			  uint32_t index, uint32_t pool);
+static int eth_em_rar_set(struct rte_eth_dev *dev,
+			struct rte_ether_addr *mac_addr,
+			uint32_t index, uint32_t pool);
 static void eth_em_rar_clear(struct rte_eth_dev *dev, uint32_t index);
 static int eth_em_default_mac_addr_set(struct rte_eth_dev *dev,
-					 struct ether_addr *addr);
+					 struct rte_ether_addr *addr);
 
 static int eth_em_set_mc_addr_list(struct rte_eth_dev *dev,
-				   struct ether_addr *mc_addr_set,
+				   struct rte_ether_addr *mc_addr_set,
 				   uint32_t nb_mc_addr);
 
 #define EM_FC_PAUSE_TIME 0x0680
@@ -283,17 +284,17 @@ eth_em_dev_init(struct rte_eth_dev *eth_dev)
 	}
 
 	/* Allocate memory for storing MAC addresses */
-	eth_dev->data->mac_addrs = rte_zmalloc("e1000", ETHER_ADDR_LEN *
+	eth_dev->data->mac_addrs = rte_zmalloc("e1000", RTE_ETHER_ADDR_LEN *
 			hw->mac.rar_entry_count, 0);
 	if (eth_dev->data->mac_addrs == NULL) {
 		PMD_INIT_LOG(ERR, "Failed to allocate %d bytes needed to "
 			"store MAC addresses",
-			ETHER_ADDR_LEN * hw->mac.rar_entry_count);
+			RTE_ETHER_ADDR_LEN * hw->mac.rar_entry_count);
 		return -ENOMEM;
 	}
 
 	/* Copy the permanent MAC address */
-	ether_addr_copy((struct ether_addr *) hw->mac.addr,
+	rte_ether_addr_copy((struct rte_ether_addr *)hw->mac.addr,
 		eth_dev->data->mac_addrs);
 
 	/* initialize the vfta */
@@ -576,7 +577,7 @@ eth_em_start(struct rte_eth_dev *dev)
 		return -EIO;
 	}
 
-	E1000_WRITE_REG(hw, E1000_VET, ETHER_TYPE_VLAN);
+	E1000_WRITE_REG(hw, E1000_VET, RTE_ETHER_TYPE_VLAN);
 
 	/* Configure for OS presence */
 	em_init_manageability(hw);
@@ -821,7 +822,8 @@ em_hardware_init(struct e1000_hw *hw)
 	 */
 	rx_buf_size = em_get_rx_buffer_size(hw);
 
-	hw->fc.high_water = rx_buf_size - PMD_ROUNDUP(ETHER_MAX_LEN * 2, 1024);
+	hw->fc.high_water = rx_buf_size -
+		PMD_ROUNDUP(RTE_ETHER_MAX_LEN * 2, 1024);
 	hw->fc.low_water = hw->fc.high_water - 1500;
 
 	if (hw->mac.type == e1000_80003es2lan)
@@ -1037,7 +1039,7 @@ em_get_max_pktlen(struct rte_eth_dev *dev)
 		return 0x1000;
 	/* Adapters that do not support jumbo frames */
 	case e1000_ich8lan:
-		return ETHER_MAX_LEN;
+		return RTE_ETHER_MAX_LEN;
 	default:
 		return MAX_JUMBO_FRAME_SIZE;
 	}
@@ -1700,7 +1702,7 @@ eth_em_flow_ctrl_set(struct rte_eth_dev *dev, struct rte_eth_fc_conf *fc_conf)
 	PMD_INIT_LOG(DEBUG, "Rx packet buffer size = 0x%x", rx_buf_size);
 
 	/* At least reserve one Ethernet frame for watermark */
-	max_high_water = rx_buf_size - ETHER_MAX_LEN;
+	max_high_water = rx_buf_size - RTE_ETHER_MAX_LEN;
 	if ((fc_conf->high_water > max_high_water) ||
 	    (fc_conf->high_water < fc_conf->low_water)) {
 		PMD_INIT_LOG(ERR, "e1000 incorrect high/low water value");
@@ -1739,7 +1741,7 @@ eth_em_flow_ctrl_set(struct rte_eth_dev *dev, struct rte_eth_fc_conf *fc_conf)
 }
 
 static int
-eth_em_rar_set(struct rte_eth_dev *dev, struct ether_addr *mac_addr,
+eth_em_rar_set(struct rte_eth_dev *dev, struct rte_ether_addr *mac_addr,
 		uint32_t index, __rte_unused uint32_t pool)
 {
 	struct e1000_hw *hw = E1000_DEV_PRIVATE_TO_HW(dev->data->dev_private);
@@ -1750,7 +1752,7 @@ eth_em_rar_set(struct rte_eth_dev *dev, struct ether_addr *mac_addr,
 static void
 eth_em_rar_clear(struct rte_eth_dev *dev, uint32_t index)
 {
-	uint8_t addr[ETHER_ADDR_LEN];
+	uint8_t addr[RTE_ETHER_ADDR_LEN];
 	struct e1000_hw *hw = E1000_DEV_PRIVATE_TO_HW(dev->data->dev_private);
 
 	memset(addr, 0, sizeof(addr));
@@ -1760,7 +1762,7 @@ eth_em_rar_clear(struct rte_eth_dev *dev, uint32_t index)
 
 static int
 eth_em_default_mac_addr_set(struct rte_eth_dev *dev,
-			    struct ether_addr *addr)
+			    struct rte_ether_addr *addr)
 {
 	eth_em_rar_clear(dev, 0);
 
@@ -1776,10 +1778,11 @@ eth_em_mtu_set(struct rte_eth_dev *dev, uint16_t mtu)
 	uint32_t rctl;
 
 	eth_em_infos_get(dev, &dev_info);
-	frame_size = mtu + ETHER_HDR_LEN + ETHER_CRC_LEN + VLAN_TAG_SIZE;
+	frame_size = mtu + RTE_ETHER_HDR_LEN + RTE_ETHER_CRC_LEN +
+		VLAN_TAG_SIZE;
 
 	/* check that mtu is within the allowed range */
-	if ((mtu < ETHER_MIN_MTU) || (frame_size > dev_info.max_rx_pktlen))
+	if (mtu < RTE_ETHER_MIN_MTU || frame_size > dev_info.max_rx_pktlen)
 		return -EINVAL;
 
 	/* refuse mtu that requires the support of scattered packets when this
@@ -1792,7 +1795,7 @@ eth_em_mtu_set(struct rte_eth_dev *dev, uint16_t mtu)
 	rctl = E1000_READ_REG(hw, E1000_RCTL);
 
 	/* switch to jumbo mode if needed */
-	if (frame_size > ETHER_MAX_LEN) {
+	if (frame_size > RTE_ETHER_MAX_LEN) {
 		dev->data->dev_conf.rxmode.offloads |=
 			DEV_RX_OFFLOAD_JUMBO_FRAME;
 		rctl |= E1000_RCTL_LPE;
@@ -1810,7 +1813,7 @@ eth_em_mtu_set(struct rte_eth_dev *dev, uint16_t mtu)
 
 static int
 eth_em_set_mc_addr_list(struct rte_eth_dev *dev,
-			struct ether_addr *mc_addr_set,
+			struct rte_ether_addr *mc_addr_set,
 			uint32_t nb_mc_addr)
 {
 	struct e1000_hw *hw;

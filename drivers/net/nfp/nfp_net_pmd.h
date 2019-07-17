@@ -34,7 +34,7 @@
  *
  * @file dpdk/pmd/nfp_net_pmd.h
  *
- * Netronome NFP_NET PDM driver
+ * Netronome NFP_NET PMD driver
  */
 
 #ifndef _NFP_NET_PMD_H_
@@ -241,7 +241,7 @@ struct nfp_net_txq {
 	uint32_t tx_free_thresh;
 
 	/*
-	 * For each descriptor keep a reference to the mbuff and
+	 * For each descriptor keep a reference to the mbuf and
 	 * DMA address used until completion is signalled.
 	 */
 	struct {
@@ -437,7 +437,7 @@ struct nfp_net_hw {
 #endif
 #endif
 
-	uint8_t mac_addr[ETHER_ADDR_LEN];
+	uint8_t mac_addr[RTE_ETHER_ADDR_LEN];
 
 	/* Records starting point for counters */
 	struct rte_eth_stats eth_stats_base;

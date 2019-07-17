@@ -15,9 +15,14 @@
 #define FME_FEATURE_GLOBAL_IPERF    "fme_iperf"
 #define FME_FEATURE_GLOBAL_ERR      "fme_error"
 #define FME_FEATURE_PR_MGMT         "fme_pr"
+#define FME_FEATURE_EMIF_MGMT       "fme_emif"
 #define FME_FEATURE_HSSI_ETH        "fme_hssi"
 #define FME_FEATURE_GLOBAL_DPERF    "fme_dperf"
 #define FME_FEATURE_QSPI_FLASH	    "fme_qspi_flash"
+#define FME_FEATURE_MAX10_SPI       "fme_max10_spi"
+#define FME_FEATURE_NIOS_SPI        "fme_nios_spi"
+#define FME_FEATURE_I2C_MASTER      "fme_i2c_master"
+#define FME_FEATURE_ETH_GROUP       "fme_eth_group"
 
 #define PORT_FEATURE_HEADER         "port_hdr"
 #define PORT_FEATURE_UAFU           "port_uafu"
@@ -42,6 +47,8 @@
 #define FME_HSSI_ETH_REVISION		0
 #define FME_GLOBAL_DPERF_REVISION	0
 #define FME_QSPI_REVISION		0
+#define FME_MAX10_SPI                   0
+#define FME_I2C_MASTER                  0
 
 #define PORT_HEADER_REVISION		0
 /* UAFU's header info depends on the downloaded GBS */
@@ -59,7 +66,8 @@
 #define FEATURE_FIU_ID_FME	0x0
 #define FEATURE_FIU_ID_PORT	0x1
 
-#define FEATURE_ID_HEADER	0x0
+/* Reserved 0xfe for Header, 0xff for AFU*/
+#define FEATURE_ID_FIU_HEADER	0xfe
 #define FEATURE_ID_AFU		0xff
 
 enum fpga_id_type {
@@ -68,31 +76,27 @@ enum fpga_id_type {
 	FPGA_ID_MAX,
 };
 
-enum fme_feature_id {
-	FME_FEATURE_ID_HEADER = 0x0,
+#define FME_FEATURE_ID_HEADER FEATURE_ID_FIU_HEADER
+#define FME_FEATURE_ID_THERMAL_MGMT 0x1
+#define FME_FEATURE_ID_POWER_MGMT 0x2
+#define FME_FEATURE_ID_GLOBAL_IPERF 0x3
+#define FME_FEATURE_ID_GLOBAL_ERR 0x4
+#define FME_FEATURE_ID_PR_MGMT 0x5
+#define FME_FEATURE_ID_HSSI_ETH 0x6
+#define FME_FEATURE_ID_GLOBAL_DPERF 0x7
+#define FME_FEATURE_ID_QSPI_FLASH 0x8
+#define FME_FEATURE_ID_EMIF_MGMT  0x9
+#define FME_FEATURE_ID_MAX10_SPI  0xe
+#define FME_FEATURE_ID_NIOS_SPI 0xd
+#define FME_FEATURE_ID_I2C_MASTER  0xf
+#define FME_FEATURE_ID_ETH_GROUP 0x10
 
-	FME_FEATURE_ID_THERMAL_MGMT	= 0x1,
-	FME_FEATURE_ID_POWER_MGMT = 0x2,
-	FME_FEATURE_ID_GLOBAL_IPERF = 0x3,
-	FME_FEATURE_ID_GLOBAL_ERR = 0x4,
-	FME_FEATURE_ID_PR_MGMT = 0x5,
-	FME_FEATURE_ID_HSSI_ETH = 0x6,
-	FME_FEATURE_ID_GLOBAL_DPERF = 0x7,
-	FME_FEATURE_ID_QSPI_FLASH = 0x8,
-
-	/* one for fme header. */
-	FME_FEATURE_ID_MAX = 0x9,
-};
-
-enum port_feature_id {
-	PORT_FEATURE_ID_HEADER = 0x0,
-	PORT_FEATURE_ID_ERROR = 0x1,
-	PORT_FEATURE_ID_UMSG = 0x2,
-	PORT_FEATURE_ID_UINT = 0x3,
-	PORT_FEATURE_ID_STP = 0x4,
-	PORT_FEATURE_ID_UAFU = 0x5,
-	PORT_FEATURE_ID_MAX = 0x6,
-};
+#define PORT_FEATURE_ID_HEADER FEATURE_ID_FIU_HEADER
+#define PORT_FEATURE_ID_ERROR 0x10
+#define PORT_FEATURE_ID_UMSG 0x12
+#define PORT_FEATURE_ID_UINT 0x13
+#define PORT_FEATURE_ID_STP 0x14
+#define PORT_FEATURE_ID_UAFU FEATURE_ID_AFU
 
 /*
  * All headers and structures must be byte-packed to match the spec.
@@ -1658,6 +1662,43 @@ struct bts_header {
 #define is_valid_bts(bts_hdr)				\
 	(((bts_hdr)->guid_h == GBS_GUID_H) &&		\
 	((bts_hdr)->guid_l == GBS_GUID_L))
+
+/* bitstream id definition */
+struct fme_bitstream_id {
+	union {
+		u64 id;
+		struct {
+			u64 hash:32;
+			u64 interface:4;
+			u64 reserved:12;
+			u64 debug:4;
+			u64 patch:4;
+			u64 minor:4;
+			u64 major:4;
+		};
+	};
+};
+
+enum board_interface {
+	VC_8_10G = 0,
+	VC_4_25G = 1,
+	VC_2_1_25 = 2,
+	VC_4_25G_2_25G = 3,
+	VC_2_2_25G = 4,
+};
+
+struct ifpga_fme_board_info {
+	enum board_interface type;
+	u32 build_hash;
+	u32 debug_version;
+	u32 patch_version;
+	u32 minor_version;
+	u32 major_version;
+	u32 nums_of_retimer;
+	u32 ports_per_retimer;
+	u32 nums_of_fvl;
+	u32 ports_per_fvl;
+};
 
 #pragma pack(pop)
 #endif /* _BASE_IFPGA_DEFINES_H_ */

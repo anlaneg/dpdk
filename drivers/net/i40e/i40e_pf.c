@@ -348,8 +348,8 @@ i40e_pf_host_process_cmd_get_vf_resource(struct i40e_pf_vf *vf, uint8_t *msg,
 	vf_res->vsi_res[0].vsi_type = VIRTCHNL_VSI_SRIOV;
 	vf_res->vsi_res[0].vsi_id = vf->vsi->vsi_id;
 	vf_res->vsi_res[0].num_queue_pairs = vf->vsi->nb_qps;
-	ether_addr_copy(&vf->mac_addr,
-		(struct ether_addr *)vf_res->vsi_res[0].default_mac_addr);
+	rte_ether_addr_copy(&vf->mac_addr,
+		(struct rte_ether_addr *)vf_res->vsi_res[0].default_mac_addr);
 
 send_msg:
 	i40e_pf_host_send_msg_to_vf(vf, VIRTCHNL_OP_GET_VF_RESOURCES,
@@ -823,7 +823,7 @@ i40e_pf_host_process_cmd_add_ether_address(struct i40e_pf_vf *vf,
 			(struct virtchnl_ether_addr_list *)msg;
 	struct i40e_mac_filter_info filter;
 	int i;
-	struct ether_addr *mac;
+	struct rte_ether_addr *mac;
 
 	if (!b_op) {
 		i40e_pf_host_send_msg_to_vf(
@@ -842,10 +842,10 @@ i40e_pf_host_process_cmd_add_ether_address(struct i40e_pf_vf *vf,
 	}
 
 	for (i = 0; i < addr_list->num_elements; i++) {
-		mac = (struct ether_addr *)(addr_list->list[i].addr);
-		rte_memcpy(&filter.mac_addr, mac, ETHER_ADDR_LEN);
+		mac = (struct rte_ether_addr *)(addr_list->list[i].addr);
+		rte_memcpy(&filter.mac_addr, mac, RTE_ETHER_ADDR_LEN);
 		filter.filter_type = RTE_MACVLAN_PERFECT_MATCH;
-		if (is_zero_ether_addr(mac) ||
+		if (rte_is_zero_ether_addr(mac) ||
 		    i40e_vsi_add_mac(vf->vsi, &filter)) {
 			ret = I40E_ERR_INVALID_MAC_ADDR;
 			goto send_msg;
@@ -869,7 +869,7 @@ i40e_pf_host_process_cmd_del_ether_address(struct i40e_pf_vf *vf,
 	struct virtchnl_ether_addr_list *addr_list =
 		(struct virtchnl_ether_addr_list *)msg;
 	int i;
-	struct ether_addr *mac;
+	struct rte_ether_addr *mac;
 
 	if (!b_op) {
 		i40e_pf_host_send_msg_to_vf(
@@ -886,8 +886,8 @@ i40e_pf_host_process_cmd_del_ether_address(struct i40e_pf_vf *vf,
 	}
 
 	for (i = 0; i < addr_list->num_elements; i++) {
-		mac = (struct ether_addr *)(addr_list->list[i].addr);
-		if(is_zero_ether_addr(mac) ||
+		mac = (struct rte_ether_addr *)(addr_list->list[i].addr);
+		if (rte_is_zero_ether_addr(mac) ||
 			i40e_vsi_delete_mac(vf->vsi, mac)) {
 			ret = I40E_ERR_INVALID_MAC_ADDR;
 			goto send_msg;
@@ -1250,6 +1250,9 @@ i40e_pf_host_process_cmd_request_queues(struct i40e_pf_vf *vf, uint8_t *msg)
 
 	pf = vf->pf;
 
+	if (!rte_is_power_of_2(req_pairs))
+		req_pairs = i40e_align_floor(req_pairs) << 1;
+
 	if (req_pairs == 0) {
 		PMD_DRV_LOG(ERR, "VF %d tried to request 0 queues. Ignoring.\n",
 			    vf->vf_idx);
@@ -1260,19 +1263,18 @@ i40e_pf_host_process_cmd_request_queues(struct i40e_pf_vf *vf, uint8_t *msg)
 			    I40E_MAX_QP_NUM_PER_VF);
 		vfres->num_queue_pairs = I40E_MAX_QP_NUM_PER_VF;
 	} else if (req_pairs > cur_pairs + pf->qp_pool.num_free) {
-		PMD_DRV_LOG(ERR,
-			    "VF %d requested %d more queues, but only %d left\n",
-			    vf->vf_idx,
-			    req_pairs - cur_pairs,
-			    pf->qp_pool.num_free);
-		vfres->num_queue_pairs = pf->qp_pool.num_free + cur_pairs;
+		PMD_DRV_LOG(ERR, "VF %d requested %d queues (rounded to %d) "
+			"but only %d available\n",
+			vf->vf_idx,
+			vfres->num_queue_pairs,
+			req_pairs,
+			cur_pairs + pf->qp_pool.num_free);
+		vfres->num_queue_pairs = i40e_align_floor(pf->qp_pool.num_free +
+							  cur_pairs);
 	} else {
 		i40e_vc_notify_vf_reset(vf);
 		vf->vsi->nb_qps = req_pairs;
-		if (rte_is_power_of_2(req_pairs))
-			pf->vf_nb_qps = req_pairs;
-		else
-			pf->vf_nb_qps = i40e_align_floor(req_pairs) << 1;
+		pf->vf_nb_qps = req_pairs;
 		i40e_pf_host_process_cmd_reset_vf(vf);
 
 		return 0;

@@ -423,7 +423,10 @@ int
 rte_pdump_init(void)
 {
 	//注册action entry,收到PDUMP_MP类消息，将由pdump_server进行处理
-	return rte_mp_action_register(PDUMP_MP, pdump_server);
+	int ret = rte_mp_action_register(PDUMP_MP, pdump_server);
+	if (ret && rte_errno != ENOTSUP)
+		return -1;
+	return 0;
 }
 
 int
@@ -516,15 +519,15 @@ pdump_prepare_client_request(char *device, uint16_t queue,
 	req->flags = flags;
 	req->op = operation;
 	if ((operation & ENABLE) != 0) {
-		snprintf(req->data.en_v1.device,
-			 sizeof(req->data.en_v1.device), "%s", device);
+		strlcpy(req->data.en_v1.device, device,
+			sizeof(req->data.en_v1.device));
 		req->data.en_v1.queue = queue;
 		req->data.en_v1.ring = ring;
 		req->data.en_v1.mp = mp;
 		req->data.en_v1.filter = filter;
 	} else {
-		snprintf(req->data.dis_v1.device,
-			 sizeof(req->data.dis_v1.device), "%s", device);
+		strlcpy(req->data.dis_v1.device, device,
+			sizeof(req->data.dis_v1.device));
 		req->data.dis_v1.queue = queue;
 		req->data.dis_v1.ring = NULL;
 		req->data.dis_v1.mp = NULL;

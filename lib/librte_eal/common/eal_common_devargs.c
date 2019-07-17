@@ -175,7 +175,6 @@ bus_name_cmp(const struct rte_bus *bus, const void *name)
 	return strncmp(bus->name, name, strlen(bus->name));
 }
 
-__rte_experimental
 int
 rte_devargs_parse(struct rte_devargs *da, const char *dev)
 {
@@ -233,7 +232,6 @@ rte_devargs_parse(struct rte_devargs *da, const char *dev)
 	return 0;
 }
 
-__rte_experimental
 int
 rte_devargs_parsef(struct rte_devargs *da, const char *format, ...)
 {
@@ -265,7 +263,7 @@ rte_devargs_parsef(struct rte_devargs *da, const char *format, ...)
 	return ret;
 }
 
-int __rte_experimental
+int
 rte_devargs_insert(struct rte_devargs **da)
 {
 	struct rte_devargs *listed_da;
@@ -302,7 +300,6 @@ rte_devargs_insert(struct rte_devargs **da)
 }
 
 /* store a whitelist parameter for later parsing */
-__rte_experimental
 int
 rte_devargs_add(enum rte_devtype devtype, const char *devargs_str)
 {
@@ -340,7 +337,7 @@ fail:
 	return -1;
 }
 
-int __rte_experimental
+int
 rte_devargs_remove(struct rte_devargs *devargs)
 {
 	struct rte_devargs *d;
@@ -363,7 +360,6 @@ rte_devargs_remove(struct rte_devargs *devargs)
 
 /* count the number of devices of a specified type */
 //获得指定类型设备的数目
-__rte_experimental
 unsigned int
 rte_devargs_type_count(enum rte_devtype devtype)
 {
@@ -379,7 +375,6 @@ rte_devargs_type_count(enum rte_devtype devtype)
 }
 
 /* dump the user devices on the console */
-__rte_experimental
 void
 rte_devargs_dump(FILE *f)
 {
@@ -394,7 +389,6 @@ rte_devargs_dump(FILE *f)
 }
 
 /* bus-aware rte_devargs iterator. */
-__rte_experimental
 struct rte_devargs *
 rte_devargs_next(const char *busname, const struct rte_devargs *start)
 {

@@ -81,7 +81,7 @@ static struct link_bonding_rssconf_unittest_params test_params  = {
 static struct rte_eth_conf default_pmd_conf = {
 	.rxmode = {
 		.mq_mode = ETH_MQ_RX_NONE,
-		.max_rx_pkt_len = ETHER_MAX_LEN,
+		.max_rx_pkt_len = RTE_ETHER_MAX_LEN,
 		.split_hdr_size = 0,
 	},
 	.txmode = {
@@ -93,7 +93,7 @@ static struct rte_eth_conf default_pmd_conf = {
 static struct rte_eth_conf rss_pmd_conf = {
 	.rxmode = {
 		.mq_mode = ETH_MQ_RX_RSS,
-		.max_rx_pkt_len = ETHER_MAX_LEN,
+		.max_rx_pkt_len = RTE_ETHER_MAX_LEN,
 		.split_hdr_size = 0,
 	},
 	.txmode = {
@@ -495,7 +495,7 @@ test_setup(void)
 	int port_id;
 	char name[256];
 	struct slave_conf *port;
-	struct ether_addr mac_addr = { .addr_bytes = {0} };
+	struct rte_ether_addr mac_addr = { .addr_bytes = {0} };
 
 	if (test_params.mbuf_pool == NULL) {
 

@@ -21,6 +21,7 @@
 #else
 #pragma message "Jansson dev libs unavailable, not including JSON parsing"
 #endif
+#include <rte_string_fns.h>
 #include <rte_log.h>
 #include <rte_memory.h>
 #include <rte_malloc.h>
@@ -55,16 +56,16 @@ static struct policy policies[MAX_CLIENTS];
 #ifdef USE_JANSSON
 
 union PFID {
-	struct ether_addr addr;
+	struct rte_ether_addr addr;
 	uint64_t pfid;
 };
 
 static int
-str_to_ether_addr(const char *a, struct ether_addr *ether_addr)
+str_to_ether_addr(const char *a, struct rte_ether_addr *ether_addr)
 {
 	int i;
 	char *end;
-	unsigned long o[ETHER_ADDR_LEN];
+	unsigned long o[RTE_ETHER_ADDR_LEN];
 
 	i = 0;
 	do {
@@ -80,14 +81,14 @@ str_to_ether_addr(const char *a, struct ether_addr *ether_addr)
 		return -1;
 
 	/* Support the format XX:XX:XX:XX:XX:XX */
-	if (i == ETHER_ADDR_LEN) {
+	if (i == RTE_ETHER_ADDR_LEN) {
 		while (i-- != 0) {
 			if (o[i] > UINT8_MAX)
 				return -1;
 			ether_addr->addr_bytes[i] = (uint8_t)o[i];
 		}
 	/* Support the format XXXX:XXXX:XXXX */
-	} else if (i == ETHER_ADDR_LEN / 2) {
+	} else if (i == RTE_ETHER_ADDR_LEN / 2) {
 		while (i-- != 0) {
 			if (o[i] > UINT16_MAX)
 				return -1;
@@ -158,10 +159,11 @@ parse_json_to_pkt(json_t *element, struct channel_packet *pkt)
 			if (ret)
 				return ret;
 		} else if (!strcmp(key, "name")) {
-			strcpy(pkt->vm_name, json_string_value(value));
+			strlcpy(pkt->vm_name, json_string_value(value),
+					sizeof(pkt->vm_name));
 		} else if (!strcmp(key, "command")) {
 			char command[32];
-			snprintf(command, 32, "%s", json_string_value(value));
+			strlcpy(command, json_string_value(value), 32);
 			if (!strcmp(command, "power")) {
 				pkt->command = CPU_POWER;
 			} else if (!strcmp(command, "create")) {
@@ -175,7 +177,7 @@ parse_json_to_pkt(json_t *element, struct channel_packet *pkt)
 			}
 		} else if (!strcmp(key, "policy_type")) {
 			char command[32];
-			snprintf(command, 32, "%s", json_string_value(value));
+			strlcpy(command, json_string_value(value), 32);
 			if (!strcmp(command, "TIME")) {
 				pkt->policy_to_use = TIME;
 			} else if (!strcmp(command, "TRAFFIC")) {
@@ -191,7 +193,7 @@ parse_json_to_pkt(json_t *element, struct channel_packet *pkt)
 			}
 		} else if (!strcmp(key, "workload")) {
 			char command[32];
-			snprintf(command, 32, "%s", json_string_value(value));
+			strlcpy(command, json_string_value(value), 32);
 			if (!strcmp(command, "HIGH")) {
 				pkt->workload = HIGH;
 			} else if (!strcmp(command, "MEDIUM")) {
@@ -237,8 +239,9 @@ parse_json_to_pkt(json_t *element, struct channel_packet *pkt)
 
 			for (i = 0; i < size; i++) {
 				char mac[32];
-				snprintf(mac, 32, "%s", json_string_value(
-						json_array_get(value, i)));
+				strlcpy(mac,
+					json_string_value(json_array_get(value, i)),
+					32);
 				set_policy_mac(pkt, i, mac);
 			}
 			pkt->nb_mac_to_monitor = size;
@@ -250,7 +253,7 @@ parse_json_to_pkt(json_t *element, struct channel_packet *pkt)
 					(uint32_t)json_integer_value(value);
 		} else if (!strcmp(key, "unit")) {
 			char unit[32];
-			snprintf(unit, 32, "%s", json_string_value(value));
+			strlcpy(unit, json_string_value(value), 32);
 			if (!strcmp(unit, "SCALE_UP")) {
 				pkt->unit = CPU_POWER_SCALE_UP;
 			} else if (!strcmp(unit, "SCALE_DOWN")) {
@@ -401,7 +404,7 @@ get_pfid(struct policy *pol)
 
 		RTE_ETH_FOREACH_DEV(x) {
 			ret = rte_pmd_i40e_query_vfid_by_mac(x,
-				(struct ether_addr *)&(pol->pkt.vfid[i]));
+				(struct rte_ether_addr *)&(pol->pkt.vfid[i]));
 			if (ret != -EINVAL) {
 				pol->port[i] = x;
 				break;
@@ -435,9 +438,12 @@ update_policy(struct channel_packet *pkt)
 			/* Copy the contents of *pkt into the policy.pkt */
 			policies[i].pkt = *pkt;
 			get_pcpu_to_control(&policies[i]);
-			if (get_pfid(&policies[i]) == -1) {
-				updated = 1;
-				break;
+			/* Check Eth dev only for Traffic policy */
+			if (policies[i].pkt.policy_to_use == TRAFFIC) {
+				if (get_pfid(&policies[i]) < 0) {
+					updated = 1;
+					break;
+				}
 			}
 			core_share_status(i);
 			policies[i].enabled = 1;
@@ -449,8 +455,13 @@ update_policy(struct channel_packet *pkt)
 			if (policies[i].enabled == 0) {
 				policies[i].pkt = *pkt;
 				get_pcpu_to_control(&policies[i]);
-				if (get_pfid(&policies[i]) == -1)
-					break;
+				/* Check Eth dev only for Traffic policy */
+				if (policies[i].pkt.policy_to_use == TRAFFIC) {
+					if (get_pfid(&policies[i]) < 0) {
+						updated = 1;
+						break;
+					}
+				}
 				core_share_status(i);
 				policies[i].enabled = 1;
 				break;
@@ -630,6 +641,8 @@ apply_policy(struct policy *pol)
 static int
 process_request(struct channel_packet *pkt, struct channel_info *chan_info)
 {
+	int ret;
+
 	if (chan_info == NULL)
 		return -1;
 
@@ -644,6 +657,9 @@ process_request(struct channel_packet *pkt, struct channel_info *chan_info)
 			core_num = get_pcpu(chan_info, pkt->resource_id);
 		else
 			core_num = pkt->resource_id;
+
+		RTE_LOG(DEBUG, CHANNEL_MONITOR, "Processing requested cmd for cpu:%d\n",
+			core_num);
 
 		switch (pkt->unit) {
 		case(CPU_POWER_SCALE_MIN):
@@ -677,9 +693,13 @@ process_request(struct channel_packet *pkt, struct channel_info *chan_info)
 	}
 
 	if (pkt->command == PKT_POLICY_REMOVE) {
-		RTE_LOG(INFO, CHANNEL_MONITOR,
-				 "Removing policy %s\n", pkt->vm_name);
-		remove_policy(pkt);
+		ret = remove_policy(pkt);
+		if (ret == 0)
+			RTE_LOG(INFO, CHANNEL_MONITOR,
+				 "Removed policy %s\n", pkt->vm_name);
+		else
+			RTE_LOG(INFO, CHANNEL_MONITOR,
+				 "Policy %s does not exist\n", pkt->vm_name);
 	}
 
 	/*
@@ -756,7 +776,7 @@ read_binary_packet(struct channel_info *chan_info)
 				buffer, buffer_len);
 		if (n_bytes == buffer_len)
 			break;
-		if (n_bytes == -1) {
+		if (n_bytes < 0) {
 			err = errno;
 			RTE_LOG(DEBUG, CHANNEL_MONITOR,
 				"Received error on "
@@ -796,18 +816,13 @@ read_json_packet(struct channel_info *chan_info)
 				indent--;
 			if ((indent > 0) || (idx > 0))
 				idx++;
-			if (indent == 0)
+			if (indent <= 0)
 				json_data[idx] = 0;
 			if (idx >= MAX_JSON_STRING_LEN-1)
 				break;
 		} while (indent > 0);
 
-		if (indent > 0)
-			/*
-			 * We've broken out of the read loop without getting
-			 * a closing brace, so throw away the data
-			 */
-			json_data[idx] = 0;
+		json_data[idx] = '\0';
 
 		if (strlen(json_data) == 0)
 			continue;

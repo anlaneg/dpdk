@@ -26,7 +26,7 @@ Set the target, for example:
 
 .. code-block:: console
 
-    export RTE_TARGET=x86_64-native-linuxapp-gcc
+    export RTE_TARGET=x86_64-native-linux-gcc
 
 See the *DPDK Getting Started* Guide for possible ``RTE_TARGET`` values.
 
@@ -40,7 +40,7 @@ Build the application as follows:
 Running the Application
 -----------------------
 
-To run the example in a ``linuxapp`` environment:
+To run the example in a ``linux`` environment:
 
 .. code-block:: console
 
@@ -304,7 +304,7 @@ looks like the following:
    main_loop(void)
    {
            struct rte_mbuf *mbufs[32];
-           struct ether_hdr *eth_hdr;
+           struct rte_ether_hdr *eth_hdr;
            uint16_t nb_rx;
            uint16_t i;
            uint16_t j;
@@ -318,7 +318,7 @@ looks like the following:
                                            struct rte_mbuf *m = mbufs[j];
 
                                            eth_hdr = rte_pktmbuf_mtod(m,
-                                                        struct ether_hdr *);
+                                                        struct rte_ether_hdr *);
                                            print_ether_addr("src=",
                                                         &eth_hdr->s_addr);
                                            print_ether_addr(" - dst=",
@@ -348,7 +348,7 @@ queues and printing for each packet the destination queue:
                 if (nb_rx) {
                         for (j = 0; j < nb_rx; j++) {
                              struct rte_mbuf *m = mbufs[j];
-                             eth_hdr = rte_pktmbuf_mtod(m, struct ether_hdr *);
+                             eth_hdr = rte_pktmbuf_mtod(m, struct rte_ether_hdr *);
                              print_ether_addr("src=", &eth_hdr->s_addr);
                              print_ether_addr(" - dst=", &eth_hdr->d_addr);
                              printf(" - queue=0x%x", (unsigned int)i);

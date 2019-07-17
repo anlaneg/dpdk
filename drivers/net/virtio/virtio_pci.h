@@ -261,7 +261,7 @@ struct virtio_hw {
 	bool        has_tx_offload;
 	bool        has_rx_offload;
 	uint16_t    port_id;
-	uint8_t     mac_addr[ETHER_ADDR_LEN];
+	uint8_t     mac_addr[RTE_ETHER_ADDR_LEN];
 	uint32_t    notify_off_multiplier;
 	uint8_t     *isr;
 	uint16_t    *notify_base;
@@ -310,7 +310,7 @@ NET_F_MAC feature, the driver MUST set the physical address of the NIC to mac. O
 use a locally-administered MAC address (see IEEE 802, “9.2 48-bit universal LAN MAC addresses”).
      mac地址配置
 	 */
-	uint8_t    mac[ETHER_ADDR_LEN];
+	uint8_t    mac[RTE_ETHER_ADDR_LEN];
 	/* See VIRTIO_NET_F_STATUS and VIRTIO_NET_S_* above */
 	//status only exists if VIRTIO_NET_F_STATUS is
 	//set. Two read-only bits (for the driver) are currently defined for the status field: VIRTIO_NET_S_LINK_UP

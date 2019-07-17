@@ -22,7 +22,7 @@ They must be separated from the EAL options, shown in the previous section, with
 
     sudo ./testpmd -l 0-3 -n 4 -- -i --portmask=0x1 --nb-cores=2
 
-The commandline options are:
+The command line options are:
 
 *   ``-i, --interactive``
 
@@ -121,11 +121,23 @@ The commandline options are:
        XX:XX:XX:XX:XX:02
        ...
 
-
 *   ``--eth-peer=N,XX:XX:XX:XX:XX:XX``
 
     Set the MAC address ``XX:XX:XX:XX:XX:XX`` of the peer port N,
     where 0 <= N < ``CONFIG_RTE_MAX_ETHPORTS`` from the configuration file.
+
+*   ``--tx-ip=SRC,DST``
+
+    Set the source and destination IP address used when doing transmit only test.
+    The defaults address values are source 192.18.0.1 and
+    destination 192.18.0.2. These are special purpose addresses
+    reserved for benchmarking (RFC 2544).
+
+*   ``--tx-udp=SRC[,DST]``
+
+    Set the source and destination UDP port number for transmit test only test.
+    The default port is the port 9 which is defined for the discard protocol
+    (RFC 863).
 
 *   ``--pkt-filter-mode=mode``
 
@@ -324,6 +336,10 @@ The commandline options are:
     Set TX segment sizes or total packet length. Valid for ``tx-only``
     and ``flowgen`` forwarding modes.
 
+*   ``--txonly-multi-flow``
+
+    Generate multiple flows in txonly mode.
+
 *   ``--disable-link-check``
 
     Disable check on link status when starting/stopping ports.
@@ -365,7 +381,7 @@ The commandline options are:
 
 *   ``--hot-plug``
 
-    Enable device event monitor machenism for hotplug.
+    Enable device event monitor mechanism for hotplug.
 
 *   ``--vxlan-gpe-port=N``
 
@@ -405,21 +421,26 @@ The commandline options are:
 
 *   ``--noisy-lkup-memory=N``
 
-    Set the size of the noisy neighbour simulation memory buffer in MB to N.
+    Set the size of the noisy neighbor simulation memory buffer in MB to N.
     Only available with the noisy forwarding mode. The default value is 0.
 
 
 *   ``--noisy-lkup-num-reads=N``
 
-    Set the number of reads to be done in noisy neighbour simulation memory buffer to N.
+    Set the number of reads to be done in noisy neighbor simulation memory buffer to N.
     Only available with the noisy forwarding mode. The default value is 0.
 
 *   ``--noisy-lkup-num-writes=N``
 
-    Set the number of writes to be done in noisy neighbour simulation memory buffer to N.
+    Set the number of writes to be done in noisy neighbor simulation memory buffer to N.
     Only available with the noisy forwarding mode. The default value is 0.
 
 *   ``--noisy-lkup-num-reads-writes=N``
 
-    Set the number of r/w accesses to be done in noisy neighbour simulation memory buffer to N.
+    Set the number of r/w accesses to be done in noisy neighbor simulation memory buffer to N.
     Only available with the noisy forwarding mode. The default value is 0.
+
+*   ``--no-iova-contig``
+
+    Enable to create mempool which is not IOVA contiguous. Valid only with --mp-alloc=anon.
+    The default value is 0.

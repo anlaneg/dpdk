@@ -54,7 +54,7 @@ A check is also performed at initialization time to ensure that the micro archit
 Then, the main() function is called. The core initialization and launch is done in rte_eal_init() (see the API documentation).
 It consist of calls to the pthread library (more specifically, pthread_self(), pthread_create(), and pthread_setaffinity_np()).
 
-.. _figure_linuxapp_launch:
+.. _figure_linux_launch:
 
 .. figure:: img/linuxapp_launch.*
 
@@ -79,7 +79,7 @@ API documentation for details.
 Multi-process Support
 ~~~~~~~~~~~~~~~~~~~~~
 
-The Linuxapp EAL allows a multi-process as well as a multi-threaded (pthread) deployment model.
+The Linux EAL allows a multi-process as well as a multi-threaded (pthread) deployment model.
 See chapter
 :ref:`Multi-process Support <Multi-process_Support>` for more details.
 
@@ -147,6 +147,14 @@ A default validator callback is provided by EAL, which can be enabled with a
 ``--socket-limit`` command-line option, for a simple way to limit maximum amount
 of memory that can be used by DPDK application.
 
+.. warning::
+    Memory subsystem uses DPDK IPC internally, so memory allocations/callbacks
+    and IPC must not be mixed: it is not safe to allocate/free memory inside
+    memory-related or IPC callbacks, and it is not safe to use IPC inside
+    memory-related callbacks. See chapter
+    :ref:`Multi-process Support <Multi-process_Support>` for more details about
+    DPDK IPC.
+
 + Legacy memory mode
 
 This mode is enabled by specifying ``--legacy-mem`` command-line switch to the
@@ -213,6 +221,24 @@ Normally, these options do not need to be changed.
     memory! All DPDK processes preallocate virtual memory at startup. Hugepages
     can later be mapped into that preallocated VA space (if dynamic memory mode
     is enabled), and can optionally be mapped into it at startup.
+
++ Segment file descriptors
+
+On Linux, in most cases, EAL will store segment file descriptors in EAL. This
+can become a problem when using smaller page sizes due to underlying limitations
+of ``glibc`` library. For example, Linux API calls such as ``select()`` may not
+work correctly because ``glibc`` does not support more than certain number of
+file descriptors.
+
+There are two possible solutions for this problem. The recommended solution is
+to use ``--single-file-segments`` mode, as that mode will not use a file
+descriptor per each page, and it will keep compatibility with Virtio with
+vhost-user backend. This option is not available when using ``--legacy-mem``
+mode.
+
+Another option is to use bigger page sizes. Since fewer pages are required to
+cover the same memory area, fewer file descriptors will be stored internally
+by EAL.
 
 Support for Externally Allocated Memory
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -282,7 +308,7 @@ The expected workflow is as follows:
     - If IOVA table is not specified, IOVA addresses will be assumed to be
       unavailable
     - Other processes must attach to the memory area before they can use it
-* Perform DMA mapping with ``rte_vfio_dma_map`` if needed
+* Perform DMA mapping with ``rte_dev_dma_map`` if needed
 * Use the memory area in your application
 * If memory area is no longer needed, it can be unregistered
     - If the area was mapped for DMA, unmapping must be performed before
@@ -346,10 +372,10 @@ To ease the idle polling with tiny throughput, it's useful to pause the polling 
 The RX interrupt is the first choice to be such kind of wake-up event, but probably won't be the only one.
 
 EAL provides the event APIs for this event-driven thread mode.
-Taking linuxapp as an example, the implementation relies on epoll. Each thread can monitor an epoll instance
+Taking Linux as an example, the implementation relies on epoll. Each thread can monitor an epoll instance
 in which all the wake-up events' file descriptors are added. The event file descriptors are created and mapped to
 the interrupt vectors according to the UIO/VFIO spec.
-From bsdapp's perspective, kqueue is the alternative way, but not implemented yet.
+From FreeBSD's perspective, kqueue is the alternative way, but not implemented yet.
 
 EAL initializes the mapping between event file descriptors and interrupt vectors, while each device initializes the mapping
 between interrupt vectors and queues. In this way, EAL actually is unaware of the interrupt cause on the specific vector.
@@ -563,6 +589,16 @@ Known Issues
 
   5. It MUST not be used by multi-producer/consumer pthreads, whose scheduling policies are SCHED_FIFO or SCHED_RR.
 
+  Alternatively, applications can use the lock-free stack mempool handler. When
+  considering this handler, note that:
+
+  - It is currently limited to the x86_64 platform, because it uses an
+    instruction (16-byte compare-and-swap) that is not yet available on other
+    platforms.
+  - It has worse average-case performance than the non-preemptive rte_ring, but
+    software caching (e.g. the mempool cache) can mitigate this by reducing the
+    number of stack accesses.
+
 + rte_timer
 
   Running  ``rte_timer_manage()`` on a non-EAL pthread is not allowed. However, resetting/stopping the timer from a non-EAL pthread is allowed.
@@ -705,7 +741,7 @@ The most important fields in the structure and how they are used are described b
 
 Malloc heap is a doubly-linked list, where each element keeps track of its
 previous and next elements. Due to the fact that hugepage memory can come and
-go, neighbouring malloc elements may not necessarily be adjacent in memory.
+go, neighboring malloc elements may not necessarily be adjacent in memory.
 Also, since a malloc element may span multiple pages, its contents may not
 necessarily be IOVA-contiguous either - each malloc element is only guaranteed
 to be virtually contiguous.

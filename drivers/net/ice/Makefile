@@ -51,8 +51,34 @@ SRCS-$(CONFIG_RTE_LIBRTE_ICE_PMD) += ice_switch.c
 SRCS-$(CONFIG_RTE_LIBRTE_ICE_PMD) += ice_nvm.c
 SRCS-$(CONFIG_RTE_LIBRTE_ICE_PMD) += ice_flex_pipe.c
 SRCS-$(CONFIG_RTE_LIBRTE_ICE_PMD) += ice_flow.c
+SRCS-$(CONFIG_RTE_LIBRTE_ICE_PMD) += ice_dcb.c
+SRCS-$(CONFIG_RTE_LIBRTE_ICE_PMD) += ice_fdir.c
 
 SRCS-$(CONFIG_RTE_LIBRTE_ICE_PMD) += ice_ethdev.c
 SRCS-$(CONFIG_RTE_LIBRTE_ICE_PMD) += ice_rxtx.c
+ifeq ($(CONFIG_RTE_ARCH_X86), y)
+SRCS-$(CONFIG_RTE_LIBRTE_ICE_PMD) += ice_rxtx_vec_sse.c
+endif
+
+SRCS-$(CONFIG_RTE_LIBRTE_ICE_PMD) += ice_switch_filter.c
+ifeq ($(findstring RTE_MACHINE_CPUFLAG_AVX2,$(CFLAGS)),RTE_MACHINE_CPUFLAG_AVX2)
+	CC_AVX2_SUPPORT=1
+else
+	CC_AVX2_SUPPORT=\
+	$(shell $(CC) -march=core-avx2 -dM -E - </dev/null 2>&1 | \
+	grep -q AVX2 && echo 1)
+	ifeq ($(CC_AVX2_SUPPORT), 1)
+		ifeq ($(CONFIG_RTE_TOOLCHAIN_ICC),y)
+			CFLAGS_ice_rxtx_vec_avx2.o += -march=core-avx2
+		else
+			CFLAGS_ice_rxtx_vec_avx2.o += -mavx2
+		endif
+	endif
+endif
+
+ifeq ($(CC_AVX2_SUPPORT), 1)
+	SRCS-$(CONFIG_RTE_LIBRTE_ICE_PMD) += ice_rxtx_vec_avx2.c
+endif
+SRCS-$(CONFIG_RTE_LIBRTE_ICE_PMD) += ice_generic_flow.c
 
 include $(RTE_SDK)/mk/rte.lib.mk

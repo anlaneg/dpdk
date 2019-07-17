@@ -42,12 +42,13 @@ static void iavf_dev_info_get(struct rte_eth_dev *dev,
 static const uint32_t *iavf_dev_supported_ptypes_get(struct rte_eth_dev *dev);
 static int iavf_dev_stats_get(struct rte_eth_dev *dev,
 			     struct rte_eth_stats *stats);
+static void iavf_dev_stats_reset(struct rte_eth_dev *dev);
 static void iavf_dev_promiscuous_enable(struct rte_eth_dev *dev);
 static void iavf_dev_promiscuous_disable(struct rte_eth_dev *dev);
 static void iavf_dev_allmulticast_enable(struct rte_eth_dev *dev);
 static void iavf_dev_allmulticast_disable(struct rte_eth_dev *dev);
 static int iavf_dev_add_mac_addr(struct rte_eth_dev *dev,
-				struct ether_addr *addr,
+				struct rte_ether_addr *addr,
 				uint32_t index,
 				uint32_t pool);
 static void iavf_dev_del_mac_addr(struct rte_eth_dev *dev, uint32_t index);
@@ -66,7 +67,7 @@ static int iavf_dev_rss_hash_conf_get(struct rte_eth_dev *dev,
 				     struct rte_eth_rss_conf *rss_conf);
 static int iavf_dev_mtu_set(struct rte_eth_dev *dev, uint16_t mtu);
 static int iavf_dev_set_default_mac_addr(struct rte_eth_dev *dev,
-					 struct ether_addr *mac_addr);
+					 struct rte_ether_addr *mac_addr);
 static int iavf_dev_rx_queue_intr_enable(struct rte_eth_dev *dev,
 					uint16_t queue_id);
 static int iavf_dev_rx_queue_intr_disable(struct rte_eth_dev *dev,
@@ -89,6 +90,7 @@ static const struct eth_dev_ops iavf_eth_dev_ops = {
 	.dev_supported_ptypes_get   = iavf_dev_supported_ptypes_get,
 	.link_update                = iavf_dev_link_update,
 	.stats_get                  = iavf_dev_stats_get,
+	.stats_reset                = iavf_dev_stats_reset,
 	.promiscuous_enable         = iavf_dev_promiscuous_enable,
 	.promiscuous_disable        = iavf_dev_promiscuous_disable,
 	.allmulticast_enable        = iavf_dev_allmulticast_enable,
@@ -223,23 +225,23 @@ iavf_init_rxq(struct rte_eth_dev *dev, struct iavf_rx_queue *rxq)
 	 * correctly.
 	 */
 	if (dev->data->dev_conf.rxmode.offloads & DEV_RX_OFFLOAD_JUMBO_FRAME) {
-		if (max_pkt_len <= ETHER_MAX_LEN ||
+		if (max_pkt_len <= RTE_ETHER_MAX_LEN ||
 		    max_pkt_len > IAVF_FRAME_SIZE_MAX) {
 			PMD_DRV_LOG(ERR, "maximum packet length must be "
 				    "larger than %u and smaller than %u, "
 				    "as jumbo frame is enabled",
-				    (uint32_t)ETHER_MAX_LEN,
+				    (uint32_t)RTE_ETHER_MAX_LEN,
 				    (uint32_t)IAVF_FRAME_SIZE_MAX);
 			return -EINVAL;
 		}
 	} else {
-		if (max_pkt_len < ETHER_MIN_LEN ||
-		    max_pkt_len > ETHER_MAX_LEN) {
+		if (max_pkt_len < RTE_ETHER_MIN_LEN ||
+		    max_pkt_len > RTE_ETHER_MAX_LEN) {
 			PMD_DRV_LOG(ERR, "maximum packet length must be "
 				    "larger than %u and smaller than %u, "
 				    "as jumbo frame is disabled",
-				    (uint32_t)ETHER_MIN_LEN,
-				    (uint32_t)ETHER_MAX_LEN);
+				    (uint32_t)RTE_ETHER_MIN_LEN,
+				    (uint32_t)RTE_ETHER_MAX_LEN);
 			return -EINVAL;
 		}
 	}
@@ -498,7 +500,6 @@ iavf_dev_info_get(struct rte_eth_dev *dev, struct rte_eth_dev_info *dev_info)
 {
 	struct iavf_info *vf = IAVF_DEV_PRIVATE_TO_VF(dev->data->dev_private);
 
-	memset(dev_info, 0, sizeof(*dev_info));
 	dev_info->max_rx_queues = vf->vsi_res->num_queue_pairs;
 	dev_info->max_tx_queues = vf->vsi_res->num_queue_pairs;
 	dev_info->min_rx_bufsize = IAVF_BUF_SIZE_MIN;
@@ -585,23 +586,32 @@ iavf_dev_link_update(struct rte_eth_dev *dev,
 	 *  when receive LINK_CHANGE evnet from PF by Virtchnnl.
 	 */
 	switch (vf->link_speed) {
-	case VIRTCHNL_LINK_SPEED_100MB:
+	case 10:
+		new_link.link_speed = ETH_SPEED_NUM_10M;
+		break;
+	case 100:
 		new_link.link_speed = ETH_SPEED_NUM_100M;
 		break;
-	case VIRTCHNL_LINK_SPEED_1GB:
+	case 1000:
 		new_link.link_speed = ETH_SPEED_NUM_1G;
 		break;
-	case VIRTCHNL_LINK_SPEED_10GB:
+	case 10000:
 		new_link.link_speed = ETH_SPEED_NUM_10G;
 		break;
-	case VIRTCHNL_LINK_SPEED_20GB:
+	case 20000:
 		new_link.link_speed = ETH_SPEED_NUM_20G;
 		break;
-	case VIRTCHNL_LINK_SPEED_25GB:
+	case 25000:
 		new_link.link_speed = ETH_SPEED_NUM_25G;
 		break;
-	case VIRTCHNL_LINK_SPEED_40GB:
+	case 40000:
 		new_link.link_speed = ETH_SPEED_NUM_40G;
+		break;
+	case 50000:
+		new_link.link_speed = ETH_SPEED_NUM_50G;
+		break;
+	case 100000:
+		new_link.link_speed = ETH_SPEED_NUM_100G;
 		break;
 	default:
 		new_link.link_speed = ETH_SPEED_NUM_NONE;
@@ -687,7 +697,7 @@ iavf_dev_allmulticast_disable(struct rte_eth_dev *dev)
 }
 
 static int
-iavf_dev_add_mac_addr(struct rte_eth_dev *dev, struct ether_addr *addr,
+iavf_dev_add_mac_addr(struct rte_eth_dev *dev, struct rte_ether_addr *addr,
 		     __rte_unused uint32_t index,
 		     __rte_unused uint32_t pool)
 {
@@ -696,7 +706,7 @@ iavf_dev_add_mac_addr(struct rte_eth_dev *dev, struct ether_addr *addr,
 	struct iavf_info *vf = IAVF_DEV_PRIVATE_TO_VF(adapter);
 	int err;
 
-	if (is_zero_ether_addr(addr)) {
+	if (rte_is_zero_ether_addr(addr)) {
 		PMD_DRV_LOG(ERR, "Invalid Ethernet Address");
 		return -EINVAL;
 	}
@@ -718,7 +728,7 @@ iavf_dev_del_mac_addr(struct rte_eth_dev *dev, uint32_t index)
 	struct iavf_adapter *adapter =
 		IAVF_DEV_PRIVATE_TO_ADAPTER(dev->data->dev_private);
 	struct iavf_info *vf = IAVF_DEV_PRIVATE_TO_VF(adapter);
-	struct ether_addr *addr;
+	struct rte_ether_addr *addr;
 	int err;
 
 	addr = &dev->data->mac_addrs[index];
@@ -907,7 +917,7 @@ iavf_dev_mtu_set(struct rte_eth_dev *dev, uint16_t mtu)
 	uint32_t frame_size = mtu + IAVF_ETH_OVERHEAD;
 	int ret = 0;
 
-	if (mtu < ETHER_MIN_MTU || frame_size > IAVF_FRAME_SIZE_MAX)
+	if (mtu < RTE_ETHER_MIN_MTU || frame_size > IAVF_FRAME_SIZE_MAX)
 		return -EINVAL;
 
 	/* mtu setting is forbidden if port is start */
@@ -916,7 +926,7 @@ iavf_dev_mtu_set(struct rte_eth_dev *dev, uint16_t mtu)
 		return -EBUSY;
 	}
 
-	if (frame_size > ETHER_MAX_LEN)
+	if (frame_size > RTE_ETHER_MAX_LEN)
 		dev->data->dev_conf.rxmode.offloads |=
 				DEV_RX_OFFLOAD_JUMBO_FRAME;
 	else
@@ -930,22 +940,22 @@ iavf_dev_mtu_set(struct rte_eth_dev *dev, uint16_t mtu)
 
 static int
 iavf_dev_set_default_mac_addr(struct rte_eth_dev *dev,
-			     struct ether_addr *mac_addr)
+			     struct rte_ether_addr *mac_addr)
 {
 	struct iavf_adapter *adapter =
 		IAVF_DEV_PRIVATE_TO_ADAPTER(dev->data->dev_private);
 	struct iavf_hw *hw = IAVF_DEV_PRIVATE_TO_HW(adapter);
-	struct ether_addr *perm_addr, *old_addr;
+	struct rte_ether_addr *perm_addr, *old_addr;
 	int ret;
 
-	old_addr = (struct ether_addr *)hw->mac.addr;
-	perm_addr = (struct ether_addr *)hw->mac.perm_addr;
+	old_addr = (struct rte_ether_addr *)hw->mac.addr;
+	perm_addr = (struct rte_ether_addr *)hw->mac.perm_addr;
 
-	if (is_same_ether_addr(mac_addr, old_addr))
+	if (rte_is_same_ether_addr(mac_addr, old_addr))
 		return 0;
 
 	/* If the MAC address is configured by host, skip the setting */
-	if (is_valid_assigned_ether_addr(perm_addr))
+	if (rte_is_valid_assigned_ether_addr(perm_addr))
 		return -EPERM;
 
 	ret = iavf_add_del_eth_addr(adapter, old_addr, FALSE);
@@ -973,8 +983,48 @@ iavf_dev_set_default_mac_addr(struct rte_eth_dev *dev,
 	if (ret)
 		return -EIO;
 
-	ether_addr_copy(mac_addr, (struct ether_addr *)hw->mac.addr);
+	rte_ether_addr_copy(mac_addr, (struct rte_ether_addr *)hw->mac.addr);
 	return 0;
+}
+
+static void
+iavf_stat_update_48(uint64_t *offset, uint64_t *stat)
+{
+	if (*stat >= *offset)
+		*stat = *stat - *offset;
+	else
+		*stat = (uint64_t)((*stat +
+			((uint64_t)1 << IAVF_48_BIT_WIDTH)) - *offset);
+
+	*stat &= IAVF_48_BIT_MASK;
+}
+
+static void
+iavf_stat_update_32(uint64_t *offset, uint64_t *stat)
+{
+	if (*stat >= *offset)
+		*stat = (uint64_t)(*stat - *offset);
+	else
+		*stat = (uint64_t)((*stat +
+			((uint64_t)1 << IAVF_32_BIT_WIDTH)) - *offset);
+}
+
+static void
+iavf_update_stats(struct iavf_vsi *vsi, struct virtchnl_eth_stats *nes)
+{
+	struct virtchnl_eth_stats *oes = &vsi->eth_stats_offset;
+
+	iavf_stat_update_48(&oes->rx_bytes, &nes->rx_bytes);
+	iavf_stat_update_48(&oes->rx_unicast, &nes->rx_unicast);
+	iavf_stat_update_48(&oes->rx_multicast, &nes->rx_multicast);
+	iavf_stat_update_48(&oes->rx_broadcast, &nes->rx_broadcast);
+	iavf_stat_update_32(&oes->rx_discards, &nes->rx_discards);
+	iavf_stat_update_48(&oes->tx_bytes, &nes->tx_bytes);
+	iavf_stat_update_48(&oes->tx_unicast, &nes->tx_unicast);
+	iavf_stat_update_48(&oes->tx_multicast, &nes->tx_multicast);
+	iavf_stat_update_48(&oes->tx_broadcast, &nes->tx_broadcast);
+	iavf_stat_update_32(&oes->tx_errors, &nes->tx_errors);
+	iavf_stat_update_32(&oes->tx_discards, &nes->tx_discards);
 }
 
 static int
@@ -982,11 +1032,14 @@ iavf_dev_stats_get(struct rte_eth_dev *dev, struct rte_eth_stats *stats)
 {
 	struct iavf_adapter *adapter =
 		IAVF_DEV_PRIVATE_TO_ADAPTER(dev->data->dev_private);
+	struct iavf_info *vf = IAVF_DEV_PRIVATE_TO_VF(dev->data->dev_private);
+	struct iavf_vsi *vsi = &vf->vsi;
 	struct virtchnl_eth_stats *pstats = NULL;
 	int ret;
 
 	ret = iavf_query_stats(adapter, &pstats);
 	if (ret == 0) {
+		iavf_update_stats(vsi, pstats);
 		stats->ipackets = pstats->rx_unicast + pstats->rx_multicast +
 						pstats->rx_broadcast;
 		stats->opackets = pstats->tx_broadcast + pstats->tx_multicast +
@@ -999,6 +1052,24 @@ iavf_dev_stats_get(struct rte_eth_dev *dev, struct rte_eth_stats *stats)
 		PMD_DRV_LOG(ERR, "Get statistics failed");
 	}
 	return -EIO;
+}
+
+static void
+iavf_dev_stats_reset(struct rte_eth_dev *dev)
+{
+	int ret;
+	struct iavf_adapter *adapter =
+		IAVF_DEV_PRIVATE_TO_ADAPTER(dev->data->dev_private);
+	struct iavf_info *vf = IAVF_DEV_PRIVATE_TO_VF(dev->data->dev_private);
+	struct iavf_vsi *vsi = &vf->vsi;
+	struct virtchnl_eth_stats *pstats = NULL;
+
+	/* read stat values to clear hardware registers */
+	ret = iavf_query_stats(adapter, &pstats);
+
+	/* set stats offset base on current values */
+	if (ret == 0)
+		vsi->eth_stats_offset = *pstats;
 }
 
 static int
@@ -1015,11 +1086,13 @@ iavf_dev_rx_queue_intr_enable(struct rte_eth_dev *dev, uint16_t queue_id)
 		PMD_DRV_LOG(INFO, "MISC is also enabled for control");
 		IAVF_WRITE_REG(hw, IAVFINT_DYN_CTL01,
 			      IAVFINT_DYN_CTL01_INTENA_MASK |
+			      IAVFINT_DYN_CTL01_CLEARPBA_MASK |
 			      IAVFINT_DYN_CTL01_ITR_INDX_MASK);
 	} else {
 		IAVF_WRITE_REG(hw,
 			      IAVFINT_DYN_CTLN1(msix_intr - IAVF_RX_VEC_START),
 			      IAVFINT_DYN_CTLN1_INTENA_MASK |
+			      IAVFINT_DYN_CTL01_CLEARPBA_MASK |
 			      IAVFINT_DYN_CTLN1_ITR_INDX_MASK);
 	}
 
@@ -1232,21 +1305,20 @@ iavf_dev_init(struct rte_eth_dev *eth_dev)
 
 	/* copy mac addr */
 	eth_dev->data->mac_addrs = rte_zmalloc(
-					"iavf_mac",
-					ETHER_ADDR_LEN * IAVF_NUM_MACADDR_MAX,
-					0);
+		"iavf_mac", RTE_ETHER_ADDR_LEN * IAVF_NUM_MACADDR_MAX, 0);
 	if (!eth_dev->data->mac_addrs) {
 		PMD_INIT_LOG(ERR, "Failed to allocate %d bytes needed to"
 			     " store MAC addresses",
-			     ETHER_ADDR_LEN * IAVF_NUM_MACADDR_MAX);
+			     RTE_ETHER_ADDR_LEN * IAVF_NUM_MACADDR_MAX);
 		return -ENOMEM;
 	}
 	/* If the MAC address is not configured by host,
 	 * generate a random one.
 	 */
-	if (!is_valid_assigned_ether_addr((struct ether_addr *)hw->mac.addr))
-		eth_random_addr(hw->mac.addr);
-	ether_addr_copy((struct ether_addr *)hw->mac.addr,
+	if (!rte_is_valid_assigned_ether_addr(
+			(struct rte_ether_addr *)hw->mac.addr))
+		rte_eth_random_addr(hw->mac.addr);
+	rte_ether_addr_copy((struct rte_ether_addr *)hw->mac.addr,
 			&eth_dev->data->mac_addrs[0]);
 
 	/* register callback func to eal lib */

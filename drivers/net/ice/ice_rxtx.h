@@ -27,6 +27,18 @@
 
 #define ICE_SUPPORT_CHAIN_NUM 5
 
+#define ICE_TD_CMD                      ICE_TX_DESC_CMD_EOP
+
+#define ICE_VPMD_RX_BURST           32
+#define ICE_VPMD_TX_BURST           32
+#define ICE_RXQ_REARM_THRESH        32
+#define ICE_MAX_RX_BURST            ICE_RXQ_REARM_THRESH
+#define ICE_TX_MAX_FREE_BUF_SZ      64
+#define ICE_DESCS_PER_LOOP          4
+
+typedef void (*ice_rx_release_mbufs_t)(struct ice_rx_queue *rxq);
+typedef void (*ice_tx_release_mbufs_t)(struct ice_tx_queue *txq);
+
 struct ice_rx_entry {
 	struct rte_mbuf *mbuf;
 };
@@ -42,13 +54,16 @@ struct ice_rx_queue {
 	uint16_t nb_rx_hold; /* number of held free RX desc */
 	struct rte_mbuf *pkt_first_seg; /**< first segment of current packet */
 	struct rte_mbuf *pkt_last_seg; /**< last segment of current packet */
-#ifdef RTE_LIBRTE_ICE_RX_ALLOW_BULK_ALLOC
 	uint16_t rx_nb_avail; /**< number of staged packets ready */
 	uint16_t rx_next_avail; /**< index of next staged packets */
 	uint16_t rx_free_trigger; /**< triggers rx buffer allocation */
 	struct rte_mbuf fake_mbuf; /**< dummy mbuf */
 	struct rte_mbuf *rx_stage[ICE_RX_MAX_BURST * 2];
-#endif
+
+	uint16_t rxrearm_nb;	/**< number of remaining to be re-armed */
+	uint16_t rxrearm_start;	/**< the idx we start the re-arming from */
+	uint64_t mbuf_initializer; /**< value to init mbufs */
+
 	uint8_t port_id; /* device port ID */
 	uint8_t crc_len; /* 0 if CRC stripped, 4 otherwise */
 	uint16_t queue_id; /* RX queue index */
@@ -61,6 +76,7 @@ struct ice_rx_queue {
 	uint16_t max_pkt_len; /* Maximum packet length */
 	bool q_set; /* indicate if rx queue has been configured */
 	bool rx_deferred_start; /* don't start this queue in dev start */
+	ice_rx_release_mbufs_t rx_rel_mbufs;
 };
 
 struct ice_tx_entry {
@@ -100,6 +116,7 @@ struct ice_tx_queue {
 	uint16_t tx_next_rs;
 	bool tx_deferred_start; /* don't start this queue in dev start */
 	bool q_set; /* indicate if tx queue has been configured */
+	ice_tx_release_mbufs_t tx_rel_mbufs;
 };
 
 /* Offload features */
@@ -141,6 +158,8 @@ uint16_t ice_xmit_pkts(void *tx_queue, struct rte_mbuf **tx_pkts,
 void ice_set_rx_function(struct rte_eth_dev *dev);
 uint16_t ice_prep_pkts(__rte_unused void *tx_queue, struct rte_mbuf **tx_pkts,
 		       uint16_t nb_pkts);
+void ice_set_tx_function_flag(struct rte_eth_dev *dev,
+			      struct ice_tx_queue *txq);
 void ice_set_tx_function(struct rte_eth_dev *dev);
 uint32_t ice_rx_queue_count(struct rte_eth_dev *dev, uint16_t rx_queue_id);
 void ice_rxq_info_get(struct rte_eth_dev *dev, uint16_t queue_id,
@@ -151,4 +170,22 @@ int ice_rx_descriptor_status(void *rx_queue, uint16_t offset);
 int ice_tx_descriptor_status(void *tx_queue, uint16_t offset);
 void ice_set_default_ptype_table(struct rte_eth_dev *dev);
 const uint32_t *ice_dev_supported_ptypes_get(struct rte_eth_dev *dev);
+
+int ice_rx_vec_dev_check(struct rte_eth_dev *dev);
+int ice_tx_vec_dev_check(struct rte_eth_dev *dev);
+int ice_rxq_vec_setup(struct ice_rx_queue *rxq);
+int ice_txq_vec_setup(struct ice_tx_queue *txq);
+uint16_t ice_recv_pkts_vec(void *rx_queue, struct rte_mbuf **rx_pkts,
+			   uint16_t nb_pkts);
+uint16_t ice_recv_scattered_pkts_vec(void *rx_queue, struct rte_mbuf **rx_pkts,
+				     uint16_t nb_pkts);
+uint16_t ice_xmit_pkts_vec(void *tx_queue, struct rte_mbuf **tx_pkts,
+			   uint16_t nb_pkts);
+uint16_t ice_recv_pkts_vec_avx2(void *rx_queue, struct rte_mbuf **rx_pkts,
+				uint16_t nb_pkts);
+uint16_t ice_recv_scattered_pkts_vec_avx2(void *rx_queue,
+					  struct rte_mbuf **rx_pkts,
+					  uint16_t nb_pkts);
+uint16_t ice_xmit_pkts_vec_avx2(void *tx_queue, struct rte_mbuf **tx_pkts,
+				uint16_t nb_pkts);
 #endif /* _ICE_RXTX_H_ */

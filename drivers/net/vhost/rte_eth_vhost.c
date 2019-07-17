@@ -48,7 +48,7 @@ static const char *valid_arguments[] = {
 	NULL
 };
 
-static struct ether_addr base_eth_addr = {
+static struct rte_ether_addr base_eth_addr = {
 	.addr_bytes = {
 		0x56 /* V */,
 		0x48 /* H */,
@@ -330,12 +330,12 @@ static inline void
 vhost_count_multicast_broadcast(struct vhost_queue *vq,
 				struct rte_mbuf *mbuf)
 {
-	struct ether_addr *ea = NULL;
+	struct rte_ether_addr *ea = NULL;
 	struct vhost_stats *pstats = &vq->stats;
 
-	ea = rte_pktmbuf_mtod(mbuf, struct ether_addr *);
-	if (is_multicast_ether_addr(ea)) {
-		if (is_broadcast_ether_addr(ea))
+	ea = rte_pktmbuf_mtod(mbuf, struct rte_ether_addr *);
+	if (rte_is_multicast_ether_addr(ea)) {
+		if (rte_is_broadcast_ether_addr(ea))
 			pstats->xstats[VHOST_BROADCAST_PKT]++;
 		else
 			pstats->xstats[VHOST_MULTICAST_PKT]++;
@@ -1035,6 +1035,9 @@ eth_dev_close(struct rte_eth_dev *dev)
 	rte_free(internal);
 
 	dev->data->dev_private = NULL;
+
+	rte_free(vring_states[dev->data->port_id]);
+	vring_states[dev->data->port_id] = NULL;
 }
 
 //vhost收队列初始化（在那个socket_id上申请ring)
@@ -1243,7 +1246,7 @@ eth_dev_vhost_create(struct rte_vdev_device *dev, char *iface_name,
 	struct rte_eth_dev_data *data;
 	struct pmd_internal *internal = NULL;
 	struct rte_eth_dev *eth_dev = NULL;
-	struct ether_addr *eth_addr = NULL;
+	struct rte_ether_addr *eth_addr = NULL;
 	struct rte_vhost_vring_state *vring_state = NULL;
 	struct internal_list *list = NULL;
 
@@ -1301,7 +1304,7 @@ eth_dev_vhost_create(struct rte_vdev_device *dev, char *iface_name,
 	internal->max_queues = queues;
 	internal->vid = -1;
 	data->dev_link = pmd_link;
-	data->dev_flags = RTE_ETH_DEV_INTR_LSC;
+	data->dev_flags = RTE_ETH_DEV_INTR_LSC | RTE_ETH_DEV_CLOSE_REMOVE;
 
 	eth_dev->dev_ops = &ops;
 
@@ -1505,16 +1508,13 @@ rte_pmd_vhost_remove(struct rte_vdev_device *dev)
 	//找名称为$name的eth_dev
 	eth_dev = rte_eth_dev_allocated(name);
 	if (eth_dev == NULL)
-		return -ENODEV;
+		return 0;
 
 	if (rte_eal_process_type() != RTE_PROC_PRIMARY)
 		return rte_eth_dev_release_port(eth_dev);
 
 	//停止设备
 	eth_dev_close(eth_dev);
-
-	rte_free(vring_states[eth_dev->data->port_id]);
-	vring_states[eth_dev->data->port_id] = NULL;
 
 	rte_eth_dev_release_port(eth_dev);
 

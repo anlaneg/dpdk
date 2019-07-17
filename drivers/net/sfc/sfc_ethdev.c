@@ -14,6 +14,7 @@
 #include <rte_bus_pci.h>
 #include <rte_errno.h>
 #include <rte_string_fns.h>
+#include <rte_ether.h>
 
 #include "efx.h"
 
@@ -32,6 +33,10 @@ uint32_t sfc_logtype_driver;
 
 static struct sfc_dp_list sfc_dp_head =
 	TAILQ_HEAD_INITIALIZER(sfc_dp_head);
+
+
+static void sfc_eth_dev_clear_ops(struct rte_eth_dev *dev);
+
 
 static int
 sfc_fw_version_get(struct rte_eth_dev *dev, char *fw_version, size_t fw_size)
@@ -92,21 +97,24 @@ sfc_dev_infos_get(struct rte_eth_dev *dev, struct rte_eth_dev_info *dev_info)
 
 	sfc_log_init(sa, "entry");
 
+	dev_info->min_mtu = RTE_ETHER_MIN_MTU;
+	dev_info->max_mtu = EFX_MAC_SDU_MAX;
+
 	dev_info->max_rx_pktlen = EFX_MAC_PDU_MAX;
 
 	/* Autonegotiation may be disabled */
 	dev_info->speed_capa = ETH_LINK_SPEED_FIXED;
-	if (sa->port.phy_adv_cap_mask & EFX_PHY_CAP_1000FDX)
+	if (sa->port.phy_adv_cap_mask & (1u << EFX_PHY_CAP_1000FDX))
 		dev_info->speed_capa |= ETH_LINK_SPEED_1G;
-	if (sa->port.phy_adv_cap_mask & EFX_PHY_CAP_10000FDX)
+	if (sa->port.phy_adv_cap_mask & (1u << EFX_PHY_CAP_10000FDX))
 		dev_info->speed_capa |= ETH_LINK_SPEED_10G;
-	if (sa->port.phy_adv_cap_mask & EFX_PHY_CAP_25000FDX)
+	if (sa->port.phy_adv_cap_mask & (1u << EFX_PHY_CAP_25000FDX))
 		dev_info->speed_capa |= ETH_LINK_SPEED_25G;
-	if (sa->port.phy_adv_cap_mask & EFX_PHY_CAP_40000FDX)
+	if (sa->port.phy_adv_cap_mask & (1u << EFX_PHY_CAP_40000FDX))
 		dev_info->speed_capa |= ETH_LINK_SPEED_40G;
-	if (sa->port.phy_adv_cap_mask & EFX_PHY_CAP_50000FDX)
+	if (sa->port.phy_adv_cap_mask & (1u << EFX_PHY_CAP_50000FDX))
 		dev_info->speed_capa |= ETH_LINK_SPEED_50G;
-	if (sa->port.phy_adv_cap_mask & EFX_PHY_CAP_100000FDX)
+	if (sa->port.phy_adv_cap_mask & (1u << EFX_PHY_CAP_100000FDX))
 		dev_info->speed_capa |= ETH_LINK_SPEED_100G;
 
 	dev_info->max_rx_queues = sa->rxq_max;
@@ -331,9 +339,29 @@ sfc_dev_close(struct rte_eth_dev *dev)
 		sfc_err(sa, "unexpected adapter state %u on close", sa->state);
 		break;
 	}
+
+	/*
+	 * Cleanup all resources in accordance with RTE_ETH_DEV_CLOSE_REMOVE.
+	 * Rollback primary process sfc_eth_dev_init() below.
+	 */
+
+	sfc_eth_dev_clear_ops(dev);
+
+	sfc_detach(sa);
+	sfc_unprobe(sa);
+
+	sfc_kvargs_cleanup(sa);
+
 	sfc_adapter_unlock(sa);
+	sfc_adapter_lock_fini(sa);
 
 	sfc_log_init(sa, "done");
+
+	/* Required for logging, so cleanup last */
+	sa->eth_dev = NULL;
+
+	dev->process_private = NULL;
+	free(sa);
 }
 
 static void
@@ -862,6 +890,34 @@ fail_inval:
 }
 
 static int
+sfc_check_scatter_on_all_rx_queues(struct sfc_adapter *sa, size_t pdu)
+{
+	struct sfc_adapter_shared * const sas = sfc_sa2shared(sa);
+	const efx_nic_cfg_t *encp = efx_nic_cfg_get(sa->nic);
+	boolean_t scatter_enabled;
+	const char *error;
+	unsigned int i;
+
+	for (i = 0; i < sas->rxq_count; i++) {
+		if ((sas->rxq_info[i].state & SFC_RXQ_INITIALIZED) == 0)
+			continue;
+
+		scatter_enabled = (sas->rxq_info[i].type_flags &
+				   EFX_RXQ_FLAG_SCATTER);
+
+		if (!sfc_rx_check_scatter(pdu, sa->rxq_ctrl[i].buf_size,
+					  encp->enc_rx_prefix_size,
+					  scatter_enabled, &error)) {
+			sfc_err(sa, "MTU check for RxQ %u failed: %s", i,
+				error);
+			return EINVAL;
+		}
+	}
+
+	return 0;
+}
+
+static int
 sfc_dev_set_mtu(struct rte_eth_dev *dev, uint16_t mtu)
 {
 	struct sfc_adapter *sa = sfc_adapter_by_eth_dev(dev);
@@ -887,6 +943,10 @@ sfc_dev_set_mtu(struct rte_eth_dev *dev, uint16_t mtu)
 
 	sfc_adapter_lock(sa);
 
+	rc = sfc_check_scatter_on_all_rx_queues(sa, pdu);
+	if (rc != 0)
+		goto fail_check_scatter;
+
 	if (pdu != sa->port.pdu) {
 		if (sa->state == SFC_ADAPTER_STARTED) {
 			sfc_stop(sa);
@@ -905,7 +965,7 @@ sfc_dev_set_mtu(struct rte_eth_dev *dev, uint16_t mtu)
 	 * The driver does not use it, but other PMDs update jumbo frame
 	 * flag and max_rx_pkt_len when MTU is set.
 	 */
-	if (mtu > ETHER_MAX_LEN) {
+	if (mtu > RTE_ETHER_MAX_LEN) {
 		struct rte_eth_rxmode *rxmode = &dev->data->dev_conf.rxmode;
 		rxmode->offloads |= DEV_RX_OFFLOAD_JUMBO_FRAME;
 	}
@@ -923,6 +983,8 @@ fail_start:
 		sfc_err(sa, "cannot start with neither new (%u) nor old (%u) "
 			"PDU max size - port is stopped",
 			(unsigned int)pdu, (unsigned int)old_pdu);
+
+fail_check_scatter:
 	sfc_adapter_unlock(sa);
 
 fail_inval:
@@ -931,12 +993,12 @@ fail_inval:
 	return -rc;
 }
 static int
-sfc_mac_addr_set(struct rte_eth_dev *dev, struct ether_addr *mac_addr)
+sfc_mac_addr_set(struct rte_eth_dev *dev, struct rte_ether_addr *mac_addr)
 {
 	struct sfc_adapter *sa = sfc_adapter_by_eth_dev(dev);
 	const efx_nic_cfg_t *encp = efx_nic_cfg_get(sa->nic);
 	struct sfc_port *port = &sa->port;
-	struct ether_addr *old_addr = &dev->data->mac_addrs[0];
+	struct rte_ether_addr *old_addr = &dev->data->mac_addrs[0];
 	int rc = 0;
 
 	sfc_adapter_lock(sa);
@@ -945,7 +1007,7 @@ sfc_mac_addr_set(struct rte_eth_dev *dev, struct ether_addr *mac_addr)
 	 * Copy the address to the device private data so that
 	 * it could be recalled in the case of adapter restart.
 	 */
-	ether_addr_copy(mac_addr, &port->default_mac_addr);
+	rte_ether_addr_copy(mac_addr, &port->default_mac_addr);
 
 	/*
 	 * Neither of the two following checks can return
@@ -1005,7 +1067,7 @@ sfc_mac_addr_set(struct rte_eth_dev *dev, struct ether_addr *mac_addr)
 
 unlock:
 	if (rc != 0)
-		ether_addr_copy(old_addr, &port->default_mac_addr);
+		rte_ether_addr_copy(old_addr, &port->default_mac_addr);
 
 	sfc_adapter_unlock(sa);
 
@@ -1015,8 +1077,8 @@ unlock:
 
 
 static int
-sfc_set_mc_addr_list(struct rte_eth_dev *dev, struct ether_addr *mc_addr_set,
-		     uint32_t nb_mc_addr)
+sfc_set_mc_addr_list(struct rte_eth_dev *dev,
+		struct rte_ether_addr *mc_addr_set, uint32_t nb_mc_addr)
 {
 	struct sfc_adapter *sa = sfc_adapter_by_eth_dev(dev);
 	struct sfc_port *port = &sa->port;
@@ -1675,6 +1737,32 @@ sfc_pool_ops_supported(struct rte_eth_dev *dev, const char *pool)
 	return sap->dp_rx->pool_ops_supported(pool);
 }
 
+static int
+sfc_rx_queue_intr_enable(struct rte_eth_dev *dev, uint16_t queue_id)
+{
+	const struct sfc_adapter_priv *sap = sfc_adapter_priv_by_eth_dev(dev);
+	struct sfc_adapter_shared *sas = sfc_adapter_shared_by_eth_dev(dev);
+	struct sfc_rxq_info *rxq_info;
+
+	SFC_ASSERT(queue_id < sas->rxq_count);
+	rxq_info = &sas->rxq_info[queue_id];
+
+	return sap->dp_rx->intr_enable(rxq_info->dp);
+}
+
+static int
+sfc_rx_queue_intr_disable(struct rte_eth_dev *dev, uint16_t queue_id)
+{
+	const struct sfc_adapter_priv *sap = sfc_adapter_priv_by_eth_dev(dev);
+	struct sfc_adapter_shared *sas = sfc_adapter_shared_by_eth_dev(dev);
+	struct sfc_rxq_info *rxq_info;
+
+	SFC_ASSERT(queue_id < sas->rxq_count);
+	rxq_info = &sas->rxq_info[queue_id];
+
+	return sap->dp_rx->intr_disable(rxq_info->dp);
+}
+
 static const struct eth_dev_ops sfc_eth_dev_ops = {
 	.dev_configure			= sfc_dev_configure,
 	.dev_start			= sfc_dev_start,
@@ -1705,6 +1793,8 @@ static const struct eth_dev_ops sfc_eth_dev_ops = {
 	.rx_descriptor_done		= sfc_rx_descriptor_done,
 	.rx_descriptor_status		= sfc_rx_descriptor_status,
 	.tx_descriptor_status		= sfc_tx_descriptor_status,
+	.rx_queue_intr_enable		= sfc_rx_queue_intr_enable,
+	.rx_queue_intr_disable		= sfc_rx_queue_intr_disable,
 	.tx_queue_setup			= sfc_tx_queue_setup,
 	.tx_queue_release		= sfc_tx_queue_release,
 	.flow_ctrl_get			= sfc_flow_ctrl_get,
@@ -1854,6 +1944,7 @@ sfc_eth_dev_set_ops(struct rte_eth_dev *dev)
 	sa->priv.dp_tx = dp_tx;
 
 	dev->rx_pkt_burst = dp_rx->pkt_burst;
+	dev->tx_pkt_prepare = dp_tx->pkt_prepare;
 	dev->tx_pkt_burst = dp_tx->pkt_burst;
 
 	dev->dev_ops = &sfc_eth_dev_ops;
@@ -1881,6 +1972,7 @@ sfc_eth_dev_clear_ops(struct rte_eth_dev *dev)
 	struct sfc_adapter_shared *sas = sfc_adapter_shared_by_eth_dev(dev);
 
 	dev->dev_ops = NULL;
+	dev->tx_pkt_prepare = NULL;
 	dev->rx_pkt_burst = NULL;
 	dev->tx_pkt_burst = NULL;
 
@@ -1961,6 +2053,7 @@ sfc_eth_dev_secondary_init(struct rte_eth_dev *dev, uint32_t logtype_main)
 
 	dev->process_private = sap;
 	dev->rx_pkt_burst = dp_rx->pkt_burst;
+	dev->tx_pkt_prepare = dp_tx->pkt_prepare;
 	dev->tx_pkt_burst = dp_tx->pkt_burst;
 	dev->dev_ops = &sfc_eth_dev_secondary_ops;
 
@@ -1982,6 +2075,7 @@ sfc_eth_dev_secondary_clear_ops(struct rte_eth_dev *dev)
 	free(dev->process_private);
 	dev->process_private = NULL;
 	dev->dev_ops = NULL;
+	dev->tx_pkt_prepare = NULL;
 	dev->tx_pkt_burst = NULL;
 	dev->rx_pkt_burst = NULL;
 }
@@ -2011,7 +2105,7 @@ sfc_eth_dev_init(struct rte_eth_dev *dev)
 	struct sfc_adapter *sa;
 	int rc;
 	const efx_nic_cfg_t *encp;
-	const struct ether_addr *from;
+	const struct rte_ether_addr *from;
 
 	sfc_register_dp();
 
@@ -2053,7 +2147,9 @@ sfc_eth_dev_init(struct rte_eth_dev *dev)
 
 	sfc_log_init(sa, "entry");
 
-	dev->data->mac_addrs = rte_zmalloc("sfc", ETHER_ADDR_LEN, 0);
+	dev->data->dev_flags |= RTE_ETH_DEV_CLOSE_REMOVE;
+
+	dev->data->mac_addrs = rte_zmalloc("sfc", RTE_ETHER_ADDR_LEN, 0);
 	if (dev->data->mac_addrs == NULL) {
 		rc = ENOMEM;
 		goto fail_mac_addrs;
@@ -2083,8 +2179,8 @@ sfc_eth_dev_init(struct rte_eth_dev *dev)
 	 * The arguments are really reverse order in comparison to
 	 * Linux kernel. Copy from NIC config to Ethernet device data.
 	 */
-	from = (const struct ether_addr *)(encp->enc_mac_addr);
-	ether_addr_copy(from, &dev->data->mac_addrs[0]);
+	from = (const struct rte_ether_addr *)(encp->enc_mac_addr);
+	rte_ether_addr_copy(from, &dev->data->mac_addrs[0]);
 
 	sfc_adapter_unlock(sa);
 
@@ -2119,35 +2215,12 @@ fail_alloc_sa:
 static int
 sfc_eth_dev_uninit(struct rte_eth_dev *dev)
 {
-	struct sfc_adapter *sa;
-
 	if (rte_eal_process_type() != RTE_PROC_PRIMARY) {
 		sfc_eth_dev_secondary_clear_ops(dev);
 		return 0;
 	}
 
-	sa = sfc_adapter_by_eth_dev(dev);
-	sfc_log_init(sa, "entry");
-
-	sfc_adapter_lock(sa);
-
-	sfc_eth_dev_clear_ops(dev);
-
-	sfc_detach(sa);
-	sfc_unprobe(sa);
-
-	sfc_kvargs_cleanup(sa);
-
-	sfc_adapter_unlock(sa);
-	sfc_adapter_lock_fini(sa);
-
-	sfc_log_init(sa, "done");
-
-	/* Required for logging, so cleanup last */
-	sa->eth_dev = NULL;
-
-	dev->process_private = NULL;
-	free(sa);
+	sfc_dev_close(dev);
 
 	return 0;
 }

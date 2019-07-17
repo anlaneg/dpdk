@@ -1529,7 +1529,7 @@ process_openssl_auth_op(struct openssl_qp *qp, struct rte_crypto_op *op,
 	}
 
 	if (sess->auth.operation == RTE_CRYPTO_AUTH_OP_VERIFY) {
-		if (memcmp(dst, op->sym->auth.digest.data,
+		if (CRYPTO_memcmp(dst, op->sym->auth.digest.data,
 				sess->auth.digest_length) != 0) {
 			op->status = RTE_CRYPTO_OP_STATUS_AUTH_FAILED;
 		}
@@ -1790,7 +1790,7 @@ process_openssl_modinv_op(struct rte_crypto_op *cop,
 
 	if (BN_mod_inverse(res, base, sess->u.m.modulus, sess->u.m.ctx)) {
 		cop->status = RTE_CRYPTO_OP_STATUS_SUCCESS;
-		op->modinv.base.length = BN_bn2bin(res, op->modinv.base.data);
+		op->modinv.result.length = BN_bn2bin(res, op->modinv.result.data);
 	} else {
 		cop->status = RTE_CRYPTO_OP_STATUS_ERROR;
 	}
@@ -1822,7 +1822,7 @@ process_openssl_modexp_op(struct rte_crypto_op *cop,
 
 	if (BN_mod_exp(res, base, sess->u.e.exp,
 				sess->u.e.mod, sess->u.e.ctx)) {
-		op->modex.base.length = BN_bn2bin(res, op->modex.base.data);
+		op->modex.result.length = BN_bn2bin(res, op->modex.result.data);
 		cop->status = RTE_CRYPTO_OP_STATUS_SUCCESS;
 	} else {
 		cop->status = RTE_CRYPTO_OP_STATUS_ERROR;
@@ -1914,7 +1914,7 @@ process_openssl_rsa_op(struct rte_crypto_op *cop,
 				"Length of public_decrypt %d "
 				"length of message %zd\n",
 				ret, op->rsa.message.length);
-		if ((ret <= 0) || (memcmp(tmp, op->rsa.message.data,
+		if ((ret <= 0) || (CRYPTO_memcmp(tmp, op->rsa.message.data,
 				op->rsa.message.length))) {
 			OPENSSL_LOG(ERR, "RSA sign Verification failed");
 			cop->status = RTE_CRYPTO_OP_STATUS_ERROR;
@@ -2125,7 +2125,9 @@ cryptodev_openssl_create(const char *name,
 			RTE_CRYPTODEV_FF_CPU_AESNI |
 			RTE_CRYPTODEV_FF_OOP_SGL_IN_LB_OUT |
 			RTE_CRYPTODEV_FF_OOP_LB_IN_LB_OUT |
-			RTE_CRYPTODEV_FF_ASYMMETRIC_CRYPTO;
+			RTE_CRYPTODEV_FF_ASYMMETRIC_CRYPTO |
+			RTE_CRYPTODEV_FF_RSA_PRIV_OP_KEY_EXP |
+			RTE_CRYPTODEV_FF_RSA_PRIV_OP_KEY_QT;
 
 	/* Set vector instructions mode supported */
 	internals = dev->data->dev_private;

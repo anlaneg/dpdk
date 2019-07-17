@@ -223,8 +223,8 @@ static int fpga_pr_buf_load(struct ifpga_fme_hw *fme_dev,
 	return 0;
 }
 
-static int fme_pr(struct ifpga_hw *hw, u32 port_id, void *buffer, u32 size,
-		  u64 *status)
+static int fme_pr(struct ifpga_hw *hw, u32 port_id, const char *buffer,
+		u32 size, u64 *status)
 {
 	struct feature_fme_header *fme_hdr;
 	struct feature_fme_capability fme_capability;
@@ -257,7 +257,7 @@ static int fme_pr(struct ifpga_hw *hw, u32 port_id, void *buffer, u32 size,
 		return -EINVAL;
 	}
 
-	memset(&info, 0, sizeof(struct fpga_pr_info));
+	opae_memset(&info, 0, sizeof(struct fpga_pr_info));
 	info.flags = FPGA_MGR_PARTIAL_RECONFIG;
 	info.port_id = port_id;
 
@@ -269,7 +269,7 @@ static int fme_pr(struct ifpga_hw *hw, u32 port_id, void *buffer, u32 size,
 	/* Disable Port before PR */
 	fpga_port_disable(port);
 
-	ret = fpga_pr_buf_load(fme, &info, (void *)buffer, size);
+	ret = fpga_pr_buf_load(fme, &info, buffer, size);
 
 	*status = info.pr_err;
 
@@ -280,27 +280,32 @@ static int fme_pr(struct ifpga_hw *hw, u32 port_id, void *buffer, u32 size,
 	return ret;
 }
 
-int do_pr(struct ifpga_hw *hw, u32 port_id, void *buffer, u32 size, u64 *status)
+int do_pr(struct ifpga_hw *hw, u32 port_id, const char *buffer,
+		u32 size, u64 *status)
 {
-	struct bts_header *bts_hdr;
-	void *buf;
+	const struct bts_header *bts_hdr;
+	const char *buf;
 	struct ifpga_port_hw *port;
 	int ret;
+	u32 header_size;
 
 	if (!buffer || size == 0) {
 		dev_err(hw, "invalid parameter\n");
 		return -EINVAL;
 	}
 
-	bts_hdr = (struct bts_header *)buffer;
+	bts_hdr = (const struct bts_header *)buffer;
 
 	if (is_valid_bts(bts_hdr)) {
 		dev_info(hw, "this is a valid bitsteam..\n");
-		size -= (sizeof(struct bts_header) +
-				     bts_hdr->metadata_len);
-		buf = (u8 *)buffer + sizeof(struct bts_header) +
-			       bts_hdr->metadata_len;
+		header_size = sizeof(struct bts_header) +
+			bts_hdr->metadata_len;
+		if (size < header_size)
+			return -EINVAL;
+		size -= header_size;
+		buf = buffer + header_size;
 	} else {
+		dev_err(hw, "this is an invalid bitstream..\n");
 		return -EINVAL;
 	}
 
@@ -315,7 +320,7 @@ int do_pr(struct ifpga_hw *hw, u32 port_id, void *buffer, u32 size, u64 *status)
 	return fme_pr(hw, port_id, buf, size, status);
 }
 
-static int fme_pr_mgmt_init(struct feature *feature)
+static int fme_pr_mgmt_init(struct ifpga_feature *feature)
 {
 	struct feature_fme_pr *fme_pr;
 	struct feature_header fme_pr_header;
@@ -339,14 +344,14 @@ static int fme_pr_mgmt_init(struct feature *feature)
 	return 0;
 }
 
-static void fme_pr_mgmt_uinit(struct feature *feature)
+static void fme_pr_mgmt_uinit(struct ifpga_feature *feature)
 {
 	UNUSED(feature);
 
 	dev_info(NULL, "FME PR MGMT UInit.\n");
 }
 
-struct feature_ops fme_pr_mgmt_ops = {
+struct ifpga_feature_ops fme_pr_mgmt_ops = {
 	.init = fme_pr_mgmt_init,
 	.uinit = fme_pr_mgmt_uinit,
 };

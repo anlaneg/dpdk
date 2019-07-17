@@ -7,8 +7,6 @@
 
 #include "ice_rxtx.h"
 
-#define ICE_TD_CMD ICE_TX_DESC_CMD_EOP
-
 #define ICE_TX_CKSUM_OFFLOAD_MASK (		 \
 		PKT_TX_IP_CKSUM |		 \
 		PKT_TX_L4_MASK |		 \
@@ -49,23 +47,23 @@ ice_program_hw_rx_queue(struct ice_rx_queue *rxq)
 				   dev->data->dev_conf.rxmode.max_rx_pkt_len);
 
 	if (rxmode->offloads & DEV_RX_OFFLOAD_JUMBO_FRAME) {
-		if (rxq->max_pkt_len <= ETHER_MAX_LEN ||
+		if (rxq->max_pkt_len <= RTE_ETHER_MAX_LEN ||
 		    rxq->max_pkt_len > ICE_FRAME_SIZE_MAX) {
 			PMD_DRV_LOG(ERR, "maximum packet length must "
 				    "be larger than %u and smaller than %u,"
 				    "as jumbo frame is enabled",
-				    (uint32_t)ETHER_MAX_LEN,
+				    (uint32_t)RTE_ETHER_MAX_LEN,
 				    (uint32_t)ICE_FRAME_SIZE_MAX);
 			return -EINVAL;
 		}
 	} else {
-		if (rxq->max_pkt_len < ETHER_MIN_LEN ||
-		    rxq->max_pkt_len > ETHER_MAX_LEN) {
+		if (rxq->max_pkt_len < RTE_ETHER_MIN_LEN ||
+		    rxq->max_pkt_len > RTE_ETHER_MAX_LEN) {
 			PMD_DRV_LOG(ERR, "maximum packet length must be "
 				    "larger than %u and smaller than %u, "
 				    "as jumbo frame is disabled",
-				    (uint32_t)ETHER_MIN_LEN,
-				    (uint32_t)ETHER_MAX_LEN);
+				    (uint32_t)RTE_ETHER_MIN_LEN,
+				    (uint32_t)RTE_ETHER_MAX_LEN);
 			return -EINVAL;
 		}
 	}
@@ -113,7 +111,7 @@ ice_program_hw_rx_queue(struct ice_rx_queue *rxq)
 			      RTE_PKTMBUF_HEADROOM);
 
 	/* Check if scattered RX needs to be used. */
-	if ((rxq->max_pkt_len + 2 * ICE_VLAN_TAG_SIZE) > buf_size)
+	if (rxq->max_pkt_len > buf_size)
 		dev->data->scattered_rx = 1;
 
 	rxq->qrx_tail = hw->hw_addr + QRX_TAIL(rxq->reg_idx);
@@ -165,7 +163,7 @@ ice_alloc_rx_queue_mbufs(struct ice_rx_queue *rxq)
 
 /* Free all mbufs for descriptors in rx queue */
 static void
-ice_rx_queue_release_mbufs(struct ice_rx_queue *rxq)
+_ice_rx_queue_release_mbufs(struct ice_rx_queue *rxq)
 {
 	uint16_t i;
 
@@ -191,6 +189,12 @@ ice_rx_queue_release_mbufs(struct ice_rx_queue *rxq)
 		}
 		rxq->rx_nb_avail = 0;
 #endif /* RTE_LIBRTE_ICE_RX_ALLOW_BULK_ALLOC */
+}
+
+static void
+ice_rx_queue_release_mbufs(struct ice_rx_queue *rxq)
+{
+	rxq->rx_rel_mbufs(rxq);
 }
 
 /* turn on or off rx queue
@@ -319,6 +323,9 @@ ice_reset_rx_queue(struct ice_rx_queue *rxq)
 	rxq->nb_rx_hold = 0;
 	rxq->pkt_first_seg = NULL;
 	rxq->pkt_last_seg = NULL;
+
+	rxq->rxrearm_start = 0;
+	rxq->rxrearm_nb = 0;
 }
 
 int
@@ -453,8 +460,9 @@ ice_tx_queue_start(struct rte_eth_dev *dev, uint16_t tx_queue_id)
 	/* Init the Tx tail register*/
 	ICE_PCI_REG_WRITE(txq->qtx_tail, 0);
 
-	err = ice_ena_vsi_txq(hw->port_info, vsi->idx, 0, 1, &txq_elem,
-			      sizeof(txq_elem), NULL);
+	/* Fix me, we assume TC always 0 here */
+	err = ice_ena_vsi_txq(hw->port_info, vsi->idx, 0, tx_queue_id, 1,
+			&txq_elem, sizeof(txq_elem), NULL);
 	if (err) {
 		PMD_DRV_LOG(ERR, "Failed to add lan txq");
 		return -EIO;
@@ -468,7 +476,7 @@ ice_tx_queue_start(struct rte_eth_dev *dev, uint16_t tx_queue_id)
 
 /* Free all mbufs for descriptors in tx queue */
 static void
-ice_tx_queue_release_mbufs(struct ice_tx_queue *txq)
+_ice_tx_queue_release_mbufs(struct ice_tx_queue *txq)
 {
 	uint16_t i;
 
@@ -483,6 +491,11 @@ ice_tx_queue_release_mbufs(struct ice_tx_queue *txq)
 			txq->sw_ring[i].mbuf = NULL;
 		}
 	}
+}
+static void
+ice_tx_queue_release_mbufs(struct ice_tx_queue *txq)
+{
+	txq->tx_rel_mbufs(txq);
 }
 
 static void
@@ -528,9 +541,12 @@ ice_tx_queue_stop(struct rte_eth_dev *dev, uint16_t tx_queue_id)
 {
 	struct ice_tx_queue *txq;
 	struct ice_hw *hw = ICE_DEV_PRIVATE_TO_HW(dev->data->dev_private);
+	struct ice_pf *pf = ICE_DEV_PRIVATE_TO_PF(dev->data->dev_private);
+	struct ice_vsi *vsi = pf->main_vsi;
 	enum ice_status status;
 	uint16_t q_ids[1];
 	uint32_t q_teids[1];
+	uint16_t q_handle = tx_queue_id;
 
 	if (tx_queue_id >= dev->data->nb_tx_queues) {
 		PMD_DRV_LOG(ERR, "TX queue %u is out of range %u",
@@ -548,8 +564,9 @@ ice_tx_queue_stop(struct rte_eth_dev *dev, uint16_t tx_queue_id)
 	q_ids[0] = txq->reg_idx;
 	q_teids[0] = txq->q_teid;
 
-	status = ice_dis_vsi_txq(hw->port_info, 1, q_ids, q_teids,
-				 ICE_NO_RESET, 0, NULL);
+	/* Fix me, we assume TC always 0 here */
+	status = ice_dis_vsi_txq(hw->port_info, vsi->idx, 0, 1, &q_handle,
+				q_ids, q_teids, ICE_NO_RESET, 0, NULL);
 	if (status != ICE_SUCCESS) {
 		PMD_DRV_LOG(DEBUG, "Failed to disable Lan Tx queue");
 		return -EINVAL;
@@ -612,7 +629,7 @@ ice_rx_queue_setup(struct rte_eth_dev *dev,
 	rxq->reg_idx = vsi->base_queue + queue_idx;
 	rxq->port_id = dev->data->port_id;
 	if (dev->data->dev_conf.rxmode.offloads & DEV_RX_OFFLOAD_KEEP_CRC)
-		rxq->crc_len = ETHER_CRC_LEN;
+		rxq->crc_len = RTE_ETHER_CRC_LEN;
 	else
 		rxq->crc_len = 0;
 
@@ -669,6 +686,7 @@ ice_rx_queue_setup(struct rte_eth_dev *dev,
 	ice_reset_rx_queue(rxq);
 	rxq->q_set = TRUE;
 	dev->data->rx_queues[queue_idx] = rxq;
+	rxq->rx_rel_mbufs = _ice_rx_queue_release_mbufs;
 
 	use_def_burst_func = ice_check_rx_burst_bulk_alloc_preconditions(rxq);
 
@@ -746,17 +764,32 @@ ice_tx_queue_setup(struct rte_eth_dev *dev,
 	 *  - tx_rs_thresh must be a divisor of the ring size.
 	 *  - tx_free_thresh must be greater than 0.
 	 *  - tx_free_thresh must be less than the size of the ring minus 3.
+	 *  - tx_free_thresh + tx_rs_thresh must not exceed nb_desc.
 	 *
 	 * One descriptor in the TX ring is used as a sentinel to avoid a H/W
 	 * race condition, hence the maximum threshold constraints. When set
 	 * to zero use default values.
 	 */
-	tx_rs_thresh = (uint16_t)(tx_conf->tx_rs_thresh ?
-				  tx_conf->tx_rs_thresh :
-				  ICE_DEFAULT_TX_RSBIT_THRESH);
 	tx_free_thresh = (uint16_t)(tx_conf->tx_free_thresh ?
 				    tx_conf->tx_free_thresh :
 				    ICE_DEFAULT_TX_FREE_THRESH);
+	/* force tx_rs_thresh to adapt an aggresive tx_free_thresh */
+	tx_rs_thresh =
+		(ICE_DEFAULT_TX_RSBIT_THRESH + tx_free_thresh > nb_desc) ?
+			nb_desc - tx_free_thresh : ICE_DEFAULT_TX_RSBIT_THRESH;
+	if (tx_conf->tx_rs_thresh)
+		tx_rs_thresh = tx_conf->tx_rs_thresh;
+	if (tx_rs_thresh + tx_free_thresh > nb_desc) {
+		PMD_INIT_LOG(ERR, "tx_rs_thresh + tx_free_thresh must not "
+				"exceed nb_desc. (tx_rs_thresh=%u "
+				"tx_free_thresh=%u nb_desc=%u port = %d queue=%d)",
+				(unsigned int)tx_rs_thresh,
+				(unsigned int)tx_free_thresh,
+				(unsigned int)nb_desc,
+				(int)dev->data->port_id,
+				(int)queue_idx);
+		return -EINVAL;
+	}
 	if (tx_rs_thresh >= (nb_desc - 2)) {
 		PMD_INIT_LOG(ERR, "tx_rs_thresh must be less than the "
 			     "number of TX descriptors minus 2. "
@@ -866,6 +899,8 @@ ice_tx_queue_setup(struct rte_eth_dev *dev,
 	ice_reset_tx_queue(txq);
 	txq->q_set = TRUE;
 	dev->data->tx_queues[queue_idx] = txq;
+	txq->tx_rel_mbufs = _ice_tx_queue_release_mbufs;
+	ice_set_tx_function_flag(dev, txq);
 
 	return 0;
 }
@@ -1392,17 +1427,17 @@ ice_recv_scattered_pkts(void *rx_queue,
 		 */
 		rxm->next = NULL;
 		if (unlikely(rxq->crc_len > 0)) {
-			first_seg->pkt_len -= ETHER_CRC_LEN;
-			if (rx_packet_len <= ETHER_CRC_LEN) {
+			first_seg->pkt_len -= RTE_ETHER_CRC_LEN;
+			if (rx_packet_len <= RTE_ETHER_CRC_LEN) {
 				rte_pktmbuf_free_seg(rxm);
 				first_seg->nb_segs--;
 				last_seg->data_len =
 					(uint16_t)(last_seg->data_len -
-					(ETHER_CRC_LEN - rx_packet_len));
+					(RTE_ETHER_CRC_LEN - rx_packet_len));
 				last_seg->next = NULL;
 			} else
 				rxm->data_len = (uint16_t)(rx_packet_len -
-							   ETHER_CRC_LEN);
+							   RTE_ETHER_CRC_LEN);
 		}
 
 		first_seg->port = rxq->port_id;
@@ -1488,6 +1523,15 @@ ice_dev_supported_ptypes_get(struct rte_eth_dev *dev)
 #endif
 	    dev->rx_pkt_burst == ice_recv_scattered_pkts)
 		return ptypes;
+
+#ifdef RTE_ARCH_X86
+	if (dev->rx_pkt_burst == ice_recv_pkts_vec ||
+	    dev->rx_pkt_burst == ice_recv_scattered_pkts_vec ||
+	    dev->rx_pkt_burst == ice_recv_pkts_vec_avx2 ||
+	    dev->rx_pkt_burst == ice_recv_scattered_pkts_vec_avx2)
+		return ptypes;
+#endif
+
 	return NULL;
 }
 
@@ -1698,14 +1742,71 @@ ice_recv_pkts(void *rx_queue,
 }
 
 static inline void
+ice_parse_tunneling_params(uint64_t ol_flags,
+			    union ice_tx_offload tx_offload,
+			    uint32_t *cd_tunneling)
+{
+	/* EIPT: External (outer) IP header type */
+	if (ol_flags & PKT_TX_OUTER_IP_CKSUM)
+		*cd_tunneling |= ICE_TX_CTX_EIPT_IPV4;
+	else if (ol_flags & PKT_TX_OUTER_IPV4)
+		*cd_tunneling |= ICE_TX_CTX_EIPT_IPV4_NO_CSUM;
+	else if (ol_flags & PKT_TX_OUTER_IPV6)
+		*cd_tunneling |= ICE_TX_CTX_EIPT_IPV6;
+
+	/* EIPLEN: External (outer) IP header length, in DWords */
+	*cd_tunneling |= (tx_offload.outer_l3_len >> 2) <<
+		ICE_TXD_CTX_QW0_EIPLEN_S;
+
+	/* L4TUNT: L4 Tunneling Type */
+	switch (ol_flags & PKT_TX_TUNNEL_MASK) {
+	case PKT_TX_TUNNEL_IPIP:
+		/* for non UDP / GRE tunneling, set to 00b */
+		break;
+	case PKT_TX_TUNNEL_VXLAN:
+	case PKT_TX_TUNNEL_GENEVE:
+		*cd_tunneling |= ICE_TXD_CTX_UDP_TUNNELING;
+		break;
+	case PKT_TX_TUNNEL_GRE:
+		*cd_tunneling |= ICE_TXD_CTX_GRE_TUNNELING;
+		break;
+	default:
+		PMD_TX_LOG(ERR, "Tunnel type not supported");
+		return;
+	}
+
+	/* L4TUNLEN: L4 Tunneling Length, in Words
+	 *
+	 * We depend on app to set rte_mbuf.l2_len correctly.
+	 * For IP in GRE it should be set to the length of the GRE
+	 * header;
+	 * For MAC in GRE or MAC in UDP it should be set to the length
+	 * of the GRE or UDP headers plus the inner MAC up to including
+	 * its last Ethertype.
+	 * If MPLS labels exists, it should include them as well.
+	 */
+	*cd_tunneling |= (tx_offload.l2_len >> 1) <<
+		ICE_TXD_CTX_QW0_NATLEN_S;
+
+	if ((ol_flags & PKT_TX_OUTER_UDP_CKSUM) &&
+	    (ol_flags & PKT_TX_OUTER_IP_CKSUM) &&
+	    (*cd_tunneling & ICE_TXD_CTX_UDP_TUNNELING))
+		*cd_tunneling |= ICE_TXD_CTX_QW0_L4T_CS_M;
+}
+
+static inline void
 ice_txd_enable_checksum(uint64_t ol_flags,
 			uint32_t *td_cmd,
 			uint32_t *td_offset,
 			union ice_tx_offload tx_offload)
 {
-	/* L2 length must be set. */
-	*td_offset |= (tx_offload.l2_len >> 1) <<
-		      ICE_TX_DESC_LEN_MACLEN_S;
+	/* Set MACLEN */
+	if (ol_flags & PKT_TX_TUNNEL_MASK)
+		*td_offset |= (tx_offload.outer_l2_len >> 1)
+			<< ICE_TX_DESC_LEN_MACLEN_S;
+	else
+		*td_offset |= (tx_offload.l2_len >> 1)
+			<< ICE_TX_DESC_LEN_MACLEN_S;
 
 	/* Enable L3 checksum offloads */
 	if (ol_flags & PKT_TX_IP_CKSUM) {
@@ -1733,17 +1834,17 @@ ice_txd_enable_checksum(uint64_t ol_flags,
 	switch (ol_flags & PKT_TX_L4_MASK) {
 	case PKT_TX_TCP_CKSUM:
 		*td_cmd |= ICE_TX_DESC_CMD_L4T_EOFT_TCP;
-		*td_offset |= (sizeof(struct tcp_hdr) >> 2) <<
+		*td_offset |= (sizeof(struct rte_tcp_hdr) >> 2) <<
 			      ICE_TX_DESC_LEN_L4_LEN_S;
 		break;
 	case PKT_TX_SCTP_CKSUM:
 		*td_cmd |= ICE_TX_DESC_CMD_L4T_EOFT_SCTP;
-		*td_offset |= (sizeof(struct sctp_hdr) >> 2) <<
+		*td_offset |= (sizeof(struct rte_sctp_hdr) >> 2) <<
 			      ICE_TX_DESC_LEN_L4_LEN_S;
 		break;
 	case PKT_TX_UDP_CKSUM:
 		*td_cmd |= ICE_TX_DESC_CMD_L4T_EOFT_UDP;
-		*td_offset |= (sizeof(struct udp_hdr) >> 2) <<
+		*td_offset |= (sizeof(struct rte_udp_hdr) >> 2) <<
 			      ICE_TX_DESC_LEN_L4_LEN_S;
 		break;
 	default:
@@ -1819,7 +1920,10 @@ ice_build_ctob(uint32_t td_cmd,
 static inline uint16_t
 ice_calc_context_desc(uint64_t flags)
 {
-	static uint64_t mask = PKT_TX_TCP_SEG | PKT_TX_QINQ;
+	static uint64_t mask = PKT_TX_TCP_SEG |
+		PKT_TX_QINQ |
+		PKT_TX_OUTER_IP_CKSUM |
+		PKT_TX_TUNNEL_MASK;
 
 	return (flags & mask) ? 1 : 0;
 }
@@ -1836,15 +1940,9 @@ ice_set_tso_ctx(struct rte_mbuf *mbuf, union ice_tx_offload tx_offload)
 		return ctx_desc;
 	}
 
-	/**
-	 * in case of non tunneling packet, the outer_l2_len and
-	 * outer_l3_len must be 0.
-	 */
-	hdr_len = tx_offload.outer_l2_len +
-		  tx_offload.outer_l3_len +
-		  tx_offload.l2_len +
-		  tx_offload.l3_len +
-		  tx_offload.l4_len;
+	hdr_len = tx_offload.l2_len + tx_offload.l3_len + tx_offload.l4_len;
+	hdr_len += (mbuf->ol_flags & PKT_TX_TUNNEL_MASK) ?
+		   tx_offload.outer_l2_len + tx_offload.outer_l3_len : 0;
 
 	cd_cmd = ICE_TX_CTX_DESC_TSO;
 	cd_tso_len = mbuf->pkt_len - hdr_len;
@@ -1865,6 +1963,7 @@ ice_xmit_pkts(void *tx_queue, struct rte_mbuf **tx_pkts, uint16_t nb_pkts)
 	struct ice_tx_entry *txe, *txn;
 	struct rte_mbuf *tx_pkt;
 	struct rte_mbuf *m_seg;
+	uint32_t cd_tunneling_params;
 	uint16_t tx_id;
 	uint16_t nb_tx;
 	uint16_t nb_used;
@@ -1935,6 +2034,12 @@ ice_xmit_pkts(void *tx_queue, struct rte_mbuf **tx_pkts, uint16_t nb_pkts)
 			td_tag = tx_pkt->vlan_tci;
 		}
 
+		/* Fill in tunneling parameters if necessary */
+		cd_tunneling_params = 0;
+		if (ol_flags & PKT_TX_TUNNEL_MASK)
+			ice_parse_tunneling_params(ol_flags, tx_offload,
+						   &cd_tunneling_params);
+
 		/* Enable checksum offloading */
 		if (ol_flags & ICE_TX_CKSUM_OFFLOAD_MASK) {
 			ice_txd_enable_checksum(ol_flags, &td_cmd,
@@ -1959,6 +2064,9 @@ ice_xmit_pkts(void *tx_queue, struct rte_mbuf **tx_pkts, uint16_t nb_pkts)
 			if (ol_flags & PKT_TX_TCP_SEG)
 				cd_type_cmd_tso_mss |=
 					ice_set_tso_ctx(tx_pkt, tx_offload);
+
+			ctx_txd->tunneling_params =
+				rte_cpu_to_le_32(cd_tunneling_params);
 
 			/* TX context descriptor based double VLAN insert */
 			if (ol_flags & PKT_TX_QINQ) {
@@ -2219,6 +2327,41 @@ ice_set_rx_function(struct rte_eth_dev *dev)
 	PMD_INIT_FUNC_TRACE();
 	struct ice_adapter *ad =
 		ICE_DEV_PRIVATE_TO_ADAPTER(dev->data->dev_private);
+#ifdef RTE_ARCH_X86
+	struct ice_rx_queue *rxq;
+	int i;
+	bool use_avx2 = false;
+
+	if (!ice_rx_vec_dev_check(dev)) {
+		for (i = 0; i < dev->data->nb_rx_queues; i++) {
+			rxq = dev->data->rx_queues[i];
+			(void)ice_rxq_vec_setup(rxq);
+		}
+
+		if (rte_cpu_get_flag_enabled(RTE_CPUFLAG_AVX2) == 1 ||
+		    rte_cpu_get_flag_enabled(RTE_CPUFLAG_AVX512F) == 1)
+			use_avx2 = true;
+
+		if (dev->data->scattered_rx) {
+			PMD_DRV_LOG(DEBUG,
+				    "Using %sVector Scattered Rx (port %d).",
+				    use_avx2 ? "avx2 " : "",
+				    dev->data->port_id);
+			dev->rx_pkt_burst = use_avx2 ?
+					    ice_recv_scattered_pkts_vec_avx2 :
+					    ice_recv_scattered_pkts_vec;
+		} else {
+			PMD_DRV_LOG(DEBUG, "Using %sVector Rx (port %d).",
+				    use_avx2 ? "avx2 " : "",
+				    dev->data->port_id);
+			dev->rx_pkt_burst = use_avx2 ?
+					    ice_recv_pkts_vec_avx2 :
+					    ice_recv_pkts_vec;
+		}
+
+		return;
+	}
+#endif
 
 	if (dev->data->scattered_rx) {
 		/* Set the non-LRO scattered function */
@@ -2240,6 +2383,27 @@ ice_set_rx_function(struct rte_eth_dev *dev)
 			     dev->data->port_id);
 		dev->rx_pkt_burst = ice_recv_pkts;
 	}
+}
+
+void __attribute__((cold))
+ice_set_tx_function_flag(struct rte_eth_dev *dev, struct ice_tx_queue *txq)
+{
+	struct ice_adapter *ad =
+		ICE_DEV_PRIVATE_TO_ADAPTER(dev->data->dev_private);
+
+	/* Use a simple Tx queue if possible (only fast free is allowed) */
+	ad->tx_simple_allowed =
+		(txq->offloads ==
+		(txq->offloads & DEV_TX_OFFLOAD_MBUF_FAST_FREE) &&
+		txq->tx_rs_thresh >= ICE_TX_MAX_BURST);
+
+	if (ad->tx_simple_allowed)
+		PMD_INIT_LOG(DEBUG, "Simple Tx can be enabled on Tx queue %u.",
+			     txq->queue_id);
+	else
+		PMD_INIT_LOG(DEBUG,
+			     "Simple Tx can NOT be enabled on Tx queue %u.",
+			     txq->queue_id);
 }
 
 /*********************************************************************
@@ -2270,20 +2434,20 @@ ice_prep_pkts(__rte_unused void *tx_queue, struct rte_mbuf **tx_pkts,
 			/**
 			 * MSS outside the range are considered malicious
 			 */
-			rte_errno = -EINVAL;
+			rte_errno = EINVAL;
 			return i;
 		}
 
 #ifdef RTE_LIBRTE_ETHDEV_DEBUG
 		ret = rte_validate_tx_offload(m);
 		if (ret != 0) {
-			rte_errno = ret;
+			rte_errno = -ret;
 			return i;
 		}
 #endif
 		ret = rte_net_intel_cksum_prepare(m);
 		if (ret != 0) {
-			rte_errno = ret;
+			rte_errno = -ret;
 			return i;
 		}
 	}
@@ -2295,6 +2459,32 @@ ice_set_tx_function(struct rte_eth_dev *dev)
 {
 	struct ice_adapter *ad =
 		ICE_DEV_PRIVATE_TO_ADAPTER(dev->data->dev_private);
+#ifdef RTE_ARCH_X86
+	struct ice_tx_queue *txq;
+	int i;
+	bool use_avx2 = false;
+
+	if (!ice_tx_vec_dev_check(dev)) {
+		for (i = 0; i < dev->data->nb_tx_queues; i++) {
+			txq = dev->data->tx_queues[i];
+			(void)ice_txq_vec_setup(txq);
+		}
+
+		if (rte_cpu_get_flag_enabled(RTE_CPUFLAG_AVX2) == 1 ||
+		    rte_cpu_get_flag_enabled(RTE_CPUFLAG_AVX512F) == 1)
+			use_avx2 = true;
+
+		PMD_DRV_LOG(DEBUG, "Using %sVector Tx (port %d).",
+			    use_avx2 ? "avx2 " : "",
+			    dev->data->port_id);
+		dev->tx_pkt_burst = use_avx2 ?
+				    ice_xmit_pkts_vec_avx2 :
+				    ice_xmit_pkts_vec;
+		dev->tx_pkt_prepare = NULL;
+
+		return;
+	}
+#endif
 
 	if (ad->tx_simple_allowed) {
 		PMD_INIT_LOG(DEBUG, "Simple tx finally be used.");

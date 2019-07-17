@@ -119,12 +119,12 @@ struct fwd_stream {
 	unsigned int retry_enabled;
 
 	/* "read-write" results */
-	unsigned int rx_packets;  /**< received packets */
-	unsigned int tx_packets;  /**< received packets transmitted */
-	unsigned int fwd_dropped; /**< received packets not forwarded */
-	unsigned int rx_bad_ip_csum ; /**< received packets has bad ip checksum */
-	unsigned int rx_bad_l4_csum ; /**< received packets has bad l4 checksum */
-	unsigned int rx_bad_outer_l4_csum;
+	uint64_t rx_packets;  /**< received packets */
+	uint64_t tx_packets;  /**< received packets transmitted */
+	uint64_t fwd_dropped; /**< received packets not forwarded */
+	uint64_t rx_bad_ip_csum ; /**< received packets has bad ip checksum */
+	uint64_t rx_bad_l4_csum ; /**< received packets has bad l4 checksum */
+	uint64_t rx_bad_outer_l4_csum;
 	/**< received packets has bad outer l4 checksum */
 	unsigned int gro_times;	/**< GRO operation times */
 #ifdef RTE_TEST_PMD_RECORD_CORE_CYCLES
@@ -162,22 +162,14 @@ struct softnic_port {
 struct rte_port {
 	struct rte_eth_dev_info dev_info;   /**< PCI info + driver name */
 	struct rte_eth_conf     dev_conf;   /**< Port configuration. */
-	struct ether_addr       eth_addr;   /**< Port ethernet address */
+	struct rte_ether_addr       eth_addr;   /**< Port ethernet address */
 	struct rte_eth_stats    stats;      /**< Last port statistics */
-	uint64_t                tx_dropped; /**< If no descriptor in TX ring */
-	struct fwd_stream       *rx_stream; /**< Port RX stream, if unique */
-	struct fwd_stream       *tx_stream; /**< Port TX stream, if unique */
 	unsigned int            socket_id;  /**< For NUMA support */
 	uint16_t		parse_tunnel:1; /**< Parse internal headers */
 	uint16_t                tso_segsz;  /**< Segmentation offload MSS for non-tunneled packets. */
 	uint16_t                tunnel_tso_segsz; /**< Segmentation offload MSS for tunneled pkts. */
 	uint16_t                tx_vlan_id;/**< The tag ID */
 	uint16_t                tx_vlan_id_outer;/**< The outer tag ID */
-	void                    *fwd_ctx;   /**< Forwarding mode context */
-	uint64_t                rx_bad_ip_csum; /**< rx pkts with bad ip checksum  */
-	uint64_t                rx_bad_l4_csum; /**< rx pkts with bad l4 checksum */
-	uint64_t                rx_bad_outer_l4_csum;
-	/**< rx pkts with bad outer l4 checksum */
 	uint8_t                 tx_queue_stats_mapping_enabled;
 	uint8_t                 rx_queue_stats_mapping_enabled;
 	volatile uint16_t        port_status;    /**< port started or not */
@@ -190,7 +182,7 @@ struct rte_port {
 	uint16_t                nb_tx_desc[MAX_QUEUE_ID+1]; /**< per queue tx desc number */
 	struct rte_eth_rxconf   rx_conf[MAX_QUEUE_ID+1]; /**< per queue rx configuration */
 	struct rte_eth_txconf   tx_conf[MAX_QUEUE_ID+1]; /**< per queue tx configuration */
-	struct ether_addr       *mc_addr_pool; /**< pool of multicast addrs */
+	struct rte_ether_addr   *mc_addr_pool; /**< pool of multicast addrs */
 	uint32_t                mc_addr_nb; /**< nb. of addr. in mc_addr_pool */
 	uint8_t                 slave_flag; /**< bonding slave port */
 	struct port_flow        *flow_list; /**< Associated flows. */
@@ -272,6 +264,8 @@ extern struct fwd_engine ieee1588_fwd_engine;
 #endif
 
 extern struct fwd_engine * fwd_engines[]; /**< NULL terminated array. */
+
+extern uint16_t mempool_flags;
 
 /**
  * Forwarding Configuration
@@ -441,6 +435,8 @@ enum tx_pkt_split {
 
 extern enum tx_pkt_split tx_pkt_split;
 
+extern uint8_t txonly_multi_flow;
+
 extern uint16_t nb_pkt_per_burst;
 extern uint16_t mb_mempool_cache;
 extern int8_t rx_pthresh;
@@ -449,6 +445,12 @@ extern int8_t rx_wthresh;
 extern int8_t tx_pthresh;
 extern int8_t tx_hthresh;
 extern int8_t tx_wthresh;
+
+extern uint16_t tx_udp_src_port;
+extern uint16_t tx_udp_dst_port;
+
+extern uint32_t tx_ip_src_addr;
+extern uint32_t tx_ip_dst_addr;
 
 extern struct fwd_config cur_fwd_config;
 extern struct fwd_engine *cur_fwd_eng;
@@ -459,7 +461,7 @@ extern struct fwd_stream **fwd_streams;
 extern uint16_t vxlan_gpe_udp_port; /**< UDP port of tunnel VXLAN-GPE. */
 
 extern portid_t nb_peer_eth_addrs; /**< Number of peer ethernet addresses. */
-extern struct ether_addr peer_eth_addrs[RTE_MAX_ETHPORTS];
+extern struct rte_ether_addr peer_eth_addrs[RTE_MAX_ETHPORTS];
 
 extern uint32_t burst_tx_delay_time; /**< Burst tx delay time(us) for mac-retry. */
 extern uint32_t burst_tx_retry_num;  /**< Burst tx retry number for mac-retry. */
@@ -500,8 +502,8 @@ struct vxlan_encap_conf {
 	rte_be16_t vlan_tci;
 	uint8_t ip_tos;
 	uint8_t ip_ttl;
-	uint8_t eth_src[ETHER_ADDR_LEN];
-	uint8_t eth_dst[ETHER_ADDR_LEN];
+	uint8_t eth_src[RTE_ETHER_ADDR_LEN];
+	uint8_t eth_dst[RTE_ETHER_ADDR_LEN];
 };
 struct vxlan_encap_conf vxlan_encap_conf;
 
@@ -515,8 +517,8 @@ struct nvgre_encap_conf {
 	uint8_t ipv6_src[16];
 	uint8_t ipv6_dst[16];
 	rte_be16_t vlan_tci;
-	uint8_t eth_src[ETHER_ADDR_LEN];
-	uint8_t eth_dst[ETHER_ADDR_LEN];
+	uint8_t eth_src[RTE_ETHER_ADDR_LEN];
+	uint8_t eth_dst[RTE_ETHER_ADDR_LEN];
 };
 struct nvgre_encap_conf nvgre_encap_conf;
 
@@ -525,8 +527,8 @@ struct l2_encap_conf {
 	uint32_t select_ipv4:1;
 	uint32_t select_vlan:1;
 	rte_be16_t vlan_tci;
-	uint8_t eth_src[ETHER_ADDR_LEN];
-	uint8_t eth_dst[ETHER_ADDR_LEN];
+	uint8_t eth_src[RTE_ETHER_ADDR_LEN];
+	uint8_t eth_dst[RTE_ETHER_ADDR_LEN];
 };
 struct l2_encap_conf l2_encap_conf;
 
@@ -546,8 +548,8 @@ struct mplsogre_encap_conf {
 	uint8_t ipv6_src[16];
 	uint8_t ipv6_dst[16];
 	rte_be16_t vlan_tci;
-	uint8_t eth_src[ETHER_ADDR_LEN];
-	uint8_t eth_dst[ETHER_ADDR_LEN];
+	uint8_t eth_src[RTE_ETHER_ADDR_LEN];
+	uint8_t eth_dst[RTE_ETHER_ADDR_LEN];
 };
 struct mplsogre_encap_conf mplsogre_encap_conf;
 
@@ -570,8 +572,8 @@ struct mplsoudp_encap_conf {
 	uint8_t ipv6_src[16];
 	uint8_t ipv6_dst[16];
 	rte_be16_t vlan_tci;
-	uint8_t eth_src[ETHER_ADDR_LEN];
-	uint8_t eth_dst[ETHER_ADDR_LEN];
+	uint8_t eth_src[RTE_ETHER_ADDR_LEN];
+	uint8_t eth_dst[RTE_ETHER_ADDR_LEN];
 };
 struct mplsoudp_encap_conf mplsoudp_encap_conf;
 
@@ -770,6 +772,8 @@ char *list_pkt_forwarding_modes(void);
 char *list_pkt_forwarding_retry_modes(void);
 void set_pkt_forwarding_mode(const char *fwd_mode);
 void start_packet_forwarding(int with_tx_first);
+void fwd_stats_display(void);
+void fwd_stats_reset(void);
 void stop_packet_forwarding(void);
 void dev_set_link_up(portid_t pid);
 void dev_set_link_down(portid_t pid);
@@ -817,8 +821,8 @@ void show_gro(portid_t port_id);
 void setup_gso(const char *mode, portid_t port_id);
 
 /* Functions to manage the set of filtered Multicast MAC addresses */
-void mcast_addr_add(portid_t port_id, struct ether_addr *mc_addr);
-void mcast_addr_remove(portid_t port_id, struct ether_addr *mc_addr);
+void mcast_addr_add(portid_t port_id, struct rte_ether_addr *mc_addr);
+void mcast_addr_remove(portid_t port_id, struct rte_ether_addr *mc_addr);
 void port_dcb_info_display(portid_t port_id);
 
 uint8_t *open_file(const char *file_path, uint32_t *size);

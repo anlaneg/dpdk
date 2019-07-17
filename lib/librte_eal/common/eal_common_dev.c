@@ -77,7 +77,7 @@ static int cmp_dev_name(const struct rte_device *dev, const void *_name)
 	return strcmp(dev->name, name);
 }
 
-int __rte_experimental
+int
 rte_dev_is_probed(const struct rte_device *dev)
 {
 	/* The field driver should be set only when the probe is successful. */
@@ -173,6 +173,9 @@ local_dev_probe(const char *devargs, struct rte_device **new_dev)
 	 */
 
 	ret = dev->bus->plug(dev);
+	if (ret > 0)
+		ret = -ENOTSUP;
+
 	if (ret && !rte_dev_is_probed(dev)) { /* if hasn't ever succeeded */
 		RTE_LOG(ERR, EAL, "Driver cannot attach the device (%s)\n",
 			dev->name);
@@ -320,7 +323,7 @@ local_dev_remove(struct rte_device *dev)
 	if (ret) {
 		RTE_LOG(ERR, EAL, "Driver cannot detach the device (%s)\n",
 			dev->name);
-		return ret;
+		return (ret < 0) ? ret : -ENOENT;
 	}
 
 	return 0;
@@ -424,7 +427,7 @@ rollback:
 }
 
 //注册设备事件处理回调（目前仅新增，删除设备两种事件）
-int __rte_experimental
+int
 rte_dev_event_callback_register(const char *device_name,
 				rte_dev_event_cb_fn cb_fn,
 				void *cb_arg)
@@ -493,7 +496,7 @@ error:
 }
 
 //解注册
-int __rte_experimental
+int
 rte_dev_event_callback_unregister(const char *device_name,
 				  rte_dev_event_cb_fn cb_fn,
 				  void *cb_arg)
@@ -539,7 +542,7 @@ rte_dev_event_callback_unregister(const char *device_name,
 }
 
 //设备新增，删除事件触发
-void __rte_experimental
+void
 rte_dev_event_callback_process(const char *device_name,
 			       enum rte_dev_event_type event)
 {
@@ -566,7 +569,6 @@ rte_dev_event_callback_process(const char *device_name,
 	rte_spinlock_unlock(&dev_event_lock);
 }
 
-__rte_experimental
 int
 rte_dev_iterator_init(struct rte_dev_iterator *it,
 		      const char *dev_str)
@@ -719,7 +721,6 @@ end:
 	it->device = dev;
 	return dev == NULL;
 }
-__rte_experimental
 struct rte_device *
 rte_dev_iterator_next(struct rte_dev_iterator *it)
 {
@@ -762,4 +763,38 @@ out:
 	free(bus_str);
 	free(cls_str);
 	return it->device;
+}
+
+int
+rte_dev_dma_map(struct rte_device *dev, void *addr, uint64_t iova,
+		size_t len)
+{
+	if (dev->bus->dma_map == NULL || len == 0) {
+		rte_errno = ENOTSUP;
+		return -1;
+	}
+	/* Memory must be registered through rte_extmem_* APIs */
+	if (rte_mem_virt2memseg_list(addr) == NULL) {
+		rte_errno = EINVAL;
+		return -1;
+	}
+
+	return dev->bus->dma_map(dev, addr, iova, len);
+}
+
+int
+rte_dev_dma_unmap(struct rte_device *dev, void *addr, uint64_t iova,
+		  size_t len)
+{
+	if (dev->bus->dma_unmap == NULL || len == 0) {
+		rte_errno = ENOTSUP;
+		return -1;
+	}
+	/* Memory must be registered through rte_extmem_* APIs */
+	if (rte_mem_virt2memseg_list(addr) == NULL) {
+		rte_errno = EINVAL;
+		return -1;
+	}
+
+	return dev->bus->dma_unmap(dev, addr, iova, len);
 }

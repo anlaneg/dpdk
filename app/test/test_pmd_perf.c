@@ -58,12 +58,12 @@
 
 static struct rte_mempool *mbufpool[NB_SOCKETS];
 /* ethernet addresses of ports */
-static struct ether_addr ports_eth_addr[RTE_MAX_ETHPORTS];
+static struct rte_ether_addr ports_eth_addr[RTE_MAX_ETHPORTS];
 
 static struct rte_eth_conf port_conf = {
 	.rxmode = {
 		.mq_mode = ETH_MQ_RX_NONE,
-		.max_rx_pkt_len = ETHER_MAX_LEN,
+		.max_rx_pkt_len = RTE_ETHER_MAX_LEN,
 		.split_hdr_size = 0,
 	},
 	.txmode = {
@@ -171,10 +171,10 @@ check_all_ports_link_status(uint16_t port_num, uint32_t port_mask)
 }
 
 static void
-print_ethaddr(const char *name, const struct ether_addr *eth_addr)
+print_ethaddr(const char *name, const struct rte_ether_addr *eth_addr)
 {
-	char buf[ETHER_ADDR_FMT_SIZE];
-	ether_format_addr(buf, ETHER_ADDR_FMT_SIZE, eth_addr);
+	char buf[RTE_ETHER_ADDR_FMT_SIZE];
+	rte_ether_format_addr(buf, RTE_ETHER_ADDR_FMT_SIZE, eth_addr);
 	printf("%s%s", name, buf);
 }
 
@@ -182,17 +182,17 @@ static int
 init_traffic(struct rte_mempool *mp,
 	     struct rte_mbuf **pkts_burst, uint32_t burst_size)
 {
-	struct ether_hdr pkt_eth_hdr;
-	struct ipv4_hdr pkt_ipv4_hdr;
-	struct udp_hdr pkt_udp_hdr;
+	struct rte_ether_hdr pkt_eth_hdr;
+	struct rte_ipv4_hdr pkt_ipv4_hdr;
+	struct rte_udp_hdr pkt_udp_hdr;
 	uint32_t pktlen;
 	static uint8_t src_mac[] = { 0x00, 0xFF, 0xAA, 0xFF, 0xAA, 0xFF };
 	static uint8_t dst_mac[] = { 0x00, 0xAA, 0xFF, 0xAA, 0xFF, 0xAA };
 
 
 	initialize_eth_header(&pkt_eth_hdr,
-		(struct ether_addr *)src_mac,
-		(struct ether_addr *)dst_mac, ETHER_TYPE_IPv4, 0, 0);
+		(struct rte_ether_addr *)src_mac,
+		(struct rte_ether_addr *)dst_mac, RTE_ETHER_TYPE_IPV4, 0, 0);
 
 	pktlen = initialize_ipv4_header(&pkt_ipv4_hdr,
 					IPV4_ADDR(10, 0, 0, 1),

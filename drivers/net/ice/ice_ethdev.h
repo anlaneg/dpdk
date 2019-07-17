@@ -7,6 +7,8 @@
 
 #include <rte_kvargs.h>
 
+#include <rte_ethdev_driver.h>
+
 #include "base/ice_common.h"
 #include "base/ice_adminq_cmd.h"
 
@@ -115,13 +117,20 @@
 	ETH_RSS_NONFRAG_IPV6_OTHER | \
 	ETH_RSS_L2_PAYLOAD)
 
+/**
+ * The overhead from MTU to max frame size.
+ * Considering QinQ packet, the VLAN tag needs to be counted twice.
+ */
+#define ICE_ETH_OVERHEAD \
+	(RTE_ETHER_HDR_LEN + RTE_ETHER_CRC_LEN + ICE_VLAN_TAG_SIZE * 2)
+
 struct ice_adapter;
 
 /**
  * MAC filter structure
  */
 struct ice_mac_filter_info {
-	struct ether_addr mac_addr;
+	struct rte_ether_addr mac_addr;
 };
 
 TAILQ_HEAD(ice_mac_filter_list, ice_mac_filter);
@@ -225,6 +234,16 @@ struct ice_vsi {
 	bool offset_loaded;
 };
 
+extern const struct rte_flow_ops ice_flow_ops;
+
+/* Struct to store flow created. */
+struct rte_flow {
+	TAILQ_ENTRY(rte_flow) node;
+	void *rule;
+};
+
+TAILQ_HEAD(ice_flow_list, rte_flow);
+
 struct ice_pf {
 	struct ice_adapter *adapter; /* The adapter this PF associate to */
 	struct ice_vsi *main_vsi; /* pointer to main VSI structure */
@@ -238,11 +257,12 @@ struct ice_pf {
 	struct ice_res_pool_info qp_pool;    /*Queue pair pool */
 	struct ice_res_pool_info msix_pool;  /* MSIX interrupt pool */
 	struct rte_eth_dev_data *dev_data; /* Pointer to the device data */
-	struct ether_addr dev_addr; /* PF device mac address */
+	struct rte_ether_addr dev_addr; /* PF device mac address */
 	uint64_t flags; /* PF feature flags */
 	uint16_t hash_lut_size; /* The size of hash lookup table */
 	uint16_t lan_nb_qp_max;
 	uint16_t lan_nb_qps; /* The number of queue pairs of LAN */
+	uint16_t base_queue; /* The base queue pairs index  in the device */
 	struct ice_hw_port_stats stats_offset;
 	struct ice_hw_port_stats stats;
 	/* internal packet statistics, it should be excluded from the total */
@@ -250,6 +270,7 @@ struct ice_pf {
 	struct ice_eth_stats internal_stats;
 	bool offset_loaded;
 	bool adapter_stopped;
+	struct ice_flow_list flow_list;
 };
 
 /**
@@ -264,6 +285,7 @@ struct ice_adapter {
 	bool tx_simple_allowed;
 	/* ptype mapping table */
 	uint32_t ptype_tbl[ICE_MAX_PKT_TYPE] __rte_cache_min_aligned;
+	bool is_safe_mode;
 };
 
 struct ice_vsi_vlan_pvid_info {
@@ -315,4 +337,44 @@ ice_align_floor(int n)
 		return 0;
 	return 1 << (sizeof(n) * CHAR_BIT - 1 - __builtin_clz(n));
 }
+
+#define ICE_PHY_TYPE_SUPPORT_50G(phy_type) \
+	(((phy_type) & ICE_PHY_TYPE_LOW_50GBASE_CR2) || \
+	((phy_type) & ICE_PHY_TYPE_LOW_50GBASE_SR2) || \
+	((phy_type) & ICE_PHY_TYPE_LOW_50GBASE_LR2) || \
+	((phy_type) & ICE_PHY_TYPE_LOW_50GBASE_KR2) || \
+	((phy_type) & ICE_PHY_TYPE_LOW_50G_LAUI2_AOC_ACC) || \
+	((phy_type) & ICE_PHY_TYPE_LOW_50G_LAUI2) || \
+	((phy_type) & ICE_PHY_TYPE_LOW_50G_AUI2_AOC_ACC) || \
+	((phy_type) & ICE_PHY_TYPE_LOW_50G_AUI2) || \
+	((phy_type) & ICE_PHY_TYPE_LOW_50GBASE_CP) || \
+	((phy_type) & ICE_PHY_TYPE_LOW_50GBASE_SR) || \
+	((phy_type) & ICE_PHY_TYPE_LOW_50GBASE_FR) || \
+	((phy_type) & ICE_PHY_TYPE_LOW_50GBASE_LR) || \
+	((phy_type) & ICE_PHY_TYPE_LOW_50GBASE_KR_PAM4) || \
+	((phy_type) & ICE_PHY_TYPE_LOW_50G_AUI1_AOC_ACC) || \
+	((phy_type) & ICE_PHY_TYPE_LOW_50G_AUI1))
+
+#define ICE_PHY_TYPE_SUPPORT_100G_LOW(phy_type) \
+	(((phy_type) & ICE_PHY_TYPE_LOW_100GBASE_CR4) || \
+	((phy_type) & ICE_PHY_TYPE_LOW_100GBASE_SR4) || \
+	((phy_type) & ICE_PHY_TYPE_LOW_100GBASE_LR4) || \
+	((phy_type) & ICE_PHY_TYPE_LOW_100GBASE_KR4) || \
+	((phy_type) & ICE_PHY_TYPE_LOW_100G_CAUI4_AOC_ACC) || \
+	((phy_type) & ICE_PHY_TYPE_LOW_100G_CAUI4) || \
+	((phy_type) & ICE_PHY_TYPE_LOW_100G_AUI4_AOC_ACC) || \
+	((phy_type) & ICE_PHY_TYPE_LOW_100G_AUI4) || \
+	((phy_type) & ICE_PHY_TYPE_LOW_100GBASE_CR_PAM4) || \
+	((phy_type) & ICE_PHY_TYPE_LOW_100GBASE_KR_PAM4) || \
+	((phy_type) & ICE_PHY_TYPE_LOW_100GBASE_CP2) || \
+	((phy_type) & ICE_PHY_TYPE_LOW_100GBASE_SR2) || \
+	((phy_type) & ICE_PHY_TYPE_LOW_100GBASE_DR))
+
+#define ICE_PHY_TYPE_SUPPORT_100G_HIGH(phy_type) \
+	(((phy_type) & ICE_PHY_TYPE_HIGH_100GBASE_KR2_PAM4) || \
+	((phy_type) & ICE_PHY_TYPE_HIGH_100G_CAUI2_AOC_ACC) || \
+	((phy_type) & ICE_PHY_TYPE_HIGH_100G_CAUI2) || \
+	((phy_type) & ICE_PHY_TYPE_HIGH_100G_AUI2_AOC_ACC) || \
+	((phy_type) & ICE_PHY_TYPE_HIGH_100G_AUI2))
+
 #endif /* _ICE_ETHDEV_H_ */

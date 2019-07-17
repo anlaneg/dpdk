@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: BSD-3-Clause
- * Copyright(c) 2016-2017 Intel Corporation
+ * Copyright(c) 2016-2019 Intel Corporation
  */
 
 #ifndef TEST_CRYPTODEV_AES_TEST_VECTORS_H_
@@ -219,6 +219,141 @@ static const uint8_t ciphertext512_aes128cbc[] = {
 	0xAA, 0x3F, 0xEE, 0xC0, 0x37, 0x27, 0x76, 0xC7,
 	0x95, 0xBB, 0x26, 0x74, 0x69, 0x12, 0x7F, 0xF1,
 	0xBB, 0xFF, 0xAE, 0xB5, 0x99, 0x6E, 0xCB, 0x0C
+};
+
+/* NULL cipher NULL auth 8-byte multiple test vector */
+static const struct blockcipher_test_data null_test_data_chain_x8_multiple = {
+	.crypto_algo = RTE_CRYPTO_CIPHER_NULL,
+	.cipher_key = {	/* arbitrary data - shouldn't be used */
+		.data = {
+			0x2B, 0x7E, 0x15, 0x16, 0x28, 0xAE, 0xD2, 0xA6,
+			0xAB, 0xF7, 0x15, 0x88, 0x09, 0xCF, 0x4F, 0x3C
+		},
+		.len = 16
+	},
+	.iv = {			/* arbitrary data - shouldn't be used */
+		.data = {
+			0xF0, 0xF1, 0xF2, 0xF3, 0xF4, 0xF5, 0xF6, 0xF7,
+			0xF8, 0xF9, 0xFA, 0xFB, 0xFC, 0xFD, 0xFE, 0xFF
+		},
+		.len = 16
+	},
+	.plaintext = {
+		.data = plaintext_aes_common,
+		.len = 512
+	},
+	.ciphertext = {
+		.data = plaintext_aes_common,
+		.len = 512
+	},
+	.auth_algo = RTE_CRYPTO_AUTH_NULL,
+	.auth_key = {		/* arbitrary data - shouldn't be used */
+		.data = {
+			0xF8, 0x2A, 0xC7, 0x54, 0xDB, 0x96, 0x18, 0xAA,
+			0xC3, 0xA1, 0x53, 0xF6, 0x1F, 0x17, 0x60, 0xBD,
+			0xDE, 0xF4, 0xDE, 0xAD
+		},
+		.len = 20
+	},
+	.digest = {
+		.data = {
+			0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+			0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+			0x00, 0x00, 0x00, 0x00
+		},
+		.len = 20,
+		.truncated_len = 12
+	}
+};
+
+/* NULL cipher NULL auth 4-byte multiple test vector */
+static const struct blockcipher_test_data null_test_data_chain_x4_multiple = {
+	.crypto_algo = RTE_CRYPTO_CIPHER_NULL,
+	.cipher_key = {	/* arbitrary data - shouldn't be used */
+		.data = {
+			0x2B, 0x7E, 0x15, 0x16, 0x28, 0xAE, 0xD2, 0xA6,
+			0xAB, 0xF7, 0x15, 0x88, 0x09, 0xCF, 0x4F, 0x3C
+		},
+		.len = 16
+	},
+	.iv = {			/* arbitrary data - shouldn't be used */
+		.data = {
+			0xF0, 0xF1, 0xF2, 0xF3, 0xF4, 0xF5, 0xF6, 0xF7,
+			0xF8, 0xF9, 0xFA, 0xFB, 0xFC, 0xFD, 0xFE, 0xFF
+		},
+		.len = 16
+	},
+	.plaintext = {
+		.data = plaintext_aes128ctr,
+		.len = 20
+	},
+	.ciphertext = {
+		.data = plaintext_aes128ctr,
+		.len = 20
+	},
+	.auth_algo = RTE_CRYPTO_AUTH_NULL,
+	.auth_key = {		/* arbitrary data - shouldn't be used */
+		.data = {
+			0xF8, 0x2A, 0xC7, 0x54, 0xDB, 0x96, 0x18, 0xAA,
+			0xC3, 0xA1, 0x53, 0xF6, 0x1F, 0x17, 0x60, 0xBD,
+			0xDE, 0xF4, 0xDE, 0xAD
+		},
+		.len = 20
+	},
+	.digest = {
+		.data = {
+			0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+			0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+			0x00, 0x00, 0x00, 0x00
+		},
+		.len = 20,
+		.truncated_len = 12
+	}
+};
+
+/* NULL cipher NULL auth 1-byte multiple test vector */
+static const struct blockcipher_test_data null_test_data_chain_x1_multiple = {
+	.crypto_algo = RTE_CRYPTO_CIPHER_NULL,
+	.cipher_key = {	/* arbitrary data - shouldn't be used */
+		.data = {
+			0x2B, 0x7E, 0x15, 0x16, 0x28, 0xAE, 0xD2, 0xA6,
+			0xAB, 0xF7, 0x15, 0x88, 0x09, 0xCF, 0x4F, 0x3C
+		},
+		.len = 16
+	},
+	.iv = {			/* arbitrary data - shouldn't be used */
+		.data = {
+			0xF0, 0xF1, 0xF2, 0xF3, 0xF4, 0xF5, 0xF6, 0xF7,
+			0xF8, 0xF9, 0xFA, 0xFB, 0xFC, 0xFD, 0xFE, 0xFF
+		},
+		.len = 16
+	},
+	.plaintext = {
+		.data = plaintext_aes128ctr,
+		.len = 21
+	},
+	.ciphertext = {
+		.data = plaintext_aes128ctr,
+		.len = 21
+	},
+	.auth_algo = RTE_CRYPTO_AUTH_NULL,
+	.auth_key = {		/* arbitrary data - shouldn't be used */
+		.data = {
+			0xF8, 0x2A, 0xC7, 0x54, 0xDB, 0x96, 0x18, 0xAA,
+			0xC3, 0xA1, 0x53, 0xF6, 0x1F, 0x17, 0x60, 0xBD,
+			0xDE, 0xF4, 0xDE, 0xAD
+		},
+		.len = 20
+	},
+	.digest = {
+		.data = {
+			0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+			0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+			0x00, 0x00, 0x00, 0x00
+		},
+		.len = 20,
+		.truncated_len = 12
+	}
 };
 
 /* AES128-CTR-SHA1 test vector */
@@ -1077,6 +1212,179 @@ static const struct blockcipher_test_data aes_test_data_13 = {
 	}
 };
 
+/** XTS-AES-128 test vector (2 keys * 128 bit) */
+static const uint8_t plaintext_aes128xts_16bytes[] = {
+	0xEB, 0xAB, 0xCE, 0x95, 0xB1, 0x4D, 0x3C, 0x8D,
+	0x6F, 0xB3, 0x50, 0x39, 0x07, 0x90, 0x31, 0x1C
+};
+static const uint8_t ciphertext_aes128xts_16bytes[] = {
+	0x77, 0x8A, 0xE8, 0xB4, 0x3C, 0xB9, 0x8D, 0x5A,
+	0x82, 0x50, 0x81, 0xD5, 0xBE, 0x47, 0x1C, 0x63
+};
+static const struct
+blockcipher_test_data aes_test_data_xts_key_32_pt_16 = {
+	.crypto_algo = RTE_CRYPTO_CIPHER_AES_XTS,
+	.cipher_key = {
+		.data = {
+			0xA1, 0xB9, 0x0C, 0xBA, 0x3F, 0x06, 0xAC, 0x35,
+			0x3B, 0x2C, 0x34, 0x38, 0x76, 0x08, 0x17, 0x62,
+			0x09, 0x09, 0x23, 0x02, 0x6E, 0x91, 0x77, 0x18,
+			0x15, 0xF2, 0x9D, 0xAB, 0x01, 0x93, 0x2F, 0x2F
+		},
+		.len = 32
+	},
+	.iv = {
+		.data = {
+			0x4F, 0xAE, 0xF7, 0x11, 0x7C, 0xDA, 0x59, 0xC6,
+			0x6E, 0x4B, 0x92, 0x01, 0x3E, 0x76, 0x8A, 0xD5
+		},
+		.len = 16
+	},
+	.plaintext = {
+		.data = plaintext_aes128xts_16bytes,
+		.len = 16
+	},
+	.ciphertext = {
+		.data = ciphertext_aes128xts_16bytes,
+		.len = 16
+	}
+};
+static const uint8_t plaintext_aes128xts_32bytes[] = {
+	0xB0, 0x4D, 0x84, 0xDA, 0x85, 0x6B, 0x9A, 0x59,
+	0xCE, 0x2D, 0x62, 0x67, 0x46, 0xF6, 0x89, 0xA8,
+	0x05, 0x1D, 0xAC, 0xD6, 0xBC, 0xE3, 0xB9, 0x90,
+	0xAA, 0x90, 0x1E, 0x40, 0x30, 0x64, 0x88, 0x79
+};
+static const uint8_t ciphertext_aes128xts_32bytes[] = {
+	0xF9, 0x41, 0x03, 0x9E, 0xBA, 0xB8, 0xCA, 0xC3,
+	0x9D, 0x59, 0x24, 0x7C, 0xBB, 0xCB, 0x4D, 0x81,
+	0x6C, 0x72, 0x6D, 0xAE, 0xD1, 0x15, 0x77, 0x69,
+	0x2C, 0x55, 0xE4, 0xAC, 0x6D, 0x3E, 0x68, 0x20
+};
+static const struct
+blockcipher_test_data aes_test_data_xts_key_32_pt_32 = {
+	.crypto_algo = RTE_CRYPTO_CIPHER_AES_XTS,
+	.cipher_key = {
+		.data = {
+			0x78, 0x3A, 0x83, 0xEC, 0x52, 0xA2, 0x74, 0x05,
+			0xDF, 0xF9, 0xDE, 0x4C, 0x57, 0xF9, 0xC9, 0x79,
+			0xB3, 0x60, 0xB6, 0xA5, 0xDF, 0x88, 0xD6, 0x7E,
+			0xC1, 0xA0, 0x52, 0xE6, 0xF5, 0x82, 0xA7, 0x17
+		},
+		.len = 32
+	},
+	.iv = {
+		.data = {
+			0x88, 0x6E, 0x97, 0x5B, 0x29, 0xBD, 0xF6, 0xF0,
+			0xC0, 0x1B, 0xB4, 0x7F, 0x61, 0xF6, 0xF0, 0xF5
+		},
+		.len = 16
+	},
+	.plaintext = {
+		.data = plaintext_aes128xts_32bytes,
+		.len = 32
+	},
+	.ciphertext = {
+		.data = ciphertext_aes128xts_32bytes,
+		.len = 32
+	}
+};
+
+/** XTS-AES-256 test vector (2 keys * 256 bit) */
+/* Encryption */
+static const uint8_t plaintext_aes256xts_32bytes[] = {
+	0x2E, 0xED, 0xEA, 0x52, 0xCD, 0x82, 0x15, 0xE1,
+	0xAC, 0xC6, 0x47, 0xE8, 0x10, 0xBB, 0xC3, 0x64,
+	0x2E, 0x87, 0x28, 0x7F, 0x8D, 0x2E, 0x57, 0xE3,
+	0x6C, 0x0A, 0x24, 0xFB, 0xC1, 0x2A, 0x20, 0x2E
+};
+static const uint8_t ciphertext_aes256xts_32bytes[] = {
+	0xCB, 0xAA, 0xD0, 0xE2, 0xF6, 0xCE, 0xA3, 0xF5,
+	0x0B, 0x37, 0xF9, 0x34, 0xD4, 0x6A, 0x9B, 0x13,
+	0x0B, 0x9D, 0x54, 0xF0, 0x7E, 0x34, 0xF3, 0x6A,
+	0xF7, 0x93, 0xE8, 0x6F, 0x73, 0xC6, 0xD7, 0xDB
+};
+static const struct
+blockcipher_test_data aes_test_data_xts_key_64_pt_32 = {
+	.crypto_algo = RTE_CRYPTO_CIPHER_AES_XTS,
+	.cipher_key = {
+		.data = {
+			0x1E, 0xA6, 0x61, 0xC5, 0x8D, 0x94, 0x3A, 0x0E,
+			0x48, 0x01, 0xE4, 0x2F, 0x4B, 0x09, 0x47, 0x14,
+			0x9E, 0x7F, 0x9F, 0x8E, 0x3E, 0x68, 0xD0, 0xC7,
+			0x50, 0x52, 0x10, 0xBD, 0x31, 0x1A, 0x0E, 0x7C,
+			0xD6, 0xE1, 0x3F, 0xFD, 0xF2, 0x41, 0x8D, 0x8D,
+			0x19, 0x11, 0xC0, 0x04, 0xCD, 0xA5, 0x8D, 0xA3,
+			0xD6, 0x19, 0xB7, 0xE2, 0xB9, 0x14, 0x1E, 0x58,
+			0x31, 0x8E, 0xEA, 0x39, 0x2C, 0xF4, 0x1B, 0x08
+		},
+		.len = 64
+	},
+	.iv = {
+		.data = {
+			0xAD, 0xF8, 0xD9, 0x26, 0x27, 0x46, 0x4A, 0xD2,
+			0xF0, 0x42, 0x8E, 0x84, 0xA9, 0xF8, 0x75, 0x64
+		},
+		.len = 16
+	},
+	.plaintext = {
+		.data = plaintext_aes256xts_32bytes,
+		.len = 32
+	},
+	.ciphertext = {
+		.data = ciphertext_aes256xts_32bytes,
+		.len = 32
+	}
+};
+static const uint8_t plaintext_aes256xts_48bytes[] = {
+	0xBB, 0xB2, 0x34, 0xDB, 0x01, 0xBE, 0x79, 0xD3,
+	0xDC, 0x7D, 0xCF, 0x49, 0xBC, 0x53, 0xB8, 0xEF,
+	0xC6, 0x2F, 0xE7, 0x17, 0x94, 0x39, 0x06, 0x1D,
+	0x73, 0xA6, 0xB2, 0x0E, 0xDB, 0x9B, 0x7D, 0xA0,
+	0x45, 0x0B, 0x19, 0xF0, 0x20, 0x82, 0x02, 0x09,
+	0xAF, 0xE0, 0x81, 0x12, 0xAE, 0x4A, 0xFD, 0xD3
+};
+static const uint8_t ciphertext_aes256xts_48bytes[] = {
+	0xCB, 0xF6, 0x88, 0x48, 0xC4, 0x20, 0x49, 0xEF,
+	0xB1, 0x46, 0xE2, 0xD1, 0xE4, 0x11, 0x5F, 0x62,
+	0xE4, 0xFA, 0xA4, 0xEF, 0xFF, 0x19, 0x8F, 0x1A,
+	0x0A, 0xA0, 0xC9, 0x8B, 0xA0, 0x2C, 0xC4, 0x4D,
+	0xA3, 0x76, 0xD7, 0x62, 0xD6, 0x15, 0x1F, 0x23,
+	0x45, 0x87, 0xBF, 0x12, 0x8B, 0x6A, 0x7F, 0xFA
+};
+static const struct
+blockcipher_test_data aes_test_data_xts_key_64_pt_48 = {
+	.crypto_algo = RTE_CRYPTO_CIPHER_AES_XTS,
+	.cipher_key = {
+		.data = {
+			0x7F, 0xB0, 0x92, 0x2F, 0xCE, 0x09, 0xED, 0xDD,
+			0x36, 0x65, 0xA1, 0x1F, 0x52, 0x35, 0xD5, 0x1E,
+			0xF7, 0x72, 0x06, 0xA7, 0xDE, 0x45, 0x47, 0x75,
+			0xB6, 0x9D, 0xCC, 0x54, 0x59, 0xAC, 0xDB, 0x24,
+			0xCC, 0xF0, 0x5C, 0x41, 0x5A, 0xF5, 0xAB, 0x8A,
+			0x06, 0x62, 0x3D, 0x19, 0x8D, 0x5B, 0x91, 0x85,
+			0x95, 0xA9, 0xDC, 0xAA, 0xF5, 0x39, 0x2E, 0xE7,
+			0x17, 0xC1, 0x04, 0x7F, 0x2F, 0x08, 0xF6, 0x2B
+		},
+		.len = 64
+	},
+	.iv = {
+		.data = {
+			0x8E, 0xA3, 0x63, 0x8B, 0x9D, 0x40, 0x62, 0xF1,
+			0x69, 0x19, 0x6F, 0xF4, 0x55, 0x5A, 0xD0, 0xAF
+		},
+		.len = 16
+	},
+	.plaintext = {
+		.data = plaintext_aes256xts_48bytes,
+		.len = 48
+	},
+	.ciphertext = {
+		.data = ciphertext_aes256xts_48bytes,
+		.len = 48
+	}
+};
+
 /* AES-DOCSIS-BPI test vectors */
 
 /* Multiple of AES block size */
@@ -1160,8 +1468,78 @@ static const struct blockcipher_test_data aes_test_data_docsis_3 = {
 	}
 };
 
+static const uint8_t
+cipher_aescbc_offset_16[] = {
+	0x57, 0x68, 0x61, 0x74, 0x20, 0x61, 0x20, 0x6C,
+	0x6F, 0x75, 0x73, 0x79, 0x20, 0x65, 0x61, 0x72,
+	0x68, 0x2A, 0x6A, 0x82, 0xE0, 0x73, 0xC7, 0x51,
+	0x81, 0xF4, 0x47, 0x27, 0x1A, 0xEF, 0x76, 0x15,
+	0x1C, 0xE1, 0x38, 0x5F, 0xE1, 0x81, 0x77, 0xC7,
+	0x8B, 0xF0, 0x69, 0xC3, 0x3C, 0x45, 0x1C, 0x0A,
+	0xA3, 0x93, 0xBF, 0x60, 0x57, 0x88, 0xD2, 0xFF,
+	0xE1, 0x8F, 0xC0, 0x64, 0x2C, 0x42, 0xC5, 0x22,
+	0xE3, 0x5F, 0x71, 0x1F, 0xF7, 0x62, 0xA2, 0x7E,
+	0x0D, 0x42, 0xD9, 0xE7, 0xF3, 0x10, 0xB0, 0xEE,
+};
+
+/** AES-128-CBC SHA1 OOP test vector for swapping src/dst */
+static const struct blockcipher_test_data aes_test_data_14 = {
+	.crypto_algo = RTE_CRYPTO_CIPHER_AES_CBC,
+	.cipher_key = {
+		.data = {
+			0xE4, 0x23, 0x33, 0x8A, 0x35, 0x64, 0x61, 0xE2,
+			0x49, 0x03, 0xDD, 0xC6, 0xB8, 0xCA, 0x55, 0x7A
+		},
+		.len = 16
+	},
+	.iv = {
+		.data = {
+			0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
+			0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F
+		},
+		.len = 16
+	},
+	.plaintext = {
+		.data = plaintext_aes_common,
+		.len = 80
+	},
+	.cipher_offset = 16,
+	.auth_offset = 0,
+	.ciphertext = {
+		.data = cipher_aescbc_offset_16,
+		.len = 80
+	},
+	.auth_algo = RTE_CRYPTO_AUTH_SHA1_HMAC,
+	.auth_key = {
+		.data = {
+			0xF8, 0x2A, 0xC7, 0x54, 0xDB, 0x96, 0x18, 0xAA,
+			0xC3, 0xA1, 0x53, 0xF6, 0x1F, 0x17, 0x60, 0xBD,
+			0xDE, 0xF4, 0xDE, 0xAD
+		},
+		.len = 20
+	},
+	.digest = {
+		.data = {
+			0xCC, 0x15, 0x83, 0xF7, 0x23, 0x87, 0x96, 0xA7,
+			0x29, 0x34, 0x32, 0xE4, 0x4C, 0x06, 0xE8, 0xEB,
+			0x70, 0x72, 0x4B, 0xAD
+		},
+		.len = 20,
+		.truncated_len = 12
+	}
+};
+
 static const struct blockcipher_test_case aes_chain_test_cases[] = {
 	{
+		.test_descr = "AES-128-CBC HMAC-SHA1 Decryption Digest "
+			"Verify OOP Offset",
+		.test_data = &aes_test_data_14,
+		.op_mask = BLOCKCIPHER_TEST_OP_AUTH_VERIFY_DEC,
+		.feature_mask = BLOCKCIPHER_TEST_FEATURE_OOP,
+		.pmd_mask = BLOCKCIPHER_TEST_TARGET_PMD_MB |
+			BLOCKCIPHER_TEST_TARGET_PMD_QAT
+	},
+		{
 		.test_descr = "AES-128-CTR HMAC-SHA1 Encryption Digest",
 		.test_data = &aes_test_data_1,
 		.op_mask = BLOCKCIPHER_TEST_OP_ENC_AUTH_GEN,
@@ -1471,7 +1849,17 @@ static const struct blockcipher_test_case aes_chain_test_cases[] = {
 			BLOCKCIPHER_TEST_TARGET_PMD_DPAA2_SEC |
 			BLOCKCIPHER_TEST_TARGET_PMD_DPAA_SEC |
 			BLOCKCIPHER_TEST_TARGET_PMD_CAAM_JR |
+			BLOCKCIPHER_TEST_TARGET_PMD_MB |
 			BLOCKCIPHER_TEST_TARGET_PMD_OCTEONTX
+	},
+	{
+		.test_descr = "AES-128-CBC HMAC-SHA1 Encryption Digest "
+			"OOP Offset",
+		.test_data = &aes_test_data_14,
+		.op_mask = BLOCKCIPHER_TEST_OP_ENC_AUTH_GEN,
+		.feature_mask = BLOCKCIPHER_TEST_FEATURE_OOP,
+		.pmd_mask = BLOCKCIPHER_TEST_TARGET_PMD_MB |
+			BLOCKCIPHER_TEST_TARGET_PMD_QAT
 	},
 	{
 		.test_descr = "AES-128-CBC HMAC-SHA1 Decryption Digest "
@@ -1485,7 +1873,8 @@ static const struct blockcipher_test_case aes_chain_test_cases[] = {
 			BLOCKCIPHER_TEST_TARGET_PMD_DPAA2_SEC |
 			BLOCKCIPHER_TEST_TARGET_PMD_DPAA_SEC |
 			BLOCKCIPHER_TEST_TARGET_PMD_CAAM_JR |
-			BLOCKCIPHER_TEST_TARGET_PMD_OCTEONTX
+			BLOCKCIPHER_TEST_TARGET_PMD_OCTEONTX |
+			BLOCKCIPHER_TEST_TARGET_PMD_MB
 	},
 	{
 		.test_descr = "AES-128-CBC HMAC-SHA224 Encryption Digest",
@@ -1567,6 +1956,90 @@ static const struct blockcipher_test_case aes_chain_test_cases[] = {
 			BLOCKCIPHER_TEST_TARGET_PMD_OPENSSL |
 			BLOCKCIPHER_TEST_TARGET_PMD_CCP |
 			BLOCKCIPHER_TEST_TARGET_PMD_OCTEONTX
+	},
+	{
+		.test_descr = "NULL-CIPHER-NULL-AUTH encrypt & gen x8byte",
+		.test_data = &null_test_data_chain_x8_multiple,
+		.op_mask = BLOCKCIPHER_TEST_OP_ENC_AUTH_GEN,
+		.pmd_mask = BLOCKCIPHER_TEST_TARGET_PMD_NULL |
+			BLOCKCIPHER_TEST_TARGET_PMD_QAT
+	},
+	{
+		.test_descr = "NULL-AUTH-NULL-CIPHER verify & decrypt x8byte",
+		.test_data = &null_test_data_chain_x8_multiple,
+		.op_mask = BLOCKCIPHER_TEST_OP_AUTH_VERIFY_DEC,
+		.pmd_mask = BLOCKCIPHER_TEST_TARGET_PMD_NULL |
+			BLOCKCIPHER_TEST_TARGET_PMD_QAT
+	},
+	{
+		.test_descr = "NULL-CIPHER-NULL-AUTH encrypt & gen x8byte - OOP",
+		.test_data = &null_test_data_chain_x8_multiple,
+		.op_mask = BLOCKCIPHER_TEST_OP_ENC_AUTH_GEN,
+		.feature_mask = BLOCKCIPHER_TEST_FEATURE_OOP,
+		.pmd_mask = BLOCKCIPHER_TEST_TARGET_PMD_QAT
+	},
+	{
+		.test_descr = "NULL-AUTH-NULL-CIPHER verify & decrypt x8byte - OOP",
+		.test_data = &null_test_data_chain_x8_multiple,
+		.op_mask = BLOCKCIPHER_TEST_OP_AUTH_VERIFY_DEC,
+		.feature_mask = BLOCKCIPHER_TEST_FEATURE_OOP,
+		.pmd_mask = BLOCKCIPHER_TEST_TARGET_PMD_QAT
+	},
+	{
+		.test_descr = "NULL-CIPHER-NULL-AUTH encrypt & gen x4byte",
+		.test_data = &null_test_data_chain_x4_multiple,
+		.op_mask = BLOCKCIPHER_TEST_OP_ENC_AUTH_GEN,
+		.pmd_mask = BLOCKCIPHER_TEST_TARGET_PMD_NULL |
+			BLOCKCIPHER_TEST_TARGET_PMD_QAT
+	},
+	{
+		.test_descr = "NULL-AUTH-NULL-CIPHER verify & decrypt x4byte",
+		.test_data = &null_test_data_chain_x4_multiple,
+		.op_mask = BLOCKCIPHER_TEST_OP_AUTH_VERIFY_DEC,
+		.pmd_mask = BLOCKCIPHER_TEST_TARGET_PMD_NULL |
+			BLOCKCIPHER_TEST_TARGET_PMD_QAT
+	},
+	{
+		.test_descr = "NULL-CIPHER-NULL-AUTH encrypt & gen x4byte - OOP",
+		.test_data = &null_test_data_chain_x4_multiple,
+		.op_mask = BLOCKCIPHER_TEST_OP_ENC_AUTH_GEN,
+		.feature_mask = BLOCKCIPHER_TEST_FEATURE_OOP,
+		.pmd_mask = BLOCKCIPHER_TEST_TARGET_PMD_QAT
+	},
+	{
+		.test_descr = "NULL-AUTH-NULL-CIPHER verify & decrypt x4byte - OOP",
+		.test_data = &null_test_data_chain_x4_multiple,
+		.op_mask = BLOCKCIPHER_TEST_OP_AUTH_VERIFY_DEC,
+		.feature_mask = BLOCKCIPHER_TEST_FEATURE_OOP,
+		.pmd_mask = BLOCKCIPHER_TEST_TARGET_PMD_QAT
+	},
+	{
+		.test_descr = "NULL-CIPHER-NULL-AUTH encrypt & gen x1byte",
+		.test_data = &null_test_data_chain_x1_multiple,
+		.op_mask = BLOCKCIPHER_TEST_OP_ENC_AUTH_GEN,
+		.pmd_mask = BLOCKCIPHER_TEST_TARGET_PMD_NULL |
+			BLOCKCIPHER_TEST_TARGET_PMD_QAT
+	},
+	{
+		.test_descr = "NULL-AUTH-NULL-CIPHER verify & decrypt x1byte",
+		.test_data = &null_test_data_chain_x1_multiple,
+		.op_mask = BLOCKCIPHER_TEST_OP_AUTH_VERIFY_DEC,
+		.pmd_mask = BLOCKCIPHER_TEST_TARGET_PMD_NULL |
+			BLOCKCIPHER_TEST_TARGET_PMD_QAT
+	},
+	{
+		.test_descr = "NULL-CIPHER-NULL-AUTH encrypt & gen x1byte - OOP",
+		.test_data = &null_test_data_chain_x1_multiple,
+		.op_mask = BLOCKCIPHER_TEST_OP_ENC_AUTH_GEN,
+		.feature_mask = BLOCKCIPHER_TEST_FEATURE_OOP,
+		.pmd_mask = BLOCKCIPHER_TEST_TARGET_PMD_QAT
+	},
+	{
+		.test_descr = "NULL-AUTH-NULL-CIPHER verify & decrypt x1byte - OOP",
+		.test_data = &null_test_data_chain_x1_multiple,
+		.op_mask = BLOCKCIPHER_TEST_OP_AUTH_VERIFY_DEC,
+		.feature_mask = BLOCKCIPHER_TEST_FEATURE_OOP,
+		.pmd_mask = BLOCKCIPHER_TEST_TARGET_PMD_QAT
 	},
 };
 
@@ -1698,7 +2171,8 @@ static const struct blockcipher_test_case aes_cipheronly_test_cases[] = {
 			BLOCKCIPHER_TEST_TARGET_PMD_DPAA_SEC |
 			BLOCKCIPHER_TEST_TARGET_PMD_CAAM_JR |
 			BLOCKCIPHER_TEST_TARGET_PMD_CCP |
-			BLOCKCIPHER_TEST_TARGET_PMD_VIRTIO
+			BLOCKCIPHER_TEST_TARGET_PMD_VIRTIO |
+			BLOCKCIPHER_TEST_TARGET_PMD_MB
 	},
 	{
 		.test_descr = "AES-256-CBC OOP Decryption",
@@ -1711,7 +2185,8 @@ static const struct blockcipher_test_case aes_cipheronly_test_cases[] = {
 			BLOCKCIPHER_TEST_TARGET_PMD_DPAA_SEC |
 			BLOCKCIPHER_TEST_TARGET_PMD_CAAM_JR |
 			BLOCKCIPHER_TEST_TARGET_PMD_CCP |
-			BLOCKCIPHER_TEST_TARGET_PMD_VIRTIO
+			BLOCKCIPHER_TEST_TARGET_PMD_VIRTIO |
+			BLOCKCIPHER_TEST_TARGET_PMD_MB
 	},
 	{
 		.test_descr = "AES-128-CTR Encryption",
@@ -1821,7 +2296,111 @@ static const struct blockcipher_test_case aes_cipheronly_test_cases[] = {
 		.op_mask = BLOCKCIPHER_TEST_OP_ENCRYPT,
 		.pmd_mask = BLOCKCIPHER_TEST_TARGET_PMD_MB |
 			    BLOCKCIPHER_TEST_TARGET_PMD_OCTEONTX
-	}
+	},
+	{
+		.test_descr = "AES-128-XTS Encryption (16-byte plaintext)",
+		.test_data = &aes_test_data_xts_key_32_pt_16,
+		.op_mask = BLOCKCIPHER_TEST_OP_ENCRYPT,
+		.pmd_mask = BLOCKCIPHER_TEST_TARGET_PMD_QAT
+	},
+	{
+		.test_descr = "AES-128-XTS Decryption (16-byte plaintext)",
+		.test_data = &aes_test_data_xts_key_32_pt_16,
+		.op_mask = BLOCKCIPHER_TEST_OP_DECRYPT,
+		.pmd_mask = BLOCKCIPHER_TEST_TARGET_PMD_QAT
+	},
+	{
+		.test_descr = "AES-128-XTS Encryption (32-byte plaintext)",
+		.test_data = &aes_test_data_xts_key_32_pt_32,
+		.op_mask = BLOCKCIPHER_TEST_OP_ENCRYPT,
+		.pmd_mask = BLOCKCIPHER_TEST_TARGET_PMD_QAT
+	},
+	{
+		.test_descr = "AES-128-XTS Decryption (32-byte plaintext)",
+		.test_data = &aes_test_data_xts_key_32_pt_32,
+		.op_mask = BLOCKCIPHER_TEST_OP_DECRYPT,
+		.pmd_mask = BLOCKCIPHER_TEST_TARGET_PMD_QAT
+	},
+	{
+		.test_descr = "AES-256-XTS Encryption (32-byte plaintext)",
+		.test_data = &aes_test_data_xts_key_64_pt_32,
+		.op_mask = BLOCKCIPHER_TEST_OP_ENCRYPT,
+		.pmd_mask = BLOCKCIPHER_TEST_TARGET_PMD_QAT
+	},
+	{
+		.test_descr = "AES-256-XTS Decryption (32-byte plaintext)",
+		.test_data = &aes_test_data_xts_key_64_pt_32,
+		.op_mask = BLOCKCIPHER_TEST_OP_DECRYPT,
+		.pmd_mask = BLOCKCIPHER_TEST_TARGET_PMD_QAT
+	},
+	{
+		.test_descr = "AES-256-XTS Encryption (48-byte plaintext)",
+		.test_data = &aes_test_data_xts_key_64_pt_48,
+		.op_mask = BLOCKCIPHER_TEST_OP_ENCRYPT,
+		.pmd_mask = BLOCKCIPHER_TEST_TARGET_PMD_QAT
+	},
+	{
+		.test_descr = "AES-256-XTS Decryption (48-byte plaintext)",
+		.test_data = &aes_test_data_xts_key_64_pt_48,
+		.op_mask = BLOCKCIPHER_TEST_OP_DECRYPT,
+		.pmd_mask = BLOCKCIPHER_TEST_TARGET_PMD_QAT
+	},
+	{
+		.test_descr = "cipher-only - NULL algo - x8 - encryption",
+		.test_data = &null_test_data_chain_x8_multiple,
+		.op_mask = BLOCKCIPHER_TEST_OP_ENCRYPT,
+		.pmd_mask = BLOCKCIPHER_TEST_TARGET_PMD_NULL |
+				BLOCKCIPHER_TEST_TARGET_PMD_QAT
+	},
+	{
+		.test_descr = "cipher-only - NULL algo - x8 - decryption",
+		.test_data = &null_test_data_chain_x8_multiple,
+		.op_mask = BLOCKCIPHER_TEST_OP_DECRYPT,
+		.pmd_mask = BLOCKCIPHER_TEST_TARGET_PMD_NULL |
+			BLOCKCIPHER_TEST_TARGET_PMD_QAT
+	},
+	{
+		.test_descr = "cipher-only - NULL algo - x4 - encryption",
+		.test_data = &null_test_data_chain_x4_multiple,
+		.op_mask = BLOCKCIPHER_TEST_OP_ENCRYPT,
+		.pmd_mask = BLOCKCIPHER_TEST_TARGET_PMD_NULL |
+			BLOCKCIPHER_TEST_TARGET_PMD_QAT
+	},
+	{
+		.test_descr = "cipher-only - NULL algo - x4 - decryption",
+		.test_data = &null_test_data_chain_x4_multiple,
+		.op_mask = BLOCKCIPHER_TEST_OP_DECRYPT,
+		.pmd_mask = BLOCKCIPHER_TEST_TARGET_PMD_NULL |
+			BLOCKCIPHER_TEST_TARGET_PMD_QAT
+	},
+	{
+		.test_descr = "cipher-only - NULL algo - x4 - encryption - OOP",
+		.test_data = &null_test_data_chain_x4_multiple,
+		.op_mask = BLOCKCIPHER_TEST_OP_ENCRYPT,
+		.feature_mask = BLOCKCIPHER_TEST_FEATURE_OOP,
+		.pmd_mask = BLOCKCIPHER_TEST_TARGET_PMD_QAT
+	},
+	{
+		.test_descr = "cipher-only - NULL algo - x4 - decryption - OOP",
+		.test_data = &null_test_data_chain_x4_multiple,
+		.op_mask = BLOCKCIPHER_TEST_OP_DECRYPT,
+		.feature_mask = BLOCKCIPHER_TEST_FEATURE_OOP,
+		.pmd_mask = BLOCKCIPHER_TEST_TARGET_PMD_QAT
+		},
+	{
+		.test_descr = "cipher-only - NULL algo - x1 - encryption",
+		.test_data = &null_test_data_chain_x1_multiple,
+		.op_mask = BLOCKCIPHER_TEST_OP_ENCRYPT,
+		.pmd_mask = BLOCKCIPHER_TEST_TARGET_PMD_NULL |
+			BLOCKCIPHER_TEST_TARGET_PMD_QAT
+	},
+	{
+		.test_descr = "cipher-only - NULL algo - x1 - decryption",
+		.test_data = &null_test_data_chain_x1_multiple,
+		.op_mask = BLOCKCIPHER_TEST_OP_DECRYPT,
+		.pmd_mask = BLOCKCIPHER_TEST_TARGET_PMD_NULL |
+			BLOCKCIPHER_TEST_TARGET_PMD_QAT
+	},
 };
 
 static const struct blockcipher_test_case aes_docsis_test_cases[] = {
@@ -1873,42 +2452,49 @@ static const struct blockcipher_test_case aes_docsis_test_cases[] = {
 		.test_data = &aes_test_data_docsis_1,
 		.op_mask = BLOCKCIPHER_TEST_OP_ENCRYPT,
 		.feature_mask = BLOCKCIPHER_TEST_FEATURE_OOP,
-		.pmd_mask = BLOCKCIPHER_TEST_TARGET_PMD_QAT
+		.pmd_mask = BLOCKCIPHER_TEST_TARGET_PMD_QAT |
+			BLOCKCIPHER_TEST_TARGET_PMD_MB
 	},
 	{
 		.test_descr = "AES-DOCSIS-BPI OOP Runt Block Encryption",
 		.test_data = &aes_test_data_docsis_2,
 		.op_mask = BLOCKCIPHER_TEST_OP_ENCRYPT,
 		.feature_mask = BLOCKCIPHER_TEST_FEATURE_OOP,
-		.pmd_mask = BLOCKCIPHER_TEST_TARGET_PMD_QAT
+		.pmd_mask = BLOCKCIPHER_TEST_TARGET_PMD_QAT |
+			BLOCKCIPHER_TEST_TARGET_PMD_MB
 	},
+
 	{
 		.test_descr = "AES-DOCSIS-BPI OOP Uneven Block Encryption",
 		.test_data = &aes_test_data_docsis_3,
 		.op_mask = BLOCKCIPHER_TEST_OP_ENCRYPT,
 		.feature_mask = BLOCKCIPHER_TEST_FEATURE_OOP,
-		.pmd_mask = BLOCKCIPHER_TEST_TARGET_PMD_QAT
+		.pmd_mask = BLOCKCIPHER_TEST_TARGET_PMD_QAT |
+			BLOCKCIPHER_TEST_TARGET_PMD_MB
 	},
 	{
 		.test_descr = "AES-DOCSIS-BPI OOP Full Block Decryption",
 		.test_data = &aes_test_data_docsis_1,
 		.op_mask = BLOCKCIPHER_TEST_OP_DECRYPT,
 		.feature_mask = BLOCKCIPHER_TEST_FEATURE_OOP,
-		.pmd_mask = BLOCKCIPHER_TEST_TARGET_PMD_QAT
+		.pmd_mask = BLOCKCIPHER_TEST_TARGET_PMD_QAT |
+			BLOCKCIPHER_TEST_TARGET_PMD_MB
 	},
 	{
 		.test_descr = "AES-DOCSIS-BPI OOP Runt Block Decryption",
 		.test_data = &aes_test_data_docsis_2,
 		.op_mask = BLOCKCIPHER_TEST_OP_DECRYPT,
 		.feature_mask = BLOCKCIPHER_TEST_FEATURE_OOP,
-		.pmd_mask = BLOCKCIPHER_TEST_TARGET_PMD_QAT
+		.pmd_mask = BLOCKCIPHER_TEST_TARGET_PMD_QAT |
+			BLOCKCIPHER_TEST_TARGET_PMD_MB
 	},
 	{
 		.test_descr = "AES-DOCSIS-BPI OOP Uneven Block Decryption",
 		.test_data = &aes_test_data_docsis_3,
 		.op_mask = BLOCKCIPHER_TEST_OP_DECRYPT,
 		.feature_mask = BLOCKCIPHER_TEST_FEATURE_OOP,
-		.pmd_mask = BLOCKCIPHER_TEST_TARGET_PMD_QAT
-	}
+		.pmd_mask = BLOCKCIPHER_TEST_TARGET_PMD_QAT |
+			BLOCKCIPHER_TEST_TARGET_PMD_MB
+	},
 };
 #endif /* TEST_CRYPTODEV_AES_TEST_VECTORS_H_ */

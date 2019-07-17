@@ -6,6 +6,7 @@
 # - DPDK_CHECKPATCH_PATH
 # - DPDK_CHECKPATCH_CODESPELL
 # - DPDK_CHECKPATCH_LINE_LENGTH
+# - DPDK_CHECKPATCH_OPTIONS
 . $(dirname $(readlink -e $0))/load-devel-config
 
 VALIDATE_NEW_API=$(dirname $(readlink -e $0))/check-symbol-change.sh
@@ -33,6 +34,7 @@ PREFER_KERNEL_TYPES,BIT_MACRO,CONST_STRUCT,\
 SPLIT_STRING,LONG_LINE_STRING,\
 LINE_SPACING,PARENTHESIS_ALIGNMENT,NETWORKING_BLOCK_COMMENT_STYLE,\
 NEW_TYPEDEFS,COMPARISON_TO_NULL"
+options="$options $DPDK_CHECKPATCH_OPTIONS"
 
 clean_tmp_files() {
 	if echo $tmpinput | grep -q '^checkpatches\.' ; then
@@ -44,13 +46,14 @@ trap "clean_tmp_files" INT
 
 print_usage () {
 	cat <<- END_OF_HELP
-	usage: $(basename $0) [-q] [-v] [-nX|patch1 [patch2] ...]]
+	usage: $(basename $0) [-q] [-v] [-nX|-r range|patch1 [patch2] ...]]
 
 	Run Linux kernel checkpatch.pl with DPDK options.
 	The environment variable DPDK_CHECKPATCH_PATH must be set.
 
 	The patches to check can be from stdin, files specified on the command line,
-	or latest git commits limited with -n option (default limit: origin/master).
+	latest git commits limited with -n option, or commits in the git range
+	specified with -r option (default: "origin/master..").
 	END_OF_HELP
 }
 
@@ -78,13 +81,45 @@ check_forbidden_additions() { # <patch>
 	return $res
 }
 
+check_experimental_tags() { # <patch>
+	res=0
+
+	cat "$1" |awk '
+	BEGIN {
+		current_file = "";
+		ret = 0;
+	}
+	/^+++ b\// {
+		current_file = $2;
+	}
+	/^+.*__rte_experimental/ {
+		if (current_file ~ ".c$" ) {
+			print "Please only put __rte_experimental tags in " \
+				"headers ("current_file")";
+			ret = 1;
+		}
+		if ($1 != "+__rte_experimental" || $2 != "") {
+			print "__rte_experimental must appear alone on the line" \
+				" immediately preceding the return type of a function."
+			ret = 1;
+		}
+	}
+	END {
+		exit ret;
+	}' || res=1
+
+	return $res
+}
+
 number=0
+range='origin/master..'
 quiet=false
 verbose=false
-while getopts hn:qv ARG ; do
+while getopts hn:qr:v ARG ; do
 	case $ARG in
 		n ) number=$OPTARG ;;
 		q ) quiet=true ;;
+		r ) range=$OPTARG ;;
 		v ) verbose=true ;;
 		h ) print_usage ; exit 0 ;;
 		? ) print_usage ; exit 1 ;;
@@ -148,6 +183,14 @@ check () { # <patch> <commit> <title>
 		ret=1
 	fi
 
+	! $verbose || printf '\nChecking __rte_experimental tags:\n'
+	report=$(check_experimental_tags "$tmpinput")
+	if [ $? -ne 0 ] ; then
+		$headline_printed || print_headline "$3"
+		printf '%s\n' "$report"
+		ret=1
+	fi
+
 	clean_tmp_files
 	[ $ret -eq 0 ] && return 0
 
@@ -172,7 +215,7 @@ elif [ ! -t 0 ] ; then # stdin
 	check '' '' "$subject"
 else
 	if [ $number -eq 0 ] ; then
-		commits=$(git rev-list --reverse origin/master..)
+		commits=$(git rev-list --reverse $range)
 	else
 		commits=$(git rev-list --reverse --max-count=$number HEAD)
 	fi

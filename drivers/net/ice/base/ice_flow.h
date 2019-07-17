@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: BSD-3-Clause
- * Copyright(c) 2001-2018
+ * Copyright(c) 2001-2019
  */
 
 #ifndef _ICE_FLOW_H_
@@ -174,7 +174,7 @@ enum ice_flow_priority {
 
 struct ice_flow_seg_xtrct {
 	u8 prot_id;	/* Protocol ID of extracted header field */
-	u8 off;		/* Starting offset of the field in header in bytes */
+	u16 off;	/* Starting offset of the field in header in bytes */
 	u8 idx;		/* Index of FV entry used */
 	u8 disp;	/* Displacement of field in bits fr. FV entry's start */
 };
@@ -225,18 +225,15 @@ struct ice_flow_entry {
 	struct LIST_ENTRY_TYPE l_entry;
 
 	u64 id;
-	u16 vsi_handle;
-	enum ice_flow_priority priority;
-
 	struct ice_flow_prof *prof;
-
-	/* Flow entry's content */
-	u16 entry_sz;
-	void *entry;
-
 	/* Action list */
-	u8 acts_cnt;
 	struct ice_flow_action *acts;
+	/* Flow entry's content */
+	void *entry;
+	enum ice_flow_priority priority;
+	u16 vsi_handle;
+	u16 entry_sz;
+	u8 acts_cnt;
 };
 
 #define ICE_FLOW_ENTRY_HNDL(e)	((unsigned long)e)
@@ -247,12 +244,13 @@ struct ice_flow_prof {
 
 	u64 id;
 	enum ice_flow_dir dir;
+	u8 segs_cnt;
+	u8 acts_cnt;
 
 	/* Keep track of flow entries associated with this flow profile */
 	struct ice_lock entries_lock;
 	struct LIST_HEAD_TYPE entries;
 
-	u8 segs_cnt;
 	struct ice_flow_seg_info segs[ICE_FLOW_SEG_MAX];
 
 	/* software VSI handles referenced by this flow profile */
@@ -265,12 +263,13 @@ struct ice_flow_prof {
 	} cfg;
 
 	/* Default actions */
-	u8 acts_cnt;
 	struct ice_flow_action *acts;
 };
 
 struct ice_rss_cfg {
 	struct LIST_ENTRY_TYPE l_entry;
+	/* bitmap of VSIs added to the RSS entry */
+	ice_declare_bitmap(vsis, ICE_MAX_VSI);
 	u64 hashed_flds;
 	u32 packet_hdr;
 };
@@ -279,14 +278,23 @@ enum ice_flow_action_type {
 	ICE_FLOW_ACT_NOP,
 	ICE_FLOW_ACT_ALLOW,
 	ICE_FLOW_ACT_DROP,
-	ICE_FLOW_ACT_COUNT,
+	ICE_FLOW_ACT_CNTR_PKT,
 	ICE_FLOW_ACT_FWD_VSI,
 	ICE_FLOW_ACT_FWD_VSI_LIST,	/* Should be abstracted away */
 	ICE_FLOW_ACT_FWD_QUEUE,		/* Can Queues be abstracted away? */
 	ICE_FLOW_ACT_FWD_QUEUE_GROUP,	/* Can Queues be abstracted away? */
-	ICE_FLOW_ACTION_PUSH,
-	ICE_FLOW_ACTION_POP,
-	ICE_FLOW_ACTION_MODIFY,
+	ICE_FLOW_ACT_PUSH,
+	ICE_FLOW_ACT_POP,
+	ICE_FLOW_ACT_MODIFY,
+	ICE_FLOW_ACT_CNTR_BYTES,
+	ICE_FLOW_ACT_CNTR_PKT_BYTES,
+	ICE_FLOW_ACT_GENERIC_0,
+	ICE_FLOW_ACT_GENERIC_1,
+	ICE_FLOW_ACT_GENERIC_2,
+	ICE_FLOW_ACT_GENERIC_3,
+	ICE_FLOW_ACT_GENERIC_4,
+	ICE_FLOW_ACT_RPT_FLOW_ID,
+	ICE_FLOW_ACT_BUILD_PROF_IDX,
 };
 
 struct ice_flow_action {
@@ -330,7 +338,7 @@ ice_flow_set_fld_prefix(struct ice_flow_seg_info *seg, enum ice_flow_field fld,
 void
 ice_flow_add_fld_raw(struct ice_flow_seg_info *seg, u16 off, u8 len,
 		     u16 val_loc, u16 mask_loc);
-void ice_rem_all_rss_vsi_ctx(struct ice_hw *hw, u16 vsi_handle);
+void ice_rem_vsi_rss_list(struct ice_hw *hw, u16 vsi_handle);
 enum ice_status ice_replay_rss_cfg(struct ice_hw *hw, u16 vsi_handle);
 enum ice_status
 ice_add_avf_rss_cfg(struct ice_hw *hw, u16 vsi_handle, u64 hashed_flds);

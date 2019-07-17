@@ -15,6 +15,7 @@
 #include <sys/types.h>
 #include <sys/syscall.h>
 
+#include <rte_string_fns.h>
 #include <rte_byteorder.h>
 #include <rte_common.h>
 #include <rte_interrupts.h>
@@ -145,13 +146,13 @@ static int
 dpaa_mtu_set(struct rte_eth_dev *dev, uint16_t mtu)
 {
 	struct dpaa_if *dpaa_intf = dev->data->dev_private;
-	uint32_t frame_size = mtu + ETHER_HDR_LEN + ETHER_CRC_LEN
+	uint32_t frame_size = mtu + RTE_ETHER_HDR_LEN + RTE_ETHER_CRC_LEN
 				+ VLAN_TAG_SIZE;
 	uint32_t buffsz = dev->data->min_rx_buf_size - RTE_PKTMBUF_HEADROOM;
 
 	PMD_INIT_FUNC_TRACE();
 
-	if (mtu < ETHER_MIN_MTU || frame_size > DPAA_MAX_RX_PKT_LEN)
+	if (mtu < RTE_ETHER_MIN_MTU || frame_size > DPAA_MAX_RX_PKT_LEN)
 		return -EINVAL;
 	/*
 	 * Refuse mtu that requires the support of scattered packets
@@ -171,7 +172,7 @@ dpaa_mtu_set(struct rte_eth_dev *dev, uint16_t mtu)
 		return -EINVAL;
 	}
 
-	if (frame_size > ETHER_MAX_LEN)
+	if (frame_size > RTE_ETHER_MAX_LEN)
 		dev->data->dev_conf.rxmode.offloads &=
 						DEV_RX_OFFLOAD_JUMBO_FRAME;
 	else
@@ -229,7 +230,7 @@ dpaa_eth_dev_configure(struct rte_eth_dev *dev)
 
 		fman_if_set_maxfrm(dpaa_intf->fif, max_len);
 		dev->data->mtu = max_len
-				- ETHER_HDR_LEN - ETHER_CRC_LEN - VLAN_TAG_SIZE;
+			- RTE_ETHER_HDR_LEN - RTE_ETHER_CRC_LEN - VLAN_TAG_SIZE;
 	}
 
 	if (rx_offloads & DEV_RX_OFFLOAD_SCATTER) {
@@ -439,10 +440,9 @@ dpaa_xstats_get_names(__rte_unused struct rte_eth_dev *dev,
 
 	if (xstats_names != NULL)
 		for (i = 0; i < stat_cnt; i++)
-			snprintf(xstats_names[i].name,
-				 sizeof(xstats_names[i].name),
-				 "%s",
-				 dpaa_xstats_strings[i].name);
+			strlcpy(xstats_names[i].name,
+				dpaa_xstats_strings[i].name,
+				sizeof(xstats_names[i].name));
 
 	return stat_cnt;
 }
@@ -673,6 +673,7 @@ int dpaa_eth_rx_queue_setup(struct rte_eth_dev *dev, uint16_t queue_idx,
 
 		rxq->is_static = true;
 	}
+	rxq->bp_array = rte_dpaa_bpid_info;
 	dev->data->rx_queues[queue_idx] = rxq;
 
 	/* configure the CGR size as per the desc size */
@@ -933,7 +934,7 @@ dpaa_flow_ctrl_get(struct rte_eth_dev *dev,
 
 static int
 dpaa_dev_add_mac_addr(struct rte_eth_dev *dev,
-			     struct ether_addr *addr,
+			     struct rte_ether_addr *addr,
 			     uint32_t index,
 			     __rte_unused uint32_t pool)
 {
@@ -963,7 +964,7 @@ dpaa_dev_remove_mac_addr(struct rte_eth_dev *dev,
 
 static int
 dpaa_dev_set_mac_addr(struct rte_eth_dev *dev,
-		       struct ether_addr *addr)
+		       struct rte_ether_addr *addr)
 {
 	int ret;
 	struct dpaa_if *dpaa_intf = dev->data->dev_private;
@@ -1213,7 +1214,7 @@ static int dpaa_debug_queue_init(struct qman_fq *fq, uint32_t fqid)
 static int
 dpaa_dev_init(struct rte_eth_dev *eth_dev)
 {
-	int num_cores, num_rx_fqs, fqid;
+	int num_rx_fqs, fqid;
 	int loop, ret = 0;
 	int dev_id;
 	struct rte_dpaa_device *dpaa_device;
@@ -1225,11 +1226,17 @@ dpaa_dev_init(struct rte_eth_dev *eth_dev)
 
 	PMD_INIT_FUNC_TRACE();
 
+	dpaa_intf = eth_dev->data->dev_private;
 	/* For secondary processes, the primary has done all the work */
 	if (rte_eal_process_type() != RTE_PROC_PRIMARY) {
 		eth_dev->dev_ops = &dpaa_devops;
 		/* Plugging of UCODE burst API not supported in Secondary */
 		eth_dev->rx_pkt_burst = dpaa_eth_queue_rx;
+		eth_dev->tx_pkt_burst = dpaa_eth_queue_tx;
+#ifdef CONFIG_FSL_QMAN_FQ_LOOKUP
+		qman_set_fq_lookup_table(
+				dpaa_intf->rx_queues->qman_fq_lookup_table);
+#endif
 		return 0;
 	}
 
@@ -1312,23 +1319,22 @@ dpaa_dev_init(struct rte_eth_dev *eth_dev)
 	dpaa_intf->nb_rx_queues = num_rx_fqs;
 
 	/* Initialise Tx FQs.free_rx Have as many Tx FQ's as number of cores */
-	num_cores = rte_lcore_count();
 	dpaa_intf->tx_queues = rte_zmalloc(NULL, sizeof(struct qman_fq) *
-		num_cores, MAX_CACHELINE);
+		MAX_DPAA_CORES, MAX_CACHELINE);
 	if (!dpaa_intf->tx_queues) {
 		DPAA_PMD_ERR("Failed to alloc mem for TX queues\n");
 		ret = -ENOMEM;
 		goto free_rx;
 	}
 
-	for (loop = 0; loop < num_cores; loop++) {
+	for (loop = 0; loop < MAX_DPAA_CORES; loop++) {
 		ret = dpaa_tx_queue_init(&dpaa_intf->tx_queues[loop],
 					 fman_intf);
 		if (ret)
 			goto free_tx;
 		dpaa_intf->tx_queues[loop].dpaa_intf = dpaa_intf;
 	}
-	dpaa_intf->nb_tx_queues = num_cores;
+	dpaa_intf->nb_tx_queues = MAX_DPAA_CORES;
 
 #ifdef RTE_LIBRTE_DPAA_DEBUG_DRIVER
 	dpaa_debug_queue_init(&dpaa_intf->debug_queues[
@@ -1347,7 +1353,7 @@ dpaa_dev_init(struct rte_eth_dev *eth_dev)
 	/* reset bpool list, initialize bpool dynamically */
 	list_for_each_entry_safe(bp, tmp_bp, &cfg->fman_if->bpool_list, node) {
 		list_del(&bp->node);
-		free(bp);
+		rte_free(bp);
 	}
 
 	/* Populate ethdev structure */
@@ -1357,17 +1363,17 @@ dpaa_dev_init(struct rte_eth_dev *eth_dev)
 
 	/* Allocate memory for storing MAC addresses */
 	eth_dev->data->mac_addrs = rte_zmalloc("mac_addr",
-		ETHER_ADDR_LEN * DPAA_MAX_MAC_FILTER, 0);
+		RTE_ETHER_ADDR_LEN * DPAA_MAX_MAC_FILTER, 0);
 	if (eth_dev->data->mac_addrs == NULL) {
 		DPAA_PMD_ERR("Failed to allocate %d bytes needed to "
 						"store MAC addresses",
-				ETHER_ADDR_LEN * DPAA_MAX_MAC_FILTER);
+				RTE_ETHER_ADDR_LEN * DPAA_MAX_MAC_FILTER);
 		ret = -ENOMEM;
 		goto free_tx;
 	}
 
 	/* copy the primary mac address */
-	ether_addr_copy(&fman_intf->mac_addr, &eth_dev->data->mac_addrs[0]);
+	rte_ether_addr_copy(&fman_intf->mac_addr, &eth_dev->data->mac_addrs[0]);
 
 	RTE_LOG(INFO, PMD, "net: dpaa: %s: %02x:%02x:%02x:%02x:%02x:%02x\n",
 		dpaa_device->name,
@@ -1389,7 +1395,7 @@ dpaa_dev_init(struct rte_eth_dev *eth_dev)
 	fman_if_stats_reset(fman_intf);
 	/* Disable SG by default */
 	fman_if_set_sg(fman_intf, 0);
-	fman_if_set_maxfrm(fman_intf, ETHER_MAX_LEN + VLAN_TAG_SIZE);
+	fman_if_set_maxfrm(fman_intf, RTE_ETHER_MAX_LEN + VLAN_TAG_SIZE);
 
 	return 0;
 
@@ -1477,7 +1483,7 @@ rte_dpaa_probe(struct rte_dpaa_driver *dpaa_drv __rte_unused,
 		return 0;
 	}
 
-	if (!is_global_init) {
+	if (!is_global_init && (rte_eal_process_type() == RTE_PROC_PRIMARY)) {
 		/* One time load of Qman/Bman drivers */
 		ret = qman_global_init();
 		if (ret) {
@@ -1523,20 +1529,29 @@ rte_dpaa_probe(struct rte_dpaa_driver *dpaa_drv __rte_unused,
 		}
 	}
 
-	eth_dev = rte_eth_dev_allocate(dpaa_dev->name);
-	if (eth_dev == NULL)
-		return -ENOMEM;
+	/* In case of secondary process, the device is already configured
+	 * and no further action is required, except portal initialization
+	 * and verifying secondary attachment to port name.
+	 */
+	if (rte_eal_process_type() != RTE_PROC_PRIMARY) {
+		eth_dev = rte_eth_dev_attach_secondary(dpaa_dev->name);
+		if (!eth_dev)
+			return -ENOMEM;
+	} else {
+		eth_dev = rte_eth_dev_allocate(dpaa_dev->name);
+		if (eth_dev == NULL)
+			return -ENOMEM;
 
-	eth_dev->data->dev_private = rte_zmalloc(
-					"ethdev private structure",
-					sizeof(struct dpaa_if),
-					RTE_CACHE_LINE_SIZE);
-	if (!eth_dev->data->dev_private) {
-		DPAA_PMD_ERR("Cannot allocate memzone for port data");
-		rte_eth_dev_release_port(eth_dev);
-		return -ENOMEM;
+		eth_dev->data->dev_private = rte_zmalloc(
+						"ethdev private structure",
+						sizeof(struct dpaa_if),
+						RTE_CACHE_LINE_SIZE);
+		if (!eth_dev->data->dev_private) {
+			DPAA_PMD_ERR("Cannot allocate memzone for port data");
+			rte_eth_dev_release_port(eth_dev);
+			return -ENOMEM;
+		}
 	}
-
 	eth_dev->device = &dpaa_dev->device;
 	dpaa_dev->eth_dev = eth_dev;
 

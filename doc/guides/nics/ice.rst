@@ -64,6 +64,33 @@ Driver compilation and testing
 Refer to the document :ref:`compiling and testing a PMD for a NIC <pmd_build_and_test>`
 for details.
 
+Features
+--------
+
+Vector PMD
+~~~~~~~~~~
+
+Vector PMD for RX and TX path are selected automatically. The paths
+are chosen based on 2 conditions.
+
+- ``CPU``
+  On the X86 platform, the driver checks if the CPU supports AVX2.
+  If it's supported, AVX2 paths will be chosen. If not, SSE is chosen.
+
+- ``Offload features``
+  The supported HW offload features are described in the document ice_vec.ini.
+  If any not supported features are used, ICE vector PMD is disabled and the
+  normal paths are chosen.
+
+Malicious driver detection (MDD)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+It's not appropriate to send a packet, if this packet's destination MAC address
+is just this port's MAC address. If SW tries to send such packets, HW will
+report a MDD event and drop the packets.
+
+The APPs based on DPDK should avoid providing such packets.
+
 Sample Application Notes
 ------------------------
 
@@ -83,6 +110,15 @@ To start ``testpmd``, and add vlan 10 to port 0:
 
 Limitations or Known issues
 ---------------------------
+
+The Intel E810 requires a programmable pipeline package be downloaded
+by the driver to support normal operations. The E810 has a limited
+functionality built in to allow PXE boot and other use cases, but the
+driver must download a package file during the driver initialization
+stage. The file must be in the /lib/firmware/intel/ice/ddp directory
+and it must be named ice.pkg. A symbolic link to this file is also ok.
+The same package file is used by both the kernel driver and the DPDK PMD.
+
 
 19.02 limitation
 ~~~~~~~~~~~~~~~~

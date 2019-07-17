@@ -28,7 +28,7 @@
 #include "dpaa2_ethdev.h"
 #include <fsl_qbman_debug.h>
 
-#define DRIVER_LOOPBACK_MODE "drv_looback"
+#define DRIVER_LOOPBACK_MODE "drv_loopback"
 
 /* Supported Rx offloads */
 static uint64_t dev_rx_offloads_sup =
@@ -102,7 +102,7 @@ static int dpaa2_dev_mtu_set(struct rte_eth_dev *dev, uint16_t mtu);
 
 int dpaa2_logtype_pmd;
 
-__rte_experimental void
+void
 rte_pmd_dpaa2_set_timestamp(enum pmd_dpaa2_ts enable)
 {
 	dpaa2_enable_ts = enable;
@@ -665,6 +665,7 @@ dpaa2_dev_tx_queue_setup(struct rte_eth_dev *dev,
 					 DPNI_CONG_OPT_WRITE_MEM_ON_ENTER |
 					 DPNI_CONG_OPT_WRITE_MEM_ON_EXIT |
 					 DPNI_CONG_OPT_COHERENT_WRITE;
+		cong_notif_cfg.cg_point = DPNI_CP_QUEUE;
 
 		ret = dpni_set_congestion_notification(dpni, CMD_PRI_LOW,
 						       priv->token,
@@ -879,6 +880,7 @@ dpaa2_dev_start(struct rte_eth_dev *dev)
 
 	/*checksum errors, send them to normal path and set it in annotation */
 	err_cfg.errors = DPNI_ERROR_L3CE | DPNI_ERROR_L4CE;
+	err_cfg.errors |= DPNI_ERROR_PHE;
 
 	err_cfg.error_action = DPNI_ERROR_ACTION_CONTINUE;
 	err_cfg.set_frame_annotation = true;
@@ -969,6 +971,8 @@ dpaa2_dev_close(struct rte_eth_dev *dev)
 	struct rte_eth_link link;
 
 	PMD_INIT_FUNC_TRACE();
+
+	dpaa2_flow_clean(dev);
 
 	/* Clean the device first */
 	ret = dpni_reset(dpni, CMD_PRI_LOW, priv->token);
@@ -1082,7 +1086,7 @@ dpaa2_dev_mtu_set(struct rte_eth_dev *dev, uint16_t mtu)
 	int ret;
 	struct dpaa2_dev_priv *priv = dev->data->dev_private;
 	struct fsl_mc_io *dpni = (struct fsl_mc_io *)priv->hw;
-	uint32_t frame_size = mtu + ETHER_HDR_LEN + ETHER_CRC_LEN
+	uint32_t frame_size = mtu + RTE_ETHER_HDR_LEN + RTE_ETHER_CRC_LEN
 				+ VLAN_TAG_SIZE;
 
 	PMD_INIT_FUNC_TRACE();
@@ -1093,10 +1097,10 @@ dpaa2_dev_mtu_set(struct rte_eth_dev *dev, uint16_t mtu)
 	}
 
 	/* check that mtu is within the allowed range */
-	if ((mtu < ETHER_MIN_MTU) || (frame_size > DPAA2_MAX_RX_PKT_LEN))
+	if (mtu < RTE_ETHER_MIN_MTU || frame_size > DPAA2_MAX_RX_PKT_LEN)
 		return -EINVAL;
 
-	if (frame_size > ETHER_MAX_LEN)
+	if (frame_size > RTE_ETHER_MAX_LEN)
 		dev->data->dev_conf.rxmode.offloads &=
 						DEV_RX_OFFLOAD_JUMBO_FRAME;
 	else
@@ -1120,7 +1124,7 @@ dpaa2_dev_mtu_set(struct rte_eth_dev *dev, uint16_t mtu)
 
 static int
 dpaa2_dev_add_mac_addr(struct rte_eth_dev *dev,
-		       struct ether_addr *addr,
+		       struct rte_ether_addr *addr,
 		       __rte_unused uint32_t index,
 		       __rte_unused uint32_t pool)
 {
@@ -1151,7 +1155,7 @@ dpaa2_dev_remove_mac_addr(struct rte_eth_dev *dev,
 	struct dpaa2_dev_priv *priv = dev->data->dev_private;
 	struct fsl_mc_io *dpni = (struct fsl_mc_io *)priv->hw;
 	struct rte_eth_dev_data *data = dev->data;
-	struct ether_addr *macaddr;
+	struct rte_ether_addr *macaddr;
 
 	PMD_INIT_FUNC_TRACE();
 
@@ -1171,7 +1175,7 @@ dpaa2_dev_remove_mac_addr(struct rte_eth_dev *dev,
 
 static int
 dpaa2_dev_set_mac_addr(struct rte_eth_dev *dev,
-		       struct ether_addr *addr)
+		       struct rte_ether_addr *addr)
 {
 	int ret;
 	struct dpaa2_dev_priv *priv = dev->data->dev_private;
@@ -1331,10 +1335,9 @@ dpaa2_xstats_get_names(__rte_unused struct rte_eth_dev *dev,
 
 	if (xstats_names != NULL)
 		for (i = 0; i < stat_cnt; i++)
-			snprintf(xstats_names[i].name,
-				 sizeof(xstats_names[i].name),
-				 "%s",
-				 dpaa2_xstats_strings[i].name);
+			strlcpy(xstats_names[i].name,
+				dpaa2_xstats_strings[i].name,
+				sizeof(xstats_names[i].name));
 
 	return stat_cnt;
 }
@@ -1989,13 +1992,13 @@ static struct eth_dev_ops dpaa2_ethdev_ops = {
  */
 static int
 populate_mac_addr(struct fsl_mc_io *dpni_dev, struct dpaa2_dev_priv *priv,
-		  struct ether_addr *mac_entry)
+		  struct rte_ether_addr *mac_entry)
 {
 	int ret;
-	struct ether_addr phy_mac, prime_mac;
+	struct rte_ether_addr phy_mac, prime_mac;
 
-	memset(&phy_mac, 0, sizeof(struct ether_addr));
-	memset(&prime_mac, 0, sizeof(struct ether_addr));
+	memset(&phy_mac, 0, sizeof(struct rte_ether_addr));
+	memset(&prime_mac, 0, sizeof(struct rte_ether_addr));
 
 	/* Get the physical device MAC address */
 	ret = dpni_get_port_mac_addr(dpni_dev, CMD_PRI_LOW, priv->token,
@@ -2018,9 +2021,9 @@ populate_mac_addr(struct fsl_mc_io *dpni_dev, struct dpaa2_dev_priv *priv,
 	 *  If empty_mac(phy), return prime.
 	 *  if both are empty, create random MAC, set as prime and return
 	 */
-	if (!is_zero_ether_addr(&phy_mac)) {
+	if (!rte_is_zero_ether_addr(&phy_mac)) {
 		/* If the addresses are not same, overwrite prime */
-		if (!is_same_ether_addr(&phy_mac, &prime_mac)) {
+		if (!rte_is_same_ether_addr(&phy_mac, &prime_mac)) {
 			ret = dpni_set_primary_mac_addr(dpni_dev, CMD_PRI_LOW,
 							priv->token,
 							phy_mac.addr_bytes);
@@ -2029,11 +2032,12 @@ populate_mac_addr(struct fsl_mc_io *dpni_dev, struct dpaa2_dev_priv *priv,
 					      ret);
 				goto cleanup;
 			}
-			memcpy(&prime_mac, &phy_mac, sizeof(struct ether_addr));
+			memcpy(&prime_mac, &phy_mac,
+				sizeof(struct rte_ether_addr));
 		}
-	} else if (is_zero_ether_addr(&prime_mac)) {
+	} else if (rte_is_zero_ether_addr(&prime_mac)) {
 		/* In case phys and prime, both are zero, create random MAC */
-		eth_random_addr(prime_mac.addr_bytes);
+		rte_eth_random_addr(prime_mac.addr_bytes);
 		ret = dpni_set_primary_mac_addr(dpni_dev, CMD_PRI_LOW,
 						priv->token,
 						prime_mac.addr_bytes);
@@ -2044,7 +2048,7 @@ populate_mac_addr(struct fsl_mc_io *dpni_dev, struct dpaa2_dev_priv *priv,
 	}
 
 	/* prime_mac the final MAC address */
-	memcpy(mac_entry, &prime_mac, sizeof(struct ether_addr));
+	memcpy(mac_entry, &prime_mac, sizeof(struct rte_ether_addr));
 	return 0;
 
 cleanup:
@@ -2182,11 +2186,11 @@ dpaa2_dev_init(struct rte_eth_dev *eth_dev)
 	 * can add MAC entries when rte_eth_dev_mac_addr_add is called.
 	 */
 	eth_dev->data->mac_addrs = rte_zmalloc("dpni",
-		ETHER_ADDR_LEN * attr.mac_filter_entries, 0);
+		RTE_ETHER_ADDR_LEN * attr.mac_filter_entries, 0);
 	if (eth_dev->data->mac_addrs == NULL) {
 		DPAA2_PMD_ERR(
 		   "Failed to allocate %d bytes needed to store MAC addresses",
-		   ETHER_ADDR_LEN * attr.mac_filter_entries);
+		   RTE_ETHER_ADDR_LEN * attr.mac_filter_entries);
 		ret = -ENOMEM;
 		goto init_err;
 	}

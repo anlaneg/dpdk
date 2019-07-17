@@ -40,6 +40,7 @@
 #include <rte_atomic.h>
 #include <rte_prefetch.h>
 #include <rte_branch_prediction.h>
+#include <rte_byteorder.h>
 #include <rte_mbuf_ptype.h>
 
 #ifdef __cplusplus
@@ -209,7 +210,7 @@ extern "C" {
 /**
  * Outer UDP checksum offload flag. This flag is used for enabling
  * outer UDP checksum in PMD. To use outer UDP checksum, the user needs to
- * 1) Enable the following in mbuff,
+ * 1) Enable the following in mbuf,
  * a) Fill outer_l2_len and outer_l3_len in mbuf.
  * b) Set the PKT_TX_OUTER_UDP_CKSUM flag.
  * c) Set the PKT_TX_OUTER_IPV4 or PKT_TX_OUTER_IPV6 flag.
@@ -279,9 +280,11 @@ extern "C" {
 #define PKT_TX_TUNNEL_MASK    (0xFULL << 45)
 
 /**
- * Second VLAN insertion (QinQ) flag.
+ * Double VLAN insertion (QinQ) request to driver, driver may offload the
+ * insertion based on device capability.
+ * mbuf 'vlan_tci' & 'vlan_tci_outer' must be valid when this flag is set.
  */
-#define PKT_TX_QINQ        (1ULL << 49)   /**< TX packet with double VLAN inserted. */
+#define PKT_TX_QINQ        (1ULL << 49)
 /* this old name is deprecated */
 #define PKT_TX_QINQ_PKT    PKT_TX_QINQ
 
@@ -338,7 +341,9 @@ extern "C" {
 #define PKT_TX_IPV6          (1ULL << 56)
 
 /**
- * TX packet is a 802.1q VLAN packet.
+ * VLAN tag insertion request to driver, driver may offload the insertion
+ * based on the device capability.
+ * mbuf 'vlan_tci' field must be valid when this flag is set.
  */
 #define PKT_TX_VLAN          (1ULL << 57)
 /* this old name is deprecated */
@@ -479,6 +484,50 @@ struct rte_mbuf_sched {
 	/**< Color. @see enum rte_color.*/
 	uint16_t reserved;   /**< Reserved. */
 }; /**< Hierarchical scheduler */
+
+/**
+ * enum for the tx_offload bit-fields lengths and offsets.
+ * defines the layout of rte_mbuf tx_offload field.
+ */
+enum {
+	RTE_MBUF_L2_LEN_BITS = 7,
+	RTE_MBUF_L3_LEN_BITS = 9,
+	RTE_MBUF_L4_LEN_BITS = 8,
+	RTE_MBUF_TSO_SEGSZ_BITS = 16,
+	RTE_MBUF_OUTL3_LEN_BITS = 9,
+	RTE_MBUF_OUTL2_LEN_BITS = 7,
+	RTE_MBUF_TXOFLD_UNUSED_BITS = sizeof(uint64_t) * CHAR_BIT -
+		RTE_MBUF_L2_LEN_BITS -
+		RTE_MBUF_L3_LEN_BITS -
+		RTE_MBUF_L4_LEN_BITS -
+		RTE_MBUF_TSO_SEGSZ_BITS -
+		RTE_MBUF_OUTL3_LEN_BITS -
+		RTE_MBUF_OUTL2_LEN_BITS,
+#if RTE_BYTE_ORDER == RTE_BIG_ENDIAN
+	RTE_MBUF_L2_LEN_OFS =
+		sizeof(uint64_t) * CHAR_BIT - RTE_MBUF_L2_LEN_BITS,
+	RTE_MBUF_L3_LEN_OFS = RTE_MBUF_L2_LEN_OFS - RTE_MBUF_L3_LEN_BITS,
+	RTE_MBUF_L4_LEN_OFS = RTE_MBUF_L3_LEN_OFS - RTE_MBUF_L4_LEN_BITS,
+	RTE_MBUF_TSO_SEGSZ_OFS = RTE_MBUF_L4_LEN_OFS - RTE_MBUF_TSO_SEGSZ_BITS,
+	RTE_MBUF_OUTL3_LEN_OFS =
+		RTE_MBUF_TSO_SEGSZ_OFS - RTE_MBUF_OUTL3_LEN_BITS,
+	RTE_MBUF_OUTL2_LEN_OFS =
+		RTE_MBUF_OUTL3_LEN_OFS - RTE_MBUF_OUTL2_LEN_BITS,
+	RTE_MBUF_TXOFLD_UNUSED_OFS =
+		RTE_MBUF_OUTL2_LEN_OFS - RTE_MBUF_TXOFLD_UNUSED_BITS,
+#else
+	RTE_MBUF_L2_LEN_OFS = 0,
+	RTE_MBUF_L3_LEN_OFS = RTE_MBUF_L2_LEN_OFS + RTE_MBUF_L2_LEN_BITS,
+	RTE_MBUF_L4_LEN_OFS = RTE_MBUF_L3_LEN_OFS + RTE_MBUF_L3_LEN_BITS,
+	RTE_MBUF_TSO_SEGSZ_OFS = RTE_MBUF_L4_LEN_OFS + RTE_MBUF_L4_LEN_BITS,
+	RTE_MBUF_OUTL3_LEN_OFS =
+		RTE_MBUF_TSO_SEGSZ_OFS + RTE_MBUF_TSO_SEGSZ_BITS,
+	RTE_MBUF_OUTL2_LEN_OFS =
+		RTE_MBUF_OUTL3_LEN_OFS + RTE_MBUF_OUTL3_LEN_BITS,
+	RTE_MBUF_TXOFLD_UNUSED_OFS =
+		RTE_MBUF_OUTL2_LEN_OFS + RTE_MBUF_OUTL2_LEN_BITS,
+#endif
+};
 
 /**
  * The generic rte_mbuf, containing a packet mbuf.
@@ -625,6 +674,8 @@ struct rte_mbuf {
 
 	/** Valid if PKT_RX_TIMESTAMP is set. The unit and time reference
 	 * are not normalized but are always the same for a given port.
+	 * Some devices allow to query rte_eth_read_clock that will return the
+	 * current device timestamp.
 	 */
 	uint64_t timestamp;
 
@@ -646,26 +697,42 @@ struct rte_mbuf {
 		uint64_t tx_offload;       /**< combined for easy fetch */
 		__extension__
 		struct {
-			uint64_t l2_len:7;//2层头长度
+			//2层头长度
+			uint64_t l2_len:RTE_MBUF_L2_LEN_BITS;
 			/**< L2 (MAC) Header Length for non-tunneling pkt.
 			 * Outer_L4_len + ... + Inner_L2_len for tunneling pkt.
 			 */
-			uint64_t l3_len:9; /**< L3 (IP) Header Length. */ //3层头部的长度
-			uint64_t l4_len:8; /**< L4 (TCP/UDP) Header Length. */ //4层头部的长度
-
+			uint64_t l3_len:RTE_MBUF_L3_LEN_BITS;//3层头部的长度
+			/**< L3 (IP) Header Length. */
+			uint64_t l4_len:RTE_MBUF_L4_LEN_BITS;//3层头部的长度
+			/**< L4 (TCP/UDP) Header Length. */
 			//在不支持TSO的网卡上，TCP层向IP层发送数据会考虑mss，使得TCP向下发送的数据可以包含在一个IP分组中而不会造成分片，
 			//mss是在TCP初始建立连接时由网卡MTU确定并和对端协商的，所以在一个MTU＝1500的网卡上，TCP向下发送的数据不会大于
 			//min(mss_local, mss_remote)-ip头-tcp头。
 			//网卡支持TSO时，TCP层会逐渐增大mss（总是整数倍数增加），当TCP层向下发送大块数据时，仅仅计算TCP头，网卡接到到了
 			//IP层传下的大数 据包后自己重新分成若干个IP数据包，添加IP头，复制TCP头并且重新计算校验和等相关数据，这样就把一部
 			//分CPU相关的处理工作转移到由网卡来处理。
-			uint64_t tso_segsz:16; /**< TCP TSO segment size */
+			uint64_t tso_segsz:RTE_MBUF_TSO_SEGSZ_BITS;
+			/**< TCP TSO segment size */
 
-			/* fields for TX offloading of tunnels */
-			uint64_t outer_l3_len:9; /**< Outer L3 (IP) Hdr Length. */
-			uint64_t outer_l2_len:7; /**< Outer L2 (MAC) Hdr Length. */
+			/*
+			 * Fields for Tx offloading of tunnels.
+			 * These are undefined for packets which don't request
+			 * any tunnel offloads (outer IP or UDP checksum,
+			 * tunnel TSO).
+			 *
+			 * PMDs should not use these fields unconditionally
+			 * when calculating offsets.
+			 *
+			 * Applications are expected to set appropriate tunnel
+			 * offload flags when they fill in these fields.
+			 */
+			uint64_t outer_l3_len:RTE_MBUF_OUTL3_LEN_BITS;
+			/**< Outer L3 (IP) Hdr Length. */
+			uint64_t outer_l2_len:RTE_MBUF_OUTL2_LEN_BITS;
+			/**< Outer L2 (MAC) Hdr Length. */
 
-			/* uint64_t unused:8; */
+			/* uint64_t unused:RTE_MBUF_TXOFLD_UNUSED_BITS; */
 		};
 	};
 
@@ -825,7 +892,8 @@ rte_mbuf_from_indirect(struct rte_mbuf *mi)
  * @return
  *   The pointer of the mbuf buffer.
  */
-static inline char * __rte_experimental
+__rte_experimental
+static inline char *
 rte_mbuf_buf_addr(struct rte_mbuf *mb, struct rte_mempool *mp)
 {
 	return (char *)mb + sizeof(*mb) + rte_pktmbuf_priv_size(mp);
@@ -842,10 +910,18 @@ rte_mbuf_buf_addr(struct rte_mbuf *mb, struct rte_mempool *mp)
  * @return
  *   The pointer of the beginning of the mbuf data.
  */
-static inline char * __rte_experimental
-rte_mbuf_data_addr_default(struct rte_mbuf *mb)
+__rte_experimental
+static inline char *
+rte_mbuf_data_addr_default(__rte_unused struct rte_mbuf *mb)
 {
+	/* gcc complains about calling this experimental function even
+	 * when not using it. Hide it with ALLOW_EXPERIMENTAL_API.
+	 */
+#ifdef ALLOW_EXPERIMENTAL_API
 	return rte_mbuf_buf_addr(mb, mb->pool) + RTE_PKTMBUF_HEADROOM;
+#else
+	return NULL;
+#endif
 }
 
 /**
@@ -885,7 +961,8 @@ rte_mbuf_to_baddr(struct rte_mbuf *md)
  * @return
  *   The starting address of the private data area of the given mbuf.
  */
-static inline void * __rte_experimental
+__rte_experimental
+static inline void *
 rte_mbuf_to_priv(struct rte_mbuf *m)
 {
 	return RTE_PTR_ADD(m, sizeof(struct rte_mbuf));
@@ -1385,7 +1462,7 @@ static inline void rte_pktmbuf_reset_headroom(struct rte_mbuf *m)
  * The given mbuf must have only one segment.
  *
  * @param m
- *   The packet mbuf to be resetted.
+ *   The packet mbuf to be reset.
  */
 #define MBUF_INVALID_PORT UINT16_MAX
 
@@ -1558,7 +1635,7 @@ rte_pktmbuf_ext_shinfo_init_helper(void *buf_addr, uint16_t *buf_len,
  * ``rte_pktmbuf_detach()``.
  *
  * Memory for shared data must be provided and user must initialize all of
- * the content properly, escpecially free callback and refcnt. The pointer
+ * the content properly, especially free callback and refcnt. The pointer
  * of shared data will be stored in m->shinfo.
  * ``rte_pktmbuf_ext_shinfo_init_helper`` can help to simply spare a few
  * bytes at the end of buffer for the shared data, store free callback and
@@ -2263,6 +2340,43 @@ static inline int rte_pktmbuf_chain(struct rte_mbuf *head, struct rte_mbuf *tail
 	return 0;
 }
 
+/*
+ * @warning
+ * @b EXPERIMENTAL: This API may change without prior notice.
+ *
+ * For given input values generate raw tx_offload value.
+ * Note that it is caller responsibility to make sure that input parameters
+ * don't exceed maximum bit-field values.
+ * @param il2
+ *   l2_len value.
+ * @param il3
+ *   l3_len value.
+ * @param il4
+ *   l4_len value.
+ * @param tso
+ *   tso_segsz value.
+ * @param ol3
+ *   outer_l3_len value.
+ * @param ol2
+ *   outer_l2_len value.
+ * @param unused
+ *   unused value.
+ * @return
+ *   raw tx_offload value.
+ */
+static __rte_always_inline uint64_t
+rte_mbuf_tx_offload(uint64_t il2, uint64_t il3, uint64_t il4, uint64_t tso,
+	uint64_t ol3, uint64_t ol2, uint64_t unused)
+{
+	return il2 << RTE_MBUF_L2_LEN_OFS |
+		il3 << RTE_MBUF_L3_LEN_OFS |
+		il4 << RTE_MBUF_L4_LEN_OFS |
+		tso << RTE_MBUF_TSO_SEGSZ_OFS |
+		ol3 << RTE_MBUF_OUTL3_LEN_OFS |
+		ol2 << RTE_MBUF_OUTL2_LEN_OFS |
+		unused << RTE_MBUF_TXOFLD_UNUSED_OFS;
+}
+
 /**
  * Validate general requirements for Tx offload in mbuf.
  *
@@ -2277,22 +2391,10 @@ static inline int
 rte_validate_tx_offload(const struct rte_mbuf *m)
 {
 	uint64_t ol_flags = m->ol_flags;
-	uint64_t inner_l3_offset = m->l2_len;
 
 	/* Does packet set any of available offloads? */
 	if (!(ol_flags & PKT_TX_OFFLOAD_MASK))
 		return 0;
-
-	if (ol_flags & PKT_TX_OUTER_IP_CKSUM)
-		/* NB: elaborating the addition like this instead of using
-		 *     += gives the result uint64_t type instead of int,
-		 *     avoiding compiler warnings on gcc 8.1 at least */
-		inner_l3_offset = inner_l3_offset + m->outer_l2_len +
-				  m->outer_l3_len;
-
-	/* Headers are fragmented */
-	if (rte_pktmbuf_data_len(m) < inner_l3_offset + m->l3_len + m->l4_len)
-		return -ENOTSUP;
 
 	/* IP checksum can be counted only for IPv4 packet */
 	if ((ol_flags & PKT_TX_IP_CKSUM) && (ol_flags & PKT_TX_IPV6))

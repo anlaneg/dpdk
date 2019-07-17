@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: BSD-3-Clause
- * Copyright(c) 2001-2018
+ * Copyright(c) 2001-2019
  */
 
 #ifndef _ICE_PROTOCOL_TYPE_H_
@@ -18,7 +18,7 @@
 /* Max recipes that can be chained */
 #define ICE_MAX_CHAIN_RECIPE 5
 
-/* 1 word reserved for switch id from allowed 5 words.
+/* 1 word reserved for switch ID from allowed 5 words.
  * So a recipe can have max 4 words. And you can chain 5 such recipes
  * together. So maximum words that can be programmed for look up is 5 * 4.
  */
@@ -30,11 +30,13 @@
 enum ice_protocol_type {
 	ICE_MAC_OFOS = 0,
 	ICE_MAC_IL,
+	ICE_ETYPE_OL,
 	ICE_IPV4_OFOS,
 	ICE_IPV4_IL,
-	ICE_IPV6_IL,
 	ICE_IPV6_OFOS,
+	ICE_IPV6_IL,
 	ICE_TCP_IL,
+	ICE_UDP_OF,
 	ICE_UDP_ILOS,
 	ICE_SCTP_IL,
 	ICE_VXLAN,
@@ -107,11 +109,13 @@ enum ice_prot_id {
 
 #define ICE_MAC_OFOS_HW		1
 #define ICE_MAC_IL_HW		4
+#define ICE_ETYPE_OL_HW		9
 #define ICE_IPV4_OFOS_HW	32
 #define ICE_IPV4_IL_HW		33
 #define ICE_IPV6_OFOS_HW	40
 #define ICE_IPV6_IL_HW		41
 #define ICE_TCP_IL_HW		49
+#define ICE_UDP_OF_HW		52
 #define ICE_UDP_ILOS_HW		53
 #define ICE_SCTP_IL_HW		96
 
@@ -128,7 +132,7 @@ enum ice_prot_id {
 
 #define ICE_PROTOCOL_MAX_ENTRIES 16
 
-/* Mapping of software defined protocol id to hardware defined protocol id */
+/* Mapping of software defined protocol ID to hardware defined protocol ID */
 struct ice_protocol_entry {
 	enum ice_protocol_type type;
 	u8 protocol_id;
@@ -138,6 +142,9 @@ struct ice_protocol_entry {
 struct ice_ether_hdr {
 	u8 dst_addr[ETH_ALEN];
 	u8 src_addr[ETH_ALEN];
+};
+
+struct ice_ethtype_hdr {
 	u16 ethtype_id;
 };
 
@@ -188,22 +195,24 @@ struct ice_l4_hdr {
 struct ice_udp_tnl_hdr {
 	u16 field;
 	u16 proto_type;
-	u16 vni;
+	u32 vni;	/* only use lower 24-bits */
 };
 
 struct ice_nvgre {
-	u16 tni;
-	u16 flow_id;
+	u16 flags;
+	u16 protocol;
+	u32 tni_flow;
 };
 
 union ice_prot_hdr {
-		struct ice_ether_hdr eth_hdr;
-		struct ice_ipv4_hdr ipv4_hdr;
-		struct ice_ipv6_hdr ice_ipv6_ofos_hdr;
-		struct ice_l4_hdr l4_hdr;
-		struct ice_sctp_hdr sctp_hdr;
-		struct ice_udp_tnl_hdr tnl_hdr;
-		struct ice_nvgre nvgre_hdr;
+	struct ice_ether_hdr eth_hdr;
+	struct ice_ethtype_hdr ethertype;
+	struct ice_ipv4_hdr ipv4_hdr;
+	struct ice_ipv6_hdr ipv6_hdr;
+	struct ice_l4_hdr l4_hdr;
+	struct ice_sctp_hdr sctp_hdr;
+	struct ice_udp_tnl_hdr tnl_hdr;
+	struct ice_nvgre nvgre_hdr;
 };
 
 /* This is mapping table entry that maps every word within a given protocol
@@ -223,7 +232,8 @@ struct ice_prot_lkup_ext {
 	u16 prot_type;
 	u8 n_val_words;
 	/* create a buffer to hold max words per recipe */
-	u8 field_off[ICE_MAX_CHAIN_WORDS];
+	u16 field_off[ICE_MAX_CHAIN_WORDS];
+	u16 field_mask[ICE_MAX_CHAIN_WORDS];
 
 	struct ice_fv_word fv_words[ICE_MAX_CHAIN_WORDS];
 
@@ -234,6 +244,7 @@ struct ice_prot_lkup_ext {
 struct ice_pref_recipe_group {
 	u8 n_val_pairs;		/* Number of valid pairs */
 	struct ice_fv_word pairs[ICE_NUM_WORDS_RECIPE];
+	u16 mask[ICE_NUM_WORDS_RECIPE];
 };
 
 struct ice_recp_grp_entry {
@@ -243,6 +254,7 @@ struct ice_recp_grp_entry {
 	u16 rid;
 	u8 chain_idx;
 	u16 fv_idx[ICE_NUM_WORDS_RECIPE];
+	u16 fv_mask[ICE_NUM_WORDS_RECIPE];
 	struct ice_pref_recipe_group r_group;
 };
 #endif /* _ICE_PROTOCOL_TYPE_H_ */

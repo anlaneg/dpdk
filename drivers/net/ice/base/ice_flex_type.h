@@ -1,15 +1,20 @@
 /* SPDX-License-Identifier: BSD-3-Clause
- * Copyright(c) 2001-2018
+ * Copyright(c) 2001-2019
  */
 
 #ifndef _ICE_FLEX_TYPE_H_
 #define _ICE_FLEX_TYPE_H_
 
+#define ICE_FV_OFFSET_INVAL	0x1FF
+
+#pragma pack(1)
 /* Extraction Sequence (Field Vector) Table */
 struct ice_fv_word {
 	u8 prot_id;
-	u8 off;		/* Offset within the protocol header */
+	u16 off;		/* Offset within the protocol header */
+	u8 resvrd;
 };
+#pragma pack()
 
 #define ICE_MAX_FV_WORDS 48
 struct ice_fv {
@@ -350,7 +355,7 @@ struct ice_sw_fv_list_entry {
 };
 
 #pragma pack(1)
-/* The BOOST tcam stores the match packet header in reverse order, meaning
+/* The BOOST TCAM stores the match packet header in reverse order, meaning
  * the fields are reversed; in addition, this means that the normally big endian
  * fields of the packet are now little endian.
  */
@@ -361,7 +366,6 @@ struct ice_boost_key_value {
 	__le16 hv_src_port_key;
 	u8 tcam_search_key;
 };
-
 #pragma pack()
 
 struct ice_boost_key {
@@ -400,7 +404,6 @@ struct ice_xlt1_section {
 	__le16 offset;
 	u8 value[1];
 };
-
 #pragma pack()
 
 #define ICE_XLT1_SIZE(n)	(sizeof(struct ice_xlt1_section) + \
@@ -449,17 +452,7 @@ struct ice_pkg_enum {
 
 enum ice_tunnel_type {
 	TNL_VXLAN = 0,
-	TNL_GTPC,
-	TNL_GTPC_TEID,
-	TNL_GTPU,
-	TNL_GTPU_TEID,
-	TNL_VXLAN_GPE,
 	TNL_GENEVE,
-	TNL_NAT,
-	TNL_ROCE_V2,
-	TNL_MPLSO_UDP,
-	TNL_UDP2_END,
-	TNL_UPD_END,
 	TNL_LAST = 0xFF,
 	TNL_ALL = 0xFF,
 };
@@ -471,19 +464,19 @@ struct ice_tunnel_type_scan {
 
 struct ice_tunnel_entry {
 	enum ice_tunnel_type type;
-	u8 valid;
-	u8 in_use;
-	u8 marked;
 	u16 boost_addr;
 	u16 port;
 	struct ice_boost_tcam_entry *boost_entry;
+	u8 valid;
+	u8 in_use;
+	u8 marked;
 };
 
 #define ICE_TUNNEL_MAX_ENTRIES	16
 
 struct ice_tunnel_table {
-	u16 count;
 	struct ice_tunnel_entry tbl[ICE_TUNNEL_MAX_ENTRIES];
+	u16 count;
 };
 
 struct ice_pkg_es {
@@ -497,10 +490,11 @@ struct ice_es {
 	u16 count;
 	u16 fvw;
 	u16 *ref_count;
-	u8 reverse; /* set to true to reverse FV order */
 	struct LIST_HEAD_TYPE prof_map;
 	struct ice_fv_word *t;
-	u8 *resource_used_hack; /* hack for testing */
+	struct ice_lock prof_map_lock;	/* protect access to profiles list */
+	u8 *written;
+	u8 reverse; /* set to true to reverse FV order */
 };
 
 /* PTYPE Group management */
@@ -514,13 +508,13 @@ struct ice_es {
 #define ICE_DEFAULT_PTG	0
 
 struct ice_ptg_entry {
-	u8 in_use;
 	struct ice_ptg_ptype *first_ptype;
+	u8 in_use;
 };
 
 struct ice_ptg_ptype {
-	u8 ptg;
 	struct ice_ptg_ptype *next_ptype;
+	u8 ptg;
 };
 
 #define ICE_MAX_TCAM_PER_PROFILE	8
@@ -538,9 +532,9 @@ struct ice_prof_map {
 #define ICE_INVALID_TCAM	0xFFFF
 
 struct ice_tcam_inf {
+	u16 tcam_idx;
 	u8 ptg;
 	u8 prof_id;
-	u16 tcam_idx;
 	u8 in_use;
 };
 
@@ -553,16 +547,16 @@ struct ice_vsig_prof {
 };
 
 struct ice_vsig_entry {
-	u8 in_use;
 	struct LIST_HEAD_TYPE prop_lst;
 	struct ice_vsig_vsi *first_vsi;
+	u8 in_use;
 };
 
 struct ice_vsig_vsi {
+	struct ice_vsig_vsi *next_vsi;
+	u32 prop_mask;
 	u16 changed;
 	u16 vsig;
-	u32 prop_mask;
-	struct ice_vsig_vsi *next_vsi;
 };
 
 #define ICE_XLT1_CNT	1024
@@ -570,11 +564,11 @@ struct ice_vsig_vsi {
 
 /* XLT1 Table */
 struct ice_xlt1 {
-	u32 sid;
-	u16 count;
 	struct ice_ptg_entry *ptg_tbl;
 	struct ice_ptg_ptype *ptypes;
 	u8 *t;
+	u32 sid;
+	u16 count;
 };
 
 #define ICE_XLT2_CNT	768
@@ -594,15 +588,15 @@ struct ice_xlt1 {
 
 /* XLT2 Table */
 struct ice_xlt2 {
-	u32 sid;
-	u16 count;
 	struct ice_vsig_entry *vsig_tbl;
 	struct ice_vsig_vsi *vsis;
 	u16 *t;
+	u32 sid;
+	u16 count;
 };
 
 /* Extraction sequence - list of match fields:
- * protocol id, offset, profile length
+ * protocol ID, offset, profile length
  */
 union ice_match_fld {
 	struct {
@@ -644,22 +638,20 @@ struct ice_prof_id_section {
 	__le16 count;
 	struct ice_prof_tcam_entry entry[1];
 };
-
 #pragma pack()
 
 struct ice_prof_tcam {
 	u32 sid;
 	u16 count;
 	u16 max_prof_id;
-	u8 cdid_bits; /* # cdid bits to use in key, 0, 2, 4, or 8 */
 	struct ice_prof_tcam_entry *t;
-	u8 *resource_used_hack;
+	u8 cdid_bits; /* # cdid bits to use in key, 0, 2, 4, or 8 */
 };
 
 struct ice_prof_redir {
+	u8 *t;
 	u32 sid;
 	u16 count;
-	u8 *t;
 };
 
 /* Tables per block */
@@ -670,13 +662,13 @@ struct ice_blk_info {
 	struct ice_prof_redir prof_redir;
 	struct ice_es es;
 	u8 overwrite; /* set to true to allow overwrite of table entries */
+	u8 is_list_init;
 };
 
 enum ice_chg_type {
 	ICE_TCAM_NONE = 0,
 	ICE_PTG_ES_ADD,
 	ICE_TCAM_ADD,
-	ICE_TCAM_REM,
 	ICE_VSIG_ADD,
 	ICE_VSIG_REM,
 	ICE_VSI_MOVE,
@@ -697,7 +689,6 @@ struct ice_chs_chg {
 	u16 vsig;
 	u16 orig_vsig;
 	u16 tcam_idx;
-	struct ice_prof_tcam_entry orig_ent;
 };
 
 #define ICE_FLOW_PTYPE_MAX		ICE_XLT1_CNT

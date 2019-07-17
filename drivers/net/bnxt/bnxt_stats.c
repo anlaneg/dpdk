@@ -5,6 +5,7 @@
 
 #include <inttypes.h>
 
+#include <rte_string_fns.h>
 #include <rte_byteorder.h>
 
 #include "bnxt.h"
@@ -386,7 +387,7 @@ int bnxt_stats_get_op(struct rte_eth_dev *eth_dev,
 
 void bnxt_stats_reset_op(struct rte_eth_dev *eth_dev)
 {
-	struct bnxt *bp = (struct bnxt *)eth_dev->data->dev_private;
+	struct bnxt *bp = eth_dev->data->dev_private;
 	unsigned int i;
 
 	if (!(bp->flags & BNXT_FLAG_INIT_DONE)) {
@@ -405,7 +406,7 @@ void bnxt_stats_reset_op(struct rte_eth_dev *eth_dev)
 int bnxt_dev_xstats_get_op(struct rte_eth_dev *eth_dev,
 			   struct rte_eth_xstat *xstats, unsigned int n)
 {
-	struct bnxt *bp = (struct bnxt *)eth_dev->data->dev_private;
+	struct bnxt *bp = eth_dev->data->dev_private;
 
 	unsigned int count, i;
 	uint64_t tx_drop_pkts;
@@ -413,6 +414,8 @@ int bnxt_dev_xstats_get_op(struct rte_eth_dev *eth_dev,
 	unsigned int tx_port_stats_ext_cnt;
 	unsigned int stat_size = sizeof(uint64_t);
 	unsigned int stat_count;
+
+	memset(xstats, 0, sizeof(*xstats));
 
 	bnxt_hwrm_port_qstats(bp);
 	bnxt_hwrm_func_qstats_tx_drop(bp, 0xffff, &tx_drop_pkts);
@@ -491,41 +494,36 @@ int bnxt_dev_xstats_get_names_op(__rte_unused struct rte_eth_dev *eth_dev,
 		count = 0;
 
 		for (i = 0; i < RTE_DIM(bnxt_rx_stats_strings); i++) {
-			snprintf(xstats_names[count].name,
-				sizeof(xstats_names[count].name),
-				"%s",
-				bnxt_rx_stats_strings[i].name);
+			strlcpy(xstats_names[count].name,
+				bnxt_rx_stats_strings[i].name,
+				sizeof(xstats_names[count].name));
 			count++;
 		}
 
 		for (i = 0; i < RTE_DIM(bnxt_tx_stats_strings); i++) {
-			snprintf(xstats_names[count].name,
-				sizeof(xstats_names[count].name),
-				"%s",
-				bnxt_tx_stats_strings[i].name);
+			strlcpy(xstats_names[count].name,
+				bnxt_tx_stats_strings[i].name,
+				sizeof(xstats_names[count].name));
 			count++;
 		}
 
-		snprintf(xstats_names[count].name,
-				sizeof(xstats_names[count].name),
-				"%s",
-				bnxt_func_stats_strings[4].name);
+		strlcpy(xstats_names[count].name,
+			bnxt_func_stats_strings[4].name,
+			sizeof(xstats_names[count].name));
 		count++;
 
 		for (i = 0; i < RTE_DIM(bnxt_rx_ext_stats_strings); i++) {
-			snprintf(xstats_names[count].name,
-				 sizeof(xstats_names[count].name),
-				 "%s",
-				 bnxt_rx_ext_stats_strings[i].name);
+			strlcpy(xstats_names[count].name,
+				bnxt_rx_ext_stats_strings[i].name,
+				sizeof(xstats_names[count].name));
 
 			count++;
 		}
 
 		for (i = 0; i < RTE_DIM(bnxt_tx_ext_stats_strings); i++) {
-			snprintf(xstats_names[count].name,
-				 sizeof(xstats_names[count].name),
-				 "%s",
-				 bnxt_tx_ext_stats_strings[i].name);
+			strlcpy(xstats_names[count].name,
+				bnxt_tx_ext_stats_strings[i].name,
+				sizeof(xstats_names[count].name));
 
 			count++;
 		}
@@ -536,7 +534,7 @@ int bnxt_dev_xstats_get_names_op(__rte_unused struct rte_eth_dev *eth_dev,
 
 void bnxt_dev_xstats_reset_op(struct rte_eth_dev *eth_dev)
 {
-	struct bnxt *bp = (struct bnxt *)eth_dev->data->dev_private;
+	struct bnxt *bp = eth_dev->data->dev_private;
 
 	if (bp->flags & BNXT_FLAG_PORT_STATS && BNXT_SINGLE_PF(bp))
 		bnxt_hwrm_port_clr_stats(bp);

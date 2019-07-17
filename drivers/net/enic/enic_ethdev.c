@@ -36,6 +36,38 @@ static const struct rte_pci_id pci_id_enic_map[] = {
 	{.vendor_id = 0, /* sentinel */},
 };
 
+/* Supported link speeds of production VIC models */
+static const struct vic_speed_capa {
+	uint16_t sub_devid;
+	uint32_t capa;
+} vic_speed_capa_map[] = {
+	{ 0x0043, ETH_LINK_SPEED_10G }, /* VIC */
+	{ 0x0047, ETH_LINK_SPEED_10G }, /* P81E PCIe */
+	{ 0x0048, ETH_LINK_SPEED_10G }, /* M81KR Mezz */
+	{ 0x004f, ETH_LINK_SPEED_10G }, /* 1280 Mezz */
+	{ 0x0084, ETH_LINK_SPEED_10G }, /* 1240 MLOM */
+	{ 0x0085, ETH_LINK_SPEED_10G }, /* 1225 PCIe */
+	{ 0x00cd, ETH_LINK_SPEED_10G | ETH_LINK_SPEED_40G }, /* 1285 PCIe */
+	{ 0x00ce, ETH_LINK_SPEED_10G }, /* 1225T PCIe */
+	{ 0x012a, ETH_LINK_SPEED_40G }, /* M4308 */
+	{ 0x012c, ETH_LINK_SPEED_10G | ETH_LINK_SPEED_40G }, /* 1340 MLOM */
+	{ 0x012e, ETH_LINK_SPEED_10G }, /* 1227 PCIe */
+	{ 0x0137, ETH_LINK_SPEED_10G | ETH_LINK_SPEED_40G }, /* 1380 Mezz */
+	{ 0x014d, ETH_LINK_SPEED_10G | ETH_LINK_SPEED_40G }, /* 1385 PCIe */
+	{ 0x015d, ETH_LINK_SPEED_10G | ETH_LINK_SPEED_40G }, /* 1387 MLOM */
+	{ 0x0215, ETH_LINK_SPEED_10G | ETH_LINK_SPEED_25G |
+		  ETH_LINK_SPEED_40G }, /* 1440 Mezz */
+	{ 0x0216, ETH_LINK_SPEED_10G | ETH_LINK_SPEED_25G |
+		  ETH_LINK_SPEED_40G }, /* 1480 MLOM */
+	{ 0x0217, ETH_LINK_SPEED_10G | ETH_LINK_SPEED_25G }, /* 1455 PCIe */
+	{ 0x0218, ETH_LINK_SPEED_10G | ETH_LINK_SPEED_25G }, /* 1457 MLOM */
+	{ 0x0219, ETH_LINK_SPEED_40G }, /* 1485 PCIe */
+	{ 0x021a, ETH_LINK_SPEED_40G }, /* 1487 MLOM */
+	{ 0x024a, ETH_LINK_SPEED_40G | ETH_LINK_SPEED_100G }, /* 1495 PCIe */
+	{ 0x024b, ETH_LINK_SPEED_40G | ETH_LINK_SPEED_100G }, /* 1497 MLOM */
+	{ 0, 0 }, /* End marker */
+};
+
 #define ENIC_DEVARG_DISABLE_OVERLAY "disable-overlay"
 #define ENIC_DEVARG_ENABLE_AVX2_RX "enable-avx2-rx"
 #define ENIC_DEVARG_IG_VLAN_REWRITE "ig-vlan-rewrite"
@@ -456,6 +488,24 @@ static void enicpmd_dev_stats_reset(struct rte_eth_dev *eth_dev)
 	enic_dev_stats_clear(enic);
 }
 
+static uint32_t speed_capa_from_pci_id(struct rte_eth_dev *eth_dev)
+{
+	const struct vic_speed_capa *m;
+	struct rte_pci_device *pdev;
+	uint16_t id;
+
+	pdev = RTE_ETH_DEV_TO_PCI(eth_dev);
+	id = pdev->id.subsystem_device_id;
+	for (m = vic_speed_capa_map; m->sub_devid != 0; m++) {
+		if (m->sub_devid == id)
+			return m->capa;
+	}
+	/* 1300 and later models are at least 40G */
+	if (id >= 0x0100)
+		return ETH_LINK_SPEED_40G;
+	return ETH_LINK_SPEED_10G;
+}
+
 static void enicpmd_dev_info_get(struct rte_eth_dev *eth_dev,
 	struct rte_eth_dev_info *device_info)
 {
@@ -475,6 +525,8 @@ static void enicpmd_dev_info_get(struct rte_eth_dev *eth_dev,
 	 */
 	device_info->max_rx_pktlen = enic_mtu_to_max_rx_pktlen(enic->max_mtu);
 	device_info->max_mac_addrs = ENIC_UNICAST_PERFECT_FILTERS;
+	device_info->min_mtu = ENIC_MIN_MTU;
+	device_info->max_mtu = enic->max_mtu;
 	device_info->rx_offload_capa = enic->rx_offload_capa;
 	device_info->tx_offload_capa = enic->tx_offload_capa;
 	device_info->tx_queue_offload_capa = enic->tx_queue_offload_capa;
@@ -508,6 +560,7 @@ static void enicpmd_dev_info_get(struct rte_eth_dev *eth_dev,
 			ENIC_DEFAULT_TX_RING_SIZE),
 		.nb_queues = ENIC_DEFAULT_TX_RINGS,
 	};
+	device_info->speed_capa = speed_capa_from_pci_id(eth_dev);
 }
 
 static const uint32_t *enicpmd_dev_supported_ptypes_get(struct rte_eth_dev *dev)
@@ -604,7 +657,7 @@ static void enicpmd_dev_allmulticast_disable(struct rte_eth_dev *eth_dev)
 }
 
 static int enicpmd_add_mac_addr(struct rte_eth_dev *eth_dev,
-	struct ether_addr *mac_addr,
+	struct rte_ether_addr *mac_addr,
 	__rte_unused uint32_t index, __rte_unused uint32_t pool)
 {
 	struct enic *enic = pmd_priv(eth_dev);
@@ -629,7 +682,7 @@ static void enicpmd_remove_mac_addr(struct rte_eth_dev *eth_dev, uint32_t index)
 }
 
 static int enicpmd_set_mac_addr(struct rte_eth_dev *eth_dev,
-				struct ether_addr *addr)
+				struct rte_ether_addr *addr)
 {
 	struct enic *enic = pmd_priv(eth_dev);
 	int ret;
@@ -644,22 +697,22 @@ static int enicpmd_set_mac_addr(struct rte_eth_dev *eth_dev,
 	return enic_set_mac_address(enic, addr->addr_bytes);
 }
 
-static void debug_log_add_del_addr(struct ether_addr *addr, bool add)
+static void debug_log_add_del_addr(struct rte_ether_addr *addr, bool add)
 {
-	char mac_str[ETHER_ADDR_FMT_SIZE];
+	char mac_str[RTE_ETHER_ADDR_FMT_SIZE];
 
-	ether_format_addr(mac_str, ETHER_ADDR_FMT_SIZE, addr);
+	rte_ether_format_addr(mac_str, RTE_ETHER_ADDR_FMT_SIZE, addr);
 	PMD_INIT_LOG(DEBUG, " %s address %s\n",
 		     add ? "add" : "remove", mac_str);
 }
 
 static int enicpmd_set_mc_addr_list(struct rte_eth_dev *eth_dev,
-				    struct ether_addr *mc_addr_set,
+				    struct rte_ether_addr *mc_addr_set,
 				    uint32_t nb_mc_addr)
 {
 	struct enic *enic = pmd_priv(eth_dev);
-	char mac_str[ETHER_ADDR_FMT_SIZE];
-	struct ether_addr *addr;
+	char mac_str[RTE_ETHER_ADDR_FMT_SIZE];
+	struct rte_ether_addr *addr;
 	uint32_t i, j;
 	int ret;
 
@@ -668,9 +721,10 @@ static int enicpmd_set_mc_addr_list(struct rte_eth_dev *eth_dev,
 	/* Validate the given addresses first */
 	for (i = 0; i < nb_mc_addr && mc_addr_set != NULL; i++) {
 		addr = &mc_addr_set[i];
-		if (!is_multicast_ether_addr(addr) ||
-		    is_broadcast_ether_addr(addr)) {
-			ether_format_addr(mac_str, ETHER_ADDR_FMT_SIZE, addr);
+		if (!rte_is_multicast_ether_addr(addr) ||
+		    rte_is_broadcast_ether_addr(addr)) {
+			rte_ether_format_addr(mac_str,
+					RTE_ETHER_ADDR_FMT_SIZE, addr);
 			PMD_INIT_LOG(ERR, " invalid multicast address %s\n",
 				     mac_str);
 			return -EINVAL;
@@ -704,7 +758,7 @@ static int enicpmd_set_mc_addr_list(struct rte_eth_dev *eth_dev,
 	for (i = 0; i < enic->mc_count; i++) {
 		addr = &enic->mc_addrs[i];
 		for (j = 0; j < nb_mc_addr; j++) {
-			if (is_same_ether_addr(addr, &mc_addr_set[j]))
+			if (rte_is_same_ether_addr(addr, &mc_addr_set[j]))
 				break;
 		}
 		if (j < nb_mc_addr)
@@ -718,7 +772,7 @@ static int enicpmd_set_mc_addr_list(struct rte_eth_dev *eth_dev,
 	for (i = 0; i < nb_mc_addr; i++) {
 		addr = &mc_addr_set[i];
 		for (j = 0; j < enic->mc_count; j++) {
-			if (is_same_ether_addr(addr, &enic->mc_addrs[j]))
+			if (rte_is_same_ether_addr(addr, &enic->mc_addrs[j]))
 				break;
 		}
 		if (j < enic->mc_count)
@@ -730,7 +784,7 @@ static int enicpmd_set_mc_addr_list(struct rte_eth_dev *eth_dev,
 	}
 	/* Keep a copy so we can flush/apply later on.. */
 	memcpy(enic->mc_addrs, mc_addr_set,
-	       nb_mc_addr * sizeof(struct ether_addr));
+	       nb_mc_addr * sizeof(struct rte_ether_addr));
 	enic->mc_count = nb_mc_addr;
 	return 0;
 }

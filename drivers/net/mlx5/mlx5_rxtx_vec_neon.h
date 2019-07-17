@@ -165,13 +165,13 @@ txq_scatter_v(struct mlx5_txq_data *txq, struct rte_mbuf **pkts,
 		ctrl = vreinterpretq_u8_u32((uint32x4_t) {
 				MLX5_OPC_MOD_MPW << 24 |
 				txq->wqe_ci << 8 | MLX5_OPCODE_TSO,
-				txq->qp_num_8s | ds, 0, 0});
+				txq->qp_num_8s | ds, 4, 0});
 		ctrl = vqtbl1q_u8(ctrl, ctrl_shuf_m);
 		vst1q_u8((void *)t_wqe, ctrl);
 		/* Fill ESEG in the header. */
 		vst1q_u32((void *)(t_wqe + 1),
 			  ((uint32x4_t){ 0,
-					 cs_flags << 16 | rte_cpu_to_be_16(len),
+					 rte_cpu_to_be_16(len) << 16 | cs_flags,
 					 metadata, 0 }));
 		txq->wqe_ci = wqe_ci;
 	}
@@ -182,7 +182,8 @@ txq_scatter_v(struct mlx5_txq_data *txq, struct rte_mbuf **pkts,
 	if (txq->elts_comp >= MLX5_TX_COMP_THRESH) {
 		/* A CQE slot must always be available. */
 		assert((1u << txq->cqe_n) - (txq->cq_pi++ - txq->cq_ci));
-		wqe->ctrl[2] = rte_cpu_to_be_32(8);
+		wqe->ctrl[2] = rte_cpu_to_be_32(MLX5_COMP_ALWAYS <<
+						MLX5_COMP_MODE_OFFSET);
 		wqe->ctrl[3] = txq->elts_head;
 		txq->elts_comp = 0;
 	}
@@ -229,7 +230,7 @@ txq_burst_v(struct mlx5_txq_data *txq, struct rte_mbuf **pkts, uint16_t pkts_n,
 	unsigned int pos;
 	uint16_t max_elts;
 	uint16_t max_wqe;
-	uint32_t comp_req = 0;
+	uint32_t comp_req;
 	const uint16_t wq_n = 1 << txq->wqe_n;
 	const uint16_t wq_mask = wq_n - 1;
 	uint16_t wq_idx = txq->wqe_ci & wq_mask;
@@ -284,12 +285,13 @@ txq_burst_v(struct mlx5_txq_data *txq, struct rte_mbuf **pkts, uint16_t pkts_n,
 	}
 	if (txq->elts_comp + pkts_n < MLX5_TX_COMP_THRESH) {
 		txq->elts_comp += pkts_n;
+		comp_req = MLX5_COMP_ONLY_FIRST_ERR << MLX5_COMP_MODE_OFFSET;
 	} else {
 		/* A CQE slot must always be available. */
 		assert((1u << txq->cqe_n) - (txq->cq_pi++ - txq->cq_ci));
 		/* Request a completion. */
 		txq->elts_comp = 0;
-		comp_req = 8;
+		comp_req = MLX5_COMP_ALWAYS << MLX5_COMP_MODE_OFFSET;
 	}
 	/* Fill CTRL in the header. */
 	ctrl = vreinterpretq_u8_u32((uint32x4_t) {
@@ -352,8 +354,11 @@ rxq_copy_mbuf_v(struct mlx5_rxq_data *rxq, struct rte_mbuf **pkts, uint16_t n)
  * @param elts
  *   Pointer to SW ring to be filled. The first mbuf has to be pre-built from
  *   the title completion descriptor to be copied to the rest of mbufs.
+ *
+ * @return
+ *   Number of mini-CQEs successfully decompressed.
  */
-static inline void
+static inline uint16_t
 rxq_cq_decompress_v(struct mlx5_rxq_data *rxq, volatile struct mlx5_cqe *cq,
 		    struct rte_mbuf **elts)
 {
@@ -379,7 +384,7 @@ rxq_cq_decompress_v(struct mlx5_rxq_data *rxq, volatile struct mlx5_cqe *cq,
 	};
 	/* Restore the compressed count. Must be 16 bits. */
 	const uint16_t mcqe_n = t_pkt->data_len +
-				(rxq->crc_present * ETHER_CRC_LEN);
+				(rxq->crc_present * RTE_ETHER_CRC_LEN);
 	const uint64x2_t rearm =
 		vld1q_u64((void *)&t_pkt->rearm_data);
 	const uint32x4_t rxdf_mask = {
@@ -393,8 +398,8 @@ rxq_cq_decompress_v(struct mlx5_rxq_data *rxq, volatile struct mlx5_cqe *cq,
 			 vreinterpretq_u8_u32(rxdf_mask));
 	const uint16x8_t crc_adj = {
 		0, 0,
-		rxq->crc_present * ETHER_CRC_LEN, 0,
-		rxq->crc_present * ETHER_CRC_LEN, 0,
+		rxq->crc_present * RTE_ETHER_CRC_LEN, 0,
+		rxq->crc_present * RTE_ETHER_CRC_LEN, 0,
 		0, 0
 	};
 	const uint32_t flow_tag = t_pkt->hash.fdir.hi;
@@ -505,6 +510,7 @@ rxq_cq_decompress_v(struct mlx5_rxq_data *rxq, volatile struct mlx5_cqe *cq,
 	rxq->stats.ibytes += rcvd_byte;
 #endif
 	rxq->cq_ci += mcqe_n;
+	return mcqe_n;
 }
 
 /**
@@ -717,7 +723,7 @@ rxq_burst_v(struct mlx5_rxq_data *rxq, struct rte_mbuf **pkts, uint16_t pkts_n,
 		12, 13, 14, -1  /* 1st CQE */
 	};
 	const uint16x8_t crc_adj = {
-		0, 0, rxq->crc_present * ETHER_CRC_LEN, 0, 0, 0, 0, 0
+		0, 0, rxq->crc_present * RTE_ETHER_CRC_LEN, 0, 0, 0, 0, 0
 	};
 	const uint32x4_t flow_mark_adj = { 0, 0, 0, rxq->mark * (-1) };
 
@@ -729,24 +735,17 @@ rxq_burst_v(struct mlx5_rxq_data *rxq, struct rte_mbuf **pkts, uint16_t pkts_n,
 	rte_prefetch_non_temporal(cq + 2);
 	rte_prefetch_non_temporal(cq + 3);
 	pkts_n = RTE_MIN(pkts_n, MLX5_VPMD_RX_MAX_BURST);
-	/*
-	 * Order of indexes:
-	 *   rq_ci >= cq_ci >= rq_pi
-	 * Definition of indexes:
-	 *   rq_ci - cq_ci := # of buffers owned by HW (posted).
-	 *   cq_ci - rq_pi := # of buffers not returned to app (decompressed).
-	 *   N - (rq_ci - rq_pi) := # of buffers consumed (to be replenished).
-	 */
 	repl_n = q_n - (rxq->rq_ci - rxq->rq_pi);
 	if (repl_n >= rxq->rq_repl_thresh)
 		mlx5_rx_replenish_bulk_mbuf(rxq, repl_n);
 	/* See if there're unreturned mbufs from compressed CQE. */
-	rcvd_pkt = rxq->cq_ci - rxq->rq_pi;
+	rcvd_pkt = rxq->decompressed;
 	if (rcvd_pkt > 0) {
 		rcvd_pkt = RTE_MIN(rcvd_pkt, pkts_n);
 		rxq_copy_mbuf_v(rxq, pkts, rcvd_pkt);
 		rxq->rq_pi += rcvd_pkt;
 		pkts += rcvd_pkt;
+		rxq->decompressed -= rcvd_pkt;
 	}
 	elts_idx = rxq->rq_pi & q_mask;
 	elts = &(*rxq->elts)[elts_idx];
@@ -754,10 +753,11 @@ rxq_burst_v(struct mlx5_rxq_data *rxq, struct rte_mbuf **pkts, uint16_t pkts_n,
 	pkts_n = RTE_ALIGN_FLOOR(pkts_n - rcvd_pkt, MLX5_VPMD_DESCS_PER_LOOP);
 	/* Not to cross queue end. */
 	pkts_n = RTE_MIN(pkts_n, q_n - elts_idx);
+	pkts_n = RTE_MIN(pkts_n, q_n - cq_idx);
 	if (!pkts_n)
 		return rcvd_pkt;
 	/* At this point, there shouldn't be any remained packets. */
-	assert(rxq->rq_pi == rxq->cq_ci);
+	assert(rxq->decompressed == 0);
 	/*
 	 * Note that vectors have reverse order - {v3, v2, v1, v0}, because
 	 * there's no instruction to count trailing zeros. __builtin_clzl() is
@@ -1003,15 +1003,17 @@ rxq_burst_v(struct mlx5_rxq_data *rxq, struct rte_mbuf **pkts, uint16_t pkts_n,
 	/* Decompress the last CQE if compressed. */
 	if (comp_idx < MLX5_VPMD_DESCS_PER_LOOP && comp_idx == n) {
 		assert(comp_idx == (nocmp_n % MLX5_VPMD_DESCS_PER_LOOP));
-		rxq_cq_decompress_v(rxq, &cq[nocmp_n], &elts[nocmp_n]);
+		rxq->decompressed = rxq_cq_decompress_v(rxq, &cq[nocmp_n],
+							&elts[nocmp_n]);
 		/* Return more packets if needed. */
 		if (nocmp_n < pkts_n) {
-			uint16_t n = rxq->cq_ci - rxq->rq_pi;
+			uint16_t n = rxq->decompressed;
 
 			n = RTE_MIN(n, pkts_n - nocmp_n);
 			rxq_copy_mbuf_v(rxq, &pkts[nocmp_n], n);
 			rxq->rq_pi += n;
 			rcvd_pkt += n;
+			rxq->decompressed -= n;
 		}
 	}
 	rte_compiler_barrier();

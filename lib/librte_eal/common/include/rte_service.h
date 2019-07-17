@@ -178,7 +178,8 @@ int32_t rte_service_runstate_get(uint32_t id);
  * @retval 0 Service is not running on any lcore
  * @retval -EINVAL Invalid service id
  */
-int32_t __rte_experimental
+__rte_experimental
+int32_t
 rte_service_may_be_active(uint32_t id);
 
 /**
@@ -337,7 +338,7 @@ int32_t rte_service_set_stats_enable(uint32_t id, int32_t enable);
 int32_t rte_service_lcore_list(uint32_t array[], uint32_t n);
 
 /**
- * Get the numer of services running on the supplied lcore.
+ * Get the number of services running on the supplied lcore.
  *
  * @param lcore Id of the service core.
  * @retval >=0 Number of services registered to this core.
@@ -372,7 +373,7 @@ int32_t rte_service_dump(FILE *f, uint32_t id);
  *         -EINVAL Invalid id, attr_id or attr_value was NULL.
  */
 int32_t rte_service_attr_get(uint32_t id, uint32_t attr_id,
-		uint32_t *attr_value);
+		uint64_t *attr_value);
 
 /**
  * Reset all attribute values of a service.
@@ -401,7 +402,8 @@ int32_t rte_service_attr_reset_all(uint32_t id);
  *         -EINVAL Invalid lcore, attr_id or attr_value was NULL.
  *         -ENOTSUP lcore is not a service core.
  */
-int32_t __rte_experimental
+__rte_experimental
+int32_t
 rte_service_lcore_attr_get(uint32_t lcore, uint32_t attr_id,
 			   uint64_t *attr_value);
 
@@ -416,7 +418,8 @@ rte_service_lcore_attr_get(uint32_t lcore, uint32_t attr_id,
  *         -EINVAL Invalid service id provided
  *         -ENOTSUP lcore is not a service core.
  */
-int32_t __rte_experimental
+__rte_experimental
+int32_t
 rte_service_lcore_attr_reset_all(uint32_t lcore);
 
 #ifdef __cplusplus

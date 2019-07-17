@@ -180,7 +180,7 @@ static void *rte_thread_init(void *arg)
 }
 
 //创建线程，并配置cpu亲昵性
-__rte_experimental int
+int
 rte_ctrl_thread_create(pthread_t *thread, const char *name,
 		const pthread_attr_t *attr,
 		void *(*start_routine)(void *), void *arg)

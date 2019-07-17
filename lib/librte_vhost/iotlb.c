@@ -384,4 +384,3 @@ vhost_user_iotlb_init(struct virtio_net *dev, int vq_index)
 
 	return 0;
 }
-

@@ -31,6 +31,7 @@
 #define BLOCKCIPHER_TEST_TARGET_PMD_VIRTIO	0x0200 /* VIRTIO flag */
 #define BLOCKCIPHER_TEST_TARGET_PMD_CAAM_JR	0x0400 /* CAAM_JR flag */
 #define BLOCKCIPHER_TEST_TARGET_PMD_CCP		0x0800 /* CCP flag */
+#define BLOCKCIPHER_TEST_TARGET_PMD_NULL	0x1000 /* NULL flag */
 
 #define BLOCKCIPHER_TEST_OP_CIPHER	(BLOCKCIPHER_TEST_OP_ENCRYPT | \
 					BLOCKCIPHER_TEST_OP_DECRYPT)
@@ -98,6 +99,9 @@ struct blockcipher_test_data {
 		unsigned int len;		/* for qat */
 		unsigned int truncated_len;	/* for mb */
 	} digest;
+
+	unsigned int cipher_offset;
+	unsigned int auth_offset;
 };
 
 int

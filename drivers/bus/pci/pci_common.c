@@ -548,6 +548,117 @@ pci_unplug(struct rte_device *dev)
 	return ret;
 }
 
+static int
+pci_dma_map(struct rte_device *dev, void *addr, uint64_t iova, size_t len)
+{
+	struct rte_pci_device *pdev = RTE_DEV_TO_PCI(dev);
+
+	if (!pdev || !pdev->driver) {
+		rte_errno = EINVAL;
+		return -1;
+	}
+	if (pdev->driver->dma_map)
+		return pdev->driver->dma_map(pdev, addr, iova, len);
+	/**
+	 *  In case driver don't provides any specific mapping
+	 *  try fallback to VFIO.
+	 */
+	if (pdev->kdrv == RTE_KDRV_VFIO)
+		return rte_vfio_container_dma_map
+				(RTE_VFIO_DEFAULT_CONTAINER_FD, (uintptr_t)addr,
+				 iova, len);
+	rte_errno = ENOTSUP;
+	return -1;
+}
+
+static int
+pci_dma_unmap(struct rte_device *dev, void *addr, uint64_t iova, size_t len)
+{
+	struct rte_pci_device *pdev = RTE_DEV_TO_PCI(dev);
+
+	if (!pdev || !pdev->driver) {
+		rte_errno = EINVAL;
+		return -1;
+	}
+	if (pdev->driver->dma_unmap)
+		return pdev->driver->dma_unmap(pdev, addr, iova, len);
+	/**
+	 *  In case driver don't provides any specific mapping
+	 *  try fallback to VFIO.
+	 */
+	if (pdev->kdrv == RTE_KDRV_VFIO)
+		return rte_vfio_container_dma_unmap
+				(RTE_VFIO_DEFAULT_CONTAINER_FD, (uintptr_t)addr,
+				 iova, len);
+	rte_errno = ENOTSUP;
+	return -1;
+}
+
+static bool
+pci_ignore_device(const struct rte_pci_device *dev)
+{
+	struct rte_devargs *devargs = dev->device.devargs;
+
+	switch (rte_pci_bus.bus.conf.scan_mode) {
+	case RTE_BUS_SCAN_WHITELIST:
+		if (devargs && devargs->policy == RTE_DEV_WHITELISTED)
+			return false;
+		break;
+	case RTE_BUS_SCAN_UNDEFINED:
+	case RTE_BUS_SCAN_BLACKLIST:
+		if (devargs == NULL ||
+		    devargs->policy != RTE_DEV_BLACKLISTED)
+			return false;
+		break;
+	}
+	return true;
+}
+
+enum rte_iova_mode
+rte_pci_get_iommu_class(void)
+{
+	enum rte_iova_mode iova_mode = RTE_IOVA_DC;
+	const struct rte_pci_device *dev;
+	const struct rte_pci_driver *drv;
+	bool devices_want_va = false;
+	bool devices_want_pa = false;
+
+	FOREACH_DEVICE_ON_PCIBUS(dev) {
+		if (pci_ignore_device(dev))
+			continue;
+		if (dev->kdrv == RTE_KDRV_UNKNOWN ||
+		    dev->kdrv == RTE_KDRV_NONE)
+			continue;
+		FOREACH_DRIVER_ON_PCIBUS(drv) {
+			enum rte_iova_mode dev_iova_mode;
+
+			if (!rte_pci_match(drv, dev))
+				continue;
+
+			dev_iova_mode = pci_device_iova_mode(drv, dev);
+			RTE_LOG(DEBUG, EAL, "PCI driver %s for device "
+				PCI_PRI_FMT " wants IOVA as '%s'\n",
+				drv->driver.name,
+				dev->addr.domain, dev->addr.bus,
+				dev->addr.devid, dev->addr.function,
+				dev_iova_mode == RTE_IOVA_DC ? "DC" :
+				(dev_iova_mode == RTE_IOVA_PA ? "PA" : "VA"));
+			if (dev_iova_mode == RTE_IOVA_PA)
+				devices_want_pa = true;
+			else if (dev_iova_mode == RTE_IOVA_VA)
+				devices_want_va = true;
+		}
+	}
+	if (devices_want_pa) {
+		iova_mode = RTE_IOVA_PA;
+		if (devices_want_va)
+			RTE_LOG(WARNING, EAL, "Some devices want 'VA' but forcing 'PA' because other devices want it\n");
+	} else if (devices_want_va) {
+		iova_mode = RTE_IOVA_VA;
+	}
+	return iova_mode;
+}
+
 struct rte_pci_bus rte_pci_bus = {
 	.bus = {
 		.scan = rte_pci_scan,//扫描函数,找到系统中所有pci设备
@@ -556,6 +667,8 @@ struct rte_pci_bus rte_pci_bus = {
 		.plug = pci_plug,
 		.unplug = pci_unplug,
 		.parse = pci_parse,
+		.dma_map = pci_dma_map,
+		.dma_unmap = pci_dma_unmap,
 		.get_iommu_class = rte_pci_get_iommu_class,
 		.dev_iterate = rte_pci_dev_iterate,
 		.hot_unplug_handler = pci_hot_unplug_handler,

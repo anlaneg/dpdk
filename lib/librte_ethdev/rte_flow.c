@@ -149,6 +149,10 @@ static const struct rte_flow_desc_data rte_flow_desc_action[] = {
 	MK_FLOW_ACTION(SET_TTL, sizeof(struct rte_flow_action_set_ttl)),
 	MK_FLOW_ACTION(SET_MAC_SRC, sizeof(struct rte_flow_action_set_mac)),
 	MK_FLOW_ACTION(SET_MAC_DST, sizeof(struct rte_flow_action_set_mac)),
+	MK_FLOW_ACTION(INC_TCP_SEQ, sizeof(rte_be32_t)),
+	MK_FLOW_ACTION(DEC_TCP_SEQ, sizeof(rte_be32_t)),
+	MK_FLOW_ACTION(INC_TCP_ACK, sizeof(rte_be32_t)),
+	MK_FLOW_ACTION(DEC_TCP_ACK, sizeof(rte_be32_t)),
 };
 
 static int
@@ -915,7 +919,7 @@ rte_flow_copy(struct rte_flow_desc *desc, size_t len,
  * Expand RSS flows into several possible flows according to the RSS hash
  * fields requested and the driver capabilities.
  */
-int __rte_experimental
+int
 rte_flow_expand_rss(struct rte_flow_expand_rss *buf, size_t size,
 		    const struct rte_flow_item *pattern, uint64_t types,
 		    const struct rte_flow_expand_node graph[],

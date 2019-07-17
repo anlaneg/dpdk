@@ -25,6 +25,7 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <zlib.h>
+#include <rte_string_fns.h>
 
 #define BNX2X_PMD_VER_PREFIX "BNX2X PMD"
 #define BNX2X_PMD_VERSION_MAJOR 1
@@ -123,7 +124,7 @@ static __rte_noinline
 int bnx2x_nic_load(struct bnx2x_softc *sc);
 
 static int bnx2x_handle_sp_tq(struct bnx2x_softc *sc);
-static void bnx2x_handle_fp_tq(struct bnx2x_fastpath *fp, int scan_fp);
+static void bnx2x_handle_fp_tq(struct bnx2x_fastpath *fp);
 static void bnx2x_ack_sb(struct bnx2x_softc *sc, uint8_t igu_sb_id,
 			 uint8_t storm, uint16_t index, uint8_t op,
 			 uint8_t update);
@@ -184,11 +185,25 @@ bnx2x_dma_alloc(struct bnx2x_softc *sc, size_t size, struct bnx2x_dma *dma,
 	}
 	dma->paddr = (uint64_t) z->iova;
 	dma->vaddr = z->addr;
+	dma->mzone = (const void *)z;
 
 	PMD_DRV_LOG(DEBUG, sc,
 		    "%s: virt=%p phys=%" PRIx64, msg, dma->vaddr, dma->paddr);
 
 	return 0;
+}
+
+void bnx2x_dma_free(struct bnx2x_dma *dma)
+{
+	if (dma->mzone == NULL)
+		return;
+
+	rte_memzone_free((const struct rte_memzone *)dma->mzone);
+	dma->sc = NULL;
+	dma->paddr = 0;
+	dma->vaddr = NULL;
+	dma->nseg = 0;
+	dma->mzone = NULL;
 }
 
 static int bnx2x_acquire_hw_lock(struct bnx2x_softc *sc, uint32_t resource)
@@ -1099,6 +1114,12 @@ bnx2x_sp_post(struct bnx2x_softc *sc, int command, int cid, uint32_t data_hi,
 		    atomic_load_acq_long(&sc->cq_spq_left),
 		    atomic_load_acq_long(&sc->eq_spq_left));
 
+	/* RAMROD completion is processed in bnx2x_intr_legacy()
+	 * which can run from different contexts.
+	 * Ask bnx2x_intr_intr() to process RAMROD
+	 * completion whenever it gets scheduled.
+	 */
+	rte_atomic32_set(&sc->scan_fp, 1);
 	bnx2x_sp_prod_update(sc);
 
 	return 0;
@@ -2176,8 +2197,8 @@ int bnx2x_tx_encap(struct bnx2x_tx_queue *txq, struct rte_mbuf *m0)
 			tx_start_bd->vlan_or_ethertype =
 			    rte_cpu_to_le_16(pkt_prod);
 		else {
-			struct ether_hdr *eh =
-			    rte_pktmbuf_mtod(m0, struct ether_hdr *);
+			struct rte_ether_hdr *eh =
+			    rte_pktmbuf_mtod(m0, struct rte_ether_hdr *);
 
 			tx_start_bd->vlan_or_ethertype =
 			    rte_cpu_to_le_16(rte_be_to_cpu_16(eh->ether_type));
@@ -2187,14 +2208,14 @@ int bnx2x_tx_encap(struct bnx2x_tx_queue *txq, struct rte_mbuf *m0)
 	bd_prod = NEXT_TX_BD(bd_prod);
 	if (IS_VF(sc)) {
 		struct eth_tx_parse_bd_e2 *tx_parse_bd;
-		const struct ether_hdr *eh =
-		    rte_pktmbuf_mtod(m0, struct ether_hdr *);
+		const struct rte_ether_hdr *eh =
+		    rte_pktmbuf_mtod(m0, struct rte_ether_hdr *);
 		uint8_t mac_type = UNICAST_ADDRESS;
 
 		tx_parse_bd =
 		    &txq->tx_ring[TX_BD(bd_prod, txq)].parse_bd_e2;
-		if (is_multicast_ether_addr(&eh->d_addr)) {
-			if (is_broadcast_ether_addr(&eh->d_addr))
+		if (rte_is_multicast_ether_addr(&eh->d_addr)) {
+			if (rte_is_broadcast_ether_addr(&eh->d_addr))
 				mac_type = BROADCAST_ADDRESS;
 			else
 				mac_type = MULTICAST_ADDRESS;
@@ -2380,6 +2401,9 @@ static void bnx2x_free_mem(struct bnx2x_softc *sc)
 	ecore_ilt_mem_op(sc, ILT_MEMOP_FREE);
 
 	bnx2x_free_ilt_lines_mem(sc);
+
+	/* free the host hardware/software hsi structures */
+	bnx2x_free_hsi_mem(sc);
 }
 
 static int bnx2x_alloc_mem(struct bnx2x_softc *sc)
@@ -2430,11 +2454,19 @@ static int bnx2x_alloc_mem(struct bnx2x_softc *sc)
 		return -1;
 	}
 
+	/* allocate the host hardware/software hsi structures */
+	if (bnx2x_alloc_hsi_mem(sc) != 0) {
+		PMD_DRV_LOG(ERR, sc, "bnx2x_alloc_hsi_mem was failed");
+		bnx2x_free_mem(sc);
+		return -ENXIO;
+	}
+
 	return 0;
 }
 
 static void bnx2x_free_fw_stats_mem(struct bnx2x_softc *sc)
 {
+	bnx2x_dma_free(&sc->fw_stats_dma);
 	sc->fw_stats_num = 0;
 
 	sc->fw_stats_req_size = 0;
@@ -4523,7 +4555,7 @@ static int bnx2x_handle_sp_tq(struct bnx2x_softc *sc)
 	return rc;
 }
 
-static void bnx2x_handle_fp_tq(struct bnx2x_fastpath *fp, int scan_fp)
+static void bnx2x_handle_fp_tq(struct bnx2x_fastpath *fp)
 {
 	struct bnx2x_softc *sc = fp->sc;
 	uint8_t more_rx = FALSE;
@@ -4538,18 +4570,20 @@ static void bnx2x_handle_fp_tq(struct bnx2x_fastpath *fp, int scan_fp)
 	/* update the fastpath index */
 	bnx2x_update_fp_sb_idx(fp);
 
-	if (scan_fp) {
+	if (rte_atomic32_read(&sc->scan_fp) == 1) {
 		if (bnx2x_has_rx_work(fp)) {
 			more_rx = bnx2x_rxeof(sc, fp);
 		}
 
 		if (more_rx) {
 			/* still more work to do */
-			bnx2x_handle_fp_tq(fp, scan_fp);
+			bnx2x_handle_fp_tq(fp);
 			return;
 		}
 	}
 
+	/* Assuming we have completed slow path completion, clear the flag */
+	rte_atomic32_set(&sc->scan_fp, 0);
 	bnx2x_ack_sb(sc, fp->igu_sb_id, USTORM_ID,
 		   le16toh(fp->fp_hc_idx), IGU_INT_ENABLE, 1);
 }
@@ -4561,7 +4595,7 @@ static void bnx2x_handle_fp_tq(struct bnx2x_fastpath *fp, int scan_fp)
  * then calls a separate routine to handle the various
  * interrupt causes: link, RX, and TX.
  */
-int bnx2x_intr_legacy(struct bnx2x_softc *sc, int scan_fp)
+int bnx2x_intr_legacy(struct bnx2x_softc *sc)
 {
 	struct bnx2x_fastpath *fp;
 	uint32_t status, mask;
@@ -4593,7 +4627,7 @@ int bnx2x_intr_legacy(struct bnx2x_softc *sc, int scan_fp)
 		/* acknowledge and disable further fastpath interrupts */
 			bnx2x_ack_sb(sc, fp->igu_sb_id, USTORM_ID,
 				     0, IGU_INT_DISABLE, 0);
-			bnx2x_handle_fp_tq(fp, scan_fp);
+			bnx2x_handle_fp_tq(fp);
 			status &= ~mask;
 		}
 	}
@@ -8081,6 +8115,27 @@ static int bnx2x_get_shmem_info(struct bnx2x_softc *sc)
 		    ~ELINK_FEATURE_CONFIG_OVERRIDE_PREEMPHASIS_ENABLED;
 	}
 
+	val = sc->devinfo.bc_ver >> 8;
+	if (val < BNX2X_BC_VER) {
+		/* for now only warn later we might need to enforce this */
+		PMD_DRV_LOG(NOTICE, sc, "This driver needs bc_ver %X but found %X, please upgrade BC\n",
+			    BNX2X_BC_VER, val);
+	}
+	sc->link_params.feature_config_flags |=
+				(val >= REQ_BC_VER_4_VRFY_FIRST_PHY_OPT_MDL) ?
+				ELINK_FEATURE_CONFIG_BC_SUPPORTS_OPT_MDL_VRFY :
+				0;
+
+	sc->link_params.feature_config_flags |=
+		(val >= REQ_BC_VER_4_VRFY_SPECIFIC_PHY_OPT_MDL) ?
+		ELINK_FEATURE_CONFIG_BC_SUPPORTS_DUAL_PHY_OPT_MDL_VRFY : 0;
+	sc->link_params.feature_config_flags |=
+		(val >= REQ_BC_VER_4_VRFY_AFEX_SUPPORTED) ?
+		ELINK_FEATURE_CONFIG_BC_SUPPORTS_AFEX : 0;
+	sc->link_params.feature_config_flags |=
+		(val >= REQ_BC_VER_4_SFP_TX_DISABLE_SUPPORTED) ?
+		ELINK_FEATURE_CONFIG_BC_SUPPORTS_SFP_TX_DISABLED : 0;
+
 	/* get the initial value of the link params */
 	sc->link_params.multi_phy_config =
 	    SHMEM_RD(sc, dev_info.port_hw_config[port].multi_phy_config);
@@ -8963,36 +9018,42 @@ void bnx2x_free_hsi_mem(struct bnx2x_softc *sc)
 /*******************/
 
 		memset(&fp->status_block, 0, sizeof(fp->status_block));
+		bnx2x_dma_free(&fp->sb_dma);
 	}
 
 	/***************************/
 	/* FW DECOMPRESSION BUFFER */
 	/***************************/
 
+	bnx2x_dma_free(&sc->gz_buf_dma);
 	sc->gz_buf = NULL;
 
 	/*******************/
 	/* SLOW PATH QUEUE */
 	/*******************/
 
+	bnx2x_dma_free(&sc->spq_dma);
 	sc->spq = NULL;
 
 	/*************/
 	/* SLOW PATH */
 	/*************/
 
+	bnx2x_dma_free(&sc->sp_dma);
 	sc->sp = NULL;
 
 	/***************/
 	/* EVENT QUEUE */
 	/***************/
 
+	bnx2x_dma_free(&sc->eq_dma);
 	sc->eq = NULL;
 
 	/************************/
 	/* DEFAULT STATUS BLOCK */
 	/************************/
 
+	bnx2x_dma_free(&sc->def_sb_dma);
 	sc->def_sb = NULL;
 
 }
@@ -9744,13 +9805,13 @@ int bnx2x_attach(struct bnx2x_softc *sc)
 		bnx2x_get_phy_info(sc);
 	} else {
 		/* Left mac of VF unfilled, PF should set it for VF */
-		memset(sc->link_params.mac_addr, 0, ETHER_ADDR_LEN);
+		memset(sc->link_params.mac_addr, 0, RTE_ETHER_ADDR_LEN);
 	}
 
 	sc->wol = 0;
 
 	/* set the default MTU (changed via ifconfig) */
-	sc->mtu = ETHER_MTU;
+	sc->mtu = RTE_ETHER_MTU;
 
 	bnx2x_set_modes_bitmap(sc);
 
@@ -11741,13 +11802,13 @@ static const char *get_bnx2x_flags(uint32_t flags)
 
 	for (i = 0; i < 5; i++)
 		if (flags & (1 << i)) {
-			strcat(flag_str, flag[i]);
+			strlcat(flag_str, flag[i], sizeof(flag_str));
 			flags ^= (1 << i);
 		}
 	if (flags) {
 		static char unknown[BNX2X_INFO_STR_MAX];
 		snprintf(unknown, 32, "Unknown flag mask %x", flags);
-		strcat(flag_str, unknown);
+		strlcat(flag_str, unknown, sizeof(flag_str));
 	}
 	return flag_str;
 }

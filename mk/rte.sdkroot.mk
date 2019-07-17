@@ -30,7 +30,7 @@ export BUILDING_RTE_SDK
 
 #
 # We can specify the configuration template when doing the "make
-# config". For instance: make config T=x86_64-native-linuxapp-gcc
+# config". For instance: make config T=x86_64-native-linux-gcc
 #
 # 如果命令行执行T,则对应到配置模板上。
 RTE_CONFIG_TEMPLATE :=

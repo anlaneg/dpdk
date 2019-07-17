@@ -35,6 +35,7 @@
 #include "virtio_logs.h"
 #include "virtqueue.h"
 #include "virtio_rxtx.h"
+#include "virtio_user/virtio_user_dev.h"
 
 static int eth_virtio_dev_uninit(struct rte_eth_dev *eth_dev);
 static int  virtio_dev_configure(struct rte_eth_dev *dev);
@@ -65,11 +66,11 @@ static void virtio_dev_free_mbufs(struct rte_eth_dev *dev);
 static int virtio_vlan_filter_set(struct rte_eth_dev *dev,
 				uint16_t vlan_id, int on);
 static int virtio_mac_addr_add(struct rte_eth_dev *dev,
-				struct ether_addr *mac_addr,
+				struct rte_ether_addr *mac_addr,
 				uint32_t index, uint32_t vmdq);
 static void virtio_mac_addr_remove(struct rte_eth_dev *dev, uint32_t index);
 static int virtio_mac_addr_set(struct rte_eth_dev *dev,
-				struct ether_addr *mac_addr);
+				struct rte_ether_addr *mac_addr);
 
 static int virtio_intr_disable(struct rte_eth_dev *dev);
 
@@ -147,9 +148,9 @@ virtio_send_command_packed(struct virtnet_ctl *cvq,
 {
 	struct virtqueue *vq = cvq->vq;
 	int head;
-	struct vring_packed_desc *desc = vq->ring_packed.desc_packed;
+	struct vring_packed_desc *desc = vq->vq_packed.ring.desc;
 	struct virtio_pmd_ctrl *result;
-	bool avail_wrap_counter;
+	uint16_t flags;
 	int sum = 0;
 	int nb_descs = 0;
 	int k;
@@ -161,14 +162,14 @@ virtio_send_command_packed(struct virtnet_ctl *cvq,
 	 * One RX packet for ACK.
 	 */
 	head = vq->vq_avail_idx;
-	avail_wrap_counter = vq->avail_wrap_counter;
+	flags = vq->vq_packed.cached_flags;
 	desc[head].addr = cvq->virtio_net_hdr_mem;
 	desc[head].len = sizeof(struct virtio_net_ctrl_hdr);
 	vq->vq_free_cnt--;
 	nb_descs++;
 	if (++vq->vq_avail_idx >= vq->vq_nentries) {
 		vq->vq_avail_idx -= vq->vq_nentries;
-		vq->avail_wrap_counter ^= 1;
+		vq->vq_packed.cached_flags ^= VRING_PACKED_DESC_F_AVAIL_USED;
 	}
 
 	for (k = 0; k < pkt_num; k++) {
@@ -177,14 +178,14 @@ virtio_send_command_packed(struct virtnet_ctl *cvq,
 			+ sizeof(ctrl->status) + sizeof(uint8_t) * sum;
 		desc[vq->vq_avail_idx].len = dlen[k];
 		desc[vq->vq_avail_idx].flags = VRING_DESC_F_NEXT |
-			VRING_DESC_F_AVAIL(vq->avail_wrap_counter) |
-			VRING_DESC_F_USED(!vq->avail_wrap_counter);
+			vq->vq_packed.cached_flags;
 		sum += dlen[k];
 		vq->vq_free_cnt--;
 		nb_descs++;
 		if (++vq->vq_avail_idx >= vq->vq_nentries) {
 			vq->vq_avail_idx -= vq->vq_nentries;
-			vq->avail_wrap_counter ^= 1;
+			vq->vq_packed.cached_flags ^=
+				VRING_PACKED_DESC_F_AVAIL_USED;
 		}
 	}
 
@@ -192,19 +193,16 @@ virtio_send_command_packed(struct virtnet_ctl *cvq,
 		+ sizeof(struct virtio_net_ctrl_hdr);
 	desc[vq->vq_avail_idx].len = sizeof(ctrl->status);
 	desc[vq->vq_avail_idx].flags = VRING_DESC_F_WRITE |
-		VRING_DESC_F_AVAIL(vq->avail_wrap_counter) |
-		VRING_DESC_F_USED(!vq->avail_wrap_counter);
+		vq->vq_packed.cached_flags;
 	vq->vq_free_cnt--;
 	nb_descs++;
 	if (++vq->vq_avail_idx >= vq->vq_nentries) {
 		vq->vq_avail_idx -= vq->vq_nentries;
-		vq->avail_wrap_counter ^= 1;
+		vq->vq_packed.cached_flags ^= VRING_PACKED_DESC_F_AVAIL_USED;
 	}
 
 	virtio_wmb(vq->hw->weak_barriers);
-	desc[head].flags = VRING_DESC_F_NEXT |
-		VRING_DESC_F_AVAIL(avail_wrap_counter) |
-		VRING_DESC_F_USED(!avail_wrap_counter);
+	desc[head].flags = VRING_DESC_F_NEXT | flags;
 
 	virtio_wmb(vq->hw->weak_barriers);
 	virtqueue_notify(vq);
@@ -220,61 +218,35 @@ virtio_send_command_packed(struct virtnet_ctl *cvq,
 	vq->vq_used_cons_idx += nb_descs;
 	if (vq->vq_used_cons_idx >= vq->vq_nentries) {
 		vq->vq_used_cons_idx -= vq->vq_nentries;
-		vq->used_wrap_counter ^= 1;
+		vq->vq_packed.used_wrap_counter ^= 1;
 	}
 
 	PMD_INIT_LOG(DEBUG, "vq->vq_free_cnt=%d\n"
 			"vq->vq_avail_idx=%d\n"
 			"vq->vq_used_cons_idx=%d\n"
-			"vq->avail_wrap_counter=%d\n"
-			"vq->used_wrap_counter=%d\n",
+			"vq->vq_packed.cached_flags=0x%x\n"
+			"vq->vq_packed.used_wrap_counter=%d\n",
 			vq->vq_free_cnt,
 			vq->vq_avail_idx,
 			vq->vq_used_cons_idx,
-			vq->avail_wrap_counter,
-			vq->used_wrap_counter);
+			vq->vq_packed.cached_flags,
+			vq->vq_packed.used_wrap_counter);
 
 	result = cvq->virtio_net_hdr_mz->addr;
 	return result;
 }
 
-static int
-virtio_send_command(struct virtnet_ctl *cvq, struct virtio_pmd_ctrl *ctrl,
-		int *dlen, int pkt_num)
+static struct virtio_pmd_ctrl *
+virtio_send_command_split(struct virtnet_ctl *cvq,
+			  struct virtio_pmd_ctrl *ctrl,
+			  int *dlen, int pkt_num)
 {
+	struct virtio_pmd_ctrl *result;
+	struct virtqueue *vq = cvq->vq;
 	uint32_t head, i;
 	int k, sum = 0;
-	virtio_net_ctrl_ack status = ~0;
-	struct virtio_pmd_ctrl *result;
-	struct virtqueue *vq;
 
-	ctrl->status = status;
-
-	if (!cvq || !cvq->vq) {
-		PMD_INIT_LOG(ERR, "Control queue is not supported.");
-		return -1;
-	}
-
-	rte_spinlock_lock(&cvq->lock);
-	vq = cvq->vq;
 	head = vq->vq_desc_head_idx;
-
-	PMD_INIT_LOG(DEBUG, "vq->vq_desc_head_idx = %d, status = %d, "
-		"vq->hw->cvq = %p vq = %p",
-		vq->vq_desc_head_idx, status, vq->hw->cvq, vq);
-
-	if (vq->vq_free_cnt < pkt_num + 2 || pkt_num < 1) {
-		rte_spinlock_unlock(&cvq->lock);
-		return -1;
-	}
-
-	memcpy(cvq->virtio_net_hdr_mz->addr, ctrl,
-		sizeof(struct virtio_pmd_ctrl));
-
-	if (vtpci_packed_queue(vq->hw)) {
-		result = virtio_send_command_packed(cvq, ctrl, dlen, pkt_num);
-		goto out_unlock;
-	}
 
 	/*
 	 * Format is enforced in qemu code:
@@ -282,30 +254,30 @@ virtio_send_command(struct virtnet_ctl *cvq, struct virtio_pmd_ctrl *ctrl,
 	 * At least one TX packet per argument;
 	 * One RX packet for ACK.
 	 */
-	vq->vq_ring.desc[head].flags = VRING_DESC_F_NEXT;
-	vq->vq_ring.desc[head].addr = cvq->virtio_net_hdr_mem;
-	vq->vq_ring.desc[head].len = sizeof(struct virtio_net_ctrl_hdr);
+	vq->vq_split.ring.desc[head].flags = VRING_DESC_F_NEXT;
+	vq->vq_split.ring.desc[head].addr = cvq->virtio_net_hdr_mem;
+	vq->vq_split.ring.desc[head].len = sizeof(struct virtio_net_ctrl_hdr);
 	vq->vq_free_cnt--;
-	i = vq->vq_ring.desc[head].next;
+	i = vq->vq_split.ring.desc[head].next;
 
 	for (k = 0; k < pkt_num; k++) {
-		vq->vq_ring.desc[i].flags = VRING_DESC_F_NEXT;
-		vq->vq_ring.desc[i].addr = cvq->virtio_net_hdr_mem
+		vq->vq_split.ring.desc[i].flags = VRING_DESC_F_NEXT;
+		vq->vq_split.ring.desc[i].addr = cvq->virtio_net_hdr_mem
 			+ sizeof(struct virtio_net_ctrl_hdr)
 			+ sizeof(ctrl->status) + sizeof(uint8_t)*sum;
-		vq->vq_ring.desc[i].len = dlen[k];
+		vq->vq_split.ring.desc[i].len = dlen[k];
 		sum += dlen[k];
 		vq->vq_free_cnt--;
-		i = vq->vq_ring.desc[i].next;
+		i = vq->vq_split.ring.desc[i].next;
 	}
 
-	vq->vq_ring.desc[i].flags = VRING_DESC_F_WRITE;
-	vq->vq_ring.desc[i].addr = cvq->virtio_net_hdr_mem
+	vq->vq_split.ring.desc[i].flags = VRING_DESC_F_WRITE;
+	vq->vq_split.ring.desc[i].addr = cvq->virtio_net_hdr_mem
 			+ sizeof(struct virtio_net_ctrl_hdr);
-	vq->vq_ring.desc[i].len = sizeof(ctrl->status);
+	vq->vq_split.ring.desc[i].len = sizeof(ctrl->status);
 	vq->vq_free_cnt--;
 
-	vq->vq_desc_head_idx = vq->vq_ring.desc[i].next;
+	vq->vq_desc_head_idx = vq->vq_split.ring.desc[i].next;
 
 	vq_update_avail_ring(vq, head);
 	vq_update_avail_idx(vq);
@@ -326,16 +298,17 @@ virtio_send_command(struct virtnet_ctl *cvq, struct virtio_pmd_ctrl *ctrl,
 
 		used_idx = (uint32_t)(vq->vq_used_cons_idx
 				& (vq->vq_nentries - 1));
-		uep = &vq->vq_ring.used->ring[used_idx];
+		uep = &vq->vq_split.ring.used->ring[used_idx];
 		idx = (uint32_t) uep->id;
 		desc_idx = idx;
 
-		while (vq->vq_ring.desc[desc_idx].flags & VRING_DESC_F_NEXT) {
-			desc_idx = vq->vq_ring.desc[desc_idx].next;
+		while (vq->vq_split.ring.desc[desc_idx].flags &
+				VRING_DESC_F_NEXT) {
+			desc_idx = vq->vq_split.ring.desc[desc_idx].next;
 			vq->vq_free_cnt++;
 		}
 
-		vq->vq_ring.desc[desc_idx].next = vq->vq_desc_head_idx;
+		vq->vq_split.ring.desc[desc_idx].next = vq->vq_desc_head_idx;
 		vq->vq_desc_head_idx = idx;
 
 		vq->vq_used_cons_idx++;
@@ -346,8 +319,44 @@ virtio_send_command(struct virtnet_ctl *cvq, struct virtio_pmd_ctrl *ctrl,
 			vq->vq_free_cnt, vq->vq_desc_head_idx);
 
 	result = cvq->virtio_net_hdr_mz->addr;
+	return result;
+}
 
-out_unlock:
+static int
+virtio_send_command(struct virtnet_ctl *cvq, struct virtio_pmd_ctrl *ctrl,
+		    int *dlen, int pkt_num)
+{
+	virtio_net_ctrl_ack status = ~0;
+	struct virtio_pmd_ctrl *result;
+	struct virtqueue *vq;
+
+	ctrl->status = status;
+
+	if (!cvq || !cvq->vq) {
+		PMD_INIT_LOG(ERR, "Control queue is not supported.");
+		return -1;
+	}
+
+	rte_spinlock_lock(&cvq->lock);
+	vq = cvq->vq;
+
+	PMD_INIT_LOG(DEBUG, "vq->vq_desc_head_idx = %d, status = %d, "
+		"vq->hw->cvq = %p vq = %p",
+		vq->vq_desc_head_idx, status, vq->hw->cvq, vq);
+
+	if (vq->vq_free_cnt < pkt_num + 2 || pkt_num < 1) {
+		rte_spinlock_unlock(&cvq->lock);
+		return -1;
+	}
+
+	memcpy(cvq->virtio_net_hdr_mz->addr, ctrl,
+		sizeof(struct virtio_pmd_ctrl));
+
+	if (vtpci_packed_queue(vq->hw))
+		result = virtio_send_command_packed(cvq, ctrl, dlen, pkt_num);
+	else
+		result = virtio_send_command_split(cvq, ctrl, dlen, pkt_num);
+
 	rte_spinlock_unlock(&cvq->lock);
 	return result->status;
 }
@@ -398,7 +407,6 @@ static void
 virtio_init_vring(struct virtqueue *vq)
 {
 	int size = vq->vq_nentries;
-	struct vring *vr = &vq->vq_ring;
 	uint8_t *ring_mem = vq->vq_ring_virt_mem;
 
 	PMD_INIT_FUNC_TRACE();
@@ -412,10 +420,12 @@ virtio_init_vring(struct virtqueue *vq)
 	vq->vq_free_cnt = vq->vq_nentries;
 	memset(vq->vq_descx, 0, sizeof(struct vq_desc_extra) * vq->vq_nentries);
 	if (vtpci_packed_queue(vq->hw)) {
-		vring_init_packed(&vq->ring_packed, ring_mem,
+		vring_init_packed(&vq->vq_packed.ring, ring_mem,
 				  VIRTIO_PCI_VRING_ALIGN, size);
 		vring_desc_init_packed(vq, size);
 	} else {
+		struct vring *vr = &vq->vq_split.ring;
+
 		vring_init_split(vr, ring_mem, VIRTIO_PCI_VRING_ALIGN, size);
 		vring_desc_init_split(vr->desc, size);
 	}
@@ -490,13 +500,12 @@ virtio_init_queue(struct rte_eth_dev *dev, uint16_t vtpci_queue_idx)
 	vq->hw = hw;
 	vq->vq_queue_index = vtpci_queue_idx;
 	vq->vq_nentries = vq_size;
-	vq->event_flags_shadow = 0;
 	if (vtpci_packed_queue(hw)) {
-		vq->avail_wrap_counter = 1;
-		vq->used_wrap_counter = 1;
-		vq->avail_used_flags =
-			VRING_DESC_F_AVAIL(vq->avail_wrap_counter) |
-			VRING_DESC_F_USED(!vq->avail_wrap_counter);
+		vq->vq_packed.used_wrap_counter = 1;
+		vq->vq_packed.cached_flags = VRING_PACKED_DESC_F_AVAIL;
+		vq->vq_packed.event_flags_shadow = 0;
+		if (queue_type == VTNET_RQ)
+			vq->vq_packed.cached_flags |= VRING_DESC_F_WRITE;
 	}
 
 	/*
@@ -604,17 +613,9 @@ virtio_init_queue(struct rte_eth_dev *dev, uint16_t vtpci_queue_idx)
 		memset(txr, 0, vq_size * sizeof(*txr));
 		for (i = 0; i < vq_size; i++) {
 			struct vring_desc *start_dp = txr[i].tx_indir;
-			struct vring_packed_desc *start_dp_packed =
-				txr[i].tx_indir_pq;
 
 			/* first indirect descriptor is always the tx header */
-			if (vtpci_packed_queue(hw)) {
-				start_dp_packed->addr = txvq->virtio_net_hdr_mem
-					+ i * sizeof(*txr)
-					+ offsetof(struct virtio_tx_region,
-						   tx_hdr);
-				start_dp_packed->len = hw->vtnet_hdr_size;
-			} else {
+			if (!vtpci_packed_queue(hw)) {
 				vring_desc_init_split(start_dp,
 						      RTE_DIM(txr[i].tx_indir));
 				start_dp->addr = txvq->virtio_net_hdr_mem
@@ -734,6 +735,17 @@ virtio_dev_close(struct rte_eth_dev *dev)
 	vtpci_reset(hw);
 	virtio_dev_free_mbufs(dev);
 	virtio_free_queues(hw);
+
+#ifdef RTE_VIRTIO_USER
+	if (hw->virtio_user_dev)
+		virtio_user_dev_uninit(hw->virtio_user_dev);
+	else
+#endif
+	if (dev->device) {
+		rte_pci_unmap_device(RTE_ETH_DEV_TO_PCI(dev));
+		if (!hw->modern)
+			rte_pci_ioport_unmap(VTPCI_IO(hw));
+	}
 }
 
 static void
@@ -833,16 +845,16 @@ static int
 virtio_mtu_set(struct rte_eth_dev *dev, uint16_t mtu)
 {
 	struct virtio_hw *hw = dev->data->dev_private;
-	uint32_t ether_hdr_len = ETHER_HDR_LEN + VLAN_TAG_LEN +
+	uint32_t ether_hdr_len = RTE_ETHER_HDR_LEN + VLAN_TAG_LEN +
 				 hw->vtnet_hdr_size;
 	uint32_t frame_size = mtu + ether_hdr_len;
 	uint32_t max_frame_size = hw->max_mtu + ether_hdr_len;
 
 	max_frame_size = RTE_MIN(max_frame_size, VIRTIO_MAX_RX_PKTLEN);
 
-	if (mtu < ETHER_MIN_MTU || frame_size > max_frame_size) {
+	if (mtu < RTE_ETHER_MIN_MTU || frame_size > max_frame_size) {
 		PMD_INIT_LOG(ERR, "MTU should be between %d and %d",
-			ETHER_MIN_MTU, max_frame_size - ether_hdr_len);
+			RTE_ETHER_MIN_MTU, max_frame_size - ether_hdr_len);
 		return -EINVAL;
 	}
 	return 0;
@@ -851,10 +863,12 @@ virtio_mtu_set(struct rte_eth_dev *dev, uint16_t mtu)
 static int
 virtio_dev_rx_queue_intr_enable(struct rte_eth_dev *dev, uint16_t queue_id)
 {
+	struct virtio_hw *hw = dev->data->dev_private;
 	struct virtnet_rx *rxvq = dev->data->rx_queues[queue_id];
 	struct virtqueue *vq = rxvq->vq;
 
 	virtqueue_enable_intr(vq);
+	virtio_mb(hw->weak_barriers);
 	return 0;
 }
 
@@ -903,6 +917,21 @@ static const struct eth_dev_ops virtio_eth_dev_ops = {
 	.mac_addr_add            = virtio_mac_addr_add,
 	.mac_addr_remove         = virtio_mac_addr_remove,
 	.mac_addr_set            = virtio_mac_addr_set,
+};
+
+/*
+ * dev_ops for virtio-user in secondary processes, as we just have
+ * some limited supports currently.
+ */
+const struct eth_dev_ops virtio_user_secondary_eth_dev_ops = {
+	.dev_infos_get           = virtio_dev_info_get,
+	.stats_get               = virtio_dev_stats_get,
+	.xstats_get              = virtio_dev_xstats_get,
+	.xstats_get_names        = virtio_dev_xstats_get_names,
+	.stats_reset             = virtio_dev_stats_reset,
+	.xstats_reset            = virtio_dev_stats_reset,
+	/* collect stats per queue */
+	.queue_stats_mapping_set = virtio_dev_queue_stats_mapping_set,
 };
 
 static void
@@ -1082,7 +1111,7 @@ virtio_set_hwaddr(struct virtio_hw *hw)
 {
 	vtpci_write_dev_config(hw,
 			offsetof(struct virtio_net_config, mac),
-			&hw->mac_addr, ETHER_ADDR_LEN);
+			&hw->mac_addr, RTE_ETHER_ADDR_LEN);
 }
 
 static void
@@ -1091,9 +1120,9 @@ virtio_get_hwaddr(struct virtio_hw *hw)
 	if (vtpci_with_feature(hw, VIRTIO_NET_F_MAC)) {
 		vtpci_read_dev_config(hw,
 			offsetof(struct virtio_net_config, mac),
-			&hw->mac_addr, ETHER_ADDR_LEN);
+			&hw->mac_addr, RTE_ETHER_ADDR_LEN);
 	} else {
-		eth_random_addr(&hw->mac_addr[0]);
+		rte_eth_random_addr(&hw->mac_addr[0]);
 		virtio_set_hwaddr(hw);
 	}
 }
@@ -1114,10 +1143,10 @@ virtio_mac_table_set(struct virtio_hw *hw,
 	ctrl.hdr.class = VIRTIO_NET_CTRL_MAC;
 	ctrl.hdr.cmd = VIRTIO_NET_CTRL_MAC_TABLE_SET;
 
-	len[0] = uc->entries * ETHER_ADDR_LEN + sizeof(uc->entries);
+	len[0] = uc->entries * RTE_ETHER_ADDR_LEN + sizeof(uc->entries);
 	memcpy(ctrl.data, uc, len[0]);
 
-	len[1] = mc->entries * ETHER_ADDR_LEN + sizeof(mc->entries);
+	len[1] = mc->entries * RTE_ETHER_ADDR_LEN + sizeof(mc->entries);
 	memcpy(ctrl.data + len[0], mc, len[1]);
 
 	err = virtio_send_command(hw->cvq, &ctrl, len, 2);
@@ -1127,11 +1156,11 @@ virtio_mac_table_set(struct virtio_hw *hw,
 }
 
 static int
-virtio_mac_addr_add(struct rte_eth_dev *dev, struct ether_addr *mac_addr,
+virtio_mac_addr_add(struct rte_eth_dev *dev, struct rte_ether_addr *mac_addr,
 		    uint32_t index, uint32_t vmdq __rte_unused)
 {
 	struct virtio_hw *hw = dev->data->dev_private;
-	const struct ether_addr *addrs = dev->data->mac_addrs;
+	const struct rte_ether_addr *addrs = dev->data->mac_addrs;
 	unsigned int i;
 	struct virtio_net_ctrl_mac *uc, *mc;
 
@@ -1140,18 +1169,20 @@ virtio_mac_addr_add(struct rte_eth_dev *dev, struct ether_addr *mac_addr,
 		return -EINVAL;
 	}
 
-	uc = alloca(VIRTIO_MAX_MAC_ADDRS * ETHER_ADDR_LEN + sizeof(uc->entries));
+	uc = alloca(VIRTIO_MAX_MAC_ADDRS * RTE_ETHER_ADDR_LEN +
+		sizeof(uc->entries));
 	uc->entries = 0;
-	mc = alloca(VIRTIO_MAX_MAC_ADDRS * ETHER_ADDR_LEN + sizeof(mc->entries));
+	mc = alloca(VIRTIO_MAX_MAC_ADDRS * RTE_ETHER_ADDR_LEN +
+		sizeof(mc->entries));
 	mc->entries = 0;
 
 	for (i = 0; i < VIRTIO_MAX_MAC_ADDRS; i++) {
-		const struct ether_addr *addr
+		const struct rte_ether_addr *addr
 			= (i == index) ? mac_addr : addrs + i;
 		struct virtio_net_ctrl_mac *tbl
-			= is_multicast_ether_addr(addr) ? mc : uc;
+			= rte_is_multicast_ether_addr(addr) ? mc : uc;
 
-		memcpy(&tbl->macs[tbl->entries++], addr, ETHER_ADDR_LEN);
+		memcpy(&tbl->macs[tbl->entries++], addr, RTE_ETHER_ADDR_LEN);
 	}
 
 	return virtio_mac_table_set(hw, uc, mc);
@@ -1161,7 +1192,7 @@ static void
 virtio_mac_addr_remove(struct rte_eth_dev *dev, uint32_t index)
 {
 	struct virtio_hw *hw = dev->data->dev_private;
-	struct ether_addr *addrs = dev->data->mac_addrs;
+	struct rte_ether_addr *addrs = dev->data->mac_addrs;
 	struct virtio_net_ctrl_mac *uc, *mc;
 	unsigned int i;
 
@@ -1170,40 +1201,43 @@ virtio_mac_addr_remove(struct rte_eth_dev *dev, uint32_t index)
 		return;
 	}
 
-	uc = alloca(VIRTIO_MAX_MAC_ADDRS * ETHER_ADDR_LEN + sizeof(uc->entries));
+	uc = alloca(VIRTIO_MAX_MAC_ADDRS * RTE_ETHER_ADDR_LEN +
+		sizeof(uc->entries));
 	uc->entries = 0;
-	mc = alloca(VIRTIO_MAX_MAC_ADDRS * ETHER_ADDR_LEN + sizeof(mc->entries));
+	mc = alloca(VIRTIO_MAX_MAC_ADDRS * RTE_ETHER_ADDR_LEN +
+		sizeof(mc->entries));
 	mc->entries = 0;
 
 	for (i = 0; i < VIRTIO_MAX_MAC_ADDRS; i++) {
 		struct virtio_net_ctrl_mac *tbl;
 
-		if (i == index || is_zero_ether_addr(addrs + i))
+		if (i == index || rte_is_zero_ether_addr(addrs + i))
 			continue;
 
-		tbl = is_multicast_ether_addr(addrs + i) ? mc : uc;
-		memcpy(&tbl->macs[tbl->entries++], addrs + i, ETHER_ADDR_LEN);
+		tbl = rte_is_multicast_ether_addr(addrs + i) ? mc : uc;
+		memcpy(&tbl->macs[tbl->entries++], addrs + i,
+			RTE_ETHER_ADDR_LEN);
 	}
 
 	virtio_mac_table_set(hw, uc, mc);
 }
 
 static int
-virtio_mac_addr_set(struct rte_eth_dev *dev, struct ether_addr *mac_addr)
+virtio_mac_addr_set(struct rte_eth_dev *dev, struct rte_ether_addr *mac_addr)
 {
 	struct virtio_hw *hw = dev->data->dev_private;
 
-	memcpy(hw->mac_addr, mac_addr, ETHER_ADDR_LEN);
+	memcpy(hw->mac_addr, mac_addr, RTE_ETHER_ADDR_LEN);
 
 	/* Use atomic update if available */
 	if (vtpci_with_feature(hw, VIRTIO_NET_F_CTRL_MAC_ADDR)) {
 		struct virtio_pmd_ctrl ctrl;
-		int len = ETHER_ADDR_LEN;
+		int len = RTE_ETHER_ADDR_LEN;
 
 		ctrl.hdr.class = VIRTIO_NET_CTRL_MAC;
 		ctrl.hdr.cmd = VIRTIO_NET_CTRL_MAC_ADDR_SET;
 
-		memcpy(ctrl.data, mac_addr, ETHER_ADDR_LEN);
+		memcpy(ctrl.data, mac_addr, RTE_ETHER_ADDR_LEN);
 		return virtio_send_command(hw->cvq, &ctrl, &len, 1);
 	}
 
@@ -1282,7 +1316,7 @@ virtio_negotiate_features(struct virtio_hw *hw, uint64_t req_features)
 			offsetof(struct virtio_net_config, mtu),
 			&config.mtu, sizeof(config.mtu));
 
-		if (config.mtu < ETHER_MIN_MTU)
+		if (config.mtu < RTE_ETHER_MIN_MTU)
 			req_features &= ~(1ULL << VIRTIO_NET_F_MTU);
 	}
 
@@ -1380,7 +1414,7 @@ virtio_notify_peers(struct rte_eth_dev *dev)
 		return;
 
 	rarp_mbuf = rte_net_make_rarp_packet(rxvq->mpool,
-			(struct ether_addr *)hw->mac_addr);
+			(struct rte_ether_addr *)hw->mac_addr);
 	if (rarp_mbuf == NULL) {
 		PMD_DRV_LOG(ERR, "failed to make RARP packet.");
 		return;
@@ -1453,6 +1487,7 @@ set_rxtx_funcs(struct rte_eth_dev *eth_dev)
 {
 	struct virtio_hw *hw = eth_dev->data->dev_private;
 
+	eth_dev->tx_pkt_prepare = virtio_xmit_pkts_prepare;
 	if (vtpci_packed_queue(hw)) {
 		PMD_INIT_LOG(INFO,
 			"virtio: using packed ring %s Tx path on port %u",
@@ -1626,10 +1661,8 @@ virtio_init_device(struct rte_eth_dev *eth_dev, uint64_t req_features)
 
 	hw->weak_barriers = !vtpci_with_feature(hw, VIRTIO_F_ORDER_PLATFORM);
 
-	if (!hw->virtio_user_dev) {
+	if (!hw->virtio_user_dev)
 		pci_dev = RTE_ETH_DEV_TO_PCI(eth_dev);
-		rte_eth_copy_pci_info(eth_dev, pci_dev);
-	}
 
 	/* If host does not support both status and MSI-X then disable LSC */
 	if (vtpci_with_feature(hw, VIRTIO_NET_F_STATUS) &&
@@ -1648,7 +1681,7 @@ virtio_init_device(struct rte_eth_dev *eth_dev, uint64_t req_features)
 
 	/* Copy the permanent MAC address to: virtio_hw */
 	virtio_get_hwaddr(hw);
-	ether_addr_copy((struct ether_addr *) hw->mac_addr,
+	rte_ether_addr_copy((struct rte_ether_addr *)hw->mac_addr,
 			&eth_dev->data->mac_addrs[0]);
 	PMD_INIT_LOG(DEBUG,
 		     "PORT MAC: %02X:%02X:%02X:%02X:%02X:%02X",
@@ -1703,7 +1736,7 @@ virtio_init_device(struct rte_eth_dev *eth_dev, uint64_t req_features)
 			 * time, but check again in case it has changed since
 			 * then, which should not happen.
 			 */
-			if (config->mtu < ETHER_MIN_MTU) {
+			if (config->mtu < RTE_ETHER_MIN_MTU) {
 				PMD_INIT_LOG(ERR, "invalid max MTU value (%u)",
 						config->mtu);
 				return -1;
@@ -1714,7 +1747,7 @@ virtio_init_device(struct rte_eth_dev *eth_dev, uint64_t req_features)
 			eth_dev->data->mtu = config->mtu;
 
 		} else {
-			hw->max_mtu = VIRTIO_MAX_RX_PKTLEN - ETHER_HDR_LEN -
+			hw->max_mtu = VIRTIO_MAX_RX_PKTLEN - RTE_ETHER_HDR_LEN -
 				VLAN_TAG_LEN - hw->vtnet_hdr_size;
 		}
 
@@ -1729,7 +1762,7 @@ virtio_init_device(struct rte_eth_dev *eth_dev, uint64_t req_features)
 	} else {
 		PMD_INIT_LOG(DEBUG, "config->max_virtqueue_pairs=1");
 		hw->max_queue_pairs = 1;
-		hw->max_mtu = VIRTIO_MAX_RX_PKTLEN - ETHER_HDR_LEN -
+		hw->max_mtu = VIRTIO_MAX_RX_PKTLEN - RTE_ETHER_HDR_LEN -
 			VLAN_TAG_LEN - hw->vtnet_hdr_size;
 	}
 
@@ -1740,6 +1773,7 @@ virtio_init_device(struct rte_eth_dev *eth_dev, uint64_t req_features)
 	if (eth_dev->data->dev_conf.intr_conf.rxq) {
 		if (virtio_configure_intr(eth_dev) < 0) {
 			PMD_INIT_LOG(ERR, "failed to configure interrupt");
+			virtio_free_queues(hw);
 			return -1;
 		}
 	}
@@ -1827,12 +1861,19 @@ eth_virtio_dev_init(struct rte_eth_dev *eth_dev)
 		return 0;
 	}
 
+	/*
+	 * Pass the information to the rte_eth_dev_close() that it should also
+	 * release the private port resources.
+	 */
+	eth_dev->data->dev_flags |= RTE_ETH_DEV_CLOSE_REMOVE;
+
 	/* Allocate memory for storing MAC addresses */
-	eth_dev->data->mac_addrs = rte_zmalloc("virtio", VIRTIO_MAX_MAC_ADDRS * ETHER_ADDR_LEN, 0);
+	eth_dev->data->mac_addrs = rte_zmalloc("virtio",
+				VIRTIO_MAX_MAC_ADDRS * RTE_ETHER_ADDR_LEN, 0);
 	if (eth_dev->data->mac_addrs == NULL) {
 		PMD_INIT_LOG(ERR,
 			"Failed to allocate %d bytes needed to store MAC addresses",
-			VIRTIO_MAX_MAC_ADDRS * ETHER_ADDR_LEN);
+			VIRTIO_MAX_MAC_ADDRS * RTE_ETHER_ADDR_LEN);
 		return -ENOMEM;
 	}
 
@@ -1843,18 +1884,27 @@ eth_virtio_dev_init(struct rte_eth_dev *eth_dev)
 	if (!hw->virtio_user_dev) {
 		ret = vtpci_init(RTE_ETH_DEV_TO_PCI(eth_dev), hw);
 		if (ret)
-			goto out;
+			goto err_vtpci_init;
 	}
 
 	/* reset device and negotiate default features */
 	ret = virtio_init_device(eth_dev, VIRTIO_PMD_DEFAULT_GUEST_FEATURES);
 	if (ret < 0)
-		goto out;
+		goto err_virtio_init;
+
+	hw->opened = true;
 
 	return 0;
 
-out:
+err_virtio_init:
+	if (!hw->virtio_user_dev) {
+		rte_pci_unmap_device(RTE_ETH_DEV_TO_PCI(eth_dev));
+		if (!hw->modern)
+			rte_pci_ioport_unmap(VTPCI_IO(hw));
+	}
+err_vtpci_init:
 	rte_free(eth_dev->data->mac_addrs);
+	eth_dev->data->mac_addrs = NULL;
 	return ret;
 }
 
@@ -1872,9 +1922,6 @@ eth_virtio_dev_uninit(struct rte_eth_dev *eth_dev)
 	eth_dev->dev_ops = NULL;
 	eth_dev->tx_pkt_burst = NULL;
 	eth_dev->rx_pkt_burst = NULL;
-
-	if (eth_dev->device)
-		rte_pci_unmap_device(RTE_ETH_DEV_TO_PCI(eth_dev));
 
 	PMD_INIT_LOG(DEBUG, "dev_uninit completed");
 
@@ -1938,7 +1985,13 @@ static int eth_virtio_pci_probe(struct rte_pci_driver *pci_drv __rte_unused,
 
 static int eth_virtio_pci_remove(struct rte_pci_device *pci_dev)
 {
-	return rte_eth_dev_pci_generic_remove(pci_dev, eth_virtio_dev_uninit);
+	int ret;
+
+	ret = rte_eth_dev_pci_generic_remove(pci_dev, eth_virtio_dev_uninit);
+	/* Port has already been released by close. */
+	if (ret == -ENODEV)
+		ret = 0;
+	return ret;
 }
 
 static struct rte_pci_driver rte_virtio_pmd = {
@@ -1984,7 +2037,7 @@ virtio_dev_configure(struct rte_eth_dev *dev)
 	const struct rte_eth_rxmode *rxmode = &dev->data->dev_conf.rxmode;
 	const struct rte_eth_txmode *txmode = &dev->data->dev_conf.txmode;
 	struct virtio_hw *hw = dev->data->dev_private;
-	uint32_t ether_hdr_len = ETHER_HDR_LEN + VLAN_TAG_LEN +
+	uint32_t ether_hdr_len = RTE_ETHER_HDR_LEN + VLAN_TAG_LEN +
 		hw->vtnet_hdr_size;
 	uint64_t rx_offloads = rxmode->offloads;
 	uint64_t tx_offloads = txmode->offloads;
@@ -2098,8 +2151,6 @@ virtio_dev_configure(struct rte_eth_dev *dev)
 			   DEV_RX_OFFLOAD_TCP_LRO |
 			   DEV_RX_OFFLOAD_VLAN_STRIP))
 		hw->use_simple_rx = 0;
-
-	hw->opened = true;
 
 	return 0;
 }

@@ -2,6 +2,7 @@
  * Copyright(c) 2010-2014 Intel Corporation
  */
 
+#include <rte_string_fns.h>
 #include <rte_acl.h>
 #include <getopt.h>
 #include <string.h>
@@ -624,7 +625,7 @@ parse_ipv4_net(const char *in, uint32_t *addr, uint32_t *mask_len)
 	GET_CB_FIELD(in, d, 0, UINT8_MAX, '/');
 	GET_CB_FIELD(in, m, 0, sizeof(uint32_t) * CHAR_BIT, 0);
 
-	addr[0] = IPv4(a, b, c, d);
+	addr[0] = RTE_IPV4(a, b, c, d);
 	mask_len[0] = m;
 
 	return 0;
@@ -928,7 +929,7 @@ print_usage(const char *prgname)
 		n += rc;
 	}
 
-	snprintf(buf + n, sizeof(buf) - n, "%s", acl_alg[i].name);
+	strlcpy(buf + n, acl_alg[i].name, sizeof(buf) - n);
 
 	fprintf(stdout,
 		PRINT_USAGE_START

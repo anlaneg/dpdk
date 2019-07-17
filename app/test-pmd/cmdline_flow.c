@@ -13,8 +13,8 @@
 #include <arpa/inet.h>
 #include <sys/socket.h>
 
+#include <rte_string_fns.h>
 #include <rte_common.h>
-#include <rte_eth_ctrl.h>
 #include <rte_ethdev.h>
 #include <rte_byteorder.h>
 #include <cmdline_parse.h>
@@ -35,6 +35,7 @@ enum index {
 	PREFIX,
 	BOOLEAN,
 	STRING,
+	HEX,
 	MAC_ADDR,
 	IPV4_ADDR,
 	IPV6_ADDR,
@@ -271,6 +272,14 @@ enum index {
 	ACTION_SET_MAC_SRC_MAC_SRC,
 	ACTION_SET_MAC_DST,
 	ACTION_SET_MAC_DST_MAC_DST,
+	ACTION_INC_TCP_SEQ,
+	ACTION_INC_TCP_SEQ_VALUE,
+	ACTION_DEC_TCP_SEQ,
+	ACTION_DEC_TCP_SEQ_VALUE,
+	ACTION_INC_TCP_ACK,
+	ACTION_INC_TCP_ACK_VALUE,
+	ACTION_DEC_TCP_ACK,
+	ACTION_DEC_TCP_ACK_VALUE,
 };
 
 /** Maximum size for pattern in struct rte_flow_item_raw. */
@@ -482,6 +491,14 @@ struct token {
 		.hton = 1, \
 		.offset = offsetof(s, f), \
 		.size = sizeof(((s *)0)->f), \
+	})
+
+/** Same as ARGS_ENTRY_HTON() for a single argument, without structure. */
+#define ARG_ENTRY_HTON(s) \
+	(&(const struct arg){ \
+		.hton = 1, \
+		.offset = 0, \
+		.size = sizeof(s), \
 	})
 
 /** Parser output buffer layout expected by cmd_flow_parsed(). */
@@ -884,6 +901,10 @@ static const enum index next_action[] = {
 	ACTION_SET_TTL,
 	ACTION_SET_MAC_SRC,
 	ACTION_SET_MAC_DST,
+	ACTION_INC_TCP_SEQ,
+	ACTION_DEC_TCP_SEQ,
+	ACTION_INC_TCP_ACK,
+	ACTION_DEC_TCP_ACK,
 	ZERO,
 };
 
@@ -1046,6 +1067,30 @@ static const enum index action_set_mac_dst[] = {
 	ZERO,
 };
 
+static const enum index action_inc_tcp_seq[] = {
+	ACTION_INC_TCP_SEQ_VALUE,
+	ACTION_NEXT,
+	ZERO,
+};
+
+static const enum index action_dec_tcp_seq[] = {
+	ACTION_DEC_TCP_SEQ_VALUE,
+	ACTION_NEXT,
+	ZERO,
+};
+
+static const enum index action_inc_tcp_ack[] = {
+	ACTION_INC_TCP_ACK_VALUE,
+	ACTION_NEXT,
+	ZERO,
+};
+
+static const enum index action_dec_tcp_ack[] = {
+	ACTION_DEC_TCP_ACK_VALUE,
+	ACTION_NEXT,
+	ZERO,
+};
+
 static int parse_init(struct context *, const struct token *,
 		      const char *, unsigned int,
 		      void *, unsigned int);
@@ -1122,6 +1167,9 @@ static int parse_boolean(struct context *, const struct token *,
 static int parse_string(struct context *, const struct token *,
 			const char *, unsigned int,
 			void *, unsigned int);
+static int parse_hex(struct context *ctx, const struct token *token,
+			const char *str, unsigned int len,
+			void *buf, unsigned int size);
 static int parse_mac_addr(struct context *, const struct token *,
 			  const char *, unsigned int,
 			  void *, unsigned int);
@@ -1196,6 +1244,13 @@ static const struct token token_list[] = {
 		.type = "STRING",
 		.help = "fixed string",
 		.call = parse_string,
+		.comp = comp_none,
+	},
+	[HEX] = {
+		.name = "{hex}",
+		.type = "HEX",
+		.help = "fixed string",
+		.call = parse_hex,
 		.comp = comp_none,
 	},
 	[MAC_ADDR] = {
@@ -2306,7 +2361,7 @@ static const struct token token_list[] = {
 	[ACTION_RSS_KEY] = {
 		.name = "key",
 		.help = "RSS hash key",
-		.next = NEXT(action_rss, NEXT_ENTRY(STRING)),
+		.next = NEXT(action_rss, NEXT_ENTRY(HEX)),
 		.args = ARGS(ARGS_ENTRY_ARB(0, 0),
 			     ARGS_ENTRY_ARB
 			     (offsetof(struct action_rss_data, conf) +
@@ -2843,6 +2898,62 @@ static const struct token token_list[] = {
 			     (struct rte_flow_action_set_mac, mac_addr)),
 		.call = parse_vc_conf,
 	},
+	[ACTION_INC_TCP_SEQ] = {
+		.name = "inc_tcp_seq",
+		.help = "increase TCP sequence number",
+		.priv = PRIV_ACTION(INC_TCP_SEQ, sizeof(rte_be32_t)),
+		.next = NEXT(action_inc_tcp_seq),
+		.call = parse_vc,
+	},
+	[ACTION_INC_TCP_SEQ_VALUE] = {
+		.name = "value",
+		.help = "the value to increase TCP sequence number by",
+		.next = NEXT(action_inc_tcp_seq, NEXT_ENTRY(UNSIGNED)),
+		.args = ARGS(ARG_ENTRY_HTON(rte_be32_t)),
+		.call = parse_vc_conf,
+	},
+	[ACTION_DEC_TCP_SEQ] = {
+		.name = "dec_tcp_seq",
+		.help = "decrease TCP sequence number",
+		.priv = PRIV_ACTION(DEC_TCP_SEQ, sizeof(rte_be32_t)),
+		.next = NEXT(action_dec_tcp_seq),
+		.call = parse_vc,
+	},
+	[ACTION_DEC_TCP_SEQ_VALUE] = {
+		.name = "value",
+		.help = "the value to decrease TCP sequence number by",
+		.next = NEXT(action_dec_tcp_seq, NEXT_ENTRY(UNSIGNED)),
+		.args = ARGS(ARG_ENTRY_HTON(rte_be32_t)),
+		.call = parse_vc_conf,
+	},
+	[ACTION_INC_TCP_ACK] = {
+		.name = "inc_tcp_ack",
+		.help = "increase TCP acknowledgment number",
+		.priv = PRIV_ACTION(INC_TCP_ACK, sizeof(rte_be32_t)),
+		.next = NEXT(action_inc_tcp_ack),
+		.call = parse_vc,
+	},
+	[ACTION_INC_TCP_ACK_VALUE] = {
+		.name = "value",
+		.help = "the value to increase TCP acknowledgment number by",
+		.next = NEXT(action_inc_tcp_ack, NEXT_ENTRY(UNSIGNED)),
+		.args = ARGS(ARG_ENTRY_HTON(rte_be32_t)),
+		.call = parse_vc_conf,
+	},
+	[ACTION_DEC_TCP_ACK] = {
+		.name = "dec_tcp_ack",
+		.help = "decrease TCP acknowledgment number",
+		.priv = PRIV_ACTION(DEC_TCP_ACK, sizeof(rte_be32_t)),
+		.next = NEXT(action_dec_tcp_ack),
+		.call = parse_vc,
+	},
+	[ACTION_DEC_TCP_ACK_VALUE] = {
+		.name = "value",
+		.help = "the value to decrease TCP acknowledgment number by",
+		.next = NEXT(action_dec_tcp_ack, NEXT_ENTRY(UNSIGNED)),
+		.args = ARGS(ARG_ENTRY_HTON(rte_be32_t)),
+		.call = parse_vc_conf,
+	},
 };
 
 /** Remove and return last entry from argument stack. */
@@ -3367,6 +3478,7 @@ parse_vc_action_rss_queue(struct context *ctx, const struct token *token,
 {
 	static const enum index next[] = NEXT_ENTRY(ACTION_RSS_QUEUE);
 	struct action_rss_data *action_rss_data;
+	const struct arg *arg;
 	int ret;
 	int i;
 
@@ -3382,10 +3494,10 @@ parse_vc_action_rss_queue(struct context *ctx, const struct token *token,
 	}
 	if (i >= ACTION_RSS_QUEUE_NUM)
 		return -1;
-	if (push_args(ctx,
-		      ARGS_ENTRY_ARB(offsetof(struct action_rss_data, queue) +
-				     i * sizeof(action_rss_data->queue[i]),
-				     sizeof(action_rss_data->queue[i]))))
+	arg = ARGS_ENTRY_ARB(offsetof(struct action_rss_data, queue) +
+			     i * sizeof(action_rss_data->queue[i]),
+			     sizeof(action_rss_data->queue[i]));
+	if (push_args(ctx, arg))
 		return -1;
 	ret = parse_int(ctx, token, str, len, NULL, 0);
 	if (ret < 0) {
@@ -3482,9 +3594,9 @@ parse_vc_action_vxlan_encap(struct context *ctx, const struct token *token,
 		.item_vxlan.flags = 0,
 	};
 	memcpy(action_vxlan_encap_data->item_eth.dst.addr_bytes,
-	       vxlan_encap_conf.eth_dst, ETHER_ADDR_LEN);
+	       vxlan_encap_conf.eth_dst, RTE_ETHER_ADDR_LEN);
 	memcpy(action_vxlan_encap_data->item_eth.src.addr_bytes,
-	       vxlan_encap_conf.eth_src, ETHER_ADDR_LEN);
+	       vxlan_encap_conf.eth_src, RTE_ETHER_ADDR_LEN);
 	if (!vxlan_encap_conf.select_ipv4) {
 		memcpy(&action_vxlan_encap_data->item_ipv6.hdr.src_addr,
 		       &vxlan_encap_conf.ipv6_src,
@@ -3521,12 +3633,12 @@ parse_vc_action_vxlan_encap(struct context *ctx, const struct token *token,
 			memcpy(&ipv6_mask_tos, &rte_flow_item_ipv6_mask,
 			       sizeof(ipv6_mask_tos));
 			ipv6_mask_tos.hdr.vtc_flow |=
-				RTE_BE32(0xfful << IPV6_HDR_TC_SHIFT);
+				RTE_BE32(0xfful << RTE_IPV6_HDR_TC_SHIFT);
 			ipv6_mask_tos.hdr.hop_limits = 0xff;
 			action_vxlan_encap_data->item_ipv6.hdr.vtc_flow |=
 				rte_cpu_to_be_32
 					((uint32_t)vxlan_encap_conf.ip_tos <<
-					 IPV6_HDR_TC_SHIFT);
+					 RTE_IPV6_HDR_TC_SHIFT);
 			action_vxlan_encap_data->item_ipv6.hdr.hop_limits =
 					vxlan_encap_conf.ip_ttl;
 			action_vxlan_encap_data->items[2].mask =
@@ -3605,9 +3717,9 @@ parse_vc_action_nvgre_encap(struct context *ctx, const struct token *token,
 		.item_nvgre.flow_id = 0,
 	};
 	memcpy(action_nvgre_encap_data->item_eth.dst.addr_bytes,
-	       nvgre_encap_conf.eth_dst, ETHER_ADDR_LEN);
+	       nvgre_encap_conf.eth_dst, RTE_ETHER_ADDR_LEN);
 	memcpy(action_nvgre_encap_data->item_eth.src.addr_bytes,
-	       nvgre_encap_conf.eth_src, ETHER_ADDR_LEN);
+	       nvgre_encap_conf.eth_src, RTE_ETHER_ADDR_LEN);
 	if (!nvgre_encap_conf.select_ipv4) {
 		memcpy(&action_nvgre_encap_data->item_ipv6.hdr.src_addr,
 		       &nvgre_encap_conf.ipv6_src,
@@ -3669,22 +3781,22 @@ parse_vc_action_l2_encap(struct context *ctx, const struct token *token,
 	};
 	header = action_encap_data->data;
 	if (l2_encap_conf.select_vlan)
-		eth.type = rte_cpu_to_be_16(ETHER_TYPE_VLAN);
+		eth.type = rte_cpu_to_be_16(RTE_ETHER_TYPE_VLAN);
 	else if (l2_encap_conf.select_ipv4)
-		eth.type = rte_cpu_to_be_16(ETHER_TYPE_IPv4);
+		eth.type = rte_cpu_to_be_16(RTE_ETHER_TYPE_IPV4);
 	else
-		eth.type = rte_cpu_to_be_16(ETHER_TYPE_IPv6);
+		eth.type = rte_cpu_to_be_16(RTE_ETHER_TYPE_IPV6);
 	memcpy(eth.dst.addr_bytes,
-	       l2_encap_conf.eth_dst, ETHER_ADDR_LEN);
+	       l2_encap_conf.eth_dst, RTE_ETHER_ADDR_LEN);
 	memcpy(eth.src.addr_bytes,
-	       l2_encap_conf.eth_src, ETHER_ADDR_LEN);
+	       l2_encap_conf.eth_src, RTE_ETHER_ADDR_LEN);
 	memcpy(header, &eth, sizeof(eth));
 	header += sizeof(eth);
 	if (l2_encap_conf.select_vlan) {
 		if (l2_encap_conf.select_ipv4)
-			vlan.inner_type = rte_cpu_to_be_16(ETHER_TYPE_IPv4);
+			vlan.inner_type = rte_cpu_to_be_16(RTE_ETHER_TYPE_IPV4);
 		else
-			vlan.inner_type = rte_cpu_to_be_16(ETHER_TYPE_IPv6);
+			vlan.inner_type = rte_cpu_to_be_16(RTE_ETHER_TYPE_IPV6);
 		memcpy(header, &vlan, sizeof(vlan));
 		header += sizeof(vlan);
 	}
@@ -3733,7 +3845,7 @@ parse_vc_action_l2_decap(struct context *ctx, const struct token *token,
 	};
 	header = action_decap_data->data;
 	if (l2_decap_conf.select_vlan)
-		eth.type = rte_cpu_to_be_16(ETHER_TYPE_VLAN);
+		eth.type = rte_cpu_to_be_16(RTE_ETHER_TYPE_VLAN);
 	memcpy(header, &eth, sizeof(eth));
 	header += sizeof(eth);
 	if (l2_decap_conf.select_vlan) {
@@ -3767,11 +3879,14 @@ parse_vc_action_mplsogre_encap(struct context *ctx, const struct token *token,
 			.src_addr = mplsogre_encap_conf.ipv4_src,
 			.dst_addr = mplsogre_encap_conf.ipv4_dst,
 			.next_proto_id = IPPROTO_GRE,
+			.version_ihl = RTE_IPV4_VHL_DEF,
+			.time_to_live = IPDEFTTL,
 		},
 	};
 	struct rte_flow_item_ipv6 ipv6 = {
 		.hdr =  {
 			.proto = IPPROTO_GRE,
+			.hop_limits = IPDEFTTL,
 		},
 	};
 	struct rte_flow_item_gre gre = {
@@ -3804,22 +3919,22 @@ parse_vc_action_mplsogre_encap(struct context *ctx, const struct token *token,
 	};
 	header = action_encap_data->data;
 	if (mplsogre_encap_conf.select_vlan)
-		eth.type = rte_cpu_to_be_16(ETHER_TYPE_VLAN);
+		eth.type = rte_cpu_to_be_16(RTE_ETHER_TYPE_VLAN);
 	else if (mplsogre_encap_conf.select_ipv4)
-		eth.type = rte_cpu_to_be_16(ETHER_TYPE_IPv4);
+		eth.type = rte_cpu_to_be_16(RTE_ETHER_TYPE_IPV4);
 	else
-		eth.type = rte_cpu_to_be_16(ETHER_TYPE_IPv6);
+		eth.type = rte_cpu_to_be_16(RTE_ETHER_TYPE_IPV6);
 	memcpy(eth.dst.addr_bytes,
-	       mplsogre_encap_conf.eth_dst, ETHER_ADDR_LEN);
+	       mplsogre_encap_conf.eth_dst, RTE_ETHER_ADDR_LEN);
 	memcpy(eth.src.addr_bytes,
-	       mplsogre_encap_conf.eth_src, ETHER_ADDR_LEN);
+	       mplsogre_encap_conf.eth_src, RTE_ETHER_ADDR_LEN);
 	memcpy(header, &eth, sizeof(eth));
 	header += sizeof(eth);
 	if (mplsogre_encap_conf.select_vlan) {
 		if (mplsogre_encap_conf.select_ipv4)
-			vlan.inner_type = rte_cpu_to_be_16(ETHER_TYPE_IPv4);
+			vlan.inner_type = rte_cpu_to_be_16(RTE_ETHER_TYPE_IPV4);
 		else
-			vlan.inner_type = rte_cpu_to_be_16(ETHER_TYPE_IPv6);
+			vlan.inner_type = rte_cpu_to_be_16(RTE_ETHER_TYPE_IPV6);
 		memcpy(header, &vlan, sizeof(vlan));
 		header += sizeof(vlan);
 	}
@@ -3899,22 +4014,22 @@ parse_vc_action_mplsogre_decap(struct context *ctx, const struct token *token,
 	};
 	header = action_decap_data->data;
 	if (mplsogre_decap_conf.select_vlan)
-		eth.type = rte_cpu_to_be_16(ETHER_TYPE_VLAN);
+		eth.type = rte_cpu_to_be_16(RTE_ETHER_TYPE_VLAN);
 	else if (mplsogre_encap_conf.select_ipv4)
-		eth.type = rte_cpu_to_be_16(ETHER_TYPE_IPv4);
+		eth.type = rte_cpu_to_be_16(RTE_ETHER_TYPE_IPV4);
 	else
-		eth.type = rte_cpu_to_be_16(ETHER_TYPE_IPv6);
+		eth.type = rte_cpu_to_be_16(RTE_ETHER_TYPE_IPV6);
 	memcpy(eth.dst.addr_bytes,
-	       mplsogre_encap_conf.eth_dst, ETHER_ADDR_LEN);
+	       mplsogre_encap_conf.eth_dst, RTE_ETHER_ADDR_LEN);
 	memcpy(eth.src.addr_bytes,
-	       mplsogre_encap_conf.eth_src, ETHER_ADDR_LEN);
+	       mplsogre_encap_conf.eth_src, RTE_ETHER_ADDR_LEN);
 	memcpy(header, &eth, sizeof(eth));
 	header += sizeof(eth);
 	if (mplsogre_encap_conf.select_vlan) {
 		if (mplsogre_encap_conf.select_ipv4)
-			vlan.inner_type = rte_cpu_to_be_16(ETHER_TYPE_IPv4);
+			vlan.inner_type = rte_cpu_to_be_16(RTE_ETHER_TYPE_IPV4);
 		else
-			vlan.inner_type = rte_cpu_to_be_16(ETHER_TYPE_IPv6);
+			vlan.inner_type = rte_cpu_to_be_16(RTE_ETHER_TYPE_IPV6);
 		memcpy(header, &vlan, sizeof(vlan));
 		header += sizeof(vlan);
 	}
@@ -3955,11 +4070,14 @@ parse_vc_action_mplsoudp_encap(struct context *ctx, const struct token *token,
 			.src_addr = mplsoudp_encap_conf.ipv4_src,
 			.dst_addr = mplsoudp_encap_conf.ipv4_dst,
 			.next_proto_id = IPPROTO_UDP,
+			.version_ihl = RTE_IPV4_VHL_DEF,
+			.time_to_live = IPDEFTTL,
 		},
 	};
 	struct rte_flow_item_ipv6 ipv6 = {
 		.hdr =  {
 			.proto = IPPROTO_UDP,
+			.hop_limits = IPDEFTTL,
 		},
 	};
 	struct rte_flow_item_udp udp = {
@@ -3995,22 +4113,22 @@ parse_vc_action_mplsoudp_encap(struct context *ctx, const struct token *token,
 	};
 	header = action_encap_data->data;
 	if (mplsoudp_encap_conf.select_vlan)
-		eth.type = rte_cpu_to_be_16(ETHER_TYPE_VLAN);
+		eth.type = rte_cpu_to_be_16(RTE_ETHER_TYPE_VLAN);
 	else if (mplsoudp_encap_conf.select_ipv4)
-		eth.type = rte_cpu_to_be_16(ETHER_TYPE_IPv4);
+		eth.type = rte_cpu_to_be_16(RTE_ETHER_TYPE_IPV4);
 	else
-		eth.type = rte_cpu_to_be_16(ETHER_TYPE_IPv6);
+		eth.type = rte_cpu_to_be_16(RTE_ETHER_TYPE_IPV6);
 	memcpy(eth.dst.addr_bytes,
-	       mplsoudp_encap_conf.eth_dst, ETHER_ADDR_LEN);
+	       mplsoudp_encap_conf.eth_dst, RTE_ETHER_ADDR_LEN);
 	memcpy(eth.src.addr_bytes,
-	       mplsoudp_encap_conf.eth_src, ETHER_ADDR_LEN);
+	       mplsoudp_encap_conf.eth_src, RTE_ETHER_ADDR_LEN);
 	memcpy(header, &eth, sizeof(eth));
 	header += sizeof(eth);
 	if (mplsoudp_encap_conf.select_vlan) {
 		if (mplsoudp_encap_conf.select_ipv4)
-			vlan.inner_type = rte_cpu_to_be_16(ETHER_TYPE_IPv4);
+			vlan.inner_type = rte_cpu_to_be_16(RTE_ETHER_TYPE_IPV4);
 		else
-			vlan.inner_type = rte_cpu_to_be_16(ETHER_TYPE_IPv6);
+			vlan.inner_type = rte_cpu_to_be_16(RTE_ETHER_TYPE_IPV6);
 		memcpy(header, &vlan, sizeof(vlan));
 		header += sizeof(vlan);
 	}
@@ -4092,22 +4210,22 @@ parse_vc_action_mplsoudp_decap(struct context *ctx, const struct token *token,
 	};
 	header = action_decap_data->data;
 	if (mplsoudp_decap_conf.select_vlan)
-		eth.type = rte_cpu_to_be_16(ETHER_TYPE_VLAN);
+		eth.type = rte_cpu_to_be_16(RTE_ETHER_TYPE_VLAN);
 	else if (mplsoudp_encap_conf.select_ipv4)
-		eth.type = rte_cpu_to_be_16(ETHER_TYPE_IPv4);
+		eth.type = rte_cpu_to_be_16(RTE_ETHER_TYPE_IPV4);
 	else
-		eth.type = rte_cpu_to_be_16(ETHER_TYPE_IPv6);
+		eth.type = rte_cpu_to_be_16(RTE_ETHER_TYPE_IPV6);
 	memcpy(eth.dst.addr_bytes,
-	       mplsoudp_encap_conf.eth_dst, ETHER_ADDR_LEN);
+	       mplsoudp_encap_conf.eth_dst, RTE_ETHER_ADDR_LEN);
 	memcpy(eth.src.addr_bytes,
-	       mplsoudp_encap_conf.eth_src, ETHER_ADDR_LEN);
+	       mplsoudp_encap_conf.eth_src, RTE_ETHER_ADDR_LEN);
 	memcpy(header, &eth, sizeof(eth));
 	header += sizeof(eth);
 	if (mplsoudp_encap_conf.select_vlan) {
 		if (mplsoudp_encap_conf.select_ipv4)
-			vlan.inner_type = rte_cpu_to_be_16(ETHER_TYPE_IPv4);
+			vlan.inner_type = rte_cpu_to_be_16(RTE_ETHER_TYPE_IPV4);
 		else
-			vlan.inner_type = rte_cpu_to_be_16(ETHER_TYPE_IPv6);
+			vlan.inner_type = rte_cpu_to_be_16(RTE_ETHER_TYPE_IPV6);
 		memcpy(header, &vlan, sizeof(vlan));
 		header += sizeof(vlan);
 	}
@@ -4475,6 +4593,121 @@ error:
 	return -1;
 }
 
+static int
+parse_hex_string(const char *src, uint8_t *dst, uint32_t *size)
+{
+	char *c = NULL;
+	uint32_t i, len;
+	char tmp[3];
+
+	/* Check input parameters */
+	if ((src == NULL) ||
+		(dst == NULL) ||
+		(size == NULL) ||
+		(*size == 0))
+		return -1;
+
+	/* Convert chars to bytes */
+	for (i = 0, len = 0; i < *size; i += 2) {
+		snprintf(tmp, 3, "%s", src + i);
+		dst[len++] = strtoul(tmp, &c, 16);
+		if (*c != 0) {
+			len--;
+			dst[len] = 0;
+			*size = len;
+			return -1;
+		}
+	}
+	dst[len] = 0;
+	*size = len;
+
+	return 0;
+}
+
+static int
+parse_hex(struct context *ctx, const struct token *token,
+		const char *str, unsigned int len,
+		void *buf, unsigned int size)
+{
+	const struct arg *arg_data = pop_args(ctx);
+	const struct arg *arg_len = pop_args(ctx);
+	const struct arg *arg_addr = pop_args(ctx);
+	char tmp[16]; /* Ought to be enough. */
+	int ret;
+	unsigned int hexlen = len;
+	unsigned int length = 256;
+	uint8_t hex_tmp[length];
+
+	/* Arguments are expected. */
+	if (!arg_data)
+		return -1;
+	if (!arg_len) {
+		push_args(ctx, arg_data);
+		return -1;
+	}
+	if (!arg_addr) {
+		push_args(ctx, arg_len);
+		push_args(ctx, arg_data);
+		return -1;
+	}
+	size = arg_data->size;
+	/* Bit-mask fill is not supported. */
+	if (arg_data->mask)
+		goto error;
+	if (!ctx->object)
+		return len;
+
+	/* translate bytes string to array. */
+	if (str[0] == '0' && ((str[1] == 'x') ||
+			(str[1] == 'X'))) {
+		str += 2;
+		hexlen -= 2;
+	}
+	if (hexlen > length)
+		return -1;
+	ret = parse_hex_string(str, hex_tmp, &hexlen);
+	if (ret < 0)
+		goto error;
+	/* Let parse_int() fill length information first. */
+	ret = snprintf(tmp, sizeof(tmp), "%u", hexlen);
+	if (ret < 0)
+		goto error;
+	push_args(ctx, arg_len);
+	ret = parse_int(ctx, token, tmp, ret, NULL, 0);
+	if (ret < 0) {
+		pop_args(ctx);
+		goto error;
+	}
+	buf = (uint8_t *)ctx->object + arg_data->offset;
+	/* Output buffer is not necessarily NUL-terminated. */
+	memcpy(buf, hex_tmp, hexlen);
+	memset((uint8_t *)buf + hexlen, 0x00, size - hexlen);
+	if (ctx->objmask)
+		memset((uint8_t *)ctx->objmask + arg_data->offset,
+					0xff, hexlen);
+	/* Save address if requested. */
+	if (arg_addr->size) {
+		memcpy((uint8_t *)ctx->object + arg_addr->offset,
+		       (void *[]){
+			(uint8_t *)ctx->object + arg_data->offset
+		       },
+		       arg_addr->size);
+		if (ctx->objmask)
+			memcpy((uint8_t *)ctx->objmask + arg_addr->offset,
+			       (void *[]){
+				(uint8_t *)ctx->objmask + arg_data->offset
+			       },
+			       arg_addr->size);
+	}
+	return len;
+error:
+	push_args(ctx, arg_addr);
+	push_args(ctx, arg_len);
+	push_args(ctx, arg_data);
+	return -1;
+
+}
+
 /**
  * Parse a MAC address.
  *
@@ -4487,7 +4720,7 @@ parse_mac_addr(struct context *ctx, const struct token *token,
 	       void *buf, unsigned int size)
 {
 	const struct arg *arg = pop_args(ctx);
-	struct ether_addr tmp;
+	struct rte_ether_addr tmp;
 	int ret;
 
 	(void)token;
@@ -4694,7 +4927,7 @@ comp_boolean(struct context *ctx, const struct token *token,
 	(void)token;
 	for (i = 0; boolean_name[i]; ++i)
 		if (buf && i == ent)
-			return snprintf(buf, size, "%s", boolean_name[i]);
+			return strlcpy(buf, boolean_name[i], size);
 	if (buf)
 		return -1;
 	return i;
@@ -4711,8 +4944,8 @@ comp_action(struct context *ctx, const struct token *token,
 	(void)token;
 	for (i = 0; next_action[i]; ++i)
 		if (buf && i == ent)
-			return snprintf(buf, size, "%s",
-					token_list[next_action[i]].name);
+			return strlcpy(buf, token_list[next_action[i]].name,
+				       size);
 	if (buf)
 		return -1;
 	return i;
@@ -4776,7 +5009,7 @@ comp_vc_action_rss_type(struct context *ctx, const struct token *token,
 	if (!buf)
 		return i + 1;
 	if (ent < i)
-		return snprintf(buf, size, "%s", rss_type_table[ent].str);
+		return strlcpy(buf, rss_type_table[ent].str, size);
 	if (ent == i)
 		return snprintf(buf, size, "end");
 	return -1;
@@ -4961,7 +5194,7 @@ cmd_flow_complete_get_elt(cmdline_parse_token_hdr_t *hdr, int index,
 	if (index >= i)
 		return -1;
 	token = &token_list[list[index]];
-	snprintf(dst, size, "%s", token->name);
+	strlcpy(dst, token->name, size);
 	/* Save index for cmd_flow_get_help(). */
 	ctx->prev = list[index];
 	return 0;
@@ -4978,7 +5211,7 @@ cmd_flow_get_help(cmdline_parse_token_hdr_t *hdr, char *dst, unsigned int size)
 	if (!size)
 		return -1;
 	/* Set token type and update global help with details. */
-	snprintf(dst, size, "%s", (token->type ? token->type : "TOKEN"));
+	strlcpy(dst, (token->type ? token->type : "TOKEN"), size);
 	if (token->help)
 		cmd_flow.help_str = token->help;
 	else

@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: BSD-3-Clause
- * Copyright(c) 2001-2018
+ * Copyright(c) 2001-2019
  */
 
 #include "ice_common.h"
@@ -7,7 +7,7 @@
 
 /**
  * ice_aq_read_nvm
- * @hw: pointer to the hw struct
+ * @hw: pointer to the HW struct
  * @module_typeid: module pointer location in words from the NVM beginning
  * @offset: byte offset from the module beginning
  * @length: length of the section to be read (in bytes from the offset)
@@ -24,7 +24,7 @@ ice_aq_read_nvm(struct ice_hw *hw, u16 module_typeid, u32 offset, u16 length,
 	struct ice_aq_desc desc;
 	struct ice_aqc_nvm *cmd;
 
-	ice_debug(hw, ICE_DBG_TRACE, "ice_aq_read_nvm");
+	ice_debug(hw, ICE_DBG_TRACE, "%s\n", __func__);
 
 	cmd = &desc.params.nvm;
 
@@ -95,7 +95,7 @@ ice_read_sr_aq(struct ice_hw *hw, u32 offset, u16 words, u16 *data,
 {
 	enum ice_status status;
 
-	ice_debug(hw, ICE_DBG_TRACE, "ice_read_sr_aq");
+	ice_debug(hw, ICE_DBG_TRACE, "%s\n", __func__);
 
 	status = ice_check_sr_access_params(hw, offset, words);
 
@@ -123,11 +123,11 @@ ice_read_sr_word_aq(struct ice_hw *hw, u16 offset, u16 *data)
 {
 	enum ice_status status;
 
-	ice_debug(hw, ICE_DBG_TRACE, "ice_read_sr_word_aq");
+	ice_debug(hw, ICE_DBG_TRACE, "%s\n", __func__);
 
 	status = ice_read_sr_aq(hw, offset, 1, data, true);
 	if (!status)
-		*data = LE16_TO_CPU(*(__le16 *)data);
+		*data = LE16_TO_CPU(*(_FORCE_ __le16 *)data);
 
 	return status;
 }
@@ -152,7 +152,7 @@ ice_read_sr_buf_aq(struct ice_hw *hw, u16 offset, u16 *words, u16 *data)
 	u16 words_read = 0;
 	u16 i = 0;
 
-	ice_debug(hw, ICE_DBG_TRACE, "ice_read_sr_buf_aq");
+	ice_debug(hw, ICE_DBG_TRACE, "%s\n", __func__);
 
 	do {
 		u16 read_size, off_w;
@@ -163,9 +163,10 @@ ice_read_sr_buf_aq(struct ice_hw *hw, u16 offset, u16 *words, u16 *data)
 		 */
 		off_w = offset % ICE_SR_SECTOR_SIZE_IN_WORDS;
 		read_size = off_w ?
-			min(*words,
-			    (u16)(ICE_SR_SECTOR_SIZE_IN_WORDS - off_w)) :
-			min((*words - words_read), ICE_SR_SECTOR_SIZE_IN_WORDS);
+			MIN_T(u16, *words,
+			      (ICE_SR_SECTOR_SIZE_IN_WORDS - off_w)) :
+			MIN_T(u16, (*words - words_read),
+			      ICE_SR_SECTOR_SIZE_IN_WORDS);
 
 		/* Check if this is last command, if so set proper flag */
 		if ((words_read + read_size) >= *words)
@@ -184,7 +185,7 @@ ice_read_sr_buf_aq(struct ice_hw *hw, u16 offset, u16 *words, u16 *data)
 	} while (words_read < *words);
 
 	for (i = 0; i < *words; i++)
-		data[i] = LE16_TO_CPU(((__le16 *)data)[i]);
+		data[i] = LE16_TO_CPU(((_FORCE_ __le16 *)data)[i]);
 
 read_nvm_buf_aq_exit:
 	*words = words_read;
@@ -201,7 +202,7 @@ read_nvm_buf_aq_exit:
 static enum ice_status
 ice_acquire_nvm(struct ice_hw *hw, enum ice_aq_res_access_type access)
 {
-	ice_debug(hw, ICE_DBG_TRACE, "ice_acquire_nvm");
+	ice_debug(hw, ICE_DBG_TRACE, "ice_acquire_nvm\n");
 
 	if (hw->nvm.blank_nvm_mode)
 		return ICE_SUCCESS;
@@ -217,7 +218,7 @@ ice_acquire_nvm(struct ice_hw *hw, enum ice_aq_res_access_type access)
  */
 static void ice_release_nvm(struct ice_hw *hw)
 {
-	ice_debug(hw, ICE_DBG_TRACE, "ice_release_nvm");
+	ice_debug(hw, ICE_DBG_TRACE, "ice_release_nvm\n");
 
 	if (hw->nvm.blank_nvm_mode)
 		return;
@@ -248,7 +249,7 @@ enum ice_status ice_read_sr_word(struct ice_hw *hw, u16 offset, u16 *data)
 
 /**
  * ice_init_nvm - initializes NVM setting
- * @hw: pointer to the hw struct
+ * @hw: pointer to the HW struct
  *
  * This function reads and populates NVM settings such as Shadow RAM size,
  * max_timeout, and blank_nvm_mode
@@ -262,9 +263,9 @@ enum ice_status ice_init_nvm(struct ice_hw *hw)
 	u32 fla, gens_stat;
 	u8 sr_size;
 
-	ice_debug(hw, ICE_DBG_TRACE, "ice_init_nvm");
+	ice_debug(hw, ICE_DBG_TRACE, "%s\n", __func__);
 
-	/* The SR size is stored regardless of the nvm programming mode
+	/* The SR size is stored regardless of the NVM programming mode
 	 * as the blank mode may be used in the factory line.
 	 */
 	gens_stat = rd32(hw, GLNVM_GENS);
@@ -357,7 +358,7 @@ ice_read_sr_buf(struct ice_hw *hw, u16 offset, u16 *words, u16 *data)
 
 /**
  * ice_nvm_validate_checksum
- * @hw: pointer to the hw struct
+ * @hw: pointer to the HW struct
  *
  * Verify NVM PFA checksum validity (0x0706)
  */

@@ -65,7 +65,7 @@ In that mode the library functions perform
 
   - check SQN
   - prepare *rte_crypto_op* structure for each input packet
-  - verify that integity check and decryption performed by crypto device
+  - verify that integrity check and decryption performed by crypto device
     completed successfully
   - check padding data
   - remove outer IP header (tunnel mode) / update IP header (transport mode)
@@ -88,7 +88,7 @@ In that mode the library functions perform
 
 * for inbound packets:
 
-  - verify that integity check and decryption performed by *rte_security*
+  - verify that integrity check and decryption performed by *rte_security*
     device completed successfully
   - check SQN
   - check padding data
@@ -101,10 +101,10 @@ In that mode the library functions perform
   - generate SQN and IV
   - add outer IP header (tunnel mode) / update IP header (transport mode)
   - add ESP header and trailer, padding and IV data
-  - update *ol_flags* inside *struct  rte_mbuf* to inidicate that
+  - update *ol_flags* inside *struct  rte_mbuf* to indicate that
     inline-crypto processing has to be performed by HW on this packet
   - invoke *rte_security* device specific *set_pkt_metadata()* to associate
-    secuirty device specific data with the packet
+    security device specific data with the packet
 
 RTE_SECURITY_ACTION_TYPE_INLINE_PROTOCOL
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -113,15 +113,15 @@ In that mode the library functions perform
 
 * for inbound packets:
 
-  - verify that integity check and decryption performed by *rte_security*
+  - verify that integrity check and decryption performed by *rte_security*
     device completed successfully
 
 * for outbound packets:
 
-  - update *ol_flags* inside *struct  rte_mbuf* to inidicate that
+  - update *ol_flags* inside *struct  rte_mbuf* to indicate that
     inline-crypto processing has to be performed by HW on this packet
   - invoke *rte_security* device specific *set_pkt_metadata()* to associate
-    secuirty device specific data with the packet
+    security device specific data with the packet
 
 RTE_SECURITY_ACTION_TYPE_LOOKASIDE_PROTOCOL
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -131,7 +131,7 @@ In that mode the library functions perform
 * for inbound packets:
 
   - prepare *rte_crypto_op* structure for each input packet
-  - verify that integity check and decryption performed by crypto device
+  - verify that integrity check and decryption performed by crypto device
     completed successfully
 
 * for outbound packets:
@@ -153,7 +153,7 @@ Supported features
 
 *  ESN and replay window.
 
-*  algorithms: AES-CBC, AES-GCM, HMAC-SHA1, NULL.
+*  algorithms: 3DES-CBC, AES-CBC, AES-CTR, AES-GCM, HMAC-SHA1, NULL.
 
 
 Limitations
@@ -162,7 +162,6 @@ Limitations
 The following features are not properly supported in the current version:
 
 *  ESP transport mode for IPv6 packets with extension headers.
-*  Multi-segment packets.
 *  Updates of the fields in inner IP header for tunnel mode
    (as described in RFC 4301, section 5.1.2).
 *  Hard/soft limit for SA lifetime (time interval/byte count).

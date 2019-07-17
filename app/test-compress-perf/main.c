@@ -13,8 +13,6 @@
 
 #define NUM_MAX_XFORMS 16
 #define NUM_MAX_INFLIGHT_OPS 512
-#define EXPANSE_RATIO 1.05
-#define MIN_COMPRESSED_BUF_SIZE 8
 
 #define DIV_CEIL(a, b)  ((a) / (b) + ((a) % (b) != 0))
 
@@ -117,9 +115,34 @@ comp_perf_check_capabilities(struct comp_test_data *test_data)
 	return 0;
 }
 
+static uint32_t
+find_buf_size(uint32_t input_size)
+{
+	uint32_t i;
+
+	/* From performance point of view the buffer size should be a
+	 * power of 2 but also should be enough to store incompressible data
+	 */
+
+	/* We're looking for nearest power of 2 buffer size, which is greather
+	 * than input_size
+	 */
+	uint32_t size =
+		!input_size ? MIN_COMPRESSED_BUF_SIZE : (input_size << 1);
+
+	for (i = UINT16_MAX + 1; !(i & size); i >>= 1)
+		;
+
+	return i > ((UINT16_MAX + 1) >> 1)
+			? (uint32_t)((float)input_size * EXPANSE_RATIO)
+			: i;
+}
+
 static int
 comp_perf_allocate_memory(struct comp_test_data *test_data)
 {
+
+	test_data->out_seg_sz = find_buf_size(test_data->seg_sz);
 	/* Number of segments for input and output
 	 * (compression and decompression)
 	 */
@@ -127,7 +150,8 @@ comp_perf_allocate_memory(struct comp_test_data *test_data)
 			test_data->seg_sz);
 	test_data->comp_buf_pool = rte_pktmbuf_pool_create("comp_buf_pool",
 				total_segs,
-				0, 0, test_data->seg_sz + RTE_PKTMBUF_HEADROOM,
+				0, 0,
+				test_data->out_seg_sz + RTE_PKTMBUF_HEADROOM,
 				rte_socket_id());
 	if (test_data->comp_buf_pool == NULL) {
 		RTE_LOG(ERR, USER1, "Mbuf mempool could not be created\n");
@@ -220,7 +244,8 @@ comp_perf_dump_input_data(struct comp_test_data *test_data)
 	if (test_data->input_data_sz == 0)
 		test_data->input_data_sz = actual_file_sz;
 
-	if (fseek(f, 0, SEEK_SET) != 0) {
+	if (test_data->input_data_sz <= 0 || actual_file_sz <= 0 ||
+			fseek(f, 0, SEEK_SET) != 0) {
 		RTE_LOG(ERR, USER1, "Size of input could not be calculated\n");
 		goto end;
 	}
@@ -396,7 +421,7 @@ prepare_bufs(struct comp_test_data *test_data)
 		}
 		data_addr = (uint8_t *) rte_pktmbuf_append(
 					test_data->comp_bufs[i],
-					test_data->seg_sz);
+					test_data->out_seg_sz);
 		if (data_addr == NULL) {
 			RTE_LOG(ERR, USER1, "Could not append data\n");
 			return -1;
@@ -414,7 +439,7 @@ prepare_bufs(struct comp_test_data *test_data)
 			}
 
 			data_addr = (uint8_t *)rte_pktmbuf_append(next_seg,
-				test_data->seg_sz);
+				test_data->out_seg_sz);
 
 			if (data_addr == NULL) {
 				RTE_LOG(ERR, USER1, "Could not append data\n");
@@ -509,6 +534,9 @@ main(int argc, char **argv)
 	else
 		level = test_data->level.list[0];
 
+	printf("App uses socket: %u\n", rte_socket_id());
+	printf("Driver uses socket: %u\n",
+	       rte_compressdev_socket_id(test_data->cdev_id));
 	printf("Burst size = %u\n", test_data->burst_sz);
 	printf("File size = %zu\n", test_data->input_data_sz);
 

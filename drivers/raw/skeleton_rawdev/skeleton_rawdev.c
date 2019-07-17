@@ -583,9 +583,10 @@ skeleton_rawdev_create(const char *name,
 		goto cleanup;
 	}
 
+	ret = rawdev->dev_id; /* return the rawdev id of new device */
+
 	rawdev->dev_ops = &skeleton_rawdev_ops;
 	rawdev->device = &vdev->device;
-	rawdev->driver_name = vdev->device.driver->name;
 
 	skeldev = skeleton_rawdev_get_priv(rawdev);
 
@@ -705,6 +706,9 @@ skeleton_rawdev_probe(struct rte_vdev_device *vdev)
 
 
 	name = rte_vdev_device_name(vdev);
+	if (name == NULL)
+		return -EINVAL;
+
 	/* More than one instance is not supported */
 	if (skeldev_init_once) {
 		SKELETON_PMD_ERR("Multiple instance not supported for %s",
@@ -718,19 +722,19 @@ skeleton_rawdev_probe(struct rte_vdev_device *vdev)
 	/* In case of invalid argument, selftest != 1; ignore other values */
 
 	ret = skeleton_rawdev_create(name, vdev, rte_socket_id());
-	if (!ret) {
+	if (ret >= 0) {
 		/* In case command line argument for 'selftest' was passed;
 		 * if invalid arguments were passed, execution continues but
 		 * without selftest.
 		 */
 		if (selftest == 1)
-			test_rawdev_skeldev();
+			test_rawdev_skeldev(ret);
 	}
 
 	/* Device instance created; Second instance not possible */
 	skeldev_init_once = 1;
 
-	return ret;
+	return ret < 0 ? ret : 0;
 }
 
 static int
@@ -740,6 +744,8 @@ skeleton_rawdev_remove(struct rte_vdev_device *vdev)
 	int ret;
 
 	name = rte_vdev_device_name(vdev);
+	if (name == NULL)
+		return -1;
 
 	SKELETON_PMD_INFO("Closing %s on NUMA node %d", name, rte_socket_id());
 

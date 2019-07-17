@@ -4,6 +4,7 @@
  * All rights reserved.
  */
 
+#include <rte_string_fns.h>
 #include <rte_ethdev_driver.h>
 #include <rte_kvargs.h>
 #include <rte_log.h>
@@ -447,7 +448,7 @@ mrvl_mtu_set(struct rte_eth_dev *dev, uint16_t mtu)
 			mbuf_data_size, mtu, mru);
 	}
 
-	if (mtu < ETHER_MIN_MTU || mru > MRVL_PKT_SIZE_MAX) {
+	if (mtu < RTE_ETHER_MIN_MTU || mru > MRVL_PKT_SIZE_MAX) {
 		MRVL_LOG(ERR, "Invalid MTU [%u] or MRU [%u]", mtu, mru);
 		return -EINVAL;
 	}
@@ -1067,7 +1068,7 @@ static void
 mrvl_mac_addr_remove(struct rte_eth_dev *dev, uint32_t index)
 {
 	struct mrvl_priv *priv = dev->data->dev_private;
-	char buf[ETHER_ADDR_FMT_SIZE];
+	char buf[RTE_ETHER_ADDR_FMT_SIZE];
 	int ret;
 
 	if (!priv->ppio)
@@ -1079,7 +1080,7 @@ mrvl_mac_addr_remove(struct rte_eth_dev *dev, uint32_t index)
 	ret = pp2_ppio_remove_mac_addr(priv->ppio,
 				       dev->data->mac_addrs[index].addr_bytes);
 	if (ret) {
-		ether_format_addr(buf, sizeof(buf),
+		rte_ether_format_addr(buf, sizeof(buf),
 				  &dev->data->mac_addrs[index]);
 		MRVL_LOG(ERR, "Failed to remove mac %s", buf);
 	}
@@ -1101,11 +1102,11 @@ mrvl_mac_addr_remove(struct rte_eth_dev *dev, uint32_t index)
  *   0 on success, negative error value otherwise.
  */
 static int
-mrvl_mac_addr_add(struct rte_eth_dev *dev, struct ether_addr *mac_addr,
+mrvl_mac_addr_add(struct rte_eth_dev *dev, struct rte_ether_addr *mac_addr,
 		  uint32_t index, uint32_t vmdq __rte_unused)
 {
 	struct mrvl_priv *priv = dev->data->dev_private;
-	char buf[ETHER_ADDR_FMT_SIZE];
+	char buf[RTE_ETHER_ADDR_FMT_SIZE];
 	int ret;
 
 	if (priv->isolated)
@@ -1133,7 +1134,7 @@ mrvl_mac_addr_add(struct rte_eth_dev *dev, struct ether_addr *mac_addr,
 	 */
 	ret = pp2_ppio_add_mac_addr(priv->ppio, mac_addr->addr_bytes);
 	if (ret) {
-		ether_format_addr(buf, sizeof(buf), mac_addr);
+		rte_ether_format_addr(buf, sizeof(buf), mac_addr);
 		MRVL_LOG(ERR, "Failed to add mac %s", buf);
 		return -1;
 	}
@@ -1153,7 +1154,7 @@ mrvl_mac_addr_add(struct rte_eth_dev *dev, struct ether_addr *mac_addr,
  *   0 on success, negative error value otherwise.
  */
 static int
-mrvl_mac_addr_set(struct rte_eth_dev *dev, struct ether_addr *mac_addr)
+mrvl_mac_addr_set(struct rte_eth_dev *dev, struct rte_ether_addr *mac_addr)
 {
 	struct mrvl_priv *priv = dev->data->dev_private;
 	int ret;
@@ -1166,8 +1167,8 @@ mrvl_mac_addr_set(struct rte_eth_dev *dev, struct ether_addr *mac_addr)
 
 	ret = pp2_ppio_set_mac_addr(priv->ppio, mac_addr->addr_bytes);
 	if (ret) {
-		char buf[ETHER_ADDR_FMT_SIZE];
-		ether_format_addr(buf, sizeof(buf), mac_addr);
+		char buf[RTE_ETHER_ADDR_FMT_SIZE];
+		rte_ether_format_addr(buf, sizeof(buf), mac_addr);
 		MRVL_LOG(ERR, "Failed to set mac to %s", buf);
 	}
 
@@ -1388,8 +1389,8 @@ mrvl_xstats_get_names(struct rte_eth_dev *dev __rte_unused,
 		return RTE_DIM(mrvl_xstats_tbl);
 
 	for (i = 0; i < size && i < RTE_DIM(mrvl_xstats_tbl); i++)
-		snprintf(xstats_names[i].name, RTE_ETH_XSTATS_NAME_SIZE, "%s",
-			 mrvl_xstats_tbl[i].name);
+		strlcpy(xstats_names[i].name, mrvl_xstats_tbl[i].name,
+			RTE_ETH_XSTATS_NAME_SIZE);
 
 	return size;
 }
@@ -2786,7 +2787,7 @@ mrvl_eth_dev_create(struct rte_vdev_device *vdev, const char *name)
 
 	eth_dev->data->mac_addrs =
 		rte_zmalloc("mac_addrs",
-			    ETHER_ADDR_LEN * MRVL_MAC_ADDRS_MAX, 0);
+			    RTE_ETHER_ADDR_LEN * MRVL_MAC_ADDRS_MAX, 0);
 	if (!eth_dev->data->mac_addrs) {
 		MRVL_LOG(ERR, "Failed to allocate space for eth addrs");
 		ret = -ENOMEM;
@@ -2800,7 +2801,7 @@ mrvl_eth_dev_create(struct rte_vdev_device *vdev, const char *name)
 		goto out_free;
 
 	memcpy(eth_dev->data->mac_addrs[0].addr_bytes,
-	       req.ifr_addr.sa_data, ETHER_ADDR_LEN);
+	       req.ifr_addr.sa_data, RTE_ETHER_ADDR_LEN);
 
 	eth_dev->data->kdrv = RTE_KDRV_NONE;
 	eth_dev->device = &vdev->device;

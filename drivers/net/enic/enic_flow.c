@@ -39,6 +39,7 @@ struct copy_item_args {
 	uint8_t *inner_ofst;
 	uint8_t l2_proto_off;
 	uint8_t l3_proto_off;
+	struct enic *enic;
 };
 
 /* functions for copying items into enic filters */
@@ -359,17 +360,6 @@ static const enum rte_flow_action_type enic_supported_actions_v2_drop[] = {
 	RTE_FLOW_ACTION_TYPE_END,
 };
 
-static const enum rte_flow_action_type enic_supported_actions_v2_count[] = {
-	RTE_FLOW_ACTION_TYPE_QUEUE,
-	RTE_FLOW_ACTION_TYPE_MARK,
-	RTE_FLOW_ACTION_TYPE_FLAG,
-	RTE_FLOW_ACTION_TYPE_DROP,
-	RTE_FLOW_ACTION_TYPE_COUNT,
-	RTE_FLOW_ACTION_TYPE_RSS,
-	RTE_FLOW_ACTION_TYPE_PASSTHRU,
-	RTE_FLOW_ACTION_TYPE_END,
-};
-
 /** Action capabilities indexed by NIC version information */
 static const struct enic_action_cap enic_action_cap[] = {
 	[FILTER_ACTION_RQ_STEERING_FLAG] = {
@@ -382,10 +372,6 @@ static const struct enic_action_cap enic_action_cap[] = {
 	},
 	[FILTER_ACTION_DROP_FLAG] = {
 		.actions = enic_supported_actions_v2_drop,
-		.copy_fn = enic_copy_action_v2,
-	},
-	[FILTER_ACTION_COUNTER_FLAG] = {
-		.actions = enic_supported_actions_v2_count,
 		.copy_fn = enic_copy_action_v2,
 	},
 };
@@ -410,7 +396,7 @@ enic_copy_item_ipv4_v1(struct copy_item_args *arg)
 	const struct rte_flow_item_ipv4 *spec = item->spec;
 	const struct rte_flow_item_ipv4 *mask = item->mask;
 	struct filter_ipv4_5tuple *enic_5tup = &enic_filter->u.ipv4;
-	struct ipv4_hdr supported_mask = {
+	struct rte_ipv4_hdr supported_mask = {
 		.src_addr = 0xffffffff,
 		.dst_addr = 0xffffffff,
 	};
@@ -448,7 +434,7 @@ enic_copy_item_udp_v1(struct copy_item_args *arg)
 	const struct rte_flow_item_udp *spec = item->spec;
 	const struct rte_flow_item_udp *mask = item->mask;
 	struct filter_ipv4_5tuple *enic_5tup = &enic_filter->u.ipv4;
-	struct udp_hdr supported_mask = {
+	struct rte_udp_hdr supported_mask = {
 		.src_port = 0xffff,
 		.dst_port = 0xffff,
 	};
@@ -487,7 +473,7 @@ enic_copy_item_tcp_v1(struct copy_item_args *arg)
 	const struct rte_flow_item_tcp *spec = item->spec;
 	const struct rte_flow_item_tcp *mask = item->mask;
 	struct filter_ipv4_5tuple *enic_5tup = &enic_filter->u.ipv4;
-	struct tcp_hdr supported_mask = {
+	struct rte_tcp_hdr supported_mask = {
 		.src_port = 0xffff,
 		.dst_port = 0xffff,
 	};
@@ -571,9 +557,9 @@ enic_copy_item_inner_eth_v2(struct copy_item_args *arg)
 	FLOW_TRACE();
 	if (!mask)
 		mask = &rte_flow_item_eth_mask;
-	arg->l2_proto_off = *off + offsetof(struct ether_hdr, ether_type);
+	arg->l2_proto_off = *off + offsetof(struct rte_ether_hdr, ether_type);
 	return copy_inner_common(&arg->filter->u.generic_1, off,
-		arg->item->spec, mask, sizeof(struct ether_hdr),
+		arg->item->spec, mask, sizeof(struct rte_ether_hdr),
 		0 /* no previous protocol */, 0, 0);
 }
 
@@ -589,10 +575,10 @@ enic_copy_item_inner_vlan_v2(struct copy_item_args *arg)
 		mask = &rte_flow_item_vlan_mask;
 	/* Append vlan header to L5 and set ether type = TPID */
 	eth_type_off = arg->l2_proto_off;
-	arg->l2_proto_off = *off + offsetof(struct vlan_hdr, eth_proto);
+	arg->l2_proto_off = *off + offsetof(struct rte_vlan_hdr, eth_proto);
 	return copy_inner_common(&arg->filter->u.generic_1, off,
-		arg->item->spec, mask, sizeof(struct vlan_hdr),
-		eth_type_off, rte_cpu_to_be_16(ETHER_TYPE_VLAN), 2);
+		arg->item->spec, mask, sizeof(struct rte_vlan_hdr),
+		eth_type_off, rte_cpu_to_be_16(RTE_ETHER_TYPE_VLAN), 2);
 }
 
 static int
@@ -605,10 +591,10 @@ enic_copy_item_inner_ipv4_v2(struct copy_item_args *arg)
 	if (!mask)
 		mask = &rte_flow_item_ipv4_mask;
 	/* Append ipv4 header to L5 and set ether type = ipv4 */
-	arg->l3_proto_off = *off + offsetof(struct ipv4_hdr, next_proto_id);
+	arg->l3_proto_off = *off + offsetof(struct rte_ipv4_hdr, next_proto_id);
 	return copy_inner_common(&arg->filter->u.generic_1, off,
-		arg->item->spec, mask, sizeof(struct ipv4_hdr),
-		arg->l2_proto_off, rte_cpu_to_be_16(ETHER_TYPE_IPv4), 2);
+		arg->item->spec, mask, sizeof(struct rte_ipv4_hdr),
+		arg->l2_proto_off, rte_cpu_to_be_16(RTE_ETHER_TYPE_IPV4), 2);
 }
 
 static int
@@ -621,10 +607,10 @@ enic_copy_item_inner_ipv6_v2(struct copy_item_args *arg)
 	if (!mask)
 		mask = &rte_flow_item_ipv6_mask;
 	/* Append ipv6 header to L5 and set ether type = ipv6 */
-	arg->l3_proto_off = *off + offsetof(struct ipv6_hdr, proto);
+	arg->l3_proto_off = *off + offsetof(struct rte_ipv6_hdr, proto);
 	return copy_inner_common(&arg->filter->u.generic_1, off,
-		arg->item->spec, mask, sizeof(struct ipv6_hdr),
-		arg->l2_proto_off, rte_cpu_to_be_16(ETHER_TYPE_IPv6), 2);
+		arg->item->spec, mask, sizeof(struct rte_ipv6_hdr),
+		arg->l2_proto_off, rte_cpu_to_be_16(RTE_ETHER_TYPE_IPV6), 2);
 }
 
 static int
@@ -638,7 +624,7 @@ enic_copy_item_inner_udp_v2(struct copy_item_args *arg)
 		mask = &rte_flow_item_udp_mask;
 	/* Append udp header to L5 and set ip proto = udp */
 	return copy_inner_common(&arg->filter->u.generic_1, off,
-		arg->item->spec, mask, sizeof(struct udp_hdr),
+		arg->item->spec, mask, sizeof(struct rte_udp_hdr),
 		arg->l3_proto_off, IPPROTO_UDP, 1);
 }
 
@@ -653,7 +639,7 @@ enic_copy_item_inner_tcp_v2(struct copy_item_args *arg)
 		mask = &rte_flow_item_tcp_mask;
 	/* Append tcp header to L5 and set ip proto = tcp */
 	return copy_inner_common(&arg->filter->u.generic_1, off,
-		arg->item->spec, mask, sizeof(struct tcp_hdr),
+		arg->item->spec, mask, sizeof(struct rte_tcp_hdr),
 		arg->l3_proto_off, IPPROTO_TCP, 1);
 }
 
@@ -662,8 +648,8 @@ enic_copy_item_eth_v2(struct copy_item_args *arg)
 {
 	const struct rte_flow_item *item = arg->item;
 	struct filter_v2 *enic_filter = arg->filter;
-	struct ether_hdr enic_spec;
-	struct ether_hdr enic_mask;
+	struct rte_ether_hdr enic_spec;
+	struct rte_ether_hdr enic_mask;
 	const struct rte_flow_item_eth *spec = item->spec;
 	const struct rte_flow_item_eth *mask = item->mask;
 	struct filter_generic_1 *gp = &enic_filter->u.generic_1;
@@ -678,22 +664,22 @@ enic_copy_item_eth_v2(struct copy_item_args *arg)
 		mask = &rte_flow_item_eth_mask;
 
 	memcpy(enic_spec.d_addr.addr_bytes, spec->dst.addr_bytes,
-	       ETHER_ADDR_LEN);
+	       RTE_ETHER_ADDR_LEN);
 	memcpy(enic_spec.s_addr.addr_bytes, spec->src.addr_bytes,
-	       ETHER_ADDR_LEN);
+	       RTE_ETHER_ADDR_LEN);
 
 	memcpy(enic_mask.d_addr.addr_bytes, mask->dst.addr_bytes,
-	       ETHER_ADDR_LEN);
+	       RTE_ETHER_ADDR_LEN);
 	memcpy(enic_mask.s_addr.addr_bytes, mask->src.addr_bytes,
-	       ETHER_ADDR_LEN);
+	       RTE_ETHER_ADDR_LEN);
 	enic_spec.ether_type = spec->type;
 	enic_mask.ether_type = mask->type;
 
 	/* outer header */
 	memcpy(gp->layer[FILTER_GENERIC_1_L2].mask, &enic_mask,
-	       sizeof(struct ether_hdr));
+	       sizeof(struct rte_ether_hdr));
 	memcpy(gp->layer[FILTER_GENERIC_1_L2].val, &enic_spec,
-	       sizeof(struct ether_hdr));
+	       sizeof(struct rte_ether_hdr));
 	return 0;
 }
 
@@ -705,8 +691,8 @@ enic_copy_item_vlan_v2(struct copy_item_args *arg)
 	const struct rte_flow_item_vlan *spec = item->spec;
 	const struct rte_flow_item_vlan *mask = item->mask;
 	struct filter_generic_1 *gp = &enic_filter->u.generic_1;
-	struct ether_hdr *eth_mask;
-	struct ether_hdr *eth_val;
+	struct rte_ether_hdr *eth_mask;
+	struct rte_ether_hdr *eth_val;
 
 	FLOW_TRACE();
 
@@ -723,12 +709,26 @@ enic_copy_item_vlan_v2(struct copy_item_args *arg)
 	if (eth_mask->ether_type)
 		return ENOTSUP;
 	/*
+	 * For recent models:
 	 * When packet matching, the VIC always compares vlan-stripped
 	 * L2, regardless of vlan stripping settings. So, the inner type
 	 * from vlan becomes the ether type of the eth header.
+	 *
+	 * Older models w/o hardware vxlan parser have a different
+	 * behavior when vlan stripping is disabled. In this case,
+	 * vlan tag remains in the L2 buffer.
 	 */
-	eth_mask->ether_type = mask->inner_type;
-	eth_val->ether_type = spec->inner_type;
+	if (!arg->enic->vxlan && !arg->enic->ig_vlan_strip_en) {
+		struct rte_vlan_hdr *vlan;
+
+		vlan = (struct rte_vlan_hdr *)(eth_mask + 1);
+		vlan->eth_proto = mask->inner_type;
+		vlan = (struct rte_vlan_hdr *)(eth_val + 1);
+		vlan->eth_proto = spec->inner_type;
+	} else {
+		eth_mask->ether_type = mask->inner_type;
+		eth_val->ether_type = spec->inner_type;
+	}
 	/* For TCI, use the vlan mask/val fields (little endian). */
 	gp->mask_vlan = rte_be_to_cpu_16(mask->tci);
 	gp->val_vlan = rte_be_to_cpu_16(spec->tci);
@@ -758,9 +758,9 @@ enic_copy_item_ipv4_v2(struct copy_item_args *arg)
 		mask = &rte_flow_item_ipv4_mask;
 
 	memcpy(gp->layer[FILTER_GENERIC_1_L3].mask, &mask->hdr,
-	       sizeof(struct ipv4_hdr));
+	       sizeof(struct rte_ipv4_hdr));
 	memcpy(gp->layer[FILTER_GENERIC_1_L3].val, &spec->hdr,
-	       sizeof(struct ipv4_hdr));
+	       sizeof(struct rte_ipv4_hdr));
 	return 0;
 }
 
@@ -787,9 +787,9 @@ enic_copy_item_ipv6_v2(struct copy_item_args *arg)
 		mask = &rte_flow_item_ipv6_mask;
 
 	memcpy(gp->layer[FILTER_GENERIC_1_L3].mask, &mask->hdr,
-	       sizeof(struct ipv6_hdr));
+	       sizeof(struct rte_ipv6_hdr));
 	memcpy(gp->layer[FILTER_GENERIC_1_L3].val, &spec->hdr,
-	       sizeof(struct ipv6_hdr));
+	       sizeof(struct rte_ipv6_hdr));
 	return 0;
 }
 
@@ -816,9 +816,9 @@ enic_copy_item_udp_v2(struct copy_item_args *arg)
 		mask = &rte_flow_item_udp_mask;
 
 	memcpy(gp->layer[FILTER_GENERIC_1_L4].mask, &mask->hdr,
-	       sizeof(struct udp_hdr));
+	       sizeof(struct rte_udp_hdr));
 	memcpy(gp->layer[FILTER_GENERIC_1_L4].val, &spec->hdr,
-	       sizeof(struct udp_hdr));
+	       sizeof(struct rte_udp_hdr));
 	return 0;
 }
 
@@ -845,9 +845,9 @@ enic_copy_item_tcp_v2(struct copy_item_args *arg)
 		return ENOTSUP;
 
 	memcpy(gp->layer[FILTER_GENERIC_1_L4].mask, &mask->hdr,
-	       sizeof(struct tcp_hdr));
+	       sizeof(struct rte_tcp_hdr));
 	memcpy(gp->layer[FILTER_GENERIC_1_L4].val, &spec->hdr,
-	       sizeof(struct tcp_hdr));
+	       sizeof(struct rte_tcp_hdr));
 	return 0;
 }
 
@@ -869,16 +869,16 @@ enic_copy_item_sctp_v2(struct copy_item_args *arg)
 	 * the protocol number in the IP pattern.
 	 */
 	if (gp->val_flags & FILTER_GENERIC_1_IPV4) {
-		struct ipv4_hdr *ip;
-		ip = (struct ipv4_hdr *)gp->layer[FILTER_GENERIC_1_L3].mask;
+		struct rte_ipv4_hdr *ip;
+		ip = (struct rte_ipv4_hdr *)gp->layer[FILTER_GENERIC_1_L3].mask;
 		ip_proto_mask = &ip->next_proto_id;
-		ip = (struct ipv4_hdr *)gp->layer[FILTER_GENERIC_1_L3].val;
+		ip = (struct rte_ipv4_hdr *)gp->layer[FILTER_GENERIC_1_L3].val;
 		ip_proto = &ip->next_proto_id;
 	} else if (gp->val_flags & FILTER_GENERIC_1_IPV6) {
-		struct ipv6_hdr *ip;
-		ip = (struct ipv6_hdr *)gp->layer[FILTER_GENERIC_1_L3].mask;
+		struct rte_ipv6_hdr *ip;
+		ip = (struct rte_ipv6_hdr *)gp->layer[FILTER_GENERIC_1_L3].mask;
 		ip_proto_mask = &ip->proto;
-		ip = (struct ipv6_hdr *)gp->layer[FILTER_GENERIC_1_L3].val;
+		ip = (struct rte_ipv6_hdr *)gp->layer[FILTER_GENERIC_1_L3].val;
 		ip_proto = &ip->proto;
 	} else {
 		/* Need IPv4/IPv6 pattern first */
@@ -895,9 +895,9 @@ enic_copy_item_sctp_v2(struct copy_item_args *arg)
 		mask = &rte_flow_item_sctp_mask;
 
 	memcpy(gp->layer[FILTER_GENERIC_1_L4].mask, &mask->hdr,
-	       sizeof(struct sctp_hdr));
+	       sizeof(struct rte_sctp_hdr));
 	memcpy(gp->layer[FILTER_GENERIC_1_L4].val, &spec->hdr,
-	       sizeof(struct sctp_hdr));
+	       sizeof(struct rte_sctp_hdr));
 	return 0;
 }
 
@@ -910,7 +910,7 @@ enic_copy_item_vxlan_v2(struct copy_item_args *arg)
 	const struct rte_flow_item_vxlan *spec = item->spec;
 	const struct rte_flow_item_vxlan *mask = item->mask;
 	struct filter_generic_1 *gp = &enic_filter->u.generic_1;
-	struct udp_hdr *udp;
+	struct rte_udp_hdr *udp;
 
 	FLOW_TRACE();
 
@@ -920,9 +920,9 @@ enic_copy_item_vxlan_v2(struct copy_item_args *arg)
 	 */
 	gp->mask_flags |= FILTER_GENERIC_1_UDP;
 	gp->val_flags |= FILTER_GENERIC_1_UDP;
-	udp = (struct udp_hdr *)gp->layer[FILTER_GENERIC_1_L4].mask;
+	udp = (struct rte_udp_hdr *)gp->layer[FILTER_GENERIC_1_L4].mask;
 	udp->dst_port = 0xffff;
-	udp = (struct udp_hdr *)gp->layer[FILTER_GENERIC_1_L4].val;
+	udp = (struct rte_udp_hdr *)gp->layer[FILTER_GENERIC_1_L4].val;
 	udp->dst_port = RTE_BE16(4789);
 	/* Match all if no spec */
 	if (!spec)
@@ -932,11 +932,11 @@ enic_copy_item_vxlan_v2(struct copy_item_args *arg)
 		mask = &rte_flow_item_vxlan_mask;
 
 	memcpy(gp->layer[FILTER_GENERIC_1_L5].mask, mask,
-	       sizeof(struct vxlan_hdr));
+	       sizeof(struct rte_vxlan_hdr));
 	memcpy(gp->layer[FILTER_GENERIC_1_L5].val, spec,
-	       sizeof(struct vxlan_hdr));
+	       sizeof(struct rte_vxlan_hdr));
 
-	*inner_ofst = sizeof(struct vxlan_hdr);
+	*inner_ofst = sizeof(struct rte_vxlan_hdr);
 	return 0;
 }
 
@@ -967,7 +967,8 @@ enic_copy_item_raw_v2(struct copy_item_args *arg)
 	if (!spec->relative || spec->offset != 0 || spec->search || spec->limit)
 		return EINVAL;
 	/* Need non-null pattern that fits within the NIC's filter pattern */
-	if (spec->length == 0 || spec->length > FILTER_GENERIC_1_KEY_LEN ||
+	if (spec->length == 0 ||
+	    spec->length + sizeof(struct rte_udp_hdr) > FILTER_GENERIC_1_KEY_LEN ||
 	    !spec->pattern || !mask->pattern)
 		return EINVAL;
 	/*
@@ -980,9 +981,9 @@ enic_copy_item_raw_v2(struct copy_item_args *arg)
 	 */
 	if (mask->length != 0 && mask->length < spec->length)
 		return EINVAL;
-	memcpy(gp->layer[FILTER_GENERIC_1_L4].mask + sizeof(struct udp_hdr),
+	memcpy(gp->layer[FILTER_GENERIC_1_L4].mask + sizeof(struct rte_udp_hdr),
 	       mask->pattern, spec->length);
-	memcpy(gp->layer[FILTER_GENERIC_1_L4].val + sizeof(struct udp_hdr),
+	memcpy(gp->layer[FILTER_GENERIC_1_L4].val + sizeof(struct rte_udp_hdr),
 	       spec->pattern, spec->length);
 
 	return 0;
@@ -1035,10 +1036,10 @@ fixup_l5_layer(struct enic *enic, struct filter_generic_1 *gp,
 	if (!(inner_ofst > 0 && enic->vxlan))
 		return;
 	FLOW_TRACE();
-	vxlan = sizeof(struct vxlan_hdr);
-	memcpy(gp->layer[FILTER_GENERIC_1_L4].mask + sizeof(struct udp_hdr),
+	vxlan = sizeof(struct rte_vxlan_hdr);
+	memcpy(gp->layer[FILTER_GENERIC_1_L4].mask + sizeof(struct rte_udp_hdr),
 	       gp->layer[FILTER_GENERIC_1_L5].mask, vxlan);
-	memcpy(gp->layer[FILTER_GENERIC_1_L4].val + sizeof(struct udp_hdr),
+	memcpy(gp->layer[FILTER_GENERIC_1_L4].val + sizeof(struct rte_udp_hdr),
 	       gp->layer[FILTER_GENERIC_1_L5].val, vxlan);
 	inner = inner_ofst - vxlan;
 	memset(layer, 0, sizeof(layer));
@@ -1082,6 +1083,7 @@ enic_copy_filter(const struct rte_flow_item pattern[],
 
 	args.filter = enic_filter;
 	args.inner_ofst = &inner_ofst;
+	args.enic = enic;
 	for (; item->type != RTE_FLOW_ITEM_TYPE_END; item++) {
 		/* Get info about how to validate and copy the item. If NULL
 		 * is returned the nic does not support the item.
@@ -1248,10 +1250,6 @@ enic_copy_action_v2(struct enic *enic,
 			enic_action->flags |= FILTER_ACTION_DROP_FLAG;
 			break;
 		}
-		case RTE_FLOW_ACTION_TYPE_COUNT: {
-			enic_action->flags |= FILTER_ACTION_COUNTER_FLAG;
-			break;
-		}
 		case RTE_FLOW_ACTION_TYPE_RSS: {
 			const struct rte_flow_action_rss *rss =
 				(const struct rte_flow_action_rss *)
@@ -1343,9 +1341,7 @@ enic_get_action_cap(struct enic *enic)
 	uint8_t actions;
 
 	actions = enic->filter_actions;
-	if (actions & FILTER_ACTION_COUNTER_FLAG)
-		ea = &enic_action_cap[FILTER_ACTION_COUNTER_FLAG];
-	else if (actions & FILTER_ACTION_DROP_FLAG)
+	if (actions & FILTER_ACTION_DROP_FLAG)
 		ea = &enic_action_cap[FILTER_ACTION_DROP_FLAG];
 	else if (actions & FILTER_ACTION_FILTER_ID_FLAG)
 		ea = &enic_action_cap[FILTER_ACTION_FILTER_ID_FLAG];
@@ -1629,9 +1625,7 @@ enic_flow_add_filter(struct enic *enic, struct filter_v2 *enic_filter,
 {
 	struct rte_flow *flow;
 	int err;
-	uint16_t entry;
-	int ctr_idx;
-	int last_max_flow_ctr;
+	u16 entry;
 
 	FLOW_TRACE();
 
@@ -1642,34 +1636,6 @@ enic_flow_add_filter(struct enic *enic, struct filter_v2 *enic_filter,
 		return NULL;
 	}
 
-	flow->counter_idx = -1;
-	last_max_flow_ctr = -1;
-	if (enic_action->flags & FILTER_ACTION_COUNTER_FLAG) {
-		if (!vnic_dev_counter_alloc(enic->vdev, (uint32_t *)&ctr_idx)) {
-			rte_flow_error_set(error, ENOMEM,
-					   RTE_FLOW_ERROR_TYPE_ACTION_CONF,
-					   NULL, "cannot allocate counter");
-			goto unwind_flow_alloc;
-		}
-		flow->counter_idx = ctr_idx;
-		enic_action->counter_index = ctr_idx;
-
-		/* If index is the largest, increase the counter DMA size */
-		if (ctr_idx > enic->max_flow_counter) {
-			err = vnic_dev_counter_dma_cfg(enic->vdev,
-						 VNIC_FLOW_COUNTER_UPDATE_MSECS,
-						 ctr_idx + 1);
-			if (err) {
-				rte_flow_error_set(error, -err,
-					   RTE_FLOW_ERROR_TYPE_ACTION_CONF,
-					   NULL, "counter DMA config failed");
-				goto unwind_ctr_alloc;
-			}
-			last_max_flow_ctr = enic->max_flow_counter;
-			enic->max_flow_counter = ctr_idx;
-		}
-	}
-
 	/* entry[in] is the queue id, entry[out] is the filter Id for delete */
 	entry = enic_action->rq_idx;
 	err = vnic_dev_classifier(enic->vdev, CLSF_ADD, &entry, enic_filter,
@@ -1677,29 +1643,13 @@ enic_flow_add_filter(struct enic *enic, struct filter_v2 *enic_filter,
 	if (err) {
 		rte_flow_error_set(error, -err, RTE_FLOW_ERROR_TYPE_HANDLE,
 				   NULL, "vnic_dev_classifier error");
-		goto unwind_ctr_dma_cfg;
+		rte_free(flow);
+		return NULL;
 	}
 
 	flow->enic_filter_id = entry;
 	flow->enic_filter = *enic_filter;
-
 	return flow;
-
-/* unwind if there are errors */
-unwind_ctr_dma_cfg:
-	if (last_max_flow_ctr != -1) {
-		/* reduce counter DMA size */
-		vnic_dev_counter_dma_cfg(enic->vdev,
-					 VNIC_FLOW_COUNTER_UPDATE_MSECS,
-					 last_max_flow_ctr + 1);
-		enic->max_flow_counter = last_max_flow_ctr;
-	}
-unwind_ctr_alloc:
-	if (flow->counter_idx != -1)
-		vnic_dev_counter_free(enic->vdev, ctr_idx);
-unwind_flow_alloc:
-	rte_free(flow);
-	return NULL;
 }
 
 /**
@@ -1728,13 +1678,6 @@ enic_flow_del_filter(struct enic *enic, struct rte_flow *flow,
 		rte_flow_error_set(error, -err, RTE_FLOW_ERROR_TYPE_HANDLE,
 				   NULL, "vnic_dev_classifier failed");
 		return -err;
-	}
-
-	if (flow->counter_idx != -1) {
-		if (!vnic_dev_counter_free(enic->vdev, flow->counter_idx))
-			dev_err(enic, "counter free failed, idx: %d\n",
-				flow->counter_idx);
-		flow->counter_idx = -1;
 	}
 	return 0;
 }
@@ -1794,12 +1737,10 @@ enic_flow_create(struct rte_eth_dev *dev,
 	if (ret < 0)
 		return NULL;
 
-	rte_spinlock_lock(&enic->flows_lock);
 	flow = enic_flow_add_filter(enic, &enic_filter, &enic_action,
 				    error);
 	if (flow)
 		LIST_INSERT_HEAD(&enic->flows, flow, next);
-	rte_spinlock_unlock(&enic->flows_lock);
 
 	return flow;
 }
@@ -1818,10 +1759,8 @@ enic_flow_destroy(struct rte_eth_dev *dev, struct rte_flow *flow,
 
 	FLOW_TRACE();
 
-	rte_spinlock_lock(&enic->flows_lock);
 	enic_flow_del_filter(enic, flow, error);
 	LIST_REMOVE(flow, next);
-	rte_spinlock_unlock(&enic->flows_lock);
 	rte_free(flow);
 	return 0;
 }
@@ -1840,77 +1779,12 @@ enic_flow_flush(struct rte_eth_dev *dev, struct rte_flow_error *error)
 
 	FLOW_TRACE();
 
-	rte_spinlock_lock(&enic->flows_lock);
 
 	while (!LIST_EMPTY(&enic->flows)) {
 		flow = LIST_FIRST(&enic->flows);
 		enic_flow_del_filter(enic, flow, error);
 		LIST_REMOVE(flow, next);
 		rte_free(flow);
-	}
-	rte_spinlock_unlock(&enic->flows_lock);
-	return 0;
-}
-
-static int
-enic_flow_query_count(struct rte_eth_dev *dev,
-		      struct rte_flow *flow, void *data,
-		      struct rte_flow_error *error)
-{
-	struct enic *enic = pmd_priv(dev);
-	struct rte_flow_query_count *query;
-	uint64_t packets, bytes;
-
-	FLOW_TRACE();
-
-	if (flow->counter_idx == -1) {
-		return rte_flow_error_set(error, ENOTSUP,
-					  RTE_FLOW_ERROR_TYPE_UNSPECIFIED,
-					  NULL,
-					  "flow does not have counter");
-	}
-	query = (struct rte_flow_query_count *)data;
-	if (!vnic_dev_counter_query(enic->vdev, flow->counter_idx,
-				    !!query->reset, &packets, &bytes)) {
-		return rte_flow_error_set
-			(error, EINVAL,
-			 RTE_FLOW_ERROR_TYPE_UNSPECIFIED,
-			 NULL,
-			 "cannot read counter");
-	}
-	query->hits_set = 1;
-	query->bytes_set = 1;
-	query->hits = packets;
-	query->bytes = bytes;
-	return 0;
-}
-
-static int
-enic_flow_query(struct rte_eth_dev *dev,
-		struct rte_flow *flow,
-		const struct rte_flow_action *actions,
-		void *data,
-		struct rte_flow_error *error)
-{
-	int ret = 0;
-
-	FLOW_TRACE();
-
-	for (; actions->type != RTE_FLOW_ACTION_TYPE_END; actions++) {
-		switch (actions->type) {
-		case RTE_FLOW_ACTION_TYPE_VOID:
-			break;
-		case RTE_FLOW_ACTION_TYPE_COUNT:
-			ret = enic_flow_query_count(dev, flow, data, error);
-			break;
-		default:
-			return rte_flow_error_set(error, ENOTSUP,
-						  RTE_FLOW_ERROR_TYPE_ACTION,
-						  actions,
-						  "action not supported");
-		}
-		if (ret < 0)
-			return ret;
 	}
 	return 0;
 }
@@ -1925,5 +1799,4 @@ const struct rte_flow_ops enic_flow_ops = {
 	.create = enic_flow_create,
 	.destroy = enic_flow_destroy,
 	.flush = enic_flow_flush,
-	.query = enic_flow_query,
 };

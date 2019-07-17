@@ -32,13 +32,13 @@ if len(sys.argv) > 3:
     else:
         test_whitelist = testlist
 
-cmdline = "%s -c f -n 4" % (sys.argv[1])
+cmdline = "%s -c f" % (sys.argv[1])
 
 print(cmdline)
 
 # how many workers to run tests with. FreeBSD doesn't support multiple primary
 # processes, so make it 1, otherwise make it 4. ignored for non-parallel tests
-n_processes = 1 if "bsdapp" in target else 4
+n_processes = 1 if "bsd" in target else 4
 
 runner = autotest_runner.AutotestRunner(cmdline, target, test_blacklist,
                                         test_whitelist, n_processes)

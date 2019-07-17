@@ -25,6 +25,8 @@ extern "C" {
 #include <rte_mempool.h>
 #include <rte_common.h>
 
+#include "rte_crypto_sym.h"
+
 typedef struct rte_crypto_param_t {
 	uint8_t *data;
 	/**< pointer to buffer holding data */
@@ -112,15 +114,15 @@ enum rte_crypto_rsa_padding_type {
 	/**< RSA no padding scheme */
 	RTE_CRYPTO_RSA_PKCS1_V1_5_BT0,
 	/**< RSA PKCS#1 V1.5 Block Type 0 padding scheme
-	 * as descibed in rfc2313
+	 * as described in rfc2313
 	 */
 	RTE_CRYPTO_RSA_PKCS1_V1_5_BT1,
 	/**< RSA PKCS#1 V1.5 Block Type 01 padding scheme
-	 * as descibed in rfc2313
+	 * as described in rfc2313
 	 */
 	RTE_CRYPTO_RSA_PKCS1_V1_5_BT2,
 	/**< RSA PKCS#1 V1.5 Block Type 02 padding scheme
-	 * as descibed in rfc2313
+	 * as described in rfc2313
 	 */
 	RTE_CRYPTO_RSA_PADDING_OAEP,
 	/**< RSA PKCS#1 OAEP padding scheme */
@@ -227,7 +229,7 @@ struct rte_crypto_rsa_xform {
 /**
  * Asymmetric Modular exponentiation transform data
  *
- * Structure describing modular exponentation xform param
+ * Structure describing modular exponentiation xform param
  *
  */
 struct rte_crypto_modex_xform {
@@ -280,7 +282,7 @@ struct rte_crypto_dh_xform {
 
 	rte_crypto_param p;
 	/**< p : Prime modulus data
-	 * DH prime modulous data in octet-string network byte order format.
+	 * DH prime modulus data in octet-string network byte order format.
 	 *
 	 */
 
@@ -338,6 +340,16 @@ struct rte_crypto_mod_op_param {
 	 * In case Multiplicative Inverse is used this number shall
 	 * be relatively prime to modulus in corresponding Modular
 	 * Multiplicative Inverse rte_crypto_modinv_xform
+	 */
+
+	rte_crypto_param result;
+	/**<
+	 * Pointer to the result of modular exponentiation/multiplicative inverse
+	 * data in octet-string network byte order format.
+	 *
+	 * This field shall be big enough to hold the result of Modular
+	 * Exponentiation or Modular Multiplicative Inverse
+	 * (bigger or equal to length of modulus)
 	 */
 };
 
@@ -500,7 +512,7 @@ struct rte_crypto_asym_op {
 		struct rte_crypto_dh_op_param dh;
 		struct rte_crypto_dsa_op_param dsa;
 	};
-} __rte_cache_aligned;
+};
 
 #ifdef __cplusplus
 }

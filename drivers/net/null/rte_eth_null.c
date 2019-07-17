@@ -73,7 +73,7 @@ struct pmd_internals {
 	struct null_queue rx_null_queues[RTE_MAX_QUEUES_PER_PORT];
 	struct null_queue tx_null_queues[RTE_MAX_QUEUES_PER_PORT];
 
-	struct ether_addr eth_addr;
+	struct rte_ether_addr eth_addr;
 	/** Bit mask of RSS offloads, the bit offset also means flow type */
 	uint64_t flow_type_rss_offloads;
 
@@ -333,10 +333,8 @@ eth_stats_get(struct rte_eth_dev *dev, struct rte_eth_stats *igb_stats)
 	for (i = 0; i < num_stats; i++) {
 		igb_stats->q_opackets[i] =
 			internal->tx_null_queues[i].tx_pkts.cnt;
-		igb_stats->q_errors[i] =
-			internal->tx_null_queues[i].err_pkts.cnt;
 		tx_total += igb_stats->q_opackets[i];
-		tx_err_total += igb_stats->q_errors[i];
+		tx_err_total += internal->tx_null_queues[i].err_pkts.cnt;
 	}
 
 	igb_stats->ipackets = rx_total;
@@ -467,7 +465,7 @@ eth_rss_hash_conf_get(struct rte_eth_dev *dev,
 
 static int
 eth_mac_address_set(__rte_unused struct rte_eth_dev *dev,
-		    __rte_unused struct ether_addr *addr)
+		    __rte_unused struct rte_ether_addr *addr)
 {
 	return 0;
 }
@@ -535,7 +533,7 @@ eth_dev_null_create(struct rte_vdev_device *dev,
 	internals->packet_size = packet_size;
 	internals->packet_copy = packet_copy;
 	internals->port_id = eth_dev->data->port_id;
-	eth_random_addr(internals->eth_addr.addr_bytes);
+	rte_eth_random_addr(internals->eth_addr.addr_bytes);
 
 	internals->flow_type_rss_offloads =  ETH_RSS_PROTO_MASK;
 	internals->reta_size = RTE_DIM(internals->reta_conf) * RTE_RETA_GROUP_SIZE;

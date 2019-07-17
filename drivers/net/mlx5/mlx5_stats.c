@@ -140,18 +140,22 @@ static inline void
 mlx5_read_ib_stat(struct mlx5_priv *priv, const char *ctr_name, uint64_t *stat)
 {
 	FILE *file;
-	MKSTR(path, "%s/ports/1/hw_counters/%s",
-		  priv->ibdev_path,
-		  ctr_name);
+	if (priv->sh) {
+		MKSTR(path, "%s/ports/%d/hw_counters/%s",
+			  priv->sh->ibdev_path,
+			  priv->ibv_port,
+			  ctr_name);
 
-	file = fopen(path, "rb");
-	if (file) {
-		int n = fscanf(file, "%" SCNu64, stat);
+		file = fopen(path, "rb");
+		if (file) {
+			int n = fscanf(file, "%" SCNu64, stat);
 
-		fclose(file);
-		if (n != 1)
-			stat = 0;
+			fclose(file);
+			if (n == 1)
+				return;
+		}
 	}
+	*stat = 0;
 }
 
 /**
@@ -382,7 +386,7 @@ mlx5_stats_get(struct rte_eth_dev *dev, struct rte_eth_stats *stats)
 
 		if (rxq == NULL)
 			continue;
-		idx = rxq->stats.idx;
+		idx = rxq->idx;
 		if (idx < RTE_ETHDEV_QUEUE_STAT_CNTRS) {
 #ifdef MLX5_PMD_SOFT_COUNTERS
 			tmp.q_ipackets[idx] += rxq->stats.ipackets;
@@ -403,13 +407,12 @@ mlx5_stats_get(struct rte_eth_dev *dev, struct rte_eth_stats *stats)
 
 		if (txq == NULL)
 			continue;
-		idx = txq->stats.idx;
+		idx = txq->idx;
 		if (idx < RTE_ETHDEV_QUEUE_STAT_CNTRS) {
 #ifdef MLX5_PMD_SOFT_COUNTERS
 			tmp.q_opackets[idx] += txq->stats.opackets;
 			tmp.q_obytes[idx] += txq->stats.obytes;
 #endif
-			tmp.q_errors[idx] += txq->stats.oerrors;
 		}
 #ifdef MLX5_PMD_SOFT_COUNTERS
 		tmp.opackets += txq->stats.opackets;
@@ -438,21 +441,18 @@ mlx5_stats_reset(struct rte_eth_dev *dev)
 	struct mlx5_priv *priv = dev->data->dev_private;
 	struct mlx5_stats_ctrl *stats_ctrl = &priv->stats_ctrl;
 	unsigned int i;
-	unsigned int idx;
 
 	for (i = 0; (i != priv->rxqs_n); ++i) {
 		if ((*priv->rxqs)[i] == NULL)
 			continue;
-		idx = (*priv->rxqs)[i]->stats.idx;
-		(*priv->rxqs)[i]->stats =
-			(struct mlx5_rxq_stats){ .idx = idx };
+		memset(&(*priv->rxqs)[i]->stats, 0,
+		       sizeof(struct mlx5_rxq_stats));
 	}
 	for (i = 0; (i != priv->txqs_n); ++i) {
 		if ((*priv->txqs)[i] == NULL)
 			continue;
-		idx = (*priv->txqs)[i]->stats.idx;
-		(*priv->txqs)[i]->stats =
-			(struct mlx5_txq_stats){ .idx = idx };
+		memset(&(*priv->txqs)[i]->stats, 0,
+		       sizeof(struct mlx5_txq_stats));
 	}
 	mlx5_read_ib_stat(priv, "out_of_buffer", &stats_ctrl->imissed_base);
 #ifndef MLX5_PMD_SOFT_COUNTERS

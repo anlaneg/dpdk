@@ -1,12 +1,12 @@
 /* SPDX-License-Identifier: BSD-3-Clause
- * Copyright(c) 2001-2018
+ * Copyright(c) 2001-2019
  */
 
 #ifndef _ICE_LAN_TX_RX_H_
 #define _ICE_LAN_TX_RX_H_
 #include "ice_osdep.h"
 
-/* RX Descriptors */
+/* Rx Descriptors */
 union ice_16byte_rx_desc {
 	struct {
 		__le64 pkt_addr; /* Packet buffer address */
@@ -20,7 +20,7 @@ union ice_16byte_rx_desc {
 			} lo_dword;
 			union {
 				__le32 rss; /* RSS Hash */
-				__le32 fd_id; /* Flow Director filter id */
+				__le32 fd_id; /* Flow Director filter ID */
 			} hi_dword;
 		} qword0;
 		struct {
@@ -46,7 +46,7 @@ union ice_32byte_rx_desc {
 			} lo_dword;
 			union {
 				__le32 rss; /* RSS Hash */
-				__le32 fd_id; /* Flow Director filter id */
+				__le32 fd_id; /* Flow Director filter ID */
 			} hi_dword;
 		} qword0;
 		struct {
@@ -162,7 +162,7 @@ struct ice_fltr_desc {
 
 #define ICE_FXD_FLTR_QW1_FDID_PRI_S	25
 #define ICE_FXD_FLTR_QW1_FDID_PRI_M	(0x7ULL << ICE_FXD_FLTR_QW1_FDID_PRI_S)
-#define ICE_FXD_FLTR_QW1_FDID_PRI_ZERO	0x0ULL
+#define ICE_FXD_FLTR_QW1_FDID_PRI_ONE	0x1ULL
 
 #define ICE_FXD_FLTR_QW1_FDID_MDID_S	28
 #define ICE_FXD_FLTR_QW1_FDID_MDID_M	(0xFULL << ICE_FXD_FLTR_QW1_FDID_MDID_S)
@@ -181,15 +181,15 @@ enum ice_rx_desc_status_bits {
 	ICE_RX_DESC_STATUS_L2TAG1P_S		= 2,
 	ICE_RX_DESC_STATUS_L3L4P_S		= 3,
 	ICE_RX_DESC_STATUS_CRCP_S		= 4,
-	ICE_RX_DESC_STATUS_TSYNINDX_S		= 5, /* 2 BITS */
+	ICE_RX_DESC_STATUS_TSYNINDX_S		= 5,
 	ICE_RX_DESC_STATUS_TSYNVALID_S		= 7,
 	ICE_RX_DESC_STATUS_EXT_UDP_0_S		= 8,
-	ICE_RX_DESC_STATUS_UMBCAST_S		= 9, /* 2 BITS */
+	ICE_RX_DESC_STATUS_UMBCAST_S		= 9,
 	ICE_RX_DESC_STATUS_FLM_S		= 11,
-	ICE_RX_DESC_STATUS_FLTSTAT_S		= 12, /* 2 BITS */
+	ICE_RX_DESC_STATUS_FLTSTAT_S		= 12,
 	ICE_RX_DESC_STATUS_LPBK_S		= 14,
 	ICE_RX_DESC_STATUS_IPV6EXADD_S		= 15,
-	ICE_RX_DESC_STATUS_RESERVED2_S		= 16, /* 2 BITS */
+	ICE_RX_DESC_STATUS_RESERVED2_S		= 16,
 	ICE_RX_DESC_STATUS_INT_UDP_0_S		= 18,
 	ICE_RX_DESC_STATUS_LAST /* this entry must be last!!! */
 };
@@ -325,8 +325,8 @@ enum ice_rx_desc_ext_status_bits {
 	/* Note: These are predefined bit offsets */
 	ICE_RX_DESC_EXT_STATUS_L2TAG2P_S	= 0,
 	ICE_RX_DESC_EXT_STATUS_L2TAG3P_S	= 1,
-	ICE_RX_DESC_EXT_STATUS_FLEXBL_S		= 2, /* 2 BITS */
-	ICE_RX_DESC_EXT_STATUS_FLEXBH_S		= 4, /* 2 BITS */
+	ICE_RX_DESC_EXT_STATUS_FLEXBL_S		= 2,
+	ICE_RX_DESC_EXT_STATUS_FLEXBH_S		= 4,
 	ICE_RX_DESC_EXT_STATUS_FDLONGB_S	= 9,
 	ICE_RX_DESC_EXT_STATUS_PELONGB_S	= 11,
 };
@@ -373,7 +373,7 @@ enum ice_rx_prog_status_desc_error_bits {
 	ICE_RX_PROG_STATUS_DESC_NO_FD_ENTRY_S	= 1,
 };
 
-/* RX Flex Descriptor
+/* Rx Flex Descriptor
  * This descriptor is used instead of the legacy version descriptor when
  * ice_rlan_ctx.adv_desc is set
  */
@@ -387,7 +387,7 @@ union ice_32b_rx_flex_desc {
 	} read;
 	struct {
 		/* Qword 0 */
-		u8 rxdid; /* descriptor builder profile id */
+		u8 rxdid; /* descriptor builder profile ID */
 		u8 mir_id_umb_cast; /* mirror=[5:0], umb=[7:6] */
 		__le16 ptype_flex_flags0; /* ptype=[9:0], ff0=[15:10] */
 		__le16 pkt_len; /* [15:14] are reserved */
@@ -422,12 +422,12 @@ union ice_32b_rx_flex_desc {
 };
 
 /* Rx Flex Descriptor NIC Profile
- * RxDID Profile Id 2
+ * RxDID Profile ID 2
  * Flex-field 0: RSS hash lower 16-bits
  * Flex-field 1: RSS hash upper 16-bits
- * Flex-field 2: Flow Id lower 16-bits
- * Flex-field 3: Flow Id higher 16-bits
- * Flex-field 4: reserved, Vlan id taken from L2Tag
+ * Flex-field 2: Flow ID lower 16-bits
+ * Flex-field 3: Flow ID higher 16-bits
+ * Flex-field 4: reserved, VLAN ID taken from L2Tag
  */
 struct ice_32b_rx_flex_desc_nic {
 	/* Qword 0 */
@@ -461,8 +461,8 @@ struct ice_32b_rx_flex_desc_nic {
 };
 
 /* Rx Flex Descriptor Switch Profile
- * RxDID Profile Id 3
- * Flex-field 0: Source Vsi
+ * RxDID Profile ID 3
+ * Flex-field 0: Source VSI
  */
 struct ice_32b_rx_flex_desc_sw {
 	/* Qword 0 */
@@ -491,8 +491,8 @@ struct ice_32b_rx_flex_desc_sw {
 };
 
 /* Rx Flex Descriptor NIC VEB Profile
- * RxDID Profile Id 4
- * Flex-field 0: Destination Vsi
+ * RxDID Profile ID 4
+ * Flex-field 0: Destination VSI
  */
 struct ice_32b_rx_flex_desc_nic_veb_dbg {
 	/* Qword 0 */
@@ -505,8 +505,8 @@ struct ice_32b_rx_flex_desc_nic_veb_dbg {
 	/* Qword 1 */
 	__le16 status_error0;
 	__le16 l2tag1;
-	__le16 dst_vsi; /* [0:12]: destination vsi */
-			/* 13: vsi valid bit */
+	__le16 dst_vsi; /* [0:12]: destination VSI */
+			/* 13: VSI valid bit */
 			/* [14:15] are reserved */
 	__le16 flex_field_1;
 
@@ -523,7 +523,7 @@ struct ice_32b_rx_flex_desc_nic_veb_dbg {
 };
 
 /* Rx Flex Descriptor NIC ACL Profile
- * RxDID Profile Id 5
+ * RxDID Profile ID 5
  * Flex-field 0: ACL Counter 0
  * Flex-field 1: ACL Counter 1
  * Flex-field 2: ACL Counter 2
@@ -556,12 +556,12 @@ struct ice_32b_rx_flex_desc_nic_acl_dbg {
 };
 
 /* Rx Flex Descriptor NIC Profile
- * RxDID Profile Id 6
+ * RxDID Profile ID 6
  * Flex-field 0: RSS hash lower 16-bits
  * Flex-field 1: RSS hash upper 16-bits
- * Flex-field 2: Flow Id lower 16-bits
- * Flex-field 3: Source Vsi
- * Flex-field 4: reserved, Vlan id taken from L2Tag
+ * Flex-field 2: Flow ID lower 16-bits
+ * Flex-field 3: Source VSI
+ * Flex-field 4: reserved, VLAN ID taken from L2Tag
  */
 struct ice_32b_rx_flex_desc_nic_2 {
 	/* Qword 0 */
@@ -627,39 +627,60 @@ enum ice_flex_opcode {
 	ICE_RX_OPC_PROTID
 };
 
-/* Receive Descriptor MDID values */
-enum ice_flex_rx_mdid {
-	ICE_RX_MDID_FLOW_ID_LOWER	= 5,
-	ICE_RX_MDID_FLOW_ID_HIGH,
-	ICE_RX_MDID_DST_VSI		= 13,
-	ICE_RX_MDID_SRC_VSI		= 19,
-	ICE_RX_MDID_HASH_LOW		= 56,
-	ICE_RX_MDID_HASH_HIGH,
-	ICE_RX_MDID_ACL_CTR0		= ICE_RX_MDID_HASH_LOW,
-	ICE_RX_MDID_ACL_CTR1		= ICE_RX_MDID_HASH_HIGH,
-	ICE_RX_MDID_ACL_CTR2		= 59
+/* Receive Descriptor MDID values that access packet flags */
+enum ice_flex_mdid_pkt_flags {
+	ICE_RX_MDID_PKT_FLAGS_15_0	= 20,
+	ICE_RX_MDID_PKT_FLAGS_31_16,
+	ICE_RX_MDID_PKT_FLAGS_47_32,
+	ICE_RX_MDID_PKT_FLAGS_63_48,
+};
+
+/* Generic descriptor MDID values */
+enum ice_flex_mdid {
+	ICE_MDID_GENERIC_WORD_0,
+	ICE_MDID_GENERIC_WORD_1,
+	ICE_MDID_GENERIC_WORD_2,
+	ICE_MDID_GENERIC_WORD_3,
+	ICE_MDID_GENERIC_WORD_4,
+	ICE_MDID_FLOW_ID_LOWER,
+	ICE_MDID_FLOW_ID_HIGH,
+	ICE_MDID_RX_DESCR_PROF_IDX,
+	ICE_MDID_RX_PKT_DROP,
+	ICE_MDID_RX_DST_Q		= 12,
+	ICE_MDID_RX_DST_VSI,
+	ICE_MDID_SRC_VSI		= 19,
+	ICE_MDID_ACL_NOP		= 55,
+	/* Entry 56 */
+	ICE_MDID_RX_HASH_LOW,
+	ICE_MDID_ACL_CNTR_PKT		= ICE_MDID_RX_HASH_LOW,
+	/* Entry 57 */
+	ICE_MDID_RX_HASH_HIGH,
+	ICE_MDID_ACL_CNTR_BYTES		= ICE_MDID_RX_HASH_HIGH,
+	ICE_MDID_ACL_CNTR_PKT_BYTES
 };
 
 /* for ice_32byte_rx_flex_desc.mir_id_umb_cast member */
 #define ICE_RX_FLEX_DESC_MIRROR_M	(0x3F) /* 6-bits */
 
-/* Rx Flag64 packet flag bits */
-enum ice_rx_flg64_bits {
-	ICE_RXFLG_PKT_DSI	= 0,
-	ICE_RXFLG_EVLAN_x8100	= 15,
-	ICE_RXFLG_EVLAN_x9100,
-	ICE_RXFLG_VLAN_x8100,
-	ICE_RXFLG_TNL_MAC	= 22,
-	ICE_RXFLG_TNL_VLAN,
-	ICE_RXFLG_PKT_FRG,
-	ICE_RXFLG_FIN		= 32,
-	ICE_RXFLG_SYN,
-	ICE_RXFLG_RST,
-	ICE_RXFLG_TNL0		= 38,
-	ICE_RXFLG_TNL1,
-	ICE_RXFLG_TNL2,
-	ICE_RXFLG_UDP_GRE,
-	ICE_RXFLG_RSVD		= 63
+/* Rx/Tx Flag64 packet flag bits */
+enum ice_flg64_bits {
+	ICE_FLG_PKT_DSI		= 0,
+	/* If there is a 1 in this bit position then that means Rx packet */
+	ICE_FLG_PKT_DIR		= 4,
+	ICE_FLG_EVLAN_x8100	= 15,
+	ICE_FLG_EVLAN_x9100,
+	ICE_FLG_VLAN_x8100,
+	ICE_FLG_TNL_MAC		= 22,
+	ICE_FLG_TNL_VLAN,
+	ICE_FLG_PKT_FRG,
+	ICE_FLG_FIN		= 32,
+	ICE_FLG_SYN,
+	ICE_FLG_RST,
+	ICE_FLG_TNL0		= 38,
+	ICE_FLG_TNL1,
+	ICE_FLG_TNL2,
+	ICE_FLG_UDP_GRE,
+	ICE_FLG_RSVD		= 63
 };
 
 enum ice_rx_flex_desc_umb_cast_bits { /* field is 2 bits long */
@@ -786,6 +807,7 @@ struct ice_rlan_ctx {
 	u8 tphdata_ena;
 	u8 tphhead_ena;
 	u16 lrxqthresh; /* bigger than needed, see above for reason */
+	u8 prefena;	/* NOTE: normally must be set to 1 at init */
 };
 
 struct ice_ctx_ele {
@@ -818,7 +840,7 @@ enum ice_rlan_ctx_rx_hsplit_1 {
 	ICE_RLAN_RX_HSPLIT_1_SPLIT_ALWAYS	= 2,
 };
 
-/* TX Descriptor */
+/* Tx Descriptor */
 struct ice_tx_desc {
 	__le64 buf_addr; /* Address of descriptor's data buf */
 	__le64 cmd_type_offset_bsz;
@@ -846,15 +868,15 @@ enum ice_tx_desc_cmd_bits {
 	ICE_TX_DESC_CMD_RSVD			= 0x0004,
 	ICE_TX_DESC_CMD_IL2TAG1			= 0x0008,
 	ICE_TX_DESC_CMD_DUMMY			= 0x0010,
-	ICE_TX_DESC_CMD_IIPT_NONIP		= 0x0000, /* 2 BITS */
-	ICE_TX_DESC_CMD_IIPT_IPV6		= 0x0020, /* 2 BITS */
-	ICE_TX_DESC_CMD_IIPT_IPV4		= 0x0040, /* 2 BITS */
-	ICE_TX_DESC_CMD_IIPT_IPV4_CSUM		= 0x0060, /* 2 BITS */
+	ICE_TX_DESC_CMD_IIPT_NONIP		= 0x0000,
+	ICE_TX_DESC_CMD_IIPT_IPV6		= 0x0020,
+	ICE_TX_DESC_CMD_IIPT_IPV4		= 0x0040,
+	ICE_TX_DESC_CMD_IIPT_IPV4_CSUM		= 0x0060,
 	ICE_TX_DESC_CMD_RSVD2			= 0x0080,
-	ICE_TX_DESC_CMD_L4T_EOFT_UNK		= 0x0000, /* 2 BITS */
-	ICE_TX_DESC_CMD_L4T_EOFT_TCP		= 0x0100, /* 2 BITS */
-	ICE_TX_DESC_CMD_L4T_EOFT_SCTP		= 0x0200, /* 2 BITS */
-	ICE_TX_DESC_CMD_L4T_EOFT_UDP		= 0x0300, /* 2 BITS */
+	ICE_TX_DESC_CMD_L4T_EOFT_UNK		= 0x0000,
+	ICE_TX_DESC_CMD_L4T_EOFT_TCP		= 0x0100,
+	ICE_TX_DESC_CMD_L4T_EOFT_SCTP		= 0x0200,
+	ICE_TX_DESC_CMD_L4T_EOFT_UDP		= 0x0300,
 	ICE_TX_DESC_CMD_RE			= 0x0400,
 	ICE_TX_DESC_CMD_RSVD3			= 0x0800,
 };
@@ -987,6 +1009,7 @@ struct ice_tlan_ctx {
 #define ICE_TLAN_CTX_VMVF_TYPE_PF	2
 	u16 src_vsi;
 	u8 tsyn_ena;
+	u8 internal_usage_flag;
 	u8 alt_vlan;
 	u16 cpuid;		/* bigger than needed, see above for reason */
 	u8 wb_mode;

@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: BSD-3-Clause
- * Copyright(c) 2010-2014 Intel Corporation
+ * Copyright(c) 2010-2019 Intel Corporation
  */
 
 #include <stdio.h>
@@ -25,6 +25,13 @@
 #include "test.h"
 
 #define N 10000
+
+
+static int
+is_mem_on_socket(int32_t socket);
+
+static int32_t
+addr_to_socket(void *addr);
 
 /*
  * Malloc
@@ -366,18 +373,6 @@ test_multi_alloc_statistics(void)
 }
 
 static int
-test_rte_malloc_type_limits(void)
-{
-	/* The type-limits functionality is not yet implemented,
-	 * so always return 0 no matter what the retval.
-	 */
-	const char *typename = "limit_test";
-	rte_malloc_set_limit(typename, 64 * 1024);
-	rte_malloc_dump_stats(stdout, typename);
-	return 0;
-}
-
-static int
 test_realloc(void)
 {
 	const char hello_str[] = "Hello, world!";
@@ -542,7 +537,49 @@ test_realloc(void)
 		return -1;
 	}
 	rte_free(ptr12);
-	return 0;
+
+	/* check realloc_socket part */
+	int32_t socket_count = 0, socket_allocated, socket;
+	int ret = -1;
+	size_t size = 1024;
+
+	ptr1 = NULL;
+	for (socket = 0; socket < RTE_MAX_NUMA_NODES; socket++) {
+		if (is_mem_on_socket(socket)) {
+			int j = 2;
+
+			socket_count++;
+			while (j--) {
+				/* j == 1 -> resizing */
+				ptr2 = rte_realloc_socket(ptr1, size,
+							  RTE_CACHE_LINE_SIZE,
+							  socket);
+				if (ptr2 == NULL) {
+					printf("NULL pointer returned from rte_realloc_socket\n");
+					goto end;
+				}
+
+				ptr1 = ptr2;
+				socket_allocated = addr_to_socket(ptr2);
+				if (socket_allocated != socket) {
+					printf("Requested socket (%d) doesn't mach allocated one (%d)\n",
+					       socket, socket_allocated);
+					goto end;
+				}
+				size += RTE_CACHE_LINE_SIZE;
+			}
+		}
+	}
+
+	/* Print warnign if only a single socket, but don't fail the test */
+	if (socket_count < 2)
+		printf("WARNING: realloc_socket test needs memory on multiple sockets!\n");
+
+	ret = 0;
+end:
+	rte_free(ptr1);
+
+	return ret;
 }
 
 static int
@@ -902,15 +939,6 @@ test_malloc(void)
 		return ret;
 	}
 	else printf("test_random_alloc_free() passed\n");
-
-	/*----------------------------*/
-	ret = test_rte_malloc_type_limits();
-	if (ret < 0){
-		printf("test_rte_malloc_type_limits() failed\n");
-		return ret;
-	}
-	/* TODO: uncomment following line once type limits are valid */
-	/*else printf("test_rte_malloc_type_limits() passed\n");*/
 
 	/*----------------------------*/
 	ret = test_rte_malloc_validate();

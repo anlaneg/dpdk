@@ -21,6 +21,7 @@
 #include <rte_errno.h>
 #include <rte_rwlock.h>
 #include <rte_spinlock.h>
+#include <rte_tailq.h>
 
 #include "rte_lpm.h"
 
@@ -97,13 +98,13 @@ rte_lpm_find_existing_v20(const char *name)
 
 	lpm_list = RTE_TAILQ_CAST(rte_lpm_tailq.head, rte_lpm_list);
 
-	rte_rwlock_read_lock(RTE_EAL_TAILQ_RWLOCK);
+	rte_mcfg_tailq_read_lock();
 	TAILQ_FOREACH(te, lpm_list, next) {
 		l = te->data;
 		if (strncmp(name, l->name, RTE_LPM_NAMESIZE) == 0)
 			break;
 	}
-	rte_rwlock_read_unlock(RTE_EAL_TAILQ_RWLOCK);
+	rte_mcfg_tailq_read_unlock();
 
 	if (te == NULL) {
 		rte_errno = ENOENT;
@@ -123,13 +124,13 @@ rte_lpm_find_existing_v1604(const char *name)
 
 	lpm_list = RTE_TAILQ_CAST(rte_lpm_tailq.head, rte_lpm_list);
 
-	rte_rwlock_read_lock(RTE_EAL_TAILQ_RWLOCK);
+	rte_mcfg_tailq_read_lock();
 	TAILQ_FOREACH(te, lpm_list, next) {
 		l = te->data;
 		if (strncmp(name, l->name, RTE_LPM_NAMESIZE) == 0)
 			break;
 	}
-	rte_rwlock_read_unlock(RTE_EAL_TAILQ_RWLOCK);
+	rte_mcfg_tailq_read_unlock();
 
 	if (te == NULL) {
 		rte_errno = ENOENT;
@@ -170,7 +171,7 @@ rte_lpm_create_v20(const char *name, int socket_id, int max_rules,
 	/* Determine the amount of memory to allocate. */
 	mem_size = sizeof(*lpm) + (sizeof(lpm->rules_tbl[0]) * max_rules);
 
-	rte_rwlock_write_lock(RTE_EAL_TAILQ_RWLOCK);
+	rte_mcfg_tailq_write_lock();
 
 	/* guarantee there's no existing */
 	TAILQ_FOREACH(te, lpm_list, next) {
@@ -205,14 +206,14 @@ rte_lpm_create_v20(const char *name, int socket_id, int max_rules,
 
 	/* Save user arguments. */
 	lpm->max_rules = max_rules;
-	snprintf(lpm->name, sizeof(lpm->name), "%s", name);
+	strlcpy(lpm->name, name, sizeof(lpm->name));
 
 	te->data = lpm;
 
 	TAILQ_INSERT_TAIL(lpm_list, te, next);
 
 exit:
-	rte_rwlock_write_unlock(RTE_EAL_TAILQ_RWLOCK);
+	rte_mcfg_tailq_write_unlock();
 
 	return lpm;
 }
@@ -247,7 +248,7 @@ rte_lpm_create_v1604(const char *name, int socket_id,
 	tbl8s_size = (sizeof(struct rte_lpm_tbl_entry) *
 			RTE_LPM_TBL8_GROUP_NUM_ENTRIES * config->number_tbl8s);
 
-	rte_rwlock_write_lock(RTE_EAL_TAILQ_RWLOCK);
+	rte_mcfg_tailq_write_lock();
 
 	/* guarantee there's no existing */
 	TAILQ_FOREACH(te, lpm_list, next) {
@@ -308,14 +309,14 @@ rte_lpm_create_v1604(const char *name, int socket_id,
 	/* Save user arguments. */
 	lpm->max_rules = config->max_rules;
 	lpm->number_tbl8s = config->number_tbl8s;
-	snprintf(lpm->name, sizeof(lpm->name), "%s", name);
+	strlcpy(lpm->name, name, sizeof(lpm->name));
 
 	te->data = lpm;
 
 	TAILQ_INSERT_TAIL(lpm_list, te, next);
 
 exit:
-	rte_rwlock_write_unlock(RTE_EAL_TAILQ_RWLOCK);
+	rte_mcfg_tailq_write_unlock();
 
 	return lpm;
 }
@@ -339,7 +340,7 @@ rte_lpm_free_v20(struct rte_lpm_v20 *lpm)
 
 	lpm_list = RTE_TAILQ_CAST(rte_lpm_tailq.head, rte_lpm_list);
 
-	rte_rwlock_write_lock(RTE_EAL_TAILQ_RWLOCK);
+	rte_mcfg_tailq_write_lock();
 
 	/* find our tailq entry */
 	TAILQ_FOREACH(te, lpm_list, next) {
@@ -349,7 +350,7 @@ rte_lpm_free_v20(struct rte_lpm_v20 *lpm)
 	if (te != NULL)
 		TAILQ_REMOVE(lpm_list, te, next);
 
-	rte_rwlock_write_unlock(RTE_EAL_TAILQ_RWLOCK);
+	rte_mcfg_tailq_write_unlock();
 
 	rte_free(lpm);
 	rte_free(te);
@@ -368,7 +369,7 @@ rte_lpm_free_v1604(struct rte_lpm *lpm)
 
 	lpm_list = RTE_TAILQ_CAST(rte_lpm_tailq.head, rte_lpm_list);
 
-	rte_rwlock_write_lock(RTE_EAL_TAILQ_RWLOCK);
+	rte_mcfg_tailq_write_lock();
 
 	/* find our tailq entry */
 	TAILQ_FOREACH(te, lpm_list, next) {
@@ -378,7 +379,7 @@ rte_lpm_free_v1604(struct rte_lpm *lpm)
 	if (te != NULL)
 		TAILQ_REMOVE(lpm_list, te, next);
 
-	rte_rwlock_write_unlock(RTE_EAL_TAILQ_RWLOCK);
+	rte_mcfg_tailq_write_unlock();
 
 	rte_free(lpm->tbl8);
 	rte_free(lpm->rules_tbl);

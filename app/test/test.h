@@ -156,6 +156,7 @@ extern const char *prgname;
 int commands_init(void);
 
 int test_mp_secondary(void);
+int test_timer_secondary(void);
 
 int test_set_rxtx_conf(cmdline_fixed_string_t mode);
 int test_set_rxtx_anchor(cmdline_fixed_string_t type);
@@ -177,8 +178,7 @@ void add_test_command(struct test_command *t);
 		.command = RTE_STR(cmd), \
 		.callback = func, \
 	}; \
-	static void __attribute__((constructor, used)) \
-	test_register_##cmd(void) \
+	RTE_INIT(test_register_##cmd) \
 	{ \
 		add_test_command(&test_struct_##cmd); \
 	}

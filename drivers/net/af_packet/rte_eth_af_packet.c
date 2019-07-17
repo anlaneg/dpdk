@@ -6,6 +6,7 @@
  * All rights reserved.
  */
 
+#include <rte_string_fns.h>
 #include <rte_mbuf.h>
 #include <rte_ethdev_driver.h>
 #include <rte_ethdev_vdev.h>
@@ -31,7 +32,6 @@
 #define ETH_AF_PACKET_FRAMECOUNT_ARG	"framecnt"
 #define ETH_AF_PACKET_QDISC_BYPASS_ARG	"qdisc_bypass"
 
-#define DFLT_BLOCK_SIZE		(1 << 12)
 #define DFLT_FRAME_SIZE		(1 << 11)
 #define DFLT_FRAME_COUNT	(1 << 9)
 
@@ -72,7 +72,7 @@ struct pmd_internals {
 
 	int if_index;
 	char *if_name;
-	struct ether_addr eth_addr;
+	struct rte_ether_addr eth_addr;
 
 	struct tpacket_req req;
 
@@ -328,10 +328,9 @@ eth_stats_get(struct rte_eth_dev *dev, struct rte_eth_stats *igb_stats)
 	        internal->nb_queues : RTE_ETHDEV_QUEUE_STAT_CNTRS);
 	for (i = 0; i < imax; i++) {
 		igb_stats->q_opackets[i] = internal->tx_queue[i].tx_pkts;
-		igb_stats->q_errors[i] = internal->tx_queue[i].err_pkts;
 		igb_stats->q_obytes[i] = internal->tx_queue[i].tx_bytes;
 		tx_total += igb_stats->q_opackets[i];
-		tx_err_total += igb_stats->q_errors[i];
+		tx_err_total += internal->tx_queue[i].err_pkts;
 		tx_bytes_total += igb_stats->q_obytes[i];
 	}
 
@@ -442,7 +441,7 @@ eth_dev_mtu_set(struct rte_eth_dev *dev, uint16_t mtu)
 	if (s < 0)
 		return -EINVAL;
 
-	snprintf(ifr.ifr_name, IFNAMSIZ, "%s", internals->if_name);
+	strlcpy(ifr.ifr_name, internals->if_name, IFNAMSIZ);
 	ret = ioctl(s, SIOCSIFMTU, &ifr);
 	close(s);
 
@@ -462,7 +461,7 @@ eth_dev_change_flags(char *if_name, uint32_t flags, uint32_t mask)
 	if (s < 0)
 		return;
 
-	snprintf(ifr.ifr_name, IFNAMSIZ, "%s", if_name);
+	strlcpy(ifr.ifr_name, if_name, IFNAMSIZ);
 	if (ioctl(s, SIOCGIFFLAGS, &ifr) < 0)
 		goto out;
 	ifr.ifr_flags &= mask;
@@ -811,7 +810,7 @@ rte_eth_from_packet(struct rte_vdev_device *dev,
 	struct rte_kvargs_pair *pair = NULL;
 	unsigned k_idx;
 	unsigned int blockcount;
-	unsigned int blocksize = DFLT_BLOCK_SIZE;
+	unsigned int blocksize;
 	unsigned int framesize = DFLT_FRAME_SIZE;
 	unsigned int framecount = DFLT_FRAME_COUNT;
 	unsigned int qpairs = 1;
@@ -820,6 +819,8 @@ rte_eth_from_packet(struct rte_vdev_device *dev,
 	/* do some parameter checking */
 	if (*sockfd < 0)
 		return -1;
+
+	blocksize = getpagesize();
 
 	/*
 	 * Walk arguments for configurable settings

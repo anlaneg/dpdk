@@ -171,6 +171,18 @@ parallel_test_list = [
         "Report":  None,
     },
     {
+        "Name":    "Ticketlock autotest",
+        "Command": "ticketlock_autotest",
+        "Func":    ticketlock_autotest,
+        "Report":  None,
+    },
+    {
+        "Name":    "MCSlock autotest",
+        "Command": "mcslock_autotest",
+        "Func":    mcslock_autotest,
+        "Report":  None,
+    },
+    {
         "Name":    "Byte order autotest",
         "Command": "byteorder_autotest",
         "Func":    default_autotest,
@@ -297,12 +309,6 @@ parallel_test_list = [
         "Report":  None,
     },
     {
-        "Name":    "Devargs autotest",
-        "Command": "devargs_autotest",
-        "Func":    default_autotest,
-        "Report":  None,
-    },
-    {
         "Name":    "Link bonding autotest",
         "Command": "link_bonding_autotest",
         "Func":    default_autotest,
@@ -393,8 +399,8 @@ parallel_test_list = [
         "Report":  None,
     },
     {
-        "Name":    "Cryptodev sw mrvl autotest",
-        "Command": "cryptodev_sw_mrvl_autotest",
+        "Name":    "Cryptodev sw mvsam autotest",
+        "Command": "cryptodev_sw_mvsam_autotest",
         "Func":    default_autotest,
         "Report":  None,
     },
@@ -622,8 +628,8 @@ non_parallel_test_list = [
         "Report":      None,
     },
     {
-        "Name":       "Power ACPI cpufreq autotest",
-        "Command":    "power_acpi_cpufreq_autotest",
+        "Name":       "Power cpufreq autotest",
+        "Command":    "power_cpufreq_autotest",
         "Func":       default_autotest,
         "Report":     None,
     },
@@ -691,6 +697,18 @@ non_parallel_test_list = [
     {
         "Name":    "Reciprocal division perf",
         "Command": "reciprocal_division_perf",
+        "Func":    default_autotest,
+        "Report":  None,
+    },
+    {
+        "Name":    "RCU QSBR autotest",
+        "Command": "rcu_qsbr_autotest",
+        "Func":    default_autotest,
+        "Report":  None,
+    },
+    {
+        "Name":    "RCU QSBR performance autotest",
+        "Command": "rcu_qsbr_perf_autotest",
         "Func":    default_autotest,
         "Report":  None,
     },

@@ -326,8 +326,15 @@ parse_seg_sz(struct comp_test_data *test_data, const char *arg)
 		return -1;
 	}
 
-	if (test_data->seg_sz == 0) {
-		RTE_LOG(ERR, USER1, "Segment size must be higher than 0\n");
+	if (test_data->seg_sz < MIN_COMPRESSED_BUF_SIZE) {
+		RTE_LOG(ERR, USER1, "Segment size must be higher than %d\n",
+			MIN_COMPRESSED_BUF_SIZE - 1);
+		return -1;
+	}
+
+	if (test_data->seg_sz > MAX_SEG_SIZE) {
+		RTE_LOG(ERR, USER1, "Segment size must be lower than %d\n",
+			MAX_SEG_SIZE + 1);
 		return -1;
 	}
 
@@ -357,12 +364,14 @@ parse_max_num_sgl_segs(struct comp_test_data *test_data, const char *arg)
 static int
 parse_window_sz(struct comp_test_data *test_data, const char *arg)
 {
-	int ret = parse_uint16_t((uint16_t *)&test_data->window_sz, arg);
+	uint16_t tmp;
+	int ret = parse_uint16_t(&tmp, arg);
 
 	if (ret) {
 		RTE_LOG(ERR, USER1, "Failed to parse window size\n");
 		return -1;
 	}
+	test_data->window_sz = (int)tmp;
 
 	return 0;
 }

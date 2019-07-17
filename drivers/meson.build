@@ -1,8 +1,12 @@
 # SPDX-License-Identifier: BSD-3-Clause
-# Copyright(c) 2017 Intel Corporation
+# Copyright(c) 2017-2019 Intel Corporation
+
+if is_windows
+	subdir_done()
+endif
 
 # Defines the order in which the drivers are buit.
-driver_classes = ['common',
+dpdk_driver_classes = ['common',
 	       'bus',
 	       'mempool', # depends on common and bus.
 	       'net',     # depends on common, bus and mempool.
@@ -17,10 +21,7 @@ if cc.has_argument('-Wno-format-truncation')
 	default_cflags += '-Wno-format-truncation'
 endif
 
-# specify -D_GNU_SOURCE unconditionally
-default_cflags += '-D_GNU_SOURCE'
-
-foreach class:driver_classes
+foreach class:dpdk_driver_classes
 	drivers = []
 	std_deps = []
 	config_flag_fmt = '' # format string used to set the value in dpdk_conf
@@ -36,6 +37,7 @@ foreach class:driver_classes
 
 		# set up empty variables used for build
 		build = true # set to false to disable, e.g. missing deps
+		reason = '<unknown reason>' # set if build == false to explain
 		name = drv
 		version = 1
 		allow_experimental_apis = false
@@ -57,7 +59,16 @@ foreach class:driver_classes
 		# pull in driver directory which should assign to each of the above
 		subdir(drv_path)
 
-		if build
+		if not build
+			# some driver directories are placeholders which
+			# are never built, so we allow suppression of the
+			# component disable printout in those cases
+			if reason != ''
+				dpdk_drvs_disabled += drv_path
+				set_variable(drv_path.underscorify() +
+						'_disable_reason', reason)
+			endif
+		else
 			class_drivers += name
 
 			dpdk_conf.set(config_flag_fmt.format(name.to_upper()),1)

@@ -17,8 +17,9 @@
 #include <sys/wait.h>
 #include <sys/file.h>
 #include <limits.h>
+#include <fcntl.h>
 
-#include <rte_per_lcore.h>
+#include <rte_lcore.h>
 #include <rte_debug.h>
 #include <rte_string_fns.h>
 
@@ -57,7 +58,7 @@ get_hugepage_path(char * src, int src_len, char * dst, int dst_len)
 		return 0;
 
 	if (strncmp(tokens[2], "hugetlbfs", sizeof("hugetlbfs")) == 0) {
-		snprintf(dst, dst_len, "%s", tokens[1]);
+		strlcpy(dst, tokens[1], dst_len);
 		return 1;
 	}
 	return 0;
@@ -190,7 +191,7 @@ end:
 	return result;
 }
 
-#ifdef RTE_EXEC_ENV_LINUXAPP
+#ifdef RTE_EXEC_ENV_LINUX
 /*
  * count the number of "node*" files in /sys/devices/system/node/
  */
@@ -231,7 +232,7 @@ static int
 test_whitelist_flag(void)
 {
 	unsigned i;
-#ifdef RTE_EXEC_ENV_BSDAPP
+#ifdef RTE_EXEC_ENV_FREEBSD
 	/* BSD target doesn't support prefixes at this point */
 	const char * prefix = "";
 #else
@@ -244,25 +245,25 @@ test_whitelist_flag(void)
 #endif
 
 	const char *wlinval[][11] = {
-		{prgname, prefix, mp_flag, "-n", "1", "-c", "1",
+		{prgname, prefix, mp_flag,
 				pci_whitelist, "error", "", ""},
-		{prgname, prefix, mp_flag, "-n", "1", "-c", "1",
+		{prgname, prefix, mp_flag,
 				pci_whitelist, "0:0:0", "", ""},
-		{prgname, prefix, mp_flag, "-n", "1", "-c", "1",
+		{prgname, prefix, mp_flag,
 				pci_whitelist, "0:error:0.1", "", ""},
-		{prgname, prefix, mp_flag, "-n", "1", "-c", "1",
+		{prgname, prefix, mp_flag,
 				pci_whitelist, "0:0:0.1error", "", ""},
-		{prgname, prefix, mp_flag, "-n", "1", "-c", "1",
+		{prgname, prefix, mp_flag,
 				pci_whitelist, "error0:0:0.1", "", ""},
-		{prgname, prefix, mp_flag, "-n", "1", "-c", "1",
+		{prgname, prefix, mp_flag,
 				pci_whitelist, "0:0:0.1.2", "", ""},
 	};
 	/* Test with valid whitelist option */
-	const char *wlval1[] = {prgname, prefix, mp_flag, "-n", "1", "-c", "1",
+	const char *wlval1[] = {prgname, prefix, mp_flag,
 			pci_whitelist, "00FF:09:0B.3"};
-	const char *wlval2[] = {prgname, prefix, mp_flag, "-n", "1", "-c", "1",
+	const char *wlval2[] = {prgname, prefix, mp_flag,
 			pci_whitelist, "09:0B.3", pci_whitelist, "0a:0b.1"};
-	const char *wlval3[] = {prgname, prefix, mp_flag, "-n", "1", "-c", "1",
+	const char *wlval3[] = {prgname, prefix, mp_flag,
 			pci_whitelist, "09:0B.3,type=test",
 			pci_whitelist, "08:00.1,type=normal",
 	};
@@ -297,7 +298,7 @@ test_whitelist_flag(void)
 static int
 test_invalid_b_flag(void)
 {
-#ifdef RTE_EXEC_ENV_BSDAPP
+#ifdef RTE_EXEC_ENV_FREEBSD
 	/* BSD target doesn't support prefixes at this point */
 	const char * prefix = "";
 #else
@@ -310,15 +311,16 @@ test_invalid_b_flag(void)
 #endif
 
 	const char *blinval[][9] = {
-		{prgname, prefix, mp_flag, "-n", "1", "-c", "1", "-b", "error"},
-		{prgname, prefix, mp_flag, "-n", "1", "-c", "1", "-b", "0:0:0"},
-		{prgname, prefix, mp_flag, "-n", "1", "-c", "1", "-b", "0:error:0.1"},
-		{prgname, prefix, mp_flag, "-n", "1", "-c", "1", "-b", "0:0:0.1error"},
-		{prgname, prefix, mp_flag, "-n", "1", "-c", "1", "-b", "error0:0:0.1"},
-		{prgname, prefix, mp_flag, "-n", "1", "-c", "1", "-b", "0:0:0.1.2"},
+		{prgname, prefix, mp_flag, "-b", "error"},
+		{prgname, prefix, mp_flag, "-b", "0:0:0"},
+		{prgname, prefix, mp_flag, "-b", "0:error:0.1"},
+		{prgname, prefix, mp_flag, "-b", "0:0:0.1error"},
+		{prgname, prefix, mp_flag, "-b", "error0:0:0.1"},
+		{prgname, prefix, mp_flag, "-b", "0:0:0.1.2"},
 	};
 	/* Test with valid blacklist option */
-	const char *blval[] = {prgname, prefix, mp_flag, "-n", "1", "-c", "1", "-b", "FF:09:0B.3"};
+	const char *blval[] = {prgname, prefix, mp_flag,
+			       "-b", "FF:09:0B.3"};
 
 	int i;
 
@@ -340,11 +342,11 @@ test_invalid_b_flag(void)
  *  Test that the app doesn't run with invalid vdev option.
  *  Final test ensures it does run with valid options as sanity check
  */
-#ifdef RTE_LIBRTE_PMD_RING
 static int
 test_invalid_vdev_flag(void)
 {
-#ifdef RTE_EXEC_ENV_BSDAPP
+#ifdef RTE_LIBRTE_PMD_RING
+#ifdef RTE_EXEC_ENV_FREEBSD
 	/* BSD target doesn't support prefixes at this point, and we also need to
 	 * run another primary process here */
 	const char * prefix = no_shconf;
@@ -353,18 +355,18 @@ test_invalid_vdev_flag(void)
 #endif
 
 	/* Test with invalid vdev option */
-	const char *vdevinval[] = {prgname, prefix, no_huge, "-n", "1",
-				"-c", "1", vdev, "eth_dummy"};
+	const char *vdevinval[] = {prgname, prefix, no_huge,
+				vdev, "eth_dummy"};
 
 	/* Test with valid vdev option */
-	const char *vdevval1[] = {prgname, prefix, no_huge, "-n", "1",
-	"-c", "1", vdev, "net_ring0"};
+	const char *vdevval1[] = {prgname, prefix, no_huge,
+	vdev, "net_ring0"};
 
-	const char *vdevval2[] = {prgname, prefix, no_huge, "-n", "1",
-	"-c", "1", vdev, "net_ring0,args=test"};
+	const char *vdevval2[] = {prgname, prefix, no_huge,
+	vdev, "net_ring0,args=test"};
 
-	const char *vdevval3[] = {prgname, prefix, no_huge, "-n", "1",
-	"-c", "1", vdev, "net_ring0,nodeaction=r1:0:CREATE"};
+	const char *vdevval3[] = {prgname, prefix, no_huge,
+	vdev, "net_ring0,nodeaction=r1:0:CREATE"};
 
 	if (launch_proc(vdevinval) == 0) {
 		printf("Error - process did run ok with invalid "
@@ -389,8 +391,10 @@ test_invalid_vdev_flag(void)
 		return -1;
 	}
 	return 0;
-}
+#else
+	return TEST_SKIPPED;
 #endif
+}
 
 /*
  * Test that the app doesn't run with invalid -r option.
@@ -398,7 +402,7 @@ test_invalid_vdev_flag(void)
 static int
 test_invalid_r_flag(void)
 {
-#ifdef RTE_EXEC_ENV_BSDAPP
+#ifdef RTE_EXEC_ENV_FREEBSD
 	/* BSD target doesn't support prefixes at this point */
 	const char * prefix = "";
 #else
@@ -411,13 +415,13 @@ test_invalid_r_flag(void)
 #endif
 
 	const char *rinval[][9] = {
-			{prgname, prefix, mp_flag, "-n", "1", "-c", "1", "-r", "error"},
-			{prgname, prefix, mp_flag, "-n", "1", "-c", "1", "-r", "0"},
-			{prgname, prefix, mp_flag, "-n", "1", "-c", "1", "-r", "-1"},
-			{prgname, prefix, mp_flag, "-n", "1", "-c", "1", "-r", "17"},
+			{prgname, prefix, mp_flag, "-r", "error"},
+			{prgname, prefix, mp_flag, "-r", "0"},
+			{prgname, prefix, mp_flag, "-r", "-1"},
+			{prgname, prefix, mp_flag, "-r", "17"},
 	};
 	/* Test with valid blacklist option */
-	const char *rval[] = {prgname, prefix, mp_flag, "-n", "1", "-c", "1", "-r", "16"};
+	const char *rval[] = {prgname, prefix, mp_flag, "-r", "16"};
 
 	int i;
 
@@ -442,7 +446,7 @@ test_invalid_r_flag(void)
 static int
 test_missing_c_flag(void)
 {
-#ifdef RTE_EXEC_ENV_BSDAPP
+#ifdef RTE_EXEC_ENV_FREEBSD
 	/* BSD target doesn't support prefixes at this point */
 	const char * prefix = "";
 #else
@@ -455,74 +459,74 @@ test_missing_c_flag(void)
 #endif
 
 	/* -c flag but no coremask value */
-	const char *argv1[] = { prgname, prefix, mp_flag, "-n", "3", "-c"};
+	const char *argv1[] = { prgname, prefix, mp_flag, "-c"};
 	/* No -c, -l or --lcores flag at all */
-	const char *argv2[] = { prgname, prefix, mp_flag, "-n", "3"};
+	const char *argv2[] = { prgname, prefix, mp_flag};
 	/* bad coremask value */
 	const char *argv3[] = { prgname, prefix, mp_flag,
-				"-n", "3", "-c", "error" };
+				"-c", "error" };
 	/* sanity check of tests - valid coremask value */
 	const char *argv4[] = { prgname, prefix, mp_flag,
-				"-n", "3", "-c", "1" };
+				"-c", "1" };
 	/* -l flag but no corelist value */
 	const char *argv5[] = { prgname, prefix, mp_flag,
-				"-n", "3", "-l"};
+				"-l"};
 	const char *argv6[] = { prgname, prefix, mp_flag,
-				"-n", "3", "-l", " " };
+				"-l", " " };
 	/* bad corelist values */
 	const char *argv7[] = { prgname, prefix, mp_flag,
-				"-n", "3", "-l", "error" };
+				"-l", "error" };
 	const char *argv8[] = { prgname, prefix, mp_flag,
-				"-n", "3", "-l", "1-" };
+				"-l", "1-" };
 	const char *argv9[] = { prgname, prefix, mp_flag,
-				"-n", "3", "-l", "1," };
+				"-l", "1," };
 	const char *argv10[] = { prgname, prefix, mp_flag,
-				 "-n", "3", "-l", "1#2" };
+				 "-l", "1#2" };
 	/* core number is negative value */
 	const char * const argv11[] = { prgname, prefix, mp_flag,
-				"-n", "3", "-l", "-5" };
+				"-l", "-5" };
 	const char * const argv12[] = { prgname, prefix, mp_flag,
-				"-n", "3", "-l", "-5-7" };
+				"-l", "-5-7" };
 	/* core number is maximum value */
 	const char * const argv13[] = { prgname, prefix, mp_flag,
-				"-n", "3", "-l", RTE_STR(RTE_MAX_LCORE) };
+				"-l", RTE_STR(RTE_MAX_LCORE) };
 	const char * const argv14[] = { prgname, prefix, mp_flag,
-				"-n", "3", "-l", "1-"RTE_STR(RTE_MAX_LCORE) };
+				"-l", "1-"RTE_STR(RTE_MAX_LCORE) };
 	/* sanity check test - valid corelist value */
 	const char * const argv15[] = { prgname, prefix, mp_flag,
-				 "-n", "3", "-l", "1-2,3" };
+				 "-l", "1-2,3" };
 
 	/* --lcores flag but no lcores value */
 	const char * const argv16[] = { prgname, prefix, mp_flag,
-				 "-n", "3", "--lcores" };
+				 "--lcores" };
 	const char * const argv17[] = { prgname, prefix, mp_flag,
-				 "-n", "3", "--lcores", " " };
+				 "--lcores", " " };
 	/* bad lcores value */
 	const char * const argv18[] = { prgname, prefix, mp_flag,
-				 "-n", "3", "--lcores", "1-3-5" };
+				 "--lcores", "1-3-5" };
 	const char * const argv19[] = { prgname, prefix, mp_flag,
-				 "-n", "3", "--lcores", "0-1,,2" };
+				 "--lcores", "0-1,,2" };
 	const char * const argv20[] = { prgname, prefix, mp_flag,
-				 "-n", "3", "--lcores", "0-,1" };
+				 "--lcores", "0-,1" };
 	const char * const argv21[] = { prgname, prefix, mp_flag,
-				 "-n", "3", "--lcores", "(0-,2-4)" };
+				 "--lcores", "(0-,2-4)" };
 	const char * const argv22[] = { prgname, prefix, mp_flag,
-				 "-n", "3", "--lcores", "(-1,2)" };
+				 "--lcores", "(-1,2)" };
 	const char * const argv23[] = { prgname, prefix, mp_flag,
-				 "-n", "3", "--lcores", "(2-4)@(2-4-6)" };
+				 "--lcores", "(2-4)@(2-4-6)" };
 	const char * const argv24[] = { prgname, prefix, mp_flag,
-				 "-n", "3", "--lcores", "(a,2)" };
+				 "--lcores", "(a,2)" };
 	const char * const argv25[] = { prgname, prefix, mp_flag,
-				 "-n", "3", "--lcores", "1-3@(1,3)" };
+				 "--lcores", "1-3@(1,3)" };
 	const char * const argv26[] = { prgname, prefix, mp_flag,
-				 "-n", "3", "--lcores", "3@((1,3)" };
+				 "--lcores", "3@((1,3)" };
 	const char * const argv27[] = { prgname, prefix, mp_flag,
-				 "-n", "3", "--lcores", "(4-7)=(1,3)" };
+				 "--lcores", "(4-7)=(1,3)" };
 	const char * const argv28[] = { prgname, prefix, mp_flag,
-				 "-n", "3", "--lcores", "[4-7]@(1,3)" };
+				 "--lcores", "[4-7]@(1,3)" };
 	/* sanity check of tests - valid lcores value */
 	const char * const argv29[] = { prgname, prefix, mp_flag,
-				 "-n", "3", "--lcores",
+				 "--lcores",
 				 "0-1,2@(5-7),(3-5)@(0,2),(0,6),7"};
 
 	if (launch_proc(argv2) != 0) {
@@ -558,7 +562,9 @@ test_missing_c_flag(void)
 		       "process ran without error with invalid -l flag\n");
 		return -1;
 	}
-	if (launch_proc(argv15) != 0) {
+	if (rte_lcore_is_enabled(0) && rte_lcore_is_enabled(1) &&
+	    rte_lcore_is_enabled(2) && rte_lcore_is_enabled(3) &&
+	    launch_proc(argv15) != 0) {
 		printf("Error - "
 		       "process did not run ok with valid corelist value\n");
 		return -1;
@@ -577,7 +583,11 @@ test_missing_c_flag(void)
 		return -1;
 	}
 
-	if (launch_proc(argv29) != 0) {
+	if (rte_lcore_is_enabled(0) && rte_lcore_is_enabled(1) &&
+	    rte_lcore_is_enabled(2) && rte_lcore_is_enabled(3) &&
+	    rte_lcore_is_enabled(3) && rte_lcore_is_enabled(5) &&
+	    rte_lcore_is_enabled(4) && rte_lcore_is_enabled(7) &&
+	    launch_proc(argv29) != 0) {
 		printf("Error - "
 		       "process did not run ok with valid corelist value\n");
 		return -1;
@@ -592,7 +602,7 @@ test_missing_c_flag(void)
 static int
 test_master_lcore_flag(void)
 {
-#ifdef RTE_EXEC_ENV_BSDAPP
+#ifdef RTE_EXEC_ENV_FREEBSD
 	/* BSD target doesn't support prefixes at this point */
 	const char *prefix = "";
 #else
@@ -604,17 +614,26 @@ test_master_lcore_flag(void)
 	snprintf(prefix, sizeof(prefix), "--file-prefix=%s", tmp);
 #endif
 
+	if (!rte_lcore_is_enabled(0) || !rte_lcore_is_enabled(1))
+		return TEST_SKIPPED;
+
 	/* --master-lcore flag but no value */
-	const char *argv1[] = { prgname, prefix, mp_flag, "-n", "1", "-c", "3", "--master-lcore"};
+	const char *argv1[] = { prgname, prefix, mp_flag,
+				"-c", "3", "--master-lcore"};
 	/* --master-lcore flag with invalid value */
-	const char *argv2[] = { prgname, prefix, mp_flag, "-n", "1", "-c", "3", "--master-lcore", "-1"};
-	const char *argv3[] = { prgname, prefix, mp_flag, "-n", "1", "-c", "3", "--master-lcore", "X"};
+	const char *argv2[] = { prgname, prefix, mp_flag,
+				"-c", "3", "--master-lcore", "-1"};
+	const char *argv3[] = { prgname, prefix, mp_flag,
+				"-c", "3", "--master-lcore", "X"};
 	/* master lcore not in coremask */
-	const char *argv4[] = { prgname, prefix, mp_flag, "-n", "1", "-c", "3", "--master-lcore", "2"};
+	const char *argv4[] = { prgname, prefix, mp_flag,
+				"-c", "3", "--master-lcore", "2"};
 	/* valid value */
-	const char *argv5[] = { prgname, prefix, mp_flag, "-n", "1", "-c", "3", "--master-lcore", "1"};
+	const char *argv5[] = { prgname, prefix, mp_flag,
+				"-c", "3", "--master-lcore", "1"};
 	/* valid value set before coremask */
-	const char *argv6[] = { prgname, prefix, mp_flag, "-n", "1", "--master-lcore", "1", "-c", "3"};
+	const char *argv6[] = { prgname, prefix, mp_flag,
+				"--master-lcore", "1", "-c", "3"};
 
 	if (launch_proc(argv1) == 0
 			|| launch_proc(argv2) == 0
@@ -640,7 +659,7 @@ test_master_lcore_flag(void)
 static int
 test_invalid_n_flag(void)
 {
-#ifdef RTE_EXEC_ENV_BSDAPP
+#ifdef RTE_EXEC_ENV_FREEBSD
 	/* BSD target doesn't support prefixes at this point */
 	const char * prefix = "";
 #else
@@ -653,15 +672,19 @@ test_invalid_n_flag(void)
 #endif
 
 	/* -n flag but no value */
-	const char *argv1[] = { prgname, prefix, no_huge, no_shconf, "-c", "1", "-n"};
+	const char *argv1[] = { prgname, prefix, no_huge, no_shconf,
+				"-n"};
 	/* bad numeric value */
-	const char *argv2[] = { prgname, prefix, no_huge, no_shconf, "-c", "1", "-n", "e" };
+	const char *argv2[] = { prgname, prefix, no_huge, no_shconf,
+				"-n", "e" };
 	/* zero is invalid */
-	const char *argv3[] = { prgname, prefix, no_huge, no_shconf, "-c", "1", "-n", "0" };
+	const char *argv3[] = { prgname, prefix, no_huge, no_shconf,
+				"-n", "0" };
 	/* sanity test - check with good value */
-	const char *argv4[] = { prgname, prefix, no_huge, no_shconf, "-c", "1", "-n", "2" };
+	const char *argv4[] = { prgname, prefix, no_huge, no_shconf,
+				"-n", "2" };
 	/* sanity test - check with no -n flag */
-	const char *argv5[] = { prgname, prefix, no_huge, no_shconf, "-c", "1"};
+	const char *argv5[] = { prgname, prefix, no_huge, no_shconf};
 
 	if (launch_proc(argv1) == 0
 			|| launch_proc(argv2) == 0
@@ -690,7 +713,7 @@ test_no_hpet_flag(void)
 {
 	char prefix[PATH_MAX] = "";
 
-#ifdef RTE_EXEC_ENV_BSDAPP
+#ifdef RTE_EXEC_ENV_FREEBSD
 	return 0;
 #else
 	char tmp[PATH_MAX];
@@ -702,9 +725,9 @@ test_no_hpet_flag(void)
 #endif
 
 	/* With --no-hpet */
-	const char *argv1[] = {prgname, prefix, mp_flag, no_hpet, "-c", "1", "-n", "2"};
+	const char *argv1[] = {prgname, prefix, mp_flag, no_hpet};
 	/* Without --no-hpet */
-	const char *argv2[] = {prgname, prefix, mp_flag, "-c", "1", "-n", "2"};
+	const char *argv2[] = {prgname, prefix, mp_flag};
 
 	if (launch_proc(argv1) != 0) {
 		printf("Error - process did not run ok with --no-hpet flag\n");
@@ -724,7 +747,7 @@ test_no_hpet_flag(void)
 static int
 test_no_huge_flag(void)
 {
-#ifdef RTE_EXEC_ENV_BSDAPP
+#ifdef RTE_EXEC_ENV_FREEBSD
 	/* BSD target doesn't support prefixes at this point, and we also need to
 	 * run another primary process here */
 	const char * prefix = no_shconf;
@@ -733,16 +756,16 @@ test_no_huge_flag(void)
 #endif
 
 	/* With --no-huge */
-	const char *argv1[] = {prgname, prefix, no_huge, "-c", "1", "-n", "2"};
+	const char *argv1[] = {prgname, prefix, no_huge};
 	/* With --no-huge and -m */
-	const char *argv2[] = {prgname, prefix, no_huge, "-c", "1", "-n", "2",
+	const char *argv2[] = {prgname, prefix, no_huge,
 			"-m", DEFAULT_MEM_SIZE};
 
 	/* With --no-huge and --socket-mem */
-	const char *argv3[] = {prgname, prefix, no_huge, "-c", "1", "-n", "2",
+	const char *argv3[] = {prgname, prefix, no_huge,
 			"--socket-mem=" DEFAULT_MEM_SIZE};
 	/* With --no-huge, -m and --socket-mem */
-	const char *argv4[] = {prgname, prefix, no_huge, "-c", "1", "-n", "2",
+	const char *argv4[] = {prgname, prefix, no_huge,
 			"-m", DEFAULT_MEM_SIZE, "--socket-mem=" DEFAULT_MEM_SIZE};
 	if (launch_proc(argv1) != 0) {
 		printf("Error - process did not run ok with --no-huge flag\n");
@@ -752,7 +775,7 @@ test_no_huge_flag(void)
 		printf("Error - process did not run ok with --no-huge and -m flags\n");
 		return -1;
 	}
-#ifdef RTE_EXEC_ENV_BSDAPP
+#ifdef RTE_EXEC_ENV_FREEBSD
 	/* BSD target does not support NUMA, hence no --socket-mem tests */
 	return 0;
 #endif
@@ -774,7 +797,7 @@ static int
 test_misc_flags(void)
 {
 	char hugepath[PATH_MAX] = {0};
-#ifdef RTE_EXEC_ENV_BSDAPP
+#ifdef RTE_EXEC_ENV_FREEBSD
 	/* BSD target doesn't support prefixes at this point */
 	const char * prefix = "";
 	const char * nosh_prefix = "";
@@ -829,55 +852,68 @@ test_misc_flags(void)
 	 * No further testing of output done.
 	 */
 	/* sanity check - failure with invalid option */
-	const char *argv0[] = {prgname, prefix, mp_flag, "-c", "1", "--invalid-opt"};
+	const char *argv0[] = {prgname, prefix, mp_flag, "--invalid-opt"};
 
 	/* With --no-pci */
-	const char *argv1[] = {prgname, prefix, mp_flag, "-c", "1", "--no-pci"};
+	const char *argv1[] = {prgname, prefix, mp_flag, "--no-pci"};
 	/* With -v */
-	const char *argv2[] = {prgname, prefix, mp_flag, "-c", "1", "-v"};
+	const char *argv2[] = {prgname, prefix, mp_flag, "-v"};
 	/* With valid --syslog */
-	const char *argv3[] = {prgname, prefix, mp_flag, "-c", "1",
+	const char *argv3[] = {prgname, prefix, mp_flag,
 			"--syslog", "syslog"};
 	/* With empty --syslog (should fail) */
-	const char *argv4[] = {prgname, prefix, mp_flag, "-c", "1", "--syslog"};
+	const char *argv4[] = {prgname, prefix, mp_flag, "--syslog"};
 	/* With invalid --syslog */
-	const char *argv5[] = {prgname, prefix, mp_flag, "-c", "1", "--syslog", "error"};
+	const char *argv5[] = {prgname, prefix, mp_flag, "--syslog", "error"};
 	/* With no-sh-conf, also use no-huge to ensure this test runs on BSD */
-	const char *argv6[] = {prgname, "-c", "1", "-n", "2", "-m", DEFAULT_MEM_SIZE,
+	const char *argv6[] = {prgname, "-m", DEFAULT_MEM_SIZE,
 			no_shconf, nosh_prefix, no_huge};
 
 	/* With --huge-dir */
-	const char *argv7[] = {prgname, "-c", "1", "-n", "2", "-m", DEFAULT_MEM_SIZE,
+	const char *argv7[] = {prgname, "-m", DEFAULT_MEM_SIZE,
 			"--file-prefix=hugedir", "--huge-dir", hugepath};
 	/* With empty --huge-dir (should fail) */
-	const char *argv8[] = {prgname, "-c", "1", "-n", "2", "-m", DEFAULT_MEM_SIZE,
+	const char *argv8[] = {prgname, "-m", DEFAULT_MEM_SIZE,
 			"--file-prefix=hugedir", "--huge-dir"};
 	/* With invalid --huge-dir */
-	const char *argv9[] = {prgname, "-c", "1", "-n", "2", "-m", DEFAULT_MEM_SIZE,
+	const char *argv9[] = {prgname, "-m", DEFAULT_MEM_SIZE,
 			"--file-prefix=hugedir", "--huge-dir", "invalid"};
 	/* Secondary process with invalid --huge-dir (should run as flag has no
 	 * effect on secondary processes) */
-	const char *argv10[] = {prgname, prefix, mp_flag, "-c", "1", "--huge-dir", "invalid"};
+	const char *argv10[] = {prgname, prefix, mp_flag,
+			"--huge-dir", "invalid"};
 
 	/* try running with base-virtaddr param */
 	const char *argv11[] = {prgname, "--file-prefix=virtaddr",
-			"-c", "1", "-n", "2", "--base-virtaddr=0x12345678"};
+			"--base-virtaddr=0x12345678"};
 
 	/* try running with --vfio-intr INTx flag */
 	const char *argv12[] = {prgname, "--file-prefix=intr",
-			"-c", "1", "-n", "2", "--vfio-intr=legacy"};
+			"--vfio-intr=legacy"};
 
 	/* try running with --vfio-intr MSI flag */
 	const char *argv13[] = {prgname, "--file-prefix=intr",
-			"-c", "1", "-n", "2", "--vfio-intr=msi"};
+			"--vfio-intr=msi"};
 
 	/* try running with --vfio-intr MSI-X flag */
 	const char *argv14[] = {prgname, "--file-prefix=intr",
-			"-c", "1", "-n", "2", "--vfio-intr=msix"};
+			"--vfio-intr=msix"};
 
 	/* try running with --vfio-intr invalid flag */
 	const char *argv15[] = {prgname, "--file-prefix=intr",
-			"-c", "1", "-n", "2", "--vfio-intr=invalid"};
+			"--vfio-intr=invalid"};
+
+	/* With process type as auto-detect */
+	const char * const argv16[] = {prgname, "--file-prefix=auto",
+			"--proc-type=auto"};
+
+	/* With process type as auto-detect with no-shconf */
+	const char * const argv17[] = {prgname, "--proc-type=auto",
+			no_shconf, nosh_prefix, no_huge};
+
+	/* With process type as --create-uio-dev flag */
+	const char * const argv18[] = {prgname, "--file-prefix=uiodev",
+			"--create-uio-dev"};
 
 	/* run all tests also applicable to FreeBSD first */
 
@@ -898,7 +934,7 @@ test_misc_flags(void)
 		return -1;
 	}
 
-#ifdef RTE_EXEC_ENV_BSDAPP
+#ifdef RTE_EXEC_ENV_FREEBSD
 	/* no more tests to be done on FreeBSD */
 	return 0;
 #endif
@@ -955,6 +991,22 @@ test_misc_flags(void)
 				"--vfio-intr invalid parameter\n");
 		return -1;
 	}
+	if (launch_proc(argv16) != 0) {
+		printf("Error - process did not run ok with "
+				"--proc-type as auto parameter\n");
+		return -1;
+	}
+	if (launch_proc(argv17) != 0) {
+		printf("Error - process did not run ok with "
+				"--proc-type and --no-shconf parameter\n");
+		return -1;
+	}
+	if (launch_proc(argv18) != 0) {
+		printf("Error - process did not run ok with "
+				"--create-uio-dev parameter\n");
+		return -1;
+	}
+
 	return 0;
 }
 
@@ -978,7 +1030,7 @@ test_file_prefix(void)
 	 */
 	char prefix[PATH_MAX] = "";
 
-#ifdef RTE_EXEC_ENV_BSDAPP
+#ifdef RTE_EXEC_ENV_FREEBSD
 	return 0;
 #else
 	if (get_current_prefix(prefix, sizeof(prefix)) == NULL) {
@@ -988,26 +1040,44 @@ test_file_prefix(void)
 #endif
 
 	/* this should fail unless the test itself is run with "memtest" prefix */
-	const char *argv0[] = {prgname, mp_flag, "-c", "1", "-n", "2", "-m", DEFAULT_MEM_SIZE,
-			"--file-prefix=" memtest };
+	const char *argv0[] = {prgname, mp_flag, "-m",
+			DEFAULT_MEM_SIZE, "--file-prefix=" memtest };
 
 	/* primary process with memtest1 and default mem mode */
-	const char *argv1[] = {prgname, "-c", "1", "-n", "2", "-m",
+	const char *argv1[] = {prgname, "-m",
 			DEFAULT_MEM_SIZE, "--file-prefix=" memtest1 };
 
 	/* primary process with memtest1 and legacy mem mode */
-	const char *argv2[] = {prgname, "-c", "1", "-n", "2", "-m",
+	const char *argv2[] = {prgname, "-m",
 			DEFAULT_MEM_SIZE, "--file-prefix=" memtest1,
 			"--legacy-mem" };
 
 	/* primary process with memtest2 and legacy mem mode */
-	const char *argv3[] = {prgname, "-c", "1", "-n", "2", "-m",
+	const char *argv3[] = {prgname, "-m",
 			DEFAULT_MEM_SIZE, "--file-prefix=" memtest2,
 			"--legacy-mem" };
 
 	/* primary process with memtest2 and default mem mode */
-	const char *argv4[] = {prgname, "-c", "1", "-n", "2", "-m",
+	const char *argv4[] = {prgname, "-m",
 			DEFAULT_MEM_SIZE, "--file-prefix=" memtest2 };
+
+	/* primary process with --in-memory mode */
+	const char * const argv5[] = {prgname, "-m",
+		DEFAULT_MEM_SIZE, "--in-memory" };
+
+	/* primary process with memtest1 and --in-memory mode */
+	const char * const argv6[] = {prgname, "-m",
+		DEFAULT_MEM_SIZE, "--in-memory",
+		"--file-prefix=" memtest1 };
+
+	/* primary process with parent file-prefix and --in-memory mode */
+	const char * const argv7[] = {prgname, "-m",
+		DEFAULT_MEM_SIZE, "--in-memory", "--file-prefix", prefix };
+
+	/* primary process with memtest1 and --single-file-segments mode */
+	const char * const argv8[] = {prgname, "-m",
+		DEFAULT_MEM_SIZE, "--single-file-segments",
+		"--file-prefix=" memtest1 };
 
 	/* check if files for current prefix are present */
 	if (process_hugefiles(prefix, HUGEPAGE_CHECK_EXISTS) != 1) {
@@ -1129,6 +1199,54 @@ test_file_prefix(void)
 		return -1;
 	}
 
+	/* this process will run in --in-memory mode, so it should not leave any
+	 * hugepage files behind.
+	 */
+
+	/* test case to check eal-options with --in-memory mode */
+	if (launch_proc(argv5) != 0) {
+		printf("Error - failed to run with --in-memory mode\n");
+		return -1;
+	}
+
+	/*test case to check eal-options with --in-memory mode with
+	 * custom file-prefix.
+	 */
+	if (launch_proc(argv6) != 0) {
+		printf("Error - failed to run with --in-memory mode\n");
+		return -1;
+	}
+
+	/* check if hugefiles for memtest1 are present */
+	if (process_hugefiles(memtest1, HUGEPAGE_CHECK_EXISTS) != 0) {
+		printf("Error - hugepage files for %s were created and not deleted!\n",
+				memtest1);
+		return -1;
+	}
+
+	/* test case to check eal-options with --in-memory mode with
+	 * parent file-prefix.
+	 */
+	if (launch_proc(argv7) != 0) {
+		printf("Error - failed to run with --file-prefix=%s\n", prefix);
+		return -1;
+	}
+
+	/* this process will run in --single-file-segments mode,
+	 * so it should not leave any hugepage files behind.
+	 */
+	if (launch_proc(argv8) != 0) {
+		printf("Error - failed to run with --single-file-segments mode\n");
+		return -1;
+	}
+
+	/* check if hugefiles for memtest1 are present */
+	if (process_hugefiles(memtest1, HUGEPAGE_CHECK_EXISTS) != 0) {
+		printf("Error - hugepage files for %s were not deleted!\n",
+				memtest1);
+		return -1;
+	}
+
 	return 0;
 }
 
@@ -1138,7 +1256,7 @@ test_file_prefix(void)
 static int
 test_memory_flags(void)
 {
-#ifdef RTE_EXEC_ENV_BSDAPP
+#ifdef RTE_EXEC_ENV_FREEBSD
 	/* BSD target doesn't support prefixes at this point */
 	const char * prefix = "";
 #else
@@ -1151,39 +1269,39 @@ test_memory_flags(void)
 #endif
 
 	/* valid -m flag and mp flag */
-	const char *argv0[] = {prgname, prefix, mp_flag, "-c", "10",
-			"-n", "2", "-m", DEFAULT_MEM_SIZE};
+	const char *argv0[] = {prgname, prefix, mp_flag,
+			"-m", DEFAULT_MEM_SIZE};
 
 	/* valid -m flag */
-	const char *argv1[] = {prgname, "-c", "10", "-n", "2",
+	const char *argv1[] = {prgname,
 			"--file-prefix=" memtest, "-m", DEFAULT_MEM_SIZE};
 
 	/* valid (zero) --socket-mem flag */
-	const char *argv2[] = {prgname, "-c", "10", "-n", "2",
+	const char *argv2[] = {prgname,
 			"--file-prefix=" memtest, "--socket-mem=0,0,0,0"};
 
 	/* invalid (incomplete) --socket-mem flag */
-	const char *argv3[] = {prgname, "-c", "10", "-n", "2",
+	const char *argv3[] = {prgname,
 			"--file-prefix=" memtest, "--socket-mem=2,2,"};
 
 	/* invalid (mixed with invalid data) --socket-mem flag */
-	const char *argv4[] = {prgname, "-c", "10", "-n", "2",
+	const char *argv4[] = {prgname,
 			"--file-prefix=" memtest, "--socket-mem=2,2,Fred"};
 
 	/* invalid (with numeric value as last character) --socket-mem flag */
-	const char *argv5[] = {prgname, "-c", "10", "-n", "2",
+	const char *argv5[] = {prgname,
 			"--file-prefix=" memtest, "--socket-mem=2,2,Fred0"};
 
 	/* invalid (with empty socket) --socket-mem flag */
-	const char *argv6[] = {prgname, "-c", "10", "-n", "2",
+	const char *argv6[] = {prgname,
 			"--file-prefix=" memtest, "--socket-mem=2,,2"};
 
 	/* invalid (null) --socket-mem flag */
-	const char *argv7[] = {prgname, "-c", "10", "-n", "2",
+	const char *argv7[] = {prgname,
 			"--file-prefix=" memtest, "--socket-mem="};
 
 	/* valid --socket-mem specified together with -m flag */
-	const char *argv8[] = {prgname, "-c", "10", "-n", "2",
+	const char *argv8[] = {prgname,
 			"--file-prefix=" memtest, "-m", DEFAULT_MEM_SIZE, "--socket-mem=2,2"};
 
 	/* construct an invalid socket mask with 2 megs on each socket plus
@@ -1191,7 +1309,7 @@ test_memory_flags(void)
 	char invalid_socket_mem[SOCKET_MEM_STRLEN];
 	char buf[SOCKET_MEM_STRLEN];	/* to avoid copying string onto itself */
 
-#ifdef RTE_EXEC_ENV_BSDAPP
+#ifdef RTE_EXEC_ENV_FREEBSD
 	int i, num_sockets = 1;
 #else
 	int i, num_sockets = RTE_MIN(get_number_of_sockets(),
@@ -1235,11 +1353,11 @@ test_memory_flags(void)
 	}
 
 	/* invalid --socket-mem flag (with extra socket) */
-	const char *argv9[] = {prgname, "-c", "10", "-n", "2",
+	const char *argv9[] = {prgname,
 			"--file-prefix=" memtest, invalid_socket_mem};
 
 	/* valid --socket-mem flag */
-	const char *argv10[] = {prgname, "-c", "10", "-n", "2",
+	const char *argv10[] = {prgname,
 			"--file-prefix=" memtest, valid_socket_mem};
 
 	if (launch_proc(argv0) != 0) {
@@ -1247,7 +1365,7 @@ test_memory_flags(void)
 		return -1;
 	}
 
-#ifdef RTE_EXEC_ENV_BSDAPP
+#ifdef RTE_EXEC_ENV_FREEBSD
 	/* no other tests are applicable to BSD */
 	return 0;
 #endif
@@ -1391,3 +1509,17 @@ test_eal_flags(void)
 }
 
 REGISTER_TEST_COMMAND(eal_flags_autotest, test_eal_flags);
+
+/* subtests used in meson for CI */
+REGISTER_TEST_COMMAND(eal_flags_c_opt_autotest, test_missing_c_flag);
+REGISTER_TEST_COMMAND(eal_flags_master_opt_autotest, test_master_lcore_flag);
+REGISTER_TEST_COMMAND(eal_flags_n_opt_autotest, test_invalid_n_flag);
+REGISTER_TEST_COMMAND(eal_flags_hpet_autotest, test_no_hpet_flag);
+REGISTER_TEST_COMMAND(eal_flags_no_huge_autotest, test_no_huge_flag);
+REGISTER_TEST_COMMAND(eal_flags_w_opt_autotest, test_whitelist_flag);
+REGISTER_TEST_COMMAND(eal_flags_b_opt_autotest, test_invalid_b_flag);
+REGISTER_TEST_COMMAND(eal_flags_vdev_opt_autotest, test_invalid_vdev_flag);
+REGISTER_TEST_COMMAND(eal_flags_r_opt_autotest, test_invalid_r_flag);
+REGISTER_TEST_COMMAND(eal_flags_mem_autotest, test_memory_flags);
+REGISTER_TEST_COMMAND(eal_flags_file_prefix_autotest, test_file_prefix);
+REGISTER_TEST_COMMAND(eal_flags_misc_autotest, test_misc_flags);

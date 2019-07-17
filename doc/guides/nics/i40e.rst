@@ -69,6 +69,8 @@ to chapter Tested Platforms/Tested NICs in release notes.
    +--------------+-----------------------+------------------+
    | DPDK version | Kernel driver version | Firmware version |
    +==============+=======================+==================+
+   |    19.05     |         2.7.29        |       6.80       |
+   +--------------+-----------------------+------------------+
    |    19.02     |         2.7.26        |       6.80       |
    +--------------+-----------------------+------------------+
    |    18.11     |         2.4.6         |       6.01       |
@@ -580,7 +582,7 @@ bandwidth setting.
 TC TX scheduling mode setting
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-There're 2 TX scheduling modes for TCs, round robin and strict priority mode.
+There are 2 TX scheduling modes for TCs, round robin and strict priority mode.
 If a TC is set to strict priority mode, it can consume unlimited bandwidth.
 It means if APP has set the max bandwidth for that TC, it comes to no
 effect.

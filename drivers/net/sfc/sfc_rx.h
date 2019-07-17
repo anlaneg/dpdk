@@ -73,6 +73,7 @@ struct sfc_efx_rxq {
 #define SFC_EFX_RXQ_FLAG_STARTED	0x1
 #define SFC_EFX_RXQ_FLAG_RUNNING	0x2
 #define SFC_EFX_RXQ_FLAG_RSS_HASH	0x4
+#define SFC_EFX_RXQ_FLAG_INTR_EN	0x8
 	unsigned int			ptr_mask;
 	unsigned int			pending;
 	unsigned int			completed;
@@ -142,6 +143,10 @@ void sfc_rx_hash_fini(struct sfc_adapter *sa);
 int sfc_rx_hf_rte_to_efx(struct sfc_adapter *sa, uint64_t rte,
 			 efx_rx_hash_type_t *efx);
 uint64_t sfc_rx_hf_efx_to_rte(struct sfc_rss *rss, efx_rx_hash_type_t efx);
+boolean_t sfc_rx_check_scatter(size_t pdu, size_t rx_buf_size,
+			       uint32_t rx_prefix_size,
+			       boolean_t rx_scatter_enabled,
+			       const char **error);
 
 #ifdef __cplusplus
 }

@@ -17,7 +17,7 @@
 #include <linux/kthread.h>
 #include <linux/delay.h>
 
-#include <exec-env/rte_kni_common.h>
+#include <rte_kni_common.h>
 #include <kni_fifo.h>
 
 #include "compat.h"
@@ -762,6 +762,7 @@ kni_net_change_carrier(struct net_device *dev, bool new_carrier)
 
 static const struct header_ops kni_net_header_ops = {
 	.create  = kni_net_header,
+	.parse   = eth_header_parse,
 #ifdef HAVE_REBUILD_HEADER
 	.rebuild = kni_net_rebuild_header,
 #endif /* < 4.1.0  */

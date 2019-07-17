@@ -16,6 +16,7 @@
 #include <sys/stat.h>
 #include <dirent.h>
 
+#include <rte_string_fns.h>
 #include <rte_eal.h>
 #include <rte_log.h>
 #include <rte_lcore.h>
@@ -144,7 +145,7 @@ eal_option_device_add(enum rte_devtype type, const char *optarg)
 	}
 
 	devopt->type = type;
-	ret = snprintf(devopt->arg, optlen, "%s", optarg);
+	ret = strlcpy(devopt->arg, optarg, optlen);
 	if (ret < 0) {
 		RTE_LOG(ERR, EAL, "Unable to copy device option\n");
 		free(devopt);
@@ -267,8 +268,7 @@ eal_plugindir_init(const char *path)
 	while ((dent = readdir(d)) != NULL) {
 		struct stat sb;
 
-		snprintf(sopath, PATH_MAX-1, "%s/%s", path, dent->d_name);
-		sopath[PATH_MAX-1] = 0;
+		snprintf(sopath, sizeof(sopath), "%s/%s", path, dent->d_name);
 
 		if (!(stat(sopath, &sb) == 0 && S_ISREG(sb.st_mode)))
 			continue;

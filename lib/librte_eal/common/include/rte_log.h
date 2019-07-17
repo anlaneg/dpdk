@@ -37,7 +37,7 @@ struct rte_logs {
 	struct rte_log_dynamic_type *dynamic_types;//指出动态模块的日志级别
 };
 
-/** Global log informations */
+/** Global log information */
 extern struct rte_logs rte_logs;
 
 /* SDK log type */

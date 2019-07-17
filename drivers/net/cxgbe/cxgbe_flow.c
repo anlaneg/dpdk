@@ -115,12 +115,12 @@ ch_rte_parsetype_eth(const void *dmask, const struct rte_flow_item *item,
 	mask = umask ? umask : (const struct rte_flow_item_eth *)dmask;
 
 	/* we don't support SRC_MAC filtering*/
-	if (!is_zero_ether_addr(&mask->src))
+	if (!rte_is_zero_ether_addr(&mask->src))
 		return rte_flow_error_set(e, ENOTSUP, RTE_FLOW_ERROR_TYPE_ITEM,
 					  item,
 					  "src mac filtering not supported");
 
-	if (!is_zero_ether_addr(&mask->dst)) {
+	if (!rte_is_zero_ether_addr(&mask->dst)) {
 		const u8 *addr = (const u8 *)&spec->dst.addr_bytes[0];
 		const u8 *m = (const u8 *)&mask->dst.addr_bytes[0];
 		struct rte_flow *flow = (struct rte_flow *)fs->private;
@@ -233,7 +233,7 @@ ch_rte_parsetype_ipv4(const void *dmask, const struct rte_flow_item *item,
 					  item, "ttl/tos are not supported");
 
 	fs->type = FILTER_TYPE_IPV4;
-	CXGBE_FILL_FS(ETHER_TYPE_IPv4, 0xffff, ethtype);
+	CXGBE_FILL_FS(RTE_ETHER_TYPE_IPV4, 0xffff, ethtype);
 	if (!val)
 		return 0; /* ipv4 wild card */
 
@@ -262,7 +262,7 @@ ch_rte_parsetype_ipv6(const void *dmask, const struct rte_flow_item *item,
 					  "tc/flow/hop are not supported");
 
 	fs->type = FILTER_TYPE_IPV6;
-	CXGBE_FILL_FS(ETHER_TYPE_IPv6, 0xffff, ethtype);
+	CXGBE_FILL_FS(RTE_ETHER_TYPE_IPV6, 0xffff, ethtype);
 	if (!val)
 		return 0; /* ipv6 wild card */
 
@@ -448,7 +448,7 @@ ch_rte_parse_atype_switch(const struct rte_flow_action *a,
 	case RTE_FLOW_ACTION_TYPE_OF_PUSH_VLAN:
 		pushvlan = (const struct rte_flow_action_of_push_vlan *)
 			    a->conf;
-		if (pushvlan->ethertype != ETHER_TYPE_VLAN)
+		if (pushvlan->ethertype != RTE_ETHER_TYPE_VLAN)
 			return rte_flow_error_set(e, EINVAL,
 						  RTE_FLOW_ERROR_TYPE_ACTION, a,
 						  "only ethertype 0x8100 "

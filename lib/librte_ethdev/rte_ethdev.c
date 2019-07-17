@@ -331,14 +331,41 @@ uint16_t
 rte_eth_find_next(uint16_t port_id)
 {
 	while (port_id < RTE_MAX_ETHPORTS &&
-	       rte_eth_devices[port_id].state != RTE_ETH_DEV_ATTACHED &&
-	       rte_eth_devices[port_id].state != RTE_ETH_DEV_REMOVED)
+			rte_eth_devices[port_id].state == RTE_ETH_DEV_UNUSED)
 		port_id++;
 
 	if (port_id >= RTE_MAX_ETHPORTS)
 		return RTE_MAX_ETHPORTS;
 
 	return port_id;
+}
+
+/*
+ * Macro to iterate over all valid ports for internal usage.
+ * Note: RTE_ETH_FOREACH_DEV is different because filtering owned ports.
+ */
+#define RTE_ETH_FOREACH_VALID_DEV(port_id) \
+	for (port_id = rte_eth_find_next(0); \
+	     port_id < RTE_MAX_ETHPORTS; \
+	     port_id = rte_eth_find_next(port_id + 1))
+
+uint16_t
+rte_eth_find_next_of(uint16_t port_id, const struct rte_device *parent)
+{
+	port_id = rte_eth_find_next(port_id);
+	while (port_id < RTE_MAX_ETHPORTS &&
+			rte_eth_devices[port_id].device != parent)
+		port_id = rte_eth_find_next(port_id + 1);
+
+	return port_id;
+}
+
+uint16_t
+rte_eth_find_next_sibling(uint16_t port_id, uint16_t ref_port_id)
+{
+	RTE_ETH_VALID_PORTID_OR_ERR_RET(ref_port_id, RTE_MAX_ETHPORTS);
+	return rte_eth_find_next_of(port_id,
+			rte_eth_devices[ref_port_id].device);
 }
 
 //分配eth_dev_data空间
@@ -445,6 +472,18 @@ rte_eth_dev_allocate(const char *name)
 {
 	uint16_t port_id;
 	struct rte_eth_dev *eth_dev = NULL;
+	size_t name_len;
+
+	name_len = strnlen(name, RTE_ETH_NAME_MAX_LEN);
+	if (name_len == 0) {
+		RTE_ETHDEV_LOG(ERR, "Zero length Ethernet device name\n");
+		return NULL;
+	}
+
+	if (name_len >= RTE_ETH_NAME_MAX_LEN) {
+		RTE_ETHDEV_LOG(ERR, "Ethernet device name is too long\n");
+		return NULL;
+	}
 
 	rte_eth_dev_shared_data_prepare();
 
@@ -469,9 +508,9 @@ rte_eth_dev_allocate(const char *name)
 	}
 
 	eth_dev = eth_dev_get(port_id);
-	snprintf(eth_dev->data->name, sizeof(eth_dev->data->name), "%s", name);
+	strlcpy(eth_dev->data->name, name, sizeof(eth_dev->data->name));
 	eth_dev->data->port_id = port_id;
-	eth_dev->data->mtu = ETHER_MTU;
+	eth_dev->data->mtu = RTE_ETHER_MTU;
 
 unlock:
 	rte_spinlock_unlock(&rte_eth_dev_shared_data->ownership_lock);
@@ -569,19 +608,16 @@ rte_eth_is_valid_owner_id(uint64_t owner_id)
 uint64_t
 rte_eth_find_next_owned_by(uint16_t port_id, const uint64_t owner_id)
 {
+	port_id = rte_eth_find_next(port_id);
 	while (port_id < RTE_MAX_ETHPORTS &&
-	       ((rte_eth_devices[port_id].state != RTE_ETH_DEV_ATTACHED &&
-	       rte_eth_devices[port_id].state != RTE_ETH_DEV_REMOVED) ||
-	       rte_eth_devices[port_id].data->owner.id != owner_id))
-		port_id++;//计算识别的port数
-
-	if (port_id >= RTE_MAX_ETHPORTS)
-		return RTE_MAX_ETHPORTS;//找不到，返回最大值
+			rte_eth_devices[port_id].data->owner.id != owner_id)
+		//计算识别的port数
+		port_id = rte_eth_find_next(port_id + 1);
 
 	return port_id;
 }
 
-int __rte_experimental
+int
 rte_eth_dev_owner_new(uint64_t *owner_id)
 {
 	rte_eth_dev_shared_data_prepare();
@@ -600,7 +636,6 @@ _rte_eth_dev_owner_set(const uint16_t port_id, const uint64_t old_owner_id,
 {
 	struct rte_eth_dev *ethdev = &rte_eth_devices[port_id];
 	struct rte_eth_dev_owner *port_owner;
-	int sret;
 
 	if (port_id >= RTE_MAX_ETHPORTS || !is_allocated(ethdev)) {
 		RTE_ETHDEV_LOG(ERR, "Port id %"PRIu16" is not allocated\n",
@@ -624,11 +659,8 @@ _rte_eth_dev_owner_set(const uint16_t port_id, const uint64_t old_owner_id,
 		return -EPERM;
 	}
 
-	sret = snprintf(port_owner->name, RTE_ETH_MAX_OWNER_NAME_LEN, "%s",
-			new_owner->name);
-	if (sret < 0 || sret >= RTE_ETH_MAX_OWNER_NAME_LEN)
-		RTE_ETHDEV_LOG(ERR, "Port %u owner name was truncated\n",
-			port_id);
+	/* can not truncate (same structure) */
+	strlcpy(port_owner->name, new_owner->name, RTE_ETH_MAX_OWNER_NAME_LEN);
 
 	port_owner->id = new_owner->id;
 
@@ -638,7 +670,7 @@ _rte_eth_dev_owner_set(const uint16_t port_id, const uint64_t old_owner_id,
 	return 0;
 }
 
-int __rte_experimental
+int
 rte_eth_dev_owner_set(const uint16_t port_id,
 		      const struct rte_eth_dev_owner *owner)
 {
@@ -654,7 +686,7 @@ rte_eth_dev_owner_set(const uint16_t port_id,
 	return ret;
 }
 
-int __rte_experimental
+int
 rte_eth_dev_owner_unset(const uint16_t port_id, const uint64_t owner_id)
 {
 	const struct rte_eth_dev_owner new_owner = (struct rte_eth_dev_owner)
@@ -671,7 +703,7 @@ rte_eth_dev_owner_unset(const uint16_t port_id, const uint64_t owner_id)
 	return ret;
 }
 
-void __rte_experimental
+void
 rte_eth_dev_owner_delete(const uint64_t owner_id)
 {
 	uint16_t port_id;
@@ -697,7 +729,7 @@ rte_eth_dev_owner_delete(const uint64_t owner_id)
 	rte_spinlock_unlock(&rte_eth_dev_shared_data->ownership_lock);
 }
 
-int __rte_experimental
+int
 rte_eth_dev_owner_get(const uint16_t port_id, struct rte_eth_dev_owner *owner)
 {
 	int ret = 0;
@@ -756,14 +788,13 @@ rte_eth_dev_count_avail(void)
 	return count;
 }
 
-uint16_t __rte_experimental
+uint16_t
 rte_eth_dev_count_total(void)
 {
 	uint16_t port, count = 0;
 
-	for (port = 0; port < RTE_MAX_ETHPORTS; port++)
-		if (rte_eth_devices[port].state != RTE_ETH_DEV_UNUSED)
-			count++;
+	RTE_ETH_FOREACH_VALID_DEV(port)
+		count++;
 
 	return count;
 }
@@ -798,13 +829,11 @@ rte_eth_dev_get_port_by_name(const char *name, uint16_t *port_id)
 		return -EINVAL;
 	}
 
-	for (pid = 0; pid < RTE_MAX_ETHPORTS; pid++) {
-		if (rte_eth_devices[pid].state != RTE_ETH_DEV_UNUSED &&
-		    !strcmp(name, rte_eth_dev_shared_data->data[pid].name)) {
+	RTE_ETH_FOREACH_VALID_DEV(pid)
+		if (!strcmp(name, rte_eth_dev_shared_data->data[pid].name)) {
 			*port_id = pid;
 			return 0;
 		}
-	}
 
 	return -ENODEV;
 }
@@ -1234,20 +1263,20 @@ rte_eth_dev_configure(uint16_t port_id, uint16_t nb_rx_q, uint16_t nb_tx_q,
 				dev_info.max_rx_pktlen);
 			ret = -EINVAL;
 			goto rollback;
-		} else if (dev_conf->rxmode.max_rx_pkt_len < ETHER_MIN_LEN) {
+		} else if (dev_conf->rxmode.max_rx_pkt_len < RTE_ETHER_MIN_LEN) {
 			RTE_ETHDEV_LOG(ERR,
 				"Ethdev port_id=%u max_rx_pkt_len %u < min valid value %u\n",
 				port_id, dev_conf->rxmode.max_rx_pkt_len,
-				(unsigned)ETHER_MIN_LEN);
+				(unsigned int)RTE_ETHER_MIN_LEN);
 			ret = -EINVAL;
 			goto rollback;
 		}
 	} else {
-		if (dev_conf->rxmode.max_rx_pkt_len < ETHER_MIN_LEN ||
-			dev_conf->rxmode.max_rx_pkt_len > ETHER_MAX_LEN)
+		if (dev_conf->rxmode.max_rx_pkt_len < RTE_ETHER_MIN_LEN ||
+			dev_conf->rxmode.max_rx_pkt_len > RTE_ETHER_MAX_LEN)
 			/* Use default value */
 			dev->data->dev_conf.rxmode.max_rx_pkt_len =
-							ETHER_MAX_LEN;
+							RTE_ETHER_MAX_LEN;
 	}
 
 	/* Any requested offloading must be within its device capabilities */
@@ -1359,7 +1388,7 @@ static void
 rte_eth_dev_mac_restore(struct rte_eth_dev *dev,
 			struct rte_eth_dev_info *dev_info)
 {
-	struct ether_addr *addr;
+	struct rte_ether_addr *addr;
 	uint16_t i;
 	uint32_t pool = 0;
 	uint64_t pool_mask;
@@ -1376,7 +1405,7 @@ rte_eth_dev_mac_restore(struct rte_eth_dev *dev,
 			addr = &dev->data->mac_addrs[i];
 
 			/* skip zero address */
-			if (is_zero_ether_addr(addr))
+			if (rte_is_zero_ether_addr(addr))
 				continue;
 
 			pool = 0;
@@ -1551,7 +1580,7 @@ rte_eth_dev_reset(uint16_t port_id)
 	return eth_err(port_id, ret);
 }
 
-int __rte_experimental
+int
 rte_eth_dev_is_removed(uint16_t port_id)
 {
 	struct rte_eth_dev *dev;
@@ -1593,6 +1622,11 @@ rte_eth_rx_queue_setup(uint16_t port_id, uint16_t rx_queue_id,
 	dev = &rte_eth_devices[port_id];
 	if (rx_queue_id >= dev->data->nb_rx_queues) {
 		RTE_ETHDEV_LOG(ERR, "Invalid RX queue_id=%u\n", rx_queue_id);
+		return -EINVAL;
+	}
+
+	if (mp == NULL) {
+		RTE_ETHDEV_LOG(ERR, "Invalid null mempool pointer\n");
 		return -EINVAL;
 	}
 
@@ -1688,7 +1722,7 @@ rte_eth_rx_queue_setup(uint16_t port_id, uint16_t rx_queue_id,
 	     local_conf.offloads) {
 		RTE_ETHDEV_LOG(ERR,
 			"Ethdev port_id=%d rx_queue_id=%d, new added offloads 0x%"PRIx64" must be "
-			"within pre-queue offload capabilities 0x%"PRIx64" in %s()\n",
+			"within per-queue offload capabilities 0x%"PRIx64" in %s()\n",
 			port_id, rx_queue_id, local_conf.offloads,
 			dev_info.rx_queue_offload_capa,
 			__func__);
@@ -1798,7 +1832,7 @@ rte_eth_tx_queue_setup(uint16_t port_id, uint16_t tx_queue_id,
 	     local_conf.offloads) {
 		RTE_ETHDEV_LOG(ERR,
 			"Ethdev port_id=%d tx_queue_id=%d, new added offloads 0x%"PRIx64" must be "
-			"within pre-queue offload capabilities 0x%"PRIx64" in %s()\n",
+			"within per-queue offload capabilities 0x%"PRIx64" in %s()\n",
 			port_id, tx_queue_id, local_conf.offloads,
 			dev_info.tx_queue_offload_capa,
 			__func__);
@@ -2119,9 +2153,9 @@ rte_eth_basic_stats_get_names(struct rte_eth_dev *dev,
 	uint16_t num_q;
 
 	for (idx = 0; idx < RTE_NB_STATS; idx++) {
-		snprintf(xstats_names[cnt_used_entries].name,
-			sizeof(xstats_names[0].name),
-			"%s", rte_stats_strings[idx].name);
+		strlcpy(xstats_names[cnt_used_entries].name,
+			rte_stats_strings[idx].name,
+			sizeof(xstats_names[0].name));
 		cnt_used_entries++;
 	}
 	num_q = RTE_MIN(dev->data->nb_rx_queues, RTE_ETHDEV_QUEUE_STAT_CNTRS);
@@ -2575,6 +2609,8 @@ rte_eth_dev_info_get(uint16_t port_id, struct rte_eth_dev_info *dev_info)
 		.nb_max = UINT16_MAX,
 		.nb_min = 0,
 		.nb_align = 1,
+		.nb_seg_max = UINT16_MAX,
+		.nb_mtu_seg_max = UINT16_MAX,
 	};
 
 	RTE_ETH_VALID_PORTID_OR_RET(port_id);
@@ -2584,6 +2620,8 @@ rte_eth_dev_info_get(uint16_t port_id, struct rte_eth_dev_info *dev_info)
 	dev_info->rx_desc_lim = lim;
 	dev_info->tx_desc_lim = lim;
 	dev_info->device = dev->device;
+	dev_info->min_mtu = RTE_ETHER_MIN_MTU;
+	dev_info->max_mtu = UINT16_MAX;
 
 	RTE_FUNC_PTR_OR_RET(*dev->dev_ops->dev_infos_get);
 	(*dev->dev_ops->dev_infos_get)(dev, dev_info);
@@ -2622,13 +2660,13 @@ rte_eth_dev_get_supported_ptypes(uint16_t port_id, uint32_t ptype_mask,
 
 //给定port id，取此port对应的mac地址
 void
-rte_eth_macaddr_get(uint16_t port_id, struct ether_addr *mac_addr)
+rte_eth_macaddr_get(uint16_t port_id, struct rte_ether_addr *mac_addr)
 {
 	struct rte_eth_dev *dev;
 
 	RTE_ETH_VALID_PORTID_OR_RET(port_id);
 	dev = &rte_eth_devices[port_id];
-	ether_addr_copy(&dev->data->mac_addrs[0], mac_addr);
+	rte_ether_addr_copy(&dev->data->mac_addrs[0], mac_addr);
 }
 
 
@@ -2648,11 +2686,24 @@ int
 rte_eth_dev_set_mtu(uint16_t port_id, uint16_t mtu)
 {
 	int ret;
+	struct rte_eth_dev_info dev_info;
 	struct rte_eth_dev *dev;
 
 	RTE_ETH_VALID_PORTID_OR_ERR_RET(port_id, -ENODEV);
 	dev = &rte_eth_devices[port_id];
 	RTE_FUNC_PTR_OR_ERR_RET(*dev->dev_ops->mtu_set, -ENOTSUP);
+
+	/*
+	 * Check if the device supports dev_infos_get, if it does not
+	 * skip min_mtu/max_mtu validation here as this requires values
+	 * that are populated within the call to rte_eth_dev_info_get()
+	 * which relies on dev->dev_ops->dev_infos_get.
+	 */
+	if (*dev->dev_ops->dev_infos_get != NULL) {
+		rte_eth_dev_info_get(port_id, &dev_info);
+		if (mtu < dev_info.min_mtu || mtu > dev_info.max_mtu)
+			return -EINVAL;
+	}
 
 	ret = (*dev->dev_ops->mtu_set)(dev, mtu);
 	if (!ret)
@@ -2744,51 +2795,54 @@ rte_eth_dev_set_vlan_offload(uint16_t port_id, int offload_mask)
 	int mask = 0;
 	int cur, org = 0;
 	uint64_t orig_offloads;
+	uint64_t *dev_offloads;
 
 	RTE_ETH_VALID_PORTID_OR_ERR_RET(port_id, -ENODEV);
 	dev = &rte_eth_devices[port_id];
 
 	/* save original values in case of failure */
 	orig_offloads = dev->data->dev_conf.rxmode.offloads;
+	dev_offloads = &dev->data->dev_conf.rxmode.offloads;
 
 	/*check which option changed by application*/
 	cur = !!(offload_mask & ETH_VLAN_STRIP_OFFLOAD);
-	org = !!(dev->data->dev_conf.rxmode.offloads &
-		 DEV_RX_OFFLOAD_VLAN_STRIP);
+	org = !!(*dev_offloads & DEV_RX_OFFLOAD_VLAN_STRIP);
 	if (cur != org) {
 		if (cur)
-			dev->data->dev_conf.rxmode.offloads |=
-				DEV_RX_OFFLOAD_VLAN_STRIP;
+			*dev_offloads |= DEV_RX_OFFLOAD_VLAN_STRIP;
 		else
-			dev->data->dev_conf.rxmode.offloads &=
-				~DEV_RX_OFFLOAD_VLAN_STRIP;
+			*dev_offloads &= ~DEV_RX_OFFLOAD_VLAN_STRIP;
 		mask |= ETH_VLAN_STRIP_MASK;
 	}
 
 	cur = !!(offload_mask & ETH_VLAN_FILTER_OFFLOAD);
-	org = !!(dev->data->dev_conf.rxmode.offloads &
-		 DEV_RX_OFFLOAD_VLAN_FILTER);
+	org = !!(*dev_offloads & DEV_RX_OFFLOAD_VLAN_FILTER);
 	if (cur != org) {
 		if (cur)
-			dev->data->dev_conf.rxmode.offloads |=
-				DEV_RX_OFFLOAD_VLAN_FILTER;
+			*dev_offloads |= DEV_RX_OFFLOAD_VLAN_FILTER;
 		else
-			dev->data->dev_conf.rxmode.offloads &=
-				~DEV_RX_OFFLOAD_VLAN_FILTER;
+			*dev_offloads &= ~DEV_RX_OFFLOAD_VLAN_FILTER;
 		mask |= ETH_VLAN_FILTER_MASK;
 	}
 
 	cur = !!(offload_mask & ETH_VLAN_EXTEND_OFFLOAD);
-	org = !!(dev->data->dev_conf.rxmode.offloads &
-		 DEV_RX_OFFLOAD_VLAN_EXTEND);
+	org = !!(*dev_offloads & DEV_RX_OFFLOAD_VLAN_EXTEND);
 	if (cur != org) {
 		if (cur)
-			dev->data->dev_conf.rxmode.offloads |=
-				DEV_RX_OFFLOAD_VLAN_EXTEND;
+			*dev_offloads |= DEV_RX_OFFLOAD_VLAN_EXTEND;
 		else
-			dev->data->dev_conf.rxmode.offloads &=
-				~DEV_RX_OFFLOAD_VLAN_EXTEND;
+			*dev_offloads &= ~DEV_RX_OFFLOAD_VLAN_EXTEND;
 		mask |= ETH_VLAN_EXTEND_MASK;
+	}
+
+	cur = !!(offload_mask & ETH_QINQ_STRIP_OFFLOAD);
+	org = !!(*dev_offloads & DEV_RX_OFFLOAD_QINQ_STRIP);
+	if (cur != org) {
+		if (cur)
+			*dev_offloads |= DEV_RX_OFFLOAD_QINQ_STRIP;
+		else
+			*dev_offloads &= ~DEV_RX_OFFLOAD_QINQ_STRIP;
+		mask |= ETH_QINQ_STRIP_MASK;
 	}
 
 	/*no change*/
@@ -2799,7 +2853,7 @@ rte_eth_dev_set_vlan_offload(uint16_t port_id, int offload_mask)
 	ret = (*dev->dev_ops->vlan_offload_set)(dev, mask);
 	if (ret) {
 		/* hit an error restore  original values */
-		dev->data->dev_conf.rxmode.offloads = orig_offloads;
+		*dev_offloads = orig_offloads;
 	}
 
 	return eth_err(port_id, ret);
@@ -2809,22 +2863,24 @@ int
 rte_eth_dev_get_vlan_offload(uint16_t port_id)
 {
 	struct rte_eth_dev *dev;
+	uint64_t *dev_offloads;
 	int ret = 0;
 
 	RTE_ETH_VALID_PORTID_OR_ERR_RET(port_id, -ENODEV);
 	dev = &rte_eth_devices[port_id];
+	dev_offloads = &dev->data->dev_conf.rxmode.offloads;
 
-	if (dev->data->dev_conf.rxmode.offloads &
-	    DEV_RX_OFFLOAD_VLAN_STRIP)
+	if (*dev_offloads & DEV_RX_OFFLOAD_VLAN_STRIP)
 		ret |= ETH_VLAN_STRIP_OFFLOAD;
 
-	if (dev->data->dev_conf.rxmode.offloads &
-	    DEV_RX_OFFLOAD_VLAN_FILTER)
+	if (*dev_offloads & DEV_RX_OFFLOAD_VLAN_FILTER)
 		ret |= ETH_VLAN_FILTER_OFFLOAD;
 
-	if (dev->data->dev_conf.rxmode.offloads &
-	    DEV_RX_OFFLOAD_VLAN_EXTEND)
+	if (*dev_offloads & DEV_RX_OFFLOAD_VLAN_EXTEND)
 		ret |= ETH_VLAN_EXTEND_OFFLOAD;
+
+	if (*dev_offloads & DEV_RX_OFFLOAD_QINQ_STRIP)
+		ret |= DEV_RX_OFFLOAD_QINQ_STRIP;
 
 	return ret;
 }
@@ -3096,7 +3152,7 @@ rte_eth_led_off(uint16_t port_id)
  * an empty spot.
  */
 static int
-get_mac_addr_index(uint16_t port_id, const struct ether_addr *addr)
+get_mac_addr_index(uint16_t port_id, const struct rte_ether_addr *addr)
 {
 	struct rte_eth_dev_info dev_info;
 	struct rte_eth_dev *dev = &rte_eth_devices[port_id];
@@ -3106,16 +3162,17 @@ get_mac_addr_index(uint16_t port_id, const struct ether_addr *addr)
 	rte_eth_dev_info_get(port_id, &dev_info);
 
 	for (i = 0; i < dev_info.max_mac_addrs; i++)
-		if (memcmp(addr, &dev->data->mac_addrs[i], ETHER_ADDR_LEN) == 0)
+		if (memcmp(addr, &dev->data->mac_addrs[i],
+				RTE_ETHER_ADDR_LEN) == 0)
 			return i;
 
 	return -1;
 }
 
-static const struct ether_addr null_mac_addr;
+static const struct rte_ether_addr null_mac_addr;
 
 int
-rte_eth_dev_mac_addr_add(uint16_t port_id, struct ether_addr *addr,
+rte_eth_dev_mac_addr_add(uint16_t port_id, struct rte_ether_addr *addr,
 			uint32_t pool)
 {
 	struct rte_eth_dev *dev;
@@ -3127,7 +3184,7 @@ rte_eth_dev_mac_addr_add(uint16_t port_id, struct ether_addr *addr,
 	dev = &rte_eth_devices[port_id];
 	RTE_FUNC_PTR_OR_ERR_RET(*dev->dev_ops->mac_addr_add, -ENOTSUP);
 
-	if (is_zero_ether_addr(addr)) {
+	if (rte_is_zero_ether_addr(addr)) {
 		RTE_ETHDEV_LOG(ERR, "Port %u: Cannot add NULL MAC address\n",
 			port_id);
 		return -EINVAL;
@@ -3158,7 +3215,7 @@ rte_eth_dev_mac_addr_add(uint16_t port_id, struct ether_addr *addr,
 
 	if (ret == 0) {
 		/* Update address in NIC data structure */
-		ether_addr_copy(addr, &dev->data->mac_addrs[index]);
+		rte_ether_addr_copy(addr, &dev->data->mac_addrs[index]);
 
 		/* Update pool bitmap in NIC data structure */
 		dev->data->mac_pool_sel[index] |= (1ULL << pool);
@@ -3168,7 +3225,7 @@ rte_eth_dev_mac_addr_add(uint16_t port_id, struct ether_addr *addr,
 }
 
 int
-rte_eth_dev_mac_addr_remove(uint16_t port_id, struct ether_addr *addr)
+rte_eth_dev_mac_addr_remove(uint16_t port_id, struct rte_ether_addr *addr)
 {
 	struct rte_eth_dev *dev;
 	int index;
@@ -3190,7 +3247,7 @@ rte_eth_dev_mac_addr_remove(uint16_t port_id, struct ether_addr *addr)
 	(*dev->dev_ops->mac_addr_remove)(dev, index);
 
 	/* Update address in NIC data structure */
-	ether_addr_copy(&null_mac_addr, &dev->data->mac_addrs[index]);
+	rte_ether_addr_copy(&null_mac_addr, &dev->data->mac_addrs[index]);
 
 	/* reset pool bitmap */
 	dev->data->mac_pool_sel[index] = 0;
@@ -3199,14 +3256,14 @@ rte_eth_dev_mac_addr_remove(uint16_t port_id, struct ether_addr *addr)
 }
 
 int
-rte_eth_dev_default_mac_addr_set(uint16_t port_id, struct ether_addr *addr)
+rte_eth_dev_default_mac_addr_set(uint16_t port_id, struct rte_ether_addr *addr)
 {
 	struct rte_eth_dev *dev;
 	int ret;
 
 	RTE_ETH_VALID_PORTID_OR_ERR_RET(port_id, -ENODEV);
 
-	if (!is_valid_assigned_ether_addr(addr))
+	if (!rte_is_valid_assigned_ether_addr(addr))
 		return -EINVAL;
 
 	dev = &rte_eth_devices[port_id];
@@ -3217,7 +3274,7 @@ rte_eth_dev_default_mac_addr_set(uint16_t port_id, struct ether_addr *addr)
 		return ret;
 
 	/* Update default address in NIC data structure */
-	ether_addr_copy(addr, &dev->data->mac_addrs[0]);
+	rte_ether_addr_copy(addr, &dev->data->mac_addrs[0]);
 
 	return 0;
 }
@@ -3228,7 +3285,7 @@ rte_eth_dev_default_mac_addr_set(uint16_t port_id, struct ether_addr *addr)
  * an empty spot.
  */
 static int
-get_hash_mac_addr_index(uint16_t port_id, const struct ether_addr *addr)
+get_hash_mac_addr_index(uint16_t port_id, const struct rte_ether_addr *addr)
 {
 	struct rte_eth_dev_info dev_info;
 	struct rte_eth_dev *dev = &rte_eth_devices[port_id];
@@ -3240,14 +3297,14 @@ get_hash_mac_addr_index(uint16_t port_id, const struct ether_addr *addr)
 
 	for (i = 0; i < dev_info.max_hash_mac_addrs; i++)
 		if (memcmp(addr, &dev->data->hash_mac_addrs[i],
-			ETHER_ADDR_LEN) == 0)
+			RTE_ETHER_ADDR_LEN) == 0)
 			return i;
 
 	return -1;
 }
 
 int
-rte_eth_dev_uc_hash_table_set(uint16_t port_id, struct ether_addr *addr,
+rte_eth_dev_uc_hash_table_set(uint16_t port_id, struct rte_ether_addr *addr,
 				uint8_t on)
 {
 	int index;
@@ -3257,7 +3314,7 @@ rte_eth_dev_uc_hash_table_set(uint16_t port_id, struct ether_addr *addr,
 	RTE_ETH_VALID_PORTID_OR_ERR_RET(port_id, -ENODEV);
 
 	dev = &rte_eth_devices[port_id];
-	if (is_zero_ether_addr(addr)) {
+	if (rte_is_zero_ether_addr(addr)) {
 		RTE_ETHDEV_LOG(ERR, "Port %u: Cannot add NULL MAC address\n",
 			port_id);
 		return -EINVAL;
@@ -3289,10 +3346,10 @@ rte_eth_dev_uc_hash_table_set(uint16_t port_id, struct ether_addr *addr,
 	if (ret == 0) {
 		/* Update address in NIC data structure */
 		if (on)
-			ether_addr_copy(addr,
+			rte_ether_addr_copy(addr,
 					&dev->data->hash_mac_addrs[index]);
 		else
-			ether_addr_copy(&null_mac_addr,
+			rte_ether_addr_copy(&null_mac_addr,
 					&dev->data->hash_mac_addrs[index]);
 	}
 
@@ -3610,7 +3667,7 @@ rte_eth_dev_rx_intr_ctl(uint16_t port_id, int epfd, int op, void *data)
 	return 0;
 }
 
-int __rte_experimental
+int
 rte_eth_dev_rx_intr_ctl_q_get_fd(uint16_t port_id, uint16_t queue_id)
 {
 	struct rte_intr_handle *intr_handle;
@@ -3672,7 +3729,7 @@ rte_eth_dma_zone_reserve(const struct rte_eth_dev *dev, const char *ring_name,
 			RTE_MEMZONE_IOVA_CONTIG, align);
 }
 
-int __rte_experimental
+int
 rte_eth_dev_create(struct rte_device *device, const char *name,
 	size_t priv_data_size,
 	ethdev_bus_specific_init ethdev_bus_specific_init,
@@ -3735,7 +3792,7 @@ probe_failed:
 	return retval;
 }
 
-int  __rte_experimental
+int
 rte_eth_dev_destroy(struct rte_eth_dev *ethdev,
 	ethdev_uninit_t ethdev_uninit)
 {
@@ -4093,7 +4150,7 @@ rte_eth_tx_queue_info_get(uint16_t port_id, uint16_t queue_id,
 
 int
 rte_eth_dev_set_mc_addr_list(uint16_t port_id,
-			     struct ether_addr *mc_addr_set,
+			     struct rte_ether_addr *mc_addr_set,
 			     uint32_t nb_mc_addr)
 {
 	struct rte_eth_dev *dev;
@@ -4198,6 +4255,18 @@ rte_eth_timesync_write_time(uint16_t port_id, const struct timespec *timestamp)
 }
 
 int
+rte_eth_read_clock(uint16_t port_id, uint64_t *clock)
+{
+	struct rte_eth_dev *dev;
+
+	RTE_ETH_VALID_PORTID_OR_ERR_RET(port_id, -ENODEV);
+	dev = &rte_eth_devices[port_id];
+
+	RTE_FUNC_PTR_OR_ERR_RET(*dev->dev_ops->read_clock, -ENOTSUP);
+	return eth_err(port_id, (*dev->dev_ops->read_clock)(dev, clock));
+}
+
+int
 rte_eth_dev_get_reg_info(uint16_t port_id, struct rte_dev_reg_info *info)
 {
 	struct rte_eth_dev *dev;
@@ -4245,7 +4314,7 @@ rte_eth_dev_set_eeprom(uint16_t port_id, struct rte_dev_eeprom_info *info)
 	return eth_err(port_id, (*dev->dev_ops->set_eeprom)(dev, info));
 }
 
-int __rte_experimental
+int
 rte_eth_dev_get_module_info(uint16_t port_id,
 			    struct rte_eth_dev_module_info *modinfo)
 {
@@ -4258,7 +4327,7 @@ rte_eth_dev_get_module_info(uint16_t port_id,
 	return (*dev->dev_ops->get_module_info)(dev, modinfo);
 }
 
-int __rte_experimental
+int
 rte_eth_dev_get_module_eeprom(uint16_t port_id,
 			      struct rte_dev_eeprom_info *info)
 {
@@ -4414,7 +4483,7 @@ static struct rte_eth_dev_switch {
 	enum rte_eth_switch_domain_state state;
 } rte_eth_switch_domains[RTE_MAX_ETHPORTS];
 
-int __rte_experimental
+int
 rte_eth_switch_domain_alloc(uint16_t *domain_id)
 {
 	unsigned int i;
@@ -4435,7 +4504,7 @@ rte_eth_switch_domain_alloc(uint16_t *domain_id)
 	return -ENOSPC;
 }
 
-int __rte_experimental
+int
 rte_eth_switch_domain_free(uint16_t domain_id)
 {
 	if (domain_id == RTE_ETH_DEV_SWITCH_DOMAIN_ID_INVALID ||
@@ -4515,7 +4584,7 @@ rte_eth_devargs_tokenise(struct rte_kvargs *arglist, const char *str_in)
 	}
 }
 
-int __rte_experimental
+int
 rte_eth_devargs_parse(const char *dargs, struct rte_eth_devargs *eth_da)
 {
 	struct rte_kvargs args;

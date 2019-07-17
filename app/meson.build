@@ -1,5 +1,9 @@
 # SPDX-License-Identifier: BSD-3-Clause
-# Copyright(c) 2017 Intel Corporation
+# Copyright(c) 2017-2019 Intel Corporation
+
+if is_windows
+	subdir_done()
+endif
 
 apps = [
 	'pdump',
@@ -17,9 +21,6 @@ apps = [
 lib_execinfo = cc.find_library('execinfo', required: false)
 
 default_cflags = machine_args
-
-# specify -D_GNU_SOURCE unconditionally
-default_cflags += '-D_GNU_SOURCE'
 
 foreach app:apps
 	build = true

@@ -12,22 +12,22 @@
 #include "ip_frag_common.h"
 
 /* Fragment Offset */
-#define	IPV4_HDR_DF_SHIFT			14
-#define	IPV4_HDR_MF_SHIFT			13
-#define	IPV4_HDR_FO_SHIFT			3
+#define	RTE_IPV4_HDR_DF_SHIFT			14
+#define	RTE_IPV4_HDR_MF_SHIFT			13
+#define	RTE_IPV4_HDR_FO_SHIFT			3
 
-#define	IPV4_HDR_DF_MASK			(1 << IPV4_HDR_DF_SHIFT)
-#define	IPV4_HDR_MF_MASK			(1 << IPV4_HDR_MF_SHIFT)
+#define	IPV4_HDR_DF_MASK			(1 << RTE_IPV4_HDR_DF_SHIFT)
+#define	IPV4_HDR_MF_MASK			(1 << RTE_IPV4_HDR_MF_SHIFT)
 
-#define	IPV4_HDR_FO_ALIGN			(1 << IPV4_HDR_FO_SHIFT)
+#define	IPV4_HDR_FO_ALIGN			(1 << RTE_IPV4_HDR_FO_SHIFT)
 
-static inline void __fill_ipv4hdr_frag(struct ipv4_hdr *dst,
-		const struct ipv4_hdr *src, uint16_t len, uint16_t fofs,
+static inline void __fill_ipv4hdr_frag(struct rte_ipv4_hdr *dst,
+		const struct rte_ipv4_hdr *src, uint16_t len, uint16_t fofs,
 		uint16_t dofs, uint32_t mf)
 {
 	rte_memcpy(dst, src, sizeof(*dst));
-	fofs = (uint16_t)(fofs + (dofs >> IPV4_HDR_FO_SHIFT));
-	fofs = (uint16_t)(fofs | mf << IPV4_HDR_MF_SHIFT);
+	fofs = (uint16_t)(fofs + (dofs >> RTE_IPV4_HDR_FO_SHIFT));
+	fofs = (uint16_t)(fofs | mf << RTE_IPV4_HDR_MF_SHIFT);
 	dst->fragment_offset = rte_cpu_to_be_16(fofs);
 	dst->total_length = rte_cpu_to_be_16(len);
 	dst->hdr_checksum = 0;
@@ -71,7 +71,7 @@ rte_ipv4_fragment_packet(struct rte_mbuf *pkt_in,
 	struct rte_mempool *pool_indirect)
 {
 	struct rte_mbuf *in_seg = NULL;
-	struct ipv4_hdr *in_hdr;
+	struct rte_ipv4_hdr *in_hdr;
 	uint32_t out_pkt_pos, in_seg_data_pos;
 	uint32_t more_in_segs;
 	uint16_t fragment_offset, flag_offset, frag_size;
@@ -82,11 +82,11 @@ rte_ipv4_fragment_packet(struct rte_mbuf *pkt_in,
 	 * multiple of 8 bytes as per RFC791 section 2.3.
 	 */
 	//确保ip负载长度均以8字节对齐
-	frag_size = RTE_ALIGN_FLOOR((mtu_size - sizeof(struct ipv4_hdr)),
+	frag_size = RTE_ALIGN_FLOOR((mtu_size - sizeof(struct rte_ipv4_hdr)),
 				    IPV4_HDR_FO_ALIGN);
 
 	//取ip头
-	in_hdr = rte_pktmbuf_mtod(pkt_in, struct ipv4_hdr *);
+	in_hdr = rte_pktmbuf_mtod(pkt_in, struct rte_ipv4_hdr *);
 	//取分片offset
 	flag_offset = rte_cpu_to_be_16(in_hdr->fragment_offset);
 
@@ -98,11 +98,11 @@ rte_ipv4_fragment_packet(struct rte_mbuf *pkt_in,
 	/* Check that pkts_out is big enough to hold all fragments */
 	//如果分片了，nb_pkts_out是否足够容纳
 	if (unlikely(frag_size * nb_pkts_out <
-	    (uint16_t)(pkt_in->pkt_len - sizeof (struct ipv4_hdr))))
+	    (uint16_t)(pkt_in->pkt_len - sizeof(struct rte_ipv4_hdr))))
 		return -EINVAL;
 
 	in_seg = pkt_in;
-	in_seg_data_pos = sizeof(struct ipv4_hdr);
+	in_seg_data_pos = sizeof(struct rte_ipv4_hdr);
 	out_pkt_pos = 0;
 	fragment_offset = 0;
 
@@ -110,7 +110,7 @@ rte_ipv4_fragment_packet(struct rte_mbuf *pkt_in,
 	while (likely(more_in_segs)) {
 		struct rte_mbuf *out_pkt = NULL, *out_seg_prev = NULL;
 		uint32_t more_out_segs;
-		struct ipv4_hdr *out_hdr;
+		struct rte_ipv4_hdr *out_hdr;
 
 		/* Allocate direct buffer */
 		//自pool_direct中申请mbuf
@@ -122,8 +122,8 @@ rte_ipv4_fragment_packet(struct rte_mbuf *pkt_in,
 		}
 
 		/* Reserve space for the IP header that will be built later */
-		out_pkt->data_len = sizeof(struct ipv4_hdr);
-		out_pkt->pkt_len = sizeof(struct ipv4_hdr);
+		out_pkt->data_len = sizeof(struct rte_ipv4_hdr);
+		out_pkt->pkt_len = sizeof(struct rte_ipv4_hdr);
 		frag_bytes_remaining = frag_size;
 
 		out_seg_prev = out_pkt;
@@ -172,7 +172,7 @@ rte_ipv4_fragment_packet(struct rte_mbuf *pkt_in,
 
 		/* Build the IP header */
 
-		out_hdr = rte_pktmbuf_mtod(out_pkt, struct ipv4_hdr *);
+		out_hdr = rte_pktmbuf_mtod(out_pkt, struct rte_ipv4_hdr *);
 
 		//完成分片数据填充
 		__fill_ipv4hdr_frag(out_hdr, in_hdr,
@@ -180,10 +180,10 @@ rte_ipv4_fragment_packet(struct rte_mbuf *pkt_in,
 		    flag_offset, fragment_offset, more_in_segs);
 
 		fragment_offset = (uint16_t)(fragment_offset +
-		    out_pkt->pkt_len - sizeof(struct ipv4_hdr));
+		    out_pkt->pkt_len - sizeof(struct rte_ipv4_hdr));
 
 		out_pkt->ol_flags |= PKT_TX_IP_CKSUM;
-		out_pkt->l3_len = sizeof(struct ipv4_hdr);
+		out_pkt->l3_len = sizeof(struct rte_ipv4_hdr);
 
 		/* Write the fragment to the output list */
 		pkts_out[out_pkt_pos] = out_pkt;

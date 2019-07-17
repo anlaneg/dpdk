@@ -20,7 +20,6 @@
 
 #include <rte_common.h>
 #include <rte_ether.h>
-#include <rte_eth_ctrl.h>
 #include <rte_ethdev_driver.h>
 #include <rte_flow.h>
 #include <rte_flow_driver.h>
@@ -29,9 +28,10 @@
 
 #include "mlx5.h"
 #include "mlx5_defs.h"
-#include "mlx5_prm.h"
-#include "mlx5_glue.h"
 #include "mlx5_flow.h"
+#include "mlx5_glue.h"
+#include "mlx5_prm.h"
+#include "mlx5_rxtx.h"
 
 #define VERBS_SPEC_INNER(item_flags) \
 	(!!((item_flags) & MLX5_FLOW_LAYER_TUNNEL) ? IBV_FLOW_SPEC_INNER : 0)
@@ -56,10 +56,11 @@ flow_verbs_counter_create(struct rte_eth_dev *dev,
 {
 #if defined(HAVE_IBV_DEVICE_COUNTERS_SET_V42)
 	struct mlx5_priv *priv = dev->data->dev_private;
+	struct ibv_context *ctx = priv->sh->ctx;
 	struct ibv_counter_set_init_attr init = {
 			 .counter_set_id = counter->id};
 
-	counter->cs = mlx5_glue->create_counter_set(priv->ctx, &init);
+	counter->cs = mlx5_glue->create_counter_set(ctx, &init);
 	if (!counter->cs) {
 		rte_errno = ENOTSUP;
 		return -ENOTSUP;
@@ -67,12 +68,13 @@ flow_verbs_counter_create(struct rte_eth_dev *dev,
 	return 0;
 #elif defined(HAVE_IBV_DEVICE_COUNTERS_SET_V45)
 	struct mlx5_priv *priv = dev->data->dev_private;
+	struct ibv_context *ctx = priv->sh->ctx;
 	struct ibv_counters_init_attr init = {0};
 	struct ibv_counter_attach_attr attach;
 	int ret;
 
 	memset(&attach, 0, sizeof(attach));
-	counter->cs = mlx5_glue->create_counters(priv->ctx, &init);
+	counter->cs = mlx5_glue->create_counters(ctx, &init);
 	if (!counter->cs) {
 		rte_errno = ENOTSUP;
 		return -ENOTSUP;
@@ -288,14 +290,18 @@ flow_verbs_translate_item_eth(struct mlx5_flow *dev_flow,
 	if (spec) {
 		unsigned int i;
 
-		memcpy(&eth.val.dst_mac, spec->dst.addr_bytes, ETHER_ADDR_LEN);
-		memcpy(&eth.val.src_mac, spec->src.addr_bytes, ETHER_ADDR_LEN);
+		memcpy(&eth.val.dst_mac, spec->dst.addr_bytes,
+			RTE_ETHER_ADDR_LEN);
+		memcpy(&eth.val.src_mac, spec->src.addr_bytes,
+			RTE_ETHER_ADDR_LEN);
 		eth.val.ether_type = spec->type;
-		memcpy(&eth.mask.dst_mac, mask->dst.addr_bytes, ETHER_ADDR_LEN);
-		memcpy(&eth.mask.src_mac, mask->src.addr_bytes, ETHER_ADDR_LEN);
+		memcpy(&eth.mask.dst_mac, mask->dst.addr_bytes,
+			RTE_ETHER_ADDR_LEN);
+		memcpy(&eth.mask.src_mac, mask->src.addr_bytes,
+			RTE_ETHER_ADDR_LEN);
 		eth.mask.ether_type = mask->type;
 		/* Remove unwanted bits from values. */
-		for (i = 0; i < ETHER_ADDR_LEN; ++i) {
+		for (i = 0; i < RTE_ETHER_ADDR_LEN; ++i) {
 			eth.val.dst_mac[i] &= eth.mask.dst_mac[i];
 			eth.val.src_mac[i] &= eth.mask.src_mac[i];
 		}
@@ -474,17 +480,17 @@ flow_verbs_translate_item_ipv6(struct mlx5_flow *dev_flow,
 		vtc_flow_val = rte_be_to_cpu_32(spec->hdr.vtc_flow);
 		vtc_flow_mask = rte_be_to_cpu_32(mask->hdr.vtc_flow);
 		ipv6.val.flow_label =
-			rte_cpu_to_be_32((vtc_flow_val & IPV6_HDR_FL_MASK) >>
-					 IPV6_HDR_FL_SHIFT);
-		ipv6.val.traffic_class = (vtc_flow_val & IPV6_HDR_TC_MASK) >>
-					 IPV6_HDR_TC_SHIFT;
+			rte_cpu_to_be_32((vtc_flow_val & RTE_IPV6_HDR_FL_MASK) >>
+					 RTE_IPV6_HDR_FL_SHIFT);
+		ipv6.val.traffic_class = (vtc_flow_val & RTE_IPV6_HDR_TC_MASK) >>
+					 RTE_IPV6_HDR_TC_SHIFT;
 		ipv6.val.next_hdr = spec->hdr.proto;
 		ipv6.val.hop_limit = spec->hdr.hop_limits;
 		ipv6.mask.flow_label =
-			rte_cpu_to_be_32((vtc_flow_mask & IPV6_HDR_FL_MASK) >>
-					 IPV6_HDR_FL_SHIFT);
-		ipv6.mask.traffic_class = (vtc_flow_mask & IPV6_HDR_TC_MASK) >>
-					  IPV6_HDR_TC_SHIFT;
+			rte_cpu_to_be_32((vtc_flow_mask & RTE_IPV6_HDR_FL_MASK) >>
+					 RTE_IPV6_HDR_FL_SHIFT);
+		ipv6.mask.traffic_class = (vtc_flow_mask & RTE_IPV6_HDR_TC_MASK) >>
+					  RTE_IPV6_HDR_TC_SHIFT;
 		ipv6.mask.next_hdr = mask->hdr.proto;
 		ipv6.mask.hop_limit = mask->hdr.hop_limits;
 		/* Remove unwanted bits from values. */
@@ -1191,7 +1197,7 @@ flow_verbs_validate(struct rte_eth_dev *dev,
 		case RTE_FLOW_ACTION_TYPE_RSS:
 			ret = mlx5_flow_validate_action_rss(actions,
 							    action_flags, dev,
-							    attr,
+							    attr, item_flags,
 							    error);
 			if (ret < 0)
 				return ret;
@@ -1383,7 +1389,7 @@ flow_verbs_prepare(const struct rte_flow_attr *attr __rte_unused,
  *   Pointer to the error structure.
  *
  * @return
- *   0 on success, else a negative errno value otherwise and rte_ernno is set.
+ *   0 on success, else a negative errno value otherwise and rte_errno is set.
  */
 static int
 flow_verbs_translate(struct rte_eth_dev *dev,
@@ -1548,6 +1554,7 @@ flow_verbs_translate(struct rte_eth_dev *dev,
 	dev_flow->layers = item_flags;
 	dev_flow->verbs.attr->priority =
 		mlx5_flow_adjust_priority(dev, priority, subpriority);
+	dev_flow->verbs.attr->port = (uint8_t)priv->ibv_port;
 	return 0;
 }
 

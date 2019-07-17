@@ -950,36 +950,38 @@ static inline uint8_t qede_check_notunn_csum_l4(uint16_t flag)
 static inline uint32_t qede_rx_cqe_to_pkt_type_outer(struct rte_mbuf *m)
 {
 	uint32_t packet_type = RTE_PTYPE_UNKNOWN;
-	struct ether_hdr *eth_hdr;
-	struct ipv4_hdr *ipv4_hdr;
-	struct ipv6_hdr *ipv6_hdr;
-	struct vlan_hdr *vlan_hdr;
+	struct rte_ether_hdr *eth_hdr;
+	struct rte_ipv4_hdr *ipv4_hdr;
+	struct rte_ipv6_hdr *ipv6_hdr;
+	struct rte_vlan_hdr *vlan_hdr;
 	uint16_t ethertype;
 	bool vlan_tagged = 0;
 	uint16_t len;
 
-	eth_hdr = rte_pktmbuf_mtod(m, struct ether_hdr *);
-	len = sizeof(struct ether_hdr);
+	eth_hdr = rte_pktmbuf_mtod(m, struct rte_ether_hdr *);
+	len = sizeof(struct rte_ether_hdr);
 	ethertype = rte_cpu_to_be_16(eth_hdr->ether_type);
 
 	 /* Note: Valid only if VLAN stripping is disabled */
-	if (ethertype == ETHER_TYPE_VLAN) {
+	if (ethertype == RTE_ETHER_TYPE_VLAN) {
 		vlan_tagged = 1;
-		vlan_hdr = (struct vlan_hdr *)(eth_hdr + 1);
-		len += sizeof(struct vlan_hdr);
+		vlan_hdr = (struct rte_vlan_hdr *)(eth_hdr + 1);
+		len += sizeof(struct rte_vlan_hdr);
 		ethertype = rte_cpu_to_be_16(vlan_hdr->eth_proto);
 	}
 
-	if (ethertype == ETHER_TYPE_IPv4) {
+	if (ethertype == RTE_ETHER_TYPE_IPV4) {
 		packet_type |= RTE_PTYPE_L3_IPV4;
-		ipv4_hdr = rte_pktmbuf_mtod_offset(m, struct ipv4_hdr *, len);
+		ipv4_hdr = rte_pktmbuf_mtod_offset(m,
+					struct rte_ipv4_hdr *, len);
 		if (ipv4_hdr->next_proto_id == IPPROTO_TCP)
 			packet_type |= RTE_PTYPE_L4_TCP;
 		else if (ipv4_hdr->next_proto_id == IPPROTO_UDP)
 			packet_type |= RTE_PTYPE_L4_UDP;
-	} else if (ethertype == ETHER_TYPE_IPv6) {
+	} else if (ethertype == RTE_ETHER_TYPE_IPV6) {
 		packet_type |= RTE_PTYPE_L3_IPV6;
-		ipv6_hdr = rte_pktmbuf_mtod_offset(m, struct ipv6_hdr *, len);
+		ipv6_hdr = rte_pktmbuf_mtod_offset(m,
+						struct rte_ipv6_hdr *, len);
 		if (ipv6_hdr->proto == IPPROTO_TCP)
 			packet_type |= RTE_PTYPE_L4_TCP;
 		else if (ipv6_hdr->proto == IPPROTO_UDP)
@@ -1141,7 +1143,7 @@ static inline uint32_t qede_rx_cqe_to_pkt_type(uint16_t flags)
 static inline uint8_t
 qede_check_notunn_csum_l3(struct rte_mbuf *m, uint16_t flag)
 {
-	struct ipv4_hdr *ip;
+	struct rte_ipv4_hdr *ip;
 	uint16_t pkt_csum;
 	uint16_t calc_csum;
 	uint16_t val;
@@ -1152,8 +1154,8 @@ qede_check_notunn_csum_l3(struct rte_mbuf *m, uint16_t flag)
 	if (unlikely(val)) {
 		m->packet_type = qede_rx_cqe_to_pkt_type(flag);
 		if (RTE_ETH_IS_IPV4_HDR(m->packet_type)) {
-			ip = rte_pktmbuf_mtod_offset(m, struct ipv4_hdr *,
-					   sizeof(struct ether_hdr));
+			ip = rte_pktmbuf_mtod_offset(m, struct rte_ipv4_hdr *,
+					   sizeof(struct rte_ether_hdr));
 			pkt_csum = ip->hdr_checksum;
 			ip->hdr_checksum = 0;
 			calc_csum = rte_ipv4_cksum(ip);
@@ -1420,13 +1422,6 @@ qede_recv_pkts(void *p_rxq, struct rte_mbuf **rx_pkts, uint16_t nb_pkts)
 	uint32_t rss_hash;
 	int rx_alloc_count = 0;
 
-	hw_comp_cons = rte_le_to_cpu_16(*rxq->hw_cons_ptr);
-	sw_comp_cons = ecore_chain_get_cons_idx(&rxq->rx_comp_ring);
-
-	rte_rmb();
-
-	if (hw_comp_cons == sw_comp_cons)
-		return 0;
 
 	/* Allocate buffers that we used in previous loop */
 	if (rxq->rx_alloc_count) {
@@ -1446,6 +1441,14 @@ qede_recv_pkts(void *p_rxq, struct rte_mbuf **rx_pkts, uint16_t nb_pkts)
 		qede_update_rx_prod(qdev, rxq);
 		rxq->rx_alloc_count = 0;
 	}
+
+	hw_comp_cons = rte_le_to_cpu_16(*rxq->hw_cons_ptr);
+	sw_comp_cons = ecore_chain_get_cons_idx(&rxq->rx_comp_ring);
+
+	rte_rmb();
+
+	if (hw_comp_cons == sw_comp_cons)
+		return 0;
 
 	while (sw_comp_cons != hw_comp_cons) {
 		ol_flags = 0;
@@ -1795,17 +1798,17 @@ qede_xmit_prep_pkts(__rte_unused void *p_txq, struct rte_mbuf **tx_pkts,
 		ol_flags = m->ol_flags;
 		if (ol_flags & PKT_TX_TCP_SEG) {
 			if (m->nb_segs >= ETH_TX_MAX_BDS_PER_LSO_PACKET) {
-				rte_errno = -EINVAL;
+				rte_errno = EINVAL;
 				break;
 			}
 			/* TBD: confirm its ~9700B for both ? */
 			if (m->tso_segsz > ETH_TX_MAX_NON_LSO_PKT_LEN) {
-				rte_errno = -EINVAL;
+				rte_errno = EINVAL;
 				break;
 			}
 		} else {
 			if (m->nb_segs >= ETH_TX_MAX_BDS_PER_NON_LSO_PACKET) {
-				rte_errno = -EINVAL;
+				rte_errno = EINVAL;
 				break;
 			}
 		}
@@ -1822,14 +1825,14 @@ qede_xmit_prep_pkts(__rte_unused void *p_txq, struct rte_mbuf **tx_pkts,
 					continue;
 			}
 
-			rte_errno = -ENOTSUP;
+			rte_errno = ENOTSUP;
 			break;
 		}
 
 #ifdef RTE_LIBRTE_ETHDEV_DEBUG
 		ret = rte_validate_tx_offload(m);
 		if (ret != 0) {
-			rte_errno = ret;
+			rte_errno = -ret;
 			break;
 		}
 #endif

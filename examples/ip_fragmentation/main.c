@@ -52,21 +52,22 @@
  * Default byte size for the IPv6 Maximum Transfer Unit (MTU).
  * This value includes the size of IPv6 header.
  */
-#define	IPV4_MTU_DEFAULT	ETHER_MTU
-#define	IPV6_MTU_DEFAULT	ETHER_MTU
+#define	IPV4_MTU_DEFAULT	RTE_ETHER_MTU
+#define	IPV6_MTU_DEFAULT	RTE_ETHER_MTU
 
 /*
  * The overhead from max frame size to MTU.
  * We have to consider the max possible overhead.
  */
 #define MTU_OVERHEAD	\
-	(ETHER_HDR_LEN + ETHER_CRC_LEN + 2 * sizeof(struct vlan_hdr))
+	(RTE_ETHER_HDR_LEN + RTE_ETHER_CRC_LEN + \
+		2 * sizeof(struct rte_vlan_hdr))
 
 /*
  * Default payload in bytes for the IPv6 packet.
  */
-#define	IPV4_DEFAULT_PAYLOAD	(IPV4_MTU_DEFAULT - sizeof(struct ipv4_hdr))
-#define	IPV6_DEFAULT_PAYLOAD	(IPV6_MTU_DEFAULT - sizeof(struct ipv6_hdr))
+#define	IPV4_DEFAULT_PAYLOAD	(IPV4_MTU_DEFAULT - sizeof(struct rte_ipv4_hdr))
+#define	IPV6_DEFAULT_PAYLOAD	(IPV6_MTU_DEFAULT - sizeof(struct rte_ipv6_hdr))
 
 /*
  * Max number of fragments per packet expected - defined by config file.
@@ -90,7 +91,7 @@ static uint16_t nb_rxd = RTE_TEST_RX_DESC_DEFAULT;
 static uint16_t nb_txd = RTE_TEST_TX_DESC_DEFAULT;
 
 /* ethernet addresses of ports */
-static struct ether_addr ports_eth_addr[RTE_MAX_ETHPORTS];
+static struct rte_ether_addr ports_eth_addr[RTE_MAX_ETHPORTS];
 
 #ifndef IPv4_BYTES
 #define IPv4_BYTES_FMT "%" PRIu8 ".%" PRIu8 ".%" PRIu8 ".%" PRIu8
@@ -168,14 +169,14 @@ struct l3fwd_ipv4_route {
 };
 
 struct l3fwd_ipv4_route l3fwd_ipv4_route_array[] = {
-		{IPv4(100,10,0,0), 16, 0},
-		{IPv4(100,20,0,0), 16, 1},
-		{IPv4(100,30,0,0), 16, 2},
-		{IPv4(100,40,0,0), 16, 3},
-		{IPv4(100,50,0,0), 16, 4},
-		{IPv4(100,60,0,0), 16, 5},
-		{IPv4(100,70,0,0), 16, 6},
-		{IPv4(100,80,0,0), 16, 7},
+		{RTE_IPV4(100,10,0,0), 16, 0},
+		{RTE_IPV4(100,20,0,0), 16, 1},
+		{RTE_IPV4(100,30,0,0), 16, 2},
+		{RTE_IPV4(100,40,0,0), 16, 3},
+		{RTE_IPV4(100,50,0,0), 16, 4},
+		{RTE_IPV4(100,60,0,0), 16, 5},
+		{RTE_IPV4(100,70,0,0), 16, 6},
+		{RTE_IPV4(100,80,0,0), 16, 7},
 };
 
 /*
@@ -252,17 +253,17 @@ l3fwd_simple_forward(struct rte_mbuf *m, struct lcore_queue_conf *qconf,
 	port_out = port_in;
 
 	/* Remove the Ethernet header and trailer from the input packet */
-	rte_pktmbuf_adj(m, (uint16_t)sizeof(struct ether_hdr));
+	rte_pktmbuf_adj(m, (uint16_t)sizeof(struct rte_ether_hdr));
 
 	/* Build transmission burst */
 	len = qconf->tx_mbufs[port_out].len;
 
 	/* if this is an IPv4 packet */
 	if (RTE_ETH_IS_IPV4_HDR(m->packet_type)) {
-		struct ipv4_hdr *ip_hdr;
+		struct rte_ipv4_hdr *ip_hdr;
 		uint32_t ip_dst;
 		/* Read the lookup key (i.e. ip_dst) from the input packet */
-		ip_hdr = rte_pktmbuf_mtod(m, struct ipv4_hdr *);
+		ip_hdr = rte_pktmbuf_mtod(m, struct rte_ipv4_hdr *);
 		ip_dst = rte_be_to_cpu_32(ip_hdr->dst_addr);
 
 		/* Find destination port */
@@ -294,12 +295,12 @@ l3fwd_simple_forward(struct rte_mbuf *m, struct lcore_queue_conf *qconf,
 		}
 	} else if (RTE_ETH_IS_IPV6_HDR(m->packet_type)) {
 		/* if this is an IPv6 packet */
-		struct ipv6_hdr *ip_hdr;
+		struct rte_ipv6_hdr *ip_hdr;
 
 		ipv6 = 1;
 
 		/* Read the lookup key (i.e. ip_dst) from the input packet */
-		ip_hdr = rte_pktmbuf_mtod(m, struct ipv6_hdr *);
+		ip_hdr = rte_pktmbuf_mtod(m, struct rte_ipv6_hdr *);
 
 		/* Find destination port */
 		if (rte_lpm6_lookup(rxq->lpm6, ip_hdr->dst_addr,
@@ -340,24 +341,30 @@ l3fwd_simple_forward(struct rte_mbuf *m, struct lcore_queue_conf *qconf,
 		void *d_addr_bytes;
 
 		m = qconf->tx_mbufs[port_out].m_table[i];
-		struct ether_hdr *eth_hdr = (struct ether_hdr *)
-			rte_pktmbuf_prepend(m, (uint16_t)sizeof(struct ether_hdr));
+		struct rte_ether_hdr *eth_hdr = (struct rte_ether_hdr *)
+			rte_pktmbuf_prepend(m,
+				(uint16_t)sizeof(struct rte_ether_hdr));
 		if (eth_hdr == NULL) {
 			rte_panic("No headroom in mbuf.\n");
 		}
 
-		m->l2_len = sizeof(struct ether_hdr);
+		m->l2_len = sizeof(struct rte_ether_hdr);
 
 		/* 02:00:00:00:00:xx */
 		d_addr_bytes = &eth_hdr->d_addr.addr_bytes[0];
 		*((uint64_t *)d_addr_bytes) = 0x000000000002 + ((uint64_t)port_out << 40);
 
 		/* src addr */
-		ether_addr_copy(&ports_eth_addr[port_out], &eth_hdr->s_addr);
-		if (ipv6)
-			eth_hdr->ether_type = rte_be_to_cpu_16(ETHER_TYPE_IPv6);
-		else
-			eth_hdr->ether_type = rte_be_to_cpu_16(ETHER_TYPE_IPv4);
+		rte_ether_addr_copy(&ports_eth_addr[port_out],
+				&eth_hdr->s_addr);
+		if (ipv6) {
+			eth_hdr->ether_type =
+				rte_be_to_cpu_16(RTE_ETHER_TYPE_IPV6);
+		} else {
+			eth_hdr->ether_type =
+				rte_be_to_cpu_16(RTE_ETHER_TYPE_IPV4);
+			m->ol_flags |= (PKT_TX_IPV4 | PKT_TX_IP_CKSUM);
+		}
 	}
 
 	len += len2;
@@ -568,10 +575,10 @@ parse_args(int argc, char **argv)
 }
 
 static void
-print_ethaddr(const char *name, struct ether_addr *eth_addr)
+print_ethaddr(const char *name, struct rte_ether_addr *eth_addr)
 {
-	char buf[ETHER_ADDR_FMT_SIZE];
-	ether_format_addr(buf, ETHER_ADDR_FMT_SIZE, eth_addr);
+	char buf[RTE_ETHER_ADDR_FMT_SIZE];
+	rte_ether_format_addr(buf, RTE_ETHER_ADDR_FMT_SIZE, eth_addr);
 	printf("%s%s", name, buf);
 }
 
@@ -669,15 +676,15 @@ check_ptype(int portid)
 static inline void
 parse_ptype(struct rte_mbuf *m)
 {
-	struct ether_hdr *eth_hdr;
+	struct rte_ether_hdr *eth_hdr;
 	uint32_t packet_type = RTE_PTYPE_UNKNOWN;
 	uint16_t ether_type;
 
-	eth_hdr = rte_pktmbuf_mtod(m, struct ether_hdr *);
+	eth_hdr = rte_pktmbuf_mtod(m, struct rte_ether_hdr *);
 	ether_type = eth_hdr->ether_type;
-	if (ether_type == rte_cpu_to_be_16(ETHER_TYPE_IPv4))
+	if (ether_type == rte_cpu_to_be_16(RTE_ETHER_TYPE_IPV4))
 		packet_type |= RTE_PTYPE_L3_IPV4_EXT_UNKNOWN;
-	else if (ether_type == rte_cpu_to_be_16(ETHER_TYPE_IPv6))
+	else if (ether_type == rte_cpu_to_be_16(RTE_ETHER_TYPE_IPV6))
 		packet_type |= RTE_PTYPE_L3_IPV6_EXT_UNKNOWN;
 
 	m->packet_type = packet_type;
@@ -983,6 +990,9 @@ main(int argc, char **argv)
 		for (lcore_id = 0; lcore_id < RTE_MAX_LCORE; lcore_id++) {
 			if (rte_lcore_is_enabled(lcore_id) == 0)
 				continue;
+
+			if (queueid >= rte_eth_devices[portid].data->nb_tx_queues)
+				break;
 
 			socket = (int) rte_lcore_to_socket_id(lcore_id);
 			printf("txq=%u,%d ", lcore_id, queueid);

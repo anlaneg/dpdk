@@ -14,6 +14,8 @@ DIRS-$(CONFIG_RTE_LIBRTE_PCI) += librte_pci
 DEPDIRS-librte_pci := librte_eal
 DIRS-$(CONFIG_RTE_LIBRTE_RING) += librte_ring
 DEPDIRS-librte_ring := librte_eal
+DIRS-$(CONFIG_RTE_LIBRTE_STACK) += librte_stack
+DEPDIRS-librte_stack := librte_eal
 DIRS-$(CONFIG_RTE_LIBRTE_MEMPOOL) += librte_mempool
 DEPDIRS-librte_mempool := librte_eal librte_ring
 DIRS-$(CONFIG_RTE_LIBRTE_MBUF) += librte_mbuf
@@ -110,11 +112,14 @@ DEPDIRS-librte_gso += librte_mempool
 DIRS-$(CONFIG_RTE_LIBRTE_BPF) += librte_bpf
 DEPDIRS-librte_bpf := librte_eal librte_mempool librte_mbuf librte_ethdev
 DIRS-$(CONFIG_RTE_LIBRTE_IPSEC) += librte_ipsec
-DEPDIRS-librte_ipsec := librte_eal librte_mbuf librte_cryptodev librte_security
+DEPDIRS-librte_ipsec := librte_eal librte_mbuf librte_cryptodev librte_security \
+			librte_net
 DIRS-$(CONFIG_RTE_LIBRTE_TELEMETRY) += librte_telemetry
 DEPDIRS-librte_telemetry := librte_eal librte_metrics librte_ethdev
+DIRS-$(CONFIG_RTE_LIBRTE_RCU) += librte_rcu
+DEPDIRS-librte_rcu := librte_eal
 
-ifeq ($(CONFIG_RTE_EXEC_ENV_LINUXAPP),y)
+ifeq ($(CONFIG_RTE_EXEC_ENV_LINUX),y)
 DIRS-$(CONFIG_RTE_LIBRTE_KNI) += librte_kni
 endif
 DEPDIRS-librte_kni := librte_eal librte_mempool librte_mbuf librte_ethdev

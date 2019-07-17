@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: BSD-3-Clause
-# Copyright(c) 2017 Intel Corporation
+# Copyright(c) 2017-2019 Intel Corporation
 
 
 # process all libraries equally, as far as possible
@@ -22,13 +22,17 @@ libraries = [
 	'gro', 'gso', 'ip_frag', 'jobstats',
 	'kni', 'latencystats', 'lpm', 'member',
 	'power', 'pdump', 'rawdev',
-	'reorder', 'sched', 'security', 'vhost',
-	#ipsec lib depends on crypto and security
+	'rcu', 'reorder', 'sched', 'security', 'stack', 'vhost',
+	# ipsec lib depends on net, crypto and security
 	'ipsec',
 	# add pkt framework libs which use other libs from above
 	'port', 'table', 'pipeline',
 	# flow_classify lib depends on pkt framework table lib
 	'flow_classify', 'bpf', 'telemetry']
+
+if is_windows
+	libraries = ['kvargs','eal'] # only supported libraries for windows
+endif
 
 default_cflags = machine_args
 if cc.has_argument('-Wno-format-truncation')
@@ -37,11 +41,9 @@ endif
 
 enabled_libs = [] # used to print summary at the end
 
-# -D_GNU_SOURCE unconditionally
-default_cflags += '-D_GNU_SOURCE'
-
 foreach l:libraries
 	build = true
+	reason = '<unknown reason>' # set if build == false to explain why
 	name = l
 	version = 1
 	allow_experimental_apis = false
@@ -64,7 +66,10 @@ foreach l:libraries
 	dir_name = 'librte_' + l
 	subdir(dir_name)
 
-	if build
+	if not build
+		dpdk_libs_disabled += name
+		set_variable(name.underscorify() + '_disable_reason', reason)
+	else
 		enabled_libs += name
 		dpdk_conf.set('RTE_LIBRTE_' + name.to_upper(), 1)
 		install_headers(headers)
@@ -117,14 +122,27 @@ foreach l:libraries
 			objs += static_lib.extract_all_objects(recursive: false)
 			version_map = '@0@/@1@/rte_@2@_version.map'.format(
 					meson.current_source_dir(), dir_name, name)
+			implib = dir_name + '.dll.a'
+
+			def_file = custom_target(name + '_def',
+				command: [map_to_def_cmd, '@INPUT@', '@OUTPUT@'],
+				input: version_map,
+				output: 'rte_@0@_exports.def'.format(name))
+			if is_windows
+				lk_args = ['-Wl,/def:' + def_file.full_path(),
+					'-Wl,/implib:lib\\' + implib]
+			else
+				lk_args = ['-Wl,--version-script=' + version_map]
+			endif
+
 			shared_lib = shared_library(libname,
 					sources,
 					objects: objs,
 					c_args: cflags,
 					dependencies: shared_deps,
 					include_directories: includes,
-					link_args: '-Wl,--version-script=' + version_map,
-					link_depends: version_map,
+					link_args: lk_args,
+					link_depends: [version_map, def_file],
 					version: lib_version,
 					soversion: so_version,
 					install: true)

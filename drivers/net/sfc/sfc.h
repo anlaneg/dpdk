@@ -108,6 +108,7 @@ struct sfc_intr {
 	efx_intr_type_t			type;
 	rte_intr_callback_fn		handler;
 	boolean_t			lsc_intr;
+	boolean_t			rxq_intr;
 };
 
 struct sfc_rxq;
@@ -134,7 +135,7 @@ struct sfc_port {
 	boolean_t			promisc;
 	boolean_t			allmulti;
 
-	struct ether_addr		default_mac_addr;
+	struct rte_ether_addr		default_mac_addr;
 
 	unsigned int			max_mcast_addrs;
 	unsigned int			nb_mcast_addrs;
@@ -286,6 +287,7 @@ struct sfc_adapter {
 	struct sfc_txq			*txq_ctrl;
 
 	boolean_t			tso;
+	boolean_t			tso_encap;
 
 	uint32_t			rxd_wait_timeout_ns;
 };

@@ -12,7 +12,6 @@ CFLAGS += -DALLOW_EXPERIMENTAL_API
 CFLAGS += -O3
 CFLAGS += $(WERROR_FLAGS)
 
-CFLAGS += -I$(RTE_SDK)/lib/librte_eal/linuxapp/eal
 CFLAGS += -I$(RTE_SDK)/drivers/bus/fslmc
 CFLAGS += -I$(RTE_SDK)/drivers/bus/fslmc/qbman/include
 
@@ -21,12 +20,13 @@ LDLIBS += -lrte_eal
 LDLIBS += -lrte_mempool
 LDLIBS += -lrte_mempool_dpaa2
 LDLIBS += -lrte_rawdev
+LDLIBS += -lrte_kvargs
 LDLIBS += -lrte_ring
 LDLIBS += -lrte_common_dpaax
 
 EXPORT_MAP := rte_pmd_dpaa2_qdma_version.map
 
-LIBABIVER := 2
+LIBABIVER := 3
 
 #
 # all source are stored in SRCS-y

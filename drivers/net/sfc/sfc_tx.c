@@ -34,43 +34,38 @@
  */
 #define SFC_TX_QFLUSH_POLL_ATTEMPTS	(2000)
 
+static uint64_t
+sfc_tx_get_offload_mask(struct sfc_adapter *sa)
+{
+	const efx_nic_cfg_t *encp = efx_nic_cfg_get(sa->nic);
+	uint64_t no_caps = 0;
+
+	if (!encp->enc_hw_tx_insert_vlan_enabled)
+		no_caps |= DEV_TX_OFFLOAD_VLAN_INSERT;
+
+	if (!encp->enc_tunnel_encapsulations_supported)
+		no_caps |= DEV_TX_OFFLOAD_OUTER_IPV4_CKSUM;
+
+	if (!sa->tso)
+		no_caps |= DEV_TX_OFFLOAD_TCP_TSO;
+
+	if (!sa->tso_encap)
+		no_caps |= (DEV_TX_OFFLOAD_VXLAN_TNL_TSO |
+			    DEV_TX_OFFLOAD_GENEVE_TNL_TSO);
+
+	return ~no_caps;
+}
+
 uint64_t
 sfc_tx_get_dev_offload_caps(struct sfc_adapter *sa)
 {
-	const efx_nic_cfg_t *encp = efx_nic_cfg_get(sa->nic);
-	uint64_t caps = 0;
-
-	if ((sa->priv.dp_tx->features & SFC_DP_TX_FEAT_VLAN_INSERT) &&
-	    encp->enc_hw_tx_insert_vlan_enabled)
-		caps |= DEV_TX_OFFLOAD_VLAN_INSERT;
-
-	if (sa->priv.dp_tx->features & SFC_DP_TX_FEAT_MULTI_SEG)
-		caps |= DEV_TX_OFFLOAD_MULTI_SEGS;
-
-	if ((~sa->priv.dp_tx->features & SFC_DP_TX_FEAT_MULTI_POOL) &&
-	    (~sa->priv.dp_tx->features & SFC_DP_TX_FEAT_REFCNT))
-		caps |= DEV_TX_OFFLOAD_MBUF_FAST_FREE;
-
-	return caps;
+	return sa->priv.dp_tx->dev_offload_capa & sfc_tx_get_offload_mask(sa);
 }
 
 uint64_t
 sfc_tx_get_queue_offload_caps(struct sfc_adapter *sa)
 {
-	const efx_nic_cfg_t *encp = efx_nic_cfg_get(sa->nic);
-	uint64_t caps = 0;
-
-	caps |= DEV_TX_OFFLOAD_IPV4_CKSUM;
-	caps |= DEV_TX_OFFLOAD_UDP_CKSUM;
-	caps |= DEV_TX_OFFLOAD_TCP_CKSUM;
-
-	if (encp->enc_tunnel_encapsulations_supported)
-		caps |= DEV_TX_OFFLOAD_OUTER_IPV4_CKSUM;
-
-	if (sa->tso)
-		caps |= DEV_TX_OFFLOAD_TCP_TSO;
-
-	return caps;
+	return sa->priv.dp_tx->queue_offload_capa & sfc_tx_get_offload_mask(sa);
 }
 
 static int
@@ -469,7 +464,9 @@ sfc_tx_qstart(struct sfc_adapter *sa, unsigned int sw_index)
 			flags |= EFX_TXQ_CKSUM_INNER_TCPUDP;
 	}
 
-	if (txq_info->offloads & DEV_TX_OFFLOAD_TCP_TSO)
+	if (txq_info->offloads & (DEV_TX_OFFLOAD_TCP_TSO |
+				  DEV_TX_OFFLOAD_VXLAN_TNL_TSO |
+				  DEV_TX_OFFLOAD_GENEVE_TNL_TSO))
 		flags |= EFX_TXQ_FATSOV2;
 
 	rc = efx_tx_qcreate(sa->nic, txq->hw_index, 0, &txq->mem,
@@ -588,16 +585,23 @@ int
 sfc_tx_start(struct sfc_adapter *sa)
 {
 	struct sfc_adapter_shared * const sas = sfc_sa2shared(sa);
+	const efx_nic_cfg_t *encp = efx_nic_cfg_get(sa->nic);
 	unsigned int sw_index;
 	int rc = 0;
 
 	sfc_log_init(sa, "txq_count = %u", sas->txq_count);
 
 	if (sa->tso) {
-		if (!efx_nic_cfg_get(sa->nic)->enc_fw_assisted_tso_v2_enabled) {
+		if (!encp->enc_fw_assisted_tso_v2_enabled) {
 			sfc_warn(sa, "TSO support was unable to be restored");
 			sa->tso = B_FALSE;
+			sa->tso_encap = B_FALSE;
 		}
+	}
+
+	if (sa->tso_encap && !encp->enc_fw_assisted_tso_v2_encap_enabled) {
+		sfc_warn(sa, "Encapsulated TSO support was unable to be restored");
+		sa->tso_encap = B_FALSE;
 	}
 
 	rc = efx_tx_init(sa->nic);
@@ -698,6 +702,36 @@ sfc_efx_tx_maybe_insert_tag(struct sfc_efx_txq *txq, struct rte_mbuf *m,
 }
 
 static uint16_t
+sfc_efx_prepare_pkts(void *tx_queue, struct rte_mbuf **tx_pkts,
+		     uint16_t nb_pkts)
+{
+	struct sfc_dp_txq *dp_txq = tx_queue;
+	struct sfc_efx_txq *txq = sfc_efx_txq_by_dp_txq(dp_txq);
+	const efx_nic_cfg_t *encp = efx_nic_cfg_get(txq->evq->sa->nic);
+	uint16_t i;
+
+	for (i = 0; i < nb_pkts; i++) {
+		int ret;
+
+		/*
+		 * EFX Tx datapath may require extra VLAN descriptor if VLAN
+		 * insertion offload is requested regardless the offload
+		 * requested/supported.
+		 */
+		ret = sfc_dp_tx_prepare_pkt(tx_pkts[i],
+				encp->enc_tx_tso_tcp_header_offset_limit,
+				txq->max_fill_level, EFX_TX_FATSOV2_OPT_NDESCS,
+				1);
+		if (unlikely(ret != 0)) {
+			rte_errno = ret;
+			break;
+		}
+	}
+
+	return i;
+}
+
+static uint16_t
 sfc_efx_xmit_pkts(void *tx_queue, struct rte_mbuf **tx_pkts, uint16_t nb_pkts)
 {
 	struct sfc_dp_txq *dp_txq = (struct sfc_dp_txq *)tx_queue;
@@ -757,13 +791,10 @@ sfc_efx_xmit_pkts(void *tx_queue, struct rte_mbuf **tx_pkts, uint16_t nb_pkts)
 			 */
 			if (sfc_efx_tso_do(txq, added, &m_seg, &in_off, &pend,
 					   &pkt_descs, &pkt_len) != 0) {
-				/* We may have reached this place for
-				 * one of the following reasons:
-				 *
-				 * 1) Packet header length is greater
-				 *    than SFC_TSOH_STD_LEN
-				 * 2) TCP header starts at more then
-				 *    208 bytes into the frame
+				/* We may have reached this place if packet
+				 * header linearization is needed but the
+				 * header length is greater than
+				 * SFC_TSOH_STD_LEN
 				 *
 				 * We will deceive RTE saying that we have sent
 				 * the packet, but we will actually drop it.
@@ -1109,11 +1140,14 @@ struct sfc_dp_tx sfc_efx_tx = {
 		.type		= SFC_DP_TX,
 		.hw_fw_caps	= 0,
 	},
-	.features		= SFC_DP_TX_FEAT_VLAN_INSERT |
-				  SFC_DP_TX_FEAT_TSO |
-				  SFC_DP_TX_FEAT_MULTI_POOL |
-				  SFC_DP_TX_FEAT_REFCNT |
-				  SFC_DP_TX_FEAT_MULTI_SEG,
+	.features		= 0,
+	.dev_offload_capa	= DEV_TX_OFFLOAD_VLAN_INSERT |
+				  DEV_TX_OFFLOAD_MULTI_SEGS,
+	.queue_offload_capa	= DEV_TX_OFFLOAD_IPV4_CKSUM |
+				  DEV_TX_OFFLOAD_UDP_CKSUM |
+				  DEV_TX_OFFLOAD_TCP_CKSUM |
+				  DEV_TX_OFFLOAD_OUTER_IPV4_CKSUM |
+				  DEV_TX_OFFLOAD_TCP_TSO,
 	.qsize_up_rings		= sfc_efx_tx_qsize_up_rings,
 	.qcreate		= sfc_efx_tx_qcreate,
 	.qdestroy		= sfc_efx_tx_qdestroy,
@@ -1121,5 +1155,6 @@ struct sfc_dp_tx sfc_efx_tx = {
 	.qstop			= sfc_efx_tx_qstop,
 	.qreap			= sfc_efx_tx_qreap,
 	.qdesc_status		= sfc_efx_tx_qdesc_status,
+	.pkt_prepare		= sfc_efx_prepare_pkts,
 	.pkt_burst		= sfc_efx_xmit_pkts,
 };

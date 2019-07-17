@@ -495,7 +495,7 @@ Supports adding traffic mirroring rules.
 Inline crypto
 -------------
 
-Supports inline crypto processing (eg. inline IPsec). See Security library and PMD documentation for more details.
+Supports inline crypto processing (e.g. inline IPsec). See Security library and PMD documentation for more details.
 
 * **[uses]       rte_eth_rxconf,rte_eth_rxmode**: ``offloads:DEV_RX_OFFLOAD_SECURITY``,
 * **[uses]       rte_eth_txconf,rte_eth_txmode**: ``offloads:DEV_TX_OFFLOAD_SECURITY``.
@@ -602,6 +602,7 @@ Supports Timestamp.
 * **[provides] mbuf**: ``mbuf.ol_flags:PKT_RX_TIMESTAMP``.
 * **[provides] mbuf**: ``mbuf.timestamp``.
 * **[provides] rte_eth_dev_info**: ``rx_offload_capa,rx_queue_offload_capa: DEV_RX_OFFLOAD_TIMESTAMP``.
+* **[related] eth_dev_ops**: ``read_clock``.
 
 .. _nic_features_macsec_offload:
 

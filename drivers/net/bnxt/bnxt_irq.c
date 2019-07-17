@@ -20,7 +20,7 @@
 static void bnxt_int_handler(void *param)
 {
 	struct rte_eth_dev *eth_dev = (struct rte_eth_dev *)param;
-	struct bnxt *bp = (struct bnxt *)eth_dev->data->dev_private;
+	struct bnxt *bp = eth_dev->data->dev_private;
 	struct bnxt_cp_ring_info *cpr = bp->def_cp_ring;
 	struct cmpl_base *cmp;
 	uint32_t raw_cons;
@@ -31,7 +31,7 @@ static void bnxt_int_handler(void *param)
 
 	raw_cons = cpr->cp_raw_cons;
 	while (1) {
-		if (!cpr || !cpr->cp_ring_struct)
+		if (!cpr || !cpr->cp_ring_struct || !cpr->cp_db.doorbell)
 			return;
 
 		cons = RING_CMP(cpr->cp_ring_struct, raw_cons);
@@ -71,7 +71,7 @@ void bnxt_disable_int(struct bnxt *bp)
 	struct bnxt_cp_ring_info *cpr = bp->def_cp_ring;
 
 	/* Only the default completion ring */
-	if (cpr != NULL && cpr->cp_doorbell != NULL)
+	if (cpr != NULL && cpr->cp_db.doorbell != NULL)
 		B_CP_DB_DISARM(cpr);
 }
 
@@ -80,7 +80,7 @@ void bnxt_enable_int(struct bnxt *bp)
 	struct bnxt_cp_ring_info *cpr = bp->def_cp_ring;
 
 	/* Only the default completion ring */
-	if (cpr != NULL && cpr->cp_doorbell != NULL)
+	if (cpr != NULL && cpr->cp_db.doorbell != NULL)
 		B_CP_DB_ARM(cpr);
 }
 

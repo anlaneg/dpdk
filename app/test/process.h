@@ -11,7 +11,7 @@
 #include <unistd.h> /* readlink */
 #include <sys/wait.h>
 
-#ifdef RTE_EXEC_ENV_BSDAPP
+#ifdef RTE_EXEC_ENV_FREEBSD
 #define self "curproc"
 #define exe "file"
 #else
@@ -19,9 +19,11 @@
 #define exe "exe"
 #endif
 
+#ifdef RTE_LIBRTE_PDUMP
 #include <pthread.h>
 extern void *send_pkts(void *empty);
 extern uint16_t flag_for_send_pkts;
+#endif
 
 /*
  * launches a second copy of the test process using the given argv parameters,
@@ -36,7 +38,9 @@ process_dup(const char *const argv[], int numargs, const char *env_value)
 	char *argv_cpy[numargs + 1];
 	int i, fd, status;
 	char path[32];
+#ifdef RTE_LIBRTE_PDUMP
 	pthread_t thread;
+#endif
 
 	pid_t pid = fork();
 	if (pid < 0)
@@ -67,22 +71,26 @@ process_dup(const char *const argv[], int numargs, const char *env_value)
 			rte_panic("Cannot exec\n");
 	}
 	/* parent process does a wait */
+#ifdef RTE_LIBRTE_PDUMP
 	if ((strcmp(env_value, "run_pdump_server_tests") == 0))
 		pthread_create(&thread, NULL, &send_pkts, NULL);
+#endif
 
 	while (wait(&status) != pid)
 		;
+#ifdef RTE_LIBRTE_PDUMP
 	if ((strcmp(env_value, "run_pdump_server_tests") == 0)) {
 		flag_for_send_pkts = 0;
 		pthread_join(thread, NULL);
 	}
+#endif
 	return status;
 }
 
 /* FreeBSD doesn't support file prefixes, so force compile failures for any
  * tests attempting to use this function on FreeBSD.
  */
-#ifdef RTE_EXEC_ENV_LINUXAPP
+#ifdef RTE_EXEC_ENV_LINUX
 static char *
 get_current_prefix(char *prefix, int size)
 {

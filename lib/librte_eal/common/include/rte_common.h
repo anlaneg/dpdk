@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: BSD-3-Clause
- * Copyright(c) 2010-2014 Intel Corporation
+ * Copyright(c) 2010-2019 Intel Corporation
  */
 
 #ifndef _RTE_COMMON_H_
@@ -23,6 +23,9 @@ extern "C" {
 #include <limits.h>
 
 #include <rte_config.h>
+
+/* OS specific include */
+#include <rte_os.h>
 
 #ifndef typeof
 #define typeof __typeof__
@@ -103,8 +106,10 @@ typedef uint16_t unaligned_uint16_t;
  *   Priority number must be above 100.
  *   Lowest number is the first to run.
  */
+#ifndef RTE_INIT_PRIO /* Allow to override from EAL */
 #define RTE_INIT_PRIO(func, prio) \
 static void __attribute__((constructor(RTE_PRIO(prio)), used)) func(void)
+#endif
 
 /**
  * Run function before main() with low priority.
@@ -126,8 +131,10 @@ static void __attribute__((constructor(RTE_PRIO(prio)), used)) func(void)
  *   Priority number must be above 100.
  *   Lowest number is the last to run.
  */
+#ifndef RTE_FINI_PRIO /* Allow to override from EAL */
 #define RTE_FINI_PRIO(func, prio) \
 static void __attribute__((destructor(RTE_PRIO(prio)), used)) func(void)
+#endif
 
 /**
  * Run after main() with high priority.
@@ -250,6 +257,18 @@ static void __attribute__((destructor(RTE_PRIO(prio)), used)) func(void)
 	((v / ((typeof(v))(mul))) * (typeof(v))(mul))
 
 /**
+ * Macro to align value to the nearest multiple of the given value.
+ * The resultant value might be greater than or less than the first parameter
+ * whichever difference is the lowest.
+ */
+#define RTE_ALIGN_MUL_NEAR(v, mul)				\
+	({							\
+		typeof(v) ceil = RTE_ALIGN_MUL_CEIL(v, mul);	\
+		typeof(v) floor = RTE_ALIGN_MUL_FLOOR(v, mul);	\
+		(ceil - v) > (v - floor) ? floor : ceil;	\
+	})
+
+/**
  * Checks if a pointer is aligned to a given power-of-two value
  *
  * @param ptr
@@ -341,7 +360,7 @@ rte_is_power_of_2(uint32_t n)
  * Aligns input parameter to the next power of 2
  *
  * @param x
- *   The integer value to algin
+ *   The integer value to align
  *
  * @return
  *   Input parameter aligned to the next power of 2
@@ -359,7 +378,7 @@ rte_align32pow2(uint32_t x)
  * Aligns input parameter to the previous power of 2
  *
  * @param x
- *   The integer value to algin
+ *   The integer value to align
  *
  * @return
  *   Input parameter aligned to the previous power of 2

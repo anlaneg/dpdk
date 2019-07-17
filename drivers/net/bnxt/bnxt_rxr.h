@@ -7,7 +7,7 @@
 #define _BNXT_RXR_H_
 
 #define B_RX_DB(db, prod)						\
-		(*(uint32_t *)db = (DB_KEY_RX | prod))
+		(*(uint32_t *)db = (DB_KEY_RX | (prod)))
 
 #define BNXT_TPA_L4_SIZE(x)	\
 	{ \
@@ -81,8 +81,8 @@ struct bnxt_sw_rx_bd {
 struct bnxt_rx_ring_info {
 	uint16_t		rx_prod;
 	uint16_t		ag_prod;
-	void			*rx_doorbell;
-	void			*ag_doorbell;
+	struct bnxt_db_info     rx_db;
+	struct bnxt_db_info     ag_db;
 
 	struct rx_prod_pkt_bd	*rx_desc_ring;
 	struct rx_prod_pkt_bd	*ag_desc_ring;
@@ -110,4 +110,11 @@ int bnxt_init_rx_ring_struct(struct bnxt_rx_queue *rxq, unsigned int socket_id);
 int bnxt_init_one_rx_ring(struct bnxt_rx_queue *rxq);
 int bnxt_rx_queue_start(struct rte_eth_dev *dev, uint16_t rx_queue_id);
 int bnxt_rx_queue_stop(struct rte_eth_dev *dev, uint16_t rx_queue_id);
+
+#ifdef RTE_ARCH_X86
+uint16_t bnxt_recv_pkts_vec(void *rx_queue, struct rte_mbuf **rx_pkts,
+			    uint16_t nb_pkts);
+int bnxt_rxq_vec_setup(struct bnxt_rx_queue *rxq);
+#endif
+
 #endif

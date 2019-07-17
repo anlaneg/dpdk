@@ -153,12 +153,13 @@ process_ipv4(struct rte_port_ring_writer_ras *p, struct rte_mbuf *pkt)
 {
 	/* Assume there is no ethernet header */
 	//取ipv4头
-	struct ipv4_hdr *pkt_hdr = rte_pktmbuf_mtod(pkt, struct ipv4_hdr *);
+	struct rte_ipv4_hdr *pkt_hdr =
+		rte_pktmbuf_mtod(pkt, struct rte_ipv4_hdr *);
 
 	/* Get "More fragments" flag and fragment offset */
 	uint16_t frag_field = rte_be_to_cpu_16(pkt_hdr->fragment_offset);//分片字段取值
-	uint16_t frag_offset = (uint16_t)(frag_field & IPV4_HDR_OFFSET_MASK);//分片偏移量
-	uint16_t frag_flag = (uint16_t)(frag_field & IPV4_HDR_MF_FLAG);//是否有more标记
+	uint16_t frag_offset = (uint16_t)(frag_field & RTE_IPV4_HDR_OFFSET_MASK);//分片偏移量
+	uint16_t frag_flag = (uint16_t)(frag_field & RTE_IPV4_HDR_MF_FLAG);//是否有more标记
 
 	/* If it is a fragmented packet, then try to reassemble */
 	//非分片报文
@@ -187,7 +188,8 @@ static void
 process_ipv6(struct rte_port_ring_writer_ras *p, struct rte_mbuf *pkt)
 {
 	/* Assume there is no ethernet header */
-	struct ipv6_hdr *pkt_hdr = rte_pktmbuf_mtod(pkt, struct ipv6_hdr *);
+	struct rte_ipv6_hdr *pkt_hdr =
+		rte_pktmbuf_mtod(pkt, struct rte_ipv6_hdr *);
 
 	struct ipv6_extension_fragment *frag_hdr;
 	uint16_t frag_data = 0;

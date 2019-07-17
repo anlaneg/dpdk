@@ -64,7 +64,9 @@ SRCS-y += test_atomic.c
 SRCS-y += test_barrier.c
 SRCS-y += test_malloc.c
 SRCS-y += test_cycles.c
+SRCS-y += test_mcslock.c
 SRCS-y += test_spinlock.c
+SRCS-y += test_ticketlock.c
 SRCS-y += test_memory.c
 SRCS-y += test_memzone.c
 SRCS-y += test_bitmap.c
@@ -72,6 +74,7 @@ SRCS-y += test_reciprocal_division.c
 SRCS-y += test_reciprocal_division_perf.c
 SRCS-y += test_fbarray.c
 SRCS-y += test_external_mem.c
+SRCS-y += test_rand_perf.c
 
 SRCS-y += test_ring.c
 SRCS-y += test_ring_perf.c
@@ -89,9 +92,13 @@ endif
 
 SRCS-y += test_rwlock.c
 
+SRCS-$(CONFIG_RTE_LIBRTE_STACK) += test_stack.c
+SRCS-$(CONFIG_RTE_LIBRTE_STACK) += test_stack_perf.c
+
 SRCS-$(CONFIG_RTE_LIBRTE_TIMER) += test_timer.c
 SRCS-$(CONFIG_RTE_LIBRTE_TIMER) += test_timer_perf.c
 SRCS-$(CONFIG_RTE_LIBRTE_TIMER) += test_timer_racecond.c
+SRCS-$(CONFIG_RTE_LIBRTE_TIMER) += test_timer_secondary.c
 
 SRCS-y += test_mempool.c
 SRCS-y += test_mempool_perf.c
@@ -158,7 +165,7 @@ endif
 
 SRCS-$(CONFIG_RTE_LIBRTE_METER) += test_meter.c
 SRCS-$(CONFIG_RTE_LIBRTE_KNI) += test_kni.c
-SRCS-$(CONFIG_RTE_LIBRTE_POWER) += test_power.c test_power_acpi_cpufreq.c
+SRCS-$(CONFIG_RTE_LIBRTE_POWER) += test_power.c test_power_cpufreq.c
 SRCS-$(CONFIG_RTE_LIBRTE_POWER) += test_power_kvm_vm.c
 SRCS-y += test_common.c
 
@@ -212,6 +219,8 @@ endif
 SRCS-$(CONFIG_RTE_LIBRTE_KVARGS) += test_kvargs.c
 
 SRCS-$(CONFIG_RTE_LIBRTE_BPF) += test_bpf.c
+
+SRCS-$(CONFIG_RTE_LIBRTE_RCU) += test_rcu_qsbr.c test_rcu_qsbr_perf.c
 
 SRCS-$(CONFIG_RTE_LIBRTE_IPSEC) += test_ipsec.c
 ifeq ($(CONFIG_RTE_LIBRTE_IPSEC),y)

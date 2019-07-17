@@ -6,6 +6,7 @@
 #define _IAVF_ETHDEV_H_
 
 #include <rte_kvargs.h>
+#include "base/iavf_type.h"
 
 #define IAVF_AQ_LEN               32
 #define IAVF_AQ_BUF_SZ            4096
@@ -56,7 +57,11 @@
  */
 #define IAVF_VLAN_TAG_SIZE               4
 #define IAVF_ETH_OVERHEAD \
-	(ETHER_HDR_LEN + ETHER_CRC_LEN + IAVF_VLAN_TAG_SIZE * 2)
+	(RTE_ETHER_HDR_LEN + RTE_ETHER_CRC_LEN + IAVF_VLAN_TAG_SIZE * 2)
+
+#define IAVF_32_BIT_WIDTH (CHAR_BIT * 4)
+#define IAVF_48_BIT_WIDTH (CHAR_BIT * 6)
+#define IAVF_48_BIT_MASK  RTE_LEN2MASK(IAVF_48_BIT_WIDTH, uint64_t)
 
 struct iavf_adapter;
 struct iavf_rx_queue;
@@ -71,6 +76,7 @@ struct iavf_vsi {
 	uint16_t max_macaddrs;   /* Maximum number of MAC addresses */
 	uint16_t base_vector;
 	uint16_t msix_intr;      /* The MSIX interrupt binds to VSI */
+	struct virtchnl_eth_stats eth_stats_offset;
 };
 
 /* TODO: is that correct to assume the max number to be 16 ?*/
@@ -95,7 +101,7 @@ struct iavf_info {
 	/* Event from pf */
 	bool dev_closed;
 	bool link_up;
-	enum virtchnl_link_speed link_speed;
+	uint32_t link_speed;
 
 	struct iavf_vsi vsi;
 	bool vf_reset;
@@ -211,6 +217,6 @@ int iavf_query_stats(struct iavf_adapter *adapter,
 int iavf_config_promisc(struct iavf_adapter *adapter, bool enable_unicast,
 		       bool enable_multicast);
 int iavf_add_del_eth_addr(struct iavf_adapter *adapter,
-			 struct ether_addr *addr, bool add);
+			 struct rte_ether_addr *addr, bool add);
 int iavf_add_del_vlan(struct iavf_adapter *adapter, uint16_t vlanid, bool add);
 #endif /* _IAVF_ETHDEV_H_ */

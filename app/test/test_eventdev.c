@@ -997,6 +997,8 @@ static int
 test_eventdev_selftest_impl(const char *pmd, const char *opts)
 {
 	rte_vdev_init(pmd, opts);
+	if (rte_event_dev_get_dev_id(pmd) == -ENODEV)
+		return TEST_SKIPPED;
 	return rte_event_dev_selftest(rte_event_dev_get_dev_id(pmd));
 }
 
@@ -1012,7 +1014,15 @@ test_eventdev_selftest_octeontx(void)
 	return test_eventdev_selftest_impl("event_octeontx", "");
 }
 
+static int
+test_eventdev_selftest_octeontx2(void)
+{
+	return test_eventdev_selftest_impl("otx2_eventdev", "");
+}
+
 REGISTER_TEST_COMMAND(eventdev_common_autotest, test_eventdev_common);
 REGISTER_TEST_COMMAND(eventdev_selftest_sw, test_eventdev_selftest_sw);
 REGISTER_TEST_COMMAND(eventdev_selftest_octeontx,
 		test_eventdev_selftest_octeontx);
+REGISTER_TEST_COMMAND(eventdev_selftest_octeontx2,
+		test_eventdev_selftest_octeontx2);

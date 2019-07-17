@@ -76,6 +76,7 @@ static int ifpga_acc_get_region_info(struct opae_accelerator *acc,
 	info->flags = ACC_REGION_READ | ACC_REGION_WRITE | ACC_REGION_MMIO;
 	info->len = afu_info->region[info->index].len;
 	info->addr = afu_info->region[info->index].addr;
+	info->phys_addr = afu_info->region[info->index].phys_addr;
 
 	return 0;
 }
@@ -170,7 +171,6 @@ struct opae_accelerator_ops ifpga_acc_ops = {
 };
 
 /* Bridge APIs */
-
 static int ifpga_br_reset(struct opae_bridge *br)
 {
 	struct ifpga_port_hw *port = br->data;
@@ -183,7 +183,7 @@ struct opae_bridge_ops ifpga_br_ops = {
 };
 
 /* Manager APIs */
-static int ifpga_mgr_flash(struct opae_manager *mgr, int id, void *buf,
+static int ifpga_mgr_flash(struct opae_manager *mgr, int id, const char *buf,
 			   u32 size, u64 *status)
 {
 	struct ifpga_fme_hw *fme = mgr->data;
@@ -192,8 +192,103 @@ static int ifpga_mgr_flash(struct opae_manager *mgr, int id, void *buf,
 	return ifpga_pr(hw, id, buf, size, status);
 }
 
+static int ifpga_mgr_get_eth_group_region_info(struct opae_manager *mgr,
+		struct opae_eth_group_region_info *info)
+{
+	struct ifpga_fme_hw *fme = mgr->data;
+
+	if (info->group_id >= MAX_ETH_GROUP_DEVICES)
+		return -EINVAL;
+
+	info->phys_addr = fme->eth_group_region[info->group_id].phys_addr;
+	info->addr = fme->eth_group_region[info->group_id].addr;
+	info->len = fme->eth_group_region[info->group_id].len;
+
+	info->mem_idx = fme->nums_acc_region + info->group_id;
+
+	return 0;
+}
+
 struct opae_manager_ops ifpga_mgr_ops = {
 	.flash = ifpga_mgr_flash,
+	.get_eth_group_region_info = ifpga_mgr_get_eth_group_region_info,
+};
+
+static int ifpga_mgr_read_mac_rom(struct opae_manager *mgr, int offset,
+		void *buf, int size)
+{
+	struct ifpga_fme_hw *fme = mgr->data;
+
+	return fme_mgr_read_mac_rom(fme, offset, buf, size);
+}
+
+static int ifpga_mgr_write_mac_rom(struct opae_manager *mgr, int offset,
+		void *buf, int size)
+{
+	struct ifpga_fme_hw *fme = mgr->data;
+
+	return fme_mgr_write_mac_rom(fme, offset, buf, size);
+}
+
+static int ifpga_mgr_get_eth_group_nums(struct opae_manager *mgr)
+{
+	struct ifpga_fme_hw *fme = mgr->data;
+
+	return fme_mgr_get_eth_group_nums(fme);
+}
+
+static int ifpga_mgr_get_eth_group_info(struct opae_manager *mgr,
+		u8 group_id, struct opae_eth_group_info *info)
+{
+	struct ifpga_fme_hw *fme = mgr->data;
+
+	return fme_mgr_get_eth_group_info(fme, group_id, info);
+}
+
+static int ifpga_mgr_eth_group_reg_read(struct opae_manager *mgr, u8 group_id,
+		u8 type, u8 index, u16 addr, u32 *data)
+{
+	struct ifpga_fme_hw *fme = mgr->data;
+
+	return fme_mgr_eth_group_read_reg(fme, group_id,
+			type, index, addr, data);
+}
+
+static int ifpga_mgr_eth_group_reg_write(struct opae_manager *mgr, u8 group_id,
+		u8 type, u8 index, u16 addr, u32 data)
+{
+	struct ifpga_fme_hw *fme = mgr->data;
+
+	return fme_mgr_eth_group_write_reg(fme, group_id,
+			type, index, addr, data);
+}
+
+static int ifpga_mgr_get_retimer_info(struct opae_manager *mgr,
+		struct opae_retimer_info *info)
+{
+	struct ifpga_fme_hw *fme = mgr->data;
+
+	return fme_mgr_get_retimer_info(fme, info);
+}
+
+static int ifpga_mgr_get_retimer_status(struct opae_manager *mgr,
+		struct opae_retimer_status *status)
+{
+	struct ifpga_fme_hw *fme = mgr->data;
+
+	return fme_mgr_get_retimer_status(fme, status);
+}
+
+/* Network APIs in FME */
+struct opae_manager_networking_ops ifpga_mgr_network_ops = {
+	.read_mac_rom = ifpga_mgr_read_mac_rom,
+	.write_mac_rom = ifpga_mgr_write_mac_rom,
+	.get_eth_group_nums = ifpga_mgr_get_eth_group_nums,
+	.get_eth_group_info = ifpga_mgr_get_eth_group_info,
+	.eth_group_reg_read = ifpga_mgr_eth_group_reg_read,
+	.eth_group_reg_write = ifpga_mgr_eth_group_reg_write,
+	.get_retimer_info = ifpga_mgr_get_retimer_info,
+	.get_retimer_status = ifpga_mgr_get_retimer_status,
 };
 
 /* Adapter APIs */
@@ -202,7 +297,7 @@ static int ifpga_adapter_enumerate(struct opae_adapter *adapter)
 	struct ifpga_hw *hw = malloc(sizeof(*hw));
 
 	if (hw) {
-		memset(hw, 0, sizeof(*hw));
+		opae_memset(hw, 0, sizeof(*hw));
 		hw->pci_data = adapter->data;
 		hw->adapter = adapter;
 		if (ifpga_bus_enumerate(hw))
@@ -230,7 +325,7 @@ struct opae_adapter_ops ifpga_adapter_ops = {
  *   - 0: Success, partial reconfiguration finished.
  *   - <0: Error code returned in partial reconfiguration.
  **/
-int ifpga_pr(struct ifpga_hw *hw, u32 port_id, void *buffer, u32 size,
+int ifpga_pr(struct ifpga_hw *hw, u32 port_id, const char *buffer, u32 size,
 	     u64 *status)
 {
 	if (!is_valid_port_id(hw, port_id))

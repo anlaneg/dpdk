@@ -226,15 +226,15 @@ virtio_enqueue_offload(struct rte_mbuf *m_buf, struct virtio_net_hdr *net_hdr)
 		//记录到checksum字段的offset
 		switch (csum_l4) {
 		case PKT_TX_TCP_CKSUM:
-			net_hdr->csum_offset = (offsetof(struct tcp_hdr,
+			net_hdr->csum_offset = (offsetof(struct rte_tcp_hdr,
 						cksum));
 			break;
 		case PKT_TX_UDP_CKSUM:
-			net_hdr->csum_offset = (offsetof(struct udp_hdr,
+			net_hdr->csum_offset = (offsetof(struct rte_udp_hdr,
 						dgram_cksum));
 			break;
 		case PKT_TX_SCTP_CKSUM:
-			net_hdr->csum_offset = (offsetof(struct sctp_hdr,
+			net_hdr->csum_offset = (offsetof(struct rte_sctp_hdr,
 						cksum));
 			break;
 		}
@@ -248,9 +248,9 @@ virtio_enqueue_offload(struct rte_mbuf *m_buf, struct virtio_net_hdr *net_hdr)
 	/* IP cksum verification cannot be bypassed, then calculate here */
 	if (m_buf->ol_flags & PKT_TX_IP_CKSUM) {
 		//如果mbuf中指明需要做checksum offload,则此处需要计算ip层checksum
-		struct ipv4_hdr *ipv4_hdr;
+		struct rte_ipv4_hdr *ipv4_hdr;
 
-		ipv4_hdr = rte_pktmbuf_mtod_offset(m_buf, struct ipv4_hdr *,
+		ipv4_hdr = rte_pktmbuf_mtod_offset(m_buf, struct rte_ipv4_hdr *,
 						   m_buf->l2_len);
 		ipv4_hdr->hdr_checksum = rte_ipv4_cksum(ipv4_hdr);//计算ipv4头部checksum
 	}
@@ -300,6 +300,8 @@ map_one_desc(struct virtio_net *dev, struct vhost_virtqueue *vq,
 				perm);
 		if (unlikely(!desc_addr))
 			return -1;
+
+		rte_prefetch0((void *)(uintptr_t)desc_addr);
 
 		buf_vec[vec_id].buf_iova = desc_iova;
 		buf_vec[vec_id].buf_addr = desc_addr;
@@ -362,7 +364,7 @@ fill_vec_buf_split(struct virtio_net *dev, struct vhost_virtqueue *vq,
 			 */
 			//dlen小于vq->desc[idx].len,说明存放描述符的内存物理上不连续
 			//申请一段连续内存把描述符 copy出来
-			idesc = alloc_copy_ind_table(dev, vq,
+			idesc = vhost_alloc_copy_ind_table(dev, vq,
 					vq->desc[idx].addr, vq->desc[idx].len);
 			if (unlikely(!idesc))
 				return -1;
@@ -483,7 +485,8 @@ fill_vec_buf_packed_indirect(struct virtio_net *dev,
 		 * The indirect desc table is not contiguous
 		 * in process VA space, we have to copy it.
 		 */
-		idescs = alloc_copy_ind_table(dev, vq, desc->addr, desc->len);
+		idescs = vhost_alloc_copy_ind_table(dev,
+				vq, desc->addr, desc->len);
 		if (unlikely(!idescs))
 			return -1;
 
@@ -647,6 +650,36 @@ reserve_avail_buf_packed(struct virtio_net *dev, struct vhost_virtqueue *vq,
 	return 0;
 }
 
+static __rte_noinline void
+copy_vnet_hdr_to_desc(struct virtio_net *dev, struct vhost_virtqueue *vq,
+		struct buf_vector *buf_vec,
+		struct virtio_net_hdr_mrg_rxbuf *hdr)
+{
+	uint64_t len;
+	uint64_t remain = dev->vhost_hlen;
+	uint64_t src = (uint64_t)(uintptr_t)hdr, dst;
+	uint64_t iova = buf_vec->buf_iova;
+
+	while (remain) {
+		len = RTE_MIN(remain,
+				buf_vec->buf_len);
+		dst = buf_vec->buf_addr;
+		rte_memcpy((void *)(uintptr_t)dst,
+				(void *)(uintptr_t)src,
+				len);
+
+		PRINT_PACKET(dev, (uintptr_t)dst,
+				(uint32_t)len, 0);
+		vhost_log_cache_write(dev, vq,
+				iova, len);
+
+		remain -= len;
+		iova += len;
+		src += len;
+		buf_vec++;
+	}
+}
+
 static __rte_always_inline int
 copy_mbuf_to_desc(struct virtio_net *dev, struct vhost_virtqueue *vq,
 			    struct rte_mbuf *m, struct buf_vector *buf_vec,
@@ -672,10 +705,6 @@ copy_mbuf_to_desc(struct virtio_net *dev, struct vhost_virtqueue *vq,
 	buf_addr = buf_vec[vec_idx].buf_addr;
 	buf_iova = buf_vec[vec_idx].buf_iova;
 	buf_len = buf_vec[vec_idx].buf_len;
-
-	if (nr_vec > 1)
-		//vector数量为1时，没办法预取
-		rte_prefetch0((void *)(uintptr_t)buf_vec[1].buf_addr);
 
 	if (unlikely(buf_len < dev->vhost_hlen && nr_vec <= 1)) {
 		//空间不足以存在dev->vhost_hlen,报错
@@ -724,10 +753,6 @@ copy_mbuf_to_desc(struct virtio_net *dev, struct vhost_virtqueue *vq,
 			buf_iova = buf_vec[vec_idx].buf_iova;
 			buf_len = buf_vec[vec_idx].buf_len;
 
-			/* Prefetch next buffer address. */
-			if (vec_idx + 1 < nr_vec)
-				rte_prefetch0((void *)(uintptr_t)
-						buf_vec[vec_idx + 1].buf_addr);
 			buf_offset = 0;
 			buf_avail  = buf_len;
 		}
@@ -750,30 +775,7 @@ copy_mbuf_to_desc(struct virtio_net *dev, struct vhost_virtqueue *vq,
 
 			if (unlikely(hdr == &tmp_hdr)) {
 				//首段desc空间过小，不足以存放virtio_net_hdr_mrg_rxbuf
-				uint64_t len;
-				uint64_t remain = dev->vhost_hlen;//XXX 这块是个bug(如果remain使用dev->vhost_hlen,则必然copy超界）
-				uint64_t src = (uint64_t)(uintptr_t)hdr, dst;
-				uint64_t iova = buf_vec[0].buf_iova;
-				uint16_t hdr_vec_idx = 0;
-
-				while (remain) {
-					len = RTE_MIN(remain,
-						buf_vec[hdr_vec_idx].buf_len);
-					dst = buf_vec[hdr_vec_idx].buf_addr;
-					rte_memcpy((void *)(uintptr_t)dst,
-							(void *)(uintptr_t)src,
-							len);
-
-					PRINT_PACKET(dev, (uintptr_t)dst,
-							(uint32_t)len, 0);
-					vhost_log_cache_write(dev, vq,
-							iova, len);
-
-					remain -= len;
-					iova += len;
-					src += len;
-					hdr_vec_idx++;
-				}
+				copy_vnet_hdr_to_desc(dev, vq, buf_vec, hdr);
 			} else {
 				PRINT_PACKET(dev, (uintptr_t)hdr_addr,
 						dev->vhost_hlen, 0);
@@ -824,7 +826,7 @@ out:
 //向virtio_net收包处理（vhost设备的发包处理）
 //pkts要发送的报文
 //count要发送的报文数
-static __rte_always_inline uint32_t
+static __rte_noinline uint32_t
 virtio_dev_rx_split(struct virtio_net *dev, struct vhost_virtqueue *vq,
 	struct rte_mbuf **pkts, uint32_t count)
 {
@@ -861,8 +863,6 @@ virtio_dev_rx_split(struct virtio_net *dev, struct vhost_virtqueue *vq,
 			break;
 		}
 
-		rte_prefetch0((void *)(uintptr_t)buf_vec[0].buf_addr);
-
 		VHOST_LOG_DEBUG(VHOST_DATA, "(%d) current index %d | end index %d\n",
 			dev->vid, vq->last_avail_idx,
 			vq->last_avail_idx + num_buffers);
@@ -889,7 +889,7 @@ virtio_dev_rx_split(struct virtio_net *dev, struct vhost_virtqueue *vq,
 	return pkt_idx;
 }
 
-static __rte_always_inline uint32_t
+static __rte_noinline uint32_t
 virtio_dev_rx_packed(struct virtio_net *dev, struct vhost_virtqueue *vq,
 	struct rte_mbuf **pkts, uint32_t count)
 {
@@ -911,8 +911,6 @@ virtio_dev_rx_packed(struct virtio_net *dev, struct vhost_virtqueue *vq,
 			vq->shadow_used_idx -= num_buffers;
 			break;
 		}
-
-		rte_prefetch0((void *)(uintptr_t)buf_vec[0].buf_addr);
 
 		VHOST_LOG_DEBUG(VHOST_DATA, "(%d) current index %d | end index %d\n",
 			dev->vid, vq->last_avail_idx,
@@ -1035,38 +1033,39 @@ virtio_net_with_host_offload(struct virtio_net *dev)
 static void
 parse_ethernet(struct rte_mbuf *m, uint16_t *l4_proto, void **l4_hdr)
 {
-	struct ipv4_hdr *ipv4_hdr;
-	struct ipv6_hdr *ipv6_hdr;
+	struct rte_ipv4_hdr *ipv4_hdr;
+	struct rte_ipv6_hdr *ipv6_hdr;
 	void *l3_hdr = NULL;
-	struct ether_hdr *eth_hdr;
+	struct rte_ether_hdr *eth_hdr;
 	uint16_t ethertype;
 
-	eth_hdr = rte_pktmbuf_mtod(m, struct ether_hdr *);
+	eth_hdr = rte_pktmbuf_mtod(m, struct rte_ether_hdr *);
 
-	m->l2_len = sizeof(struct ether_hdr);
+	m->l2_len = sizeof(struct rte_ether_hdr);
 	ethertype = rte_be_to_cpu_16(eth_hdr->ether_type);
 
-	if (ethertype == ETHER_TYPE_VLAN) {
-		struct vlan_hdr *vlan_hdr = (struct vlan_hdr *)(eth_hdr + 1);
+	if (ethertype == RTE_ETHER_TYPE_VLAN) {
+		struct rte_vlan_hdr *vlan_hdr =
+			(struct rte_vlan_hdr *)(eth_hdr + 1);
 
-		m->l2_len += sizeof(struct vlan_hdr);
+		m->l2_len += sizeof(struct rte_vlan_hdr);
 		ethertype = rte_be_to_cpu_16(vlan_hdr->eth_proto);
 	}
 
 	l3_hdr = (char *)eth_hdr + m->l2_len;
 
 	switch (ethertype) {
-	case ETHER_TYPE_IPv4:
+	case RTE_ETHER_TYPE_IPV4:
 		ipv4_hdr = l3_hdr;
 		*l4_proto = ipv4_hdr->next_proto_id;
 		m->l3_len = (ipv4_hdr->version_ihl & 0x0f) * 4;
 		*l4_hdr = (char *)l3_hdr + m->l3_len;
 		m->ol_flags |= PKT_TX_IPV4;
 		break;
-	case ETHER_TYPE_IPv6:
+	case RTE_ETHER_TYPE_IPV6:
 		ipv6_hdr = l3_hdr;
 		*l4_proto = ipv6_hdr->proto;
-		m->l3_len = sizeof(struct ipv6_hdr);
+		m->l3_len = sizeof(struct rte_ipv6_hdr);
 		*l4_hdr = (char *)l3_hdr + m->l3_len;
 		m->ol_flags |= PKT_TX_IPV6;
 		break;
@@ -1084,7 +1083,7 @@ vhost_dequeue_offload(struct virtio_net_hdr *hdr, struct rte_mbuf *m)
 {
 	uint16_t l4_proto = 0;
 	void *l4_hdr = NULL;
-	struct tcp_hdr *tcp_hdr = NULL;
+	struct rte_tcp_hdr *tcp_hdr = NULL;
 
 	if (hdr->flags == 0 && hdr->gso_type == VIRTIO_NET_HDR_GSO_NONE)
 		//无offload flag,退出
@@ -1096,15 +1095,15 @@ vhost_dequeue_offload(struct virtio_net_hdr *hdr, struct rte_mbuf *m)
 		//checksum flags处理，打上相关标记位，交给？？？处理
 		if (hdr->csum_start == (m->l2_len + m->l3_len)) {
 			switch (hdr->csum_offset) {
-			case (offsetof(struct tcp_hdr, cksum)):
+			case (offsetof(struct rte_tcp_hdr, cksum)):
 				if (l4_proto == IPPROTO_TCP)
 					m->ol_flags |= PKT_TX_TCP_CKSUM;
 				break;
-			case (offsetof(struct udp_hdr, dgram_cksum)):
+			case (offsetof(struct rte_udp_hdr, dgram_cksum)):
 				if (l4_proto == IPPROTO_UDP)
 					m->ol_flags |= PKT_TX_UDP_CKSUM;
 				break;
-			case (offsetof(struct sctp_hdr, cksum)):
+			case (offsetof(struct rte_sctp_hdr, cksum)):
 				if (l4_proto == IPPROTO_SCTP)
 					m->ol_flags |= PKT_TX_SCTP_CKSUM;
 				break;
@@ -1127,13 +1126,34 @@ vhost_dequeue_offload(struct virtio_net_hdr *hdr, struct rte_mbuf *m)
 		case VIRTIO_NET_HDR_GSO_UDP:
 			m->ol_flags |= PKT_TX_UDP_SEG;
 			m->tso_segsz = hdr->gso_size;
-			m->l4_len = sizeof(struct udp_hdr);
+			m->l4_len = sizeof(struct rte_udp_hdr);
 			break;
 		default:
 			RTE_LOG(WARNING, VHOST_DATA,
 				"unsupported gso type %u.\n", hdr->gso_type);
 			break;
 		}
+	}
+}
+
+static __rte_noinline void
+copy_vnet_hdr_from_desc(struct virtio_net_hdr *hdr,
+		struct buf_vector *buf_vec)
+{
+	uint64_t len;
+	uint64_t remain = sizeof(struct virtio_net_hdr);
+	uint64_t src;
+	uint64_t dst = (uint64_t)(uintptr_t)hdr;
+
+	while (remain) {
+		len = RTE_MIN(remain, buf_vec->buf_len);
+		src = buf_vec->buf_addr;
+		rte_memcpy((void *)(uintptr_t)dst,
+				(void *)(uintptr_t)src, len);
+
+		remain -= len;
+		dst += len;
+		buf_vec++;
 	}
 }
 
@@ -1165,41 +1185,18 @@ copy_desc_to_mbuf(struct virtio_net *dev, struct vhost_virtqueue *vq,
 		goto out;
 	}
 
-	if (likely(nr_vec > 1))
-		rte_prefetch0((void *)(uintptr_t)buf_vec[1].buf_addr);
-
 	if (virtio_net_with_host_offload(dev)) {
 		//需要在virtio_net这一层做offload
 		if (unlikely(buf_len < sizeof(struct virtio_net_hdr))) {
-			//首个desc长度不足，读取virtio_net_hdr到tmp_hdr
-			//并使hdr指向它，这里的copy目的仅仅用于分析。virtio_net_hdr头部仍然会copy进mbuf
-			uint64_t len;
-			uint64_t remain = sizeof(struct virtio_net_hdr);
-			uint64_t src;
-			uint64_t dst = (uint64_t)(uintptr_t)&tmp_hdr;
-			uint16_t hdr_vec_idx = 0;
-
 			/*
 			 * No luck, the virtio-net header doesn't fit
 			 * in a contiguous virtual area.
 			 */
-			while (remain) {
-				len = RTE_MIN(remain,
-					buf_vec[hdr_vec_idx].buf_len);
-				src = buf_vec[hdr_vec_idx].buf_addr;
-				rte_memcpy((void *)(uintptr_t)dst,
-						   (void *)(uintptr_t)src, len);
-
-				remain -= len;
-				dst += len;
-				hdr_vec_idx++;
-			}
-
+			copy_vnet_hdr_from_desc(&tmp_hdr, buf_vec);
 			hdr = &tmp_hdr;
 		} else {
 			//长度足够，使hdr直接指向它
 			hdr = (struct virtio_net_hdr *)((uintptr_t)buf_addr);
-			rte_prefetch0(hdr);
 		}
 	}
 
@@ -1233,11 +1230,6 @@ copy_desc_to_mbuf(struct virtio_net *dev, struct vhost_virtqueue *vq,
 		buf_avail = buf_vec[vec_idx].buf_len - dev->vhost_hlen;
 	}
 
-	//预取报文内容
-	rte_prefetch0((void *)(uintptr_t)
-			(buf_addr + buf_offset));
-
-	//print报文内容
 	PRINT_PACKET(dev,
 			(uintptr_t)(buf_addr + buf_offset),
 			(uint32_t)buf_avail, 0);
@@ -1312,14 +1304,6 @@ copy_desc_to_mbuf(struct virtio_net *dev, struct vhost_virtqueue *vq,
 			buf_addr = buf_vec[vec_idx].buf_addr;
 			buf_iova = buf_vec[vec_idx].buf_iova;
 			buf_len = buf_vec[vec_idx].buf_len;
-
-			/*
-			 * Prefecth desc n + 1 buffer while
-			 * desc n buffer is processed.
-			 */
-			if (vec_idx + 1 < nr_vec)
-				rte_prefetch0((void *)(uintptr_t)
-						buf_vec[vec_idx + 1].buf_addr);
 
 			buf_offset = 0;
 			buf_avail  = buf_len;
@@ -1404,7 +1388,7 @@ again:
 //成一个描述符list,并在链表头上标注VRING_DESC_F_INDIRECT）
 //再由描述符定位到实际的报文，然后copy或者zero copy构建mbuf
 //
-static __rte_always_inline uint16_t
+static __rte_noinline uint16_t
 virtio_dev_tx_split(struct virtio_net *dev, struct vhost_virtqueue *vq,
 	struct rte_mempool *mbuf_pool, struct rte_mbuf **pkts, uint16_t count)
 {
@@ -1481,8 +1465,6 @@ virtio_dev_tx_split(struct virtio_net *dev, struct vhost_virtqueue *vq,
 			//记录head_idx已被使用（注意：还没有使用完，还需要使用其对应的buffer)
 			update_shadow_used_ring_split(vq, head_idx, 0);
 
-		rte_prefetch0((void *)(uintptr_t)buf_vec[0].buf_addr);
-
 		//申请mbuf
 		pkts[i] = rte_pktmbuf_alloc(mbuf_pool);
 		if (unlikely(pkts[i] == NULL)) {
@@ -1540,7 +1522,7 @@ virtio_dev_tx_split(struct virtio_net *dev, struct vhost_virtqueue *vq,
 	return i;
 }
 
-static __rte_always_inline uint16_t
+static __rte_noinline uint16_t
 virtio_dev_tx_packed(struct virtio_net *dev, struct vhost_virtqueue *vq,
 	struct rte_mempool *mbuf_pool, struct rte_mbuf **pkts, uint16_t count)
 {
@@ -1598,8 +1580,6 @@ virtio_dev_tx_packed(struct virtio_net *dev, struct vhost_virtqueue *vq,
 		if (likely(dev->dequeue_zero_copy == 0))
 			update_shadow_used_ring_packed(vq, buf_id, 0,
 					desc_count);
-
-		rte_prefetch0((void *)(uintptr_t)buf_vec[0].buf_addr);
 
 		//申请mbuf
 		pkts[i] = rte_pktmbuf_alloc(mbuf_pool);
