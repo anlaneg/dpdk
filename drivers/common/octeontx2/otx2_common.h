@@ -69,12 +69,9 @@ extern int otx2_logtype_tm;
 extern int otx2_logtype_tim;
 extern int otx2_logtype_dpi;
 
-#define OTX2_CLNRM  "\x1b[0m"
-#define OTX2_CLRED  "\x1b[31m"
-
-#define otx2_err(fmt, args...)						\
-	RTE_LOG(ERR, PMD, ""OTX2_CLRED"%s():%u " fmt OTX2_CLNRM"\n",	\
-				__func__, __LINE__, ## args)
+#define otx2_err(fmt, args...)			\
+	RTE_LOG(ERR, PMD, "%s():%u " fmt "\n",	\
+		__func__, __LINE__, ## args)
 
 #define otx2_info(fmt, args...)						\
 	RTE_LOG(INFO, PMD, fmt"\n", ## args)
@@ -107,6 +104,26 @@ extern int otx2_logtype_dpi;
 #define PCI_DEVID_OCTEONTX2_RVU_CPT_VF		0xA0FE
 #define PCI_DEVID_OCTEONTX2_RVU_AF_VF		0xA0f8
 #define PCI_DEVID_OCTEONTX2_DPI_VF		0xA081
+
+/* Subsystem Device ID */
+#define PCI_SUBSYS_DEVID_96XX_95XX		0xB200
+
+/*
+ * REVID for RVU PCIe devices.
+ * Bits 0..1: minor pass
+ * Bits 3..2: major pass
+ * Bits 7..4: midr id, 0:96, 1:95, 2:loki, f:unknown
+ */
+
+#define RVU_PCI_REV_MIDR_ID(rev_id)		(rev_id >> 4)
+#define RVU_PCI_REV_MAJOR(rev_id)		((rev_id >> 2) & 0x3)
+#define RVU_PCI_REV_MINOR(rev_id)		(rev_id & 0x3)
+
+#define RVU_PCI_CN96XX_MIDR_ID			0x0
+#define RVU_PCI_CNF95XX_MIDR_ID			0x1
+
+/* PCI Config offsets */
+#define RVU_PCI_REVISION_ID			0x08
 
 /* IO Access */
 #define otx2_read64(addr) rte_read64_relaxed((void *)(addr))

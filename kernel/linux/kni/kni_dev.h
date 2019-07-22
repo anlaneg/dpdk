@@ -11,6 +11,8 @@
 #endif
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
 
+#define KNI_VERSION	"1.0"
+
 #include "compat.h"
 
 #include <linux/if.h>
@@ -39,9 +41,6 @@ struct kni_dev {
 	/* kni list */
 	struct list_head list;
 
-	struct net_device_stats stats;
-	int status;
-	uint16_t group_id;           /* Group ID of a group of KNI devices */
 	uint32_t core_id;            /* Core ID to bind */
 	char name[RTE_KNI_NAMESIZE]; /* Network device name */
 	struct task_struct *pthread;
@@ -54,22 +53,22 @@ struct kni_dev {
 	struct net_device *net_dev;
 
 	/* queue for packets to be sent out */
-	void *tx_q;
+	struct rte_kni_fifo *tx_q;
 
 	/* queue for the packets received */
-	void *rx_q;
+	struct rte_kni_fifo *rx_q;
 
 	/* queue for the allocated mbufs those can be used to save sk buffs */
-	void *alloc_q;//kernel模块自此队列获取空闲的mbuf
+	struct rte_kni_fifo *alloc_q;//kernel模块自此队列获取空闲的mbuf
 
 	/* free queue for the mbufs to be freed */
-	void *free_q;
+	struct rte_kni_fifo *free_q;
 
 	/* request queue */
-	void *req_q;
+	struct rte_kni_fifo *req_q;
 
 	/* response queue */
-	void *resp_q;
+	struct rte_kni_fifo *resp_q;
 
 	void *sync_kva;
 	void *sync_va;
@@ -79,9 +78,6 @@ struct kni_dev {
 
 	/* mbuf size */
 	uint32_t mbuf_size;
-
-	/* synchro for request processing */
-	unsigned long synchro;
 
 	/* buffers */
 	void *pa[MBUF_BURST_SZ];//用于缓冲收到的报文指针

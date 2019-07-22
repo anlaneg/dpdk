@@ -2377,6 +2377,7 @@ create_wireless_algo_hash_session(uint8_t dev_id,
 	enum rte_crypto_auth_algorithm algo)
 {
 	uint8_t hash_key[key_len];
+	int status;
 
 	struct crypto_testsuite_params *ts_params = &testsuite_params;
 	struct crypto_unittest_params *ut_params = &unittest_params;
@@ -2399,9 +2400,10 @@ create_wireless_algo_hash_session(uint8_t dev_id,
 	ut_params->sess = rte_cryptodev_sym_session_create(
 			ts_params->session_mpool);
 
-	rte_cryptodev_sym_session_init(dev_id, ut_params->sess,
+	status = rte_cryptodev_sym_session_init(dev_id, ut_params->sess,
 			&ut_params->auth_xform,
 			ts_params->session_priv_mpool);
+	TEST_ASSERT_EQUAL(status, 0, "session init failed");
 	TEST_ASSERT_NOT_NULL(ut_params->sess, "Session creation failed");
 	return 0;
 }
@@ -2414,7 +2416,7 @@ create_wireless_algo_cipher_session(uint8_t dev_id,
 			uint8_t iv_len)
 {
 	uint8_t cipher_key[key_len];
-
+	int status;
 	struct crypto_testsuite_params *ts_params = &testsuite_params;
 	struct crypto_unittest_params *ut_params = &unittest_params;
 
@@ -2437,9 +2439,10 @@ create_wireless_algo_cipher_session(uint8_t dev_id,
 	ut_params->sess = rte_cryptodev_sym_session_create(
 			ts_params->session_mpool);
 
-	rte_cryptodev_sym_session_init(dev_id, ut_params->sess,
+	status = rte_cryptodev_sym_session_init(dev_id, ut_params->sess,
 			&ut_params->cipher_xform,
 			ts_params->session_priv_mpool);
+	TEST_ASSERT_EQUAL(status, 0, "session init failed");
 	TEST_ASSERT_NOT_NULL(ut_params->sess, "Session creation failed");
 	return 0;
 }
@@ -2517,6 +2520,7 @@ create_wireless_algo_cipher_auth_session(uint8_t dev_id,
 
 {
 	uint8_t cipher_auth_key[key_len];
+	int status;
 
 	struct crypto_testsuite_params *ts_params = &testsuite_params;
 	struct crypto_unittest_params *ut_params = &unittest_params;
@@ -2554,10 +2558,11 @@ create_wireless_algo_cipher_auth_session(uint8_t dev_id,
 	ut_params->sess = rte_cryptodev_sym_session_create(
 			ts_params->session_mpool);
 
-	rte_cryptodev_sym_session_init(dev_id, ut_params->sess,
+	status = rte_cryptodev_sym_session_init(dev_id, ut_params->sess,
 			&ut_params->cipher_xform,
 			ts_params->session_priv_mpool);
 
+	TEST_ASSERT_EQUAL(status, 0, "session init failed");
 	TEST_ASSERT_NOT_NULL(ut_params->sess, "Session creation failed");
 	return 0;
 }
@@ -2572,6 +2577,7 @@ create_wireless_cipher_auth_session(uint8_t dev_id,
 {
 	const uint8_t key_len = tdata->key.len;
 	uint8_t cipher_auth_key[key_len];
+	int status;
 
 	struct crypto_testsuite_params *ts_params = &testsuite_params;
 	struct crypto_unittest_params *ut_params = &unittest_params;
@@ -2614,10 +2620,11 @@ create_wireless_cipher_auth_session(uint8_t dev_id,
 	ut_params->sess = rte_cryptodev_sym_session_create(
 			ts_params->session_mpool);
 
-	rte_cryptodev_sym_session_init(dev_id, ut_params->sess,
+	status = rte_cryptodev_sym_session_init(dev_id, ut_params->sess,
 			&ut_params->cipher_xform,
 			ts_params->session_priv_mpool);
 
+	TEST_ASSERT_EQUAL(status, 0, "session init failed");
 	TEST_ASSERT_NOT_NULL(ut_params->sess, "Session creation failed");
 	return 0;
 }
@@ -2643,7 +2650,7 @@ create_wireless_algo_auth_cipher_session(uint8_t dev_id,
 		uint8_t cipher_iv_len)
 {
 	uint8_t auth_cipher_key[key_len];
-
+	int status;
 	struct crypto_testsuite_params *ts_params = &testsuite_params;
 	struct crypto_unittest_params *ut_params = &unittest_params;
 
@@ -2677,10 +2684,10 @@ create_wireless_algo_auth_cipher_session(uint8_t dev_id,
 	ut_params->sess = rte_cryptodev_sym_session_create(
 			ts_params->session_mpool);
 
-	rte_cryptodev_sym_session_init(dev_id, ut_params->sess,
+	status = rte_cryptodev_sym_session_init(dev_id, ut_params->sess,
 			&ut_params->auth_xform,
 			ts_params->session_priv_mpool);
-
+	TEST_ASSERT_EQUAL(status, 0, "session init failed");
 	TEST_ASSERT_NOT_NULL(ut_params->sess, "Session creation failed");
 
 	return 0;
@@ -2909,8 +2916,6 @@ create_wireless_algo_auth_cipher_operation(unsigned int auth_tag_len,
 			(op_mode == IN_PLACE ?
 				ut_params->ibuf : ut_params->obuf),
 			data_pad_len);
-		TEST_ASSERT_NOT_NULL(sym_op->auth.digest.data,
-			"no room to append auth tag");
 		memset(sym_op->auth.digest.data, 0, auth_tag_len);
 	} else {
 		uint16_t remaining_off = (auth_offset >> 3) + (auth_len >> 3);
@@ -2924,8 +2929,6 @@ create_wireless_algo_auth_cipher_operation(unsigned int auth_tag_len,
 				uint8_t *, remaining_off);
 		sym_op->auth.digest.phys_addr = rte_pktmbuf_iova_offset(sgl_buf,
 				remaining_off);
-		TEST_ASSERT_NOT_NULL(sym_op->auth.digest.data,
-			"no room to append auth tag");
 		memset(sym_op->auth.digest.data, 0, remaining_off);
 		while (sgl_buf->next != NULL) {
 			memset(rte_pktmbuf_mtod(sgl_buf, uint8_t *),
@@ -5002,7 +5005,7 @@ test_kasumi_auth_cipher_sgl(const struct kasumi_test_data *tdata,
 	}
 	memset(buffer, 0, sizeof(buffer));
 
-	/* Create SNOW 3G operation */
+	/* Create KASUMI operation */
 	retval = create_wireless_algo_auth_cipher_operation(
 		tdata->digest.len,
 		tdata->cipher_iv.data, tdata->cipher_iv.len,
@@ -5432,6 +5435,15 @@ test_zuc_auth_cipher(const struct wireless_test_data *tdata,
 	unsigned int ciphertext_len;
 
 	struct rte_cryptodev_info dev_info;
+	struct rte_cryptodev_sym_capability_idx cap_idx;
+
+	/* Check if device supports ZUC EIA3 */
+	cap_idx.type = RTE_CRYPTO_SYM_XFORM_AUTH;
+	cap_idx.algo.auth = RTE_CRYPTO_AUTH_ZUC_EIA3;
+
+	if (rte_cryptodev_sym_capability_get(ts_params->valid_devs[0],
+			&cap_idx) == NULL)
+		return -ENOTSUP;
 
 	rte_cryptodev_info_get(ts_params->valid_devs[0], &dev_info);
 
@@ -5444,7 +5456,7 @@ test_zuc_auth_cipher(const struct wireless_test_data *tdata,
 		}
 	}
 
-	/* Create KASUMI session */
+	/* Create ZUC session */
 	retval = create_wireless_algo_auth_cipher_session(
 			ts_params->valid_devs[0],
 			(verify ? RTE_CRYPTO_CIPHER_OP_DECRYPT
@@ -5473,8 +5485,6 @@ test_zuc_auth_cipher(const struct wireless_test_data *tdata,
 
 	ciphertext_len = ceil_byte_length(tdata->ciphertext.len);
 	plaintext_len = ceil_byte_length(tdata->plaintext.len);
-	/* Append data which is padded to a multiple of */
-	/* the algorithms block size */
 	ciphertext_pad_len = RTE_ALIGN_CEIL(ciphertext_len, 16);
 	plaintext_pad_len = RTE_ALIGN_CEIL(plaintext_len, 16);
 
@@ -5600,6 +5610,15 @@ test_zuc_auth_cipher_sgl(const struct wireless_test_data *tdata,
 	uint8_t digest_buffer[10000];
 
 	struct rte_cryptodev_info dev_info;
+	struct rte_cryptodev_sym_capability_idx cap_idx;
+
+	/* Check if device supports ZUC EIA3 */
+	cap_idx.type = RTE_CRYPTO_SYM_XFORM_AUTH;
+	cap_idx.algo.auth = RTE_CRYPTO_AUTH_ZUC_EIA3;
+
+	if (rte_cryptodev_sym_capability_get(ts_params->valid_devs[0],
+			&cap_idx) == NULL)
+		return -ENOTSUP;
 
 	rte_cryptodev_info_get(ts_params->valid_devs[0], &dev_info);
 

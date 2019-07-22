@@ -18,7 +18,6 @@
 #include <rte_ethdev.h>
 #include <rte_byteorder.h>
 #include <cmdline_parse.h>
-#include <cmdline_parse_etheraddr.h>
 #include <rte_flow.h>
 
 #include "testpmd.h"
@@ -148,6 +147,10 @@ enum index {
 	ITEM_MPLS_LABEL,
 	ITEM_GRE,
 	ITEM_GRE_PROTO,
+	ITEM_GRE_C_RSVD0_VER,
+	ITEM_GRE_C_BIT,
+	ITEM_GRE_K_BIT,
+	ITEM_GRE_S_BIT,
 	ITEM_FUZZY,
 	ITEM_FUZZY_THRESH,
 	ITEM_GTP,
@@ -181,6 +184,8 @@ enum index {
 	ITEM_ICMP6_ND_OPT_TLA_ETH_TLA,
 	ITEM_META,
 	ITEM_META_DATA,
+	ITEM_GRE_KEY,
+	ITEM_GRE_KEY_VALUE,
 
 	/* Validate/create actions. */
 	ACTIONS,
@@ -626,6 +631,7 @@ static const enum index next_item[] = {
 	ITEM_ICMP6_ND_OPT_SLA_ETH,
 	ITEM_ICMP6_ND_OPT_TLA_ETH,
 	ITEM_META,
+	ITEM_GRE_KEY,
 	ZERO,
 };
 
@@ -771,6 +777,16 @@ static const enum index item_mpls[] = {
 
 static const enum index item_gre[] = {
 	ITEM_GRE_PROTO,
+	ITEM_GRE_C_RSVD0_VER,
+	ITEM_GRE_C_BIT,
+	ITEM_GRE_K_BIT,
+	ITEM_GRE_S_BIT,
+	ITEM_NEXT,
+	ZERO,
+};
+
+static const enum index item_gre_key[] = {
+	ITEM_GRE_KEY_VALUE,
 	ITEM_NEXT,
 	ZERO,
 };
@@ -1942,6 +1958,40 @@ static const struct token token_list[] = {
 		.args = ARGS(ARGS_ENTRY_HTON(struct rte_flow_item_gre,
 					     protocol)),
 	},
+	[ITEM_GRE_C_RSVD0_VER] = {
+		.name = "c_rsvd0_ver",
+		.help =
+			"checksum (1b), undefined (1b), key bit (1b),"
+			" sequence number (1b), reserved 0 (9b),"
+			" version (3b)",
+		.next = NEXT(item_gre, NEXT_ENTRY(UNSIGNED), item_param),
+		.args = ARGS(ARGS_ENTRY_HTON(struct rte_flow_item_gre,
+					     c_rsvd0_ver)),
+	},
+	[ITEM_GRE_C_BIT] = {
+		.name = "c_bit",
+		.help = "checksum bit (C)",
+		.next = NEXT(item_gre, NEXT_ENTRY(BOOLEAN), item_param),
+		.args = ARGS(ARGS_ENTRY_MASK_HTON(struct rte_flow_item_gre,
+						  c_rsvd0_ver,
+						  "\x80\x00\x00\x00")),
+	},
+	[ITEM_GRE_S_BIT] = {
+		.name = "s_bit",
+		.help = "sequence number bit (S)",
+		.next = NEXT(item_gre, NEXT_ENTRY(BOOLEAN), item_param),
+		.args = ARGS(ARGS_ENTRY_MASK_HTON(struct rte_flow_item_gre,
+						  c_rsvd0_ver,
+						  "\x10\x00\x00\x00")),
+	},
+	[ITEM_GRE_K_BIT] = {
+		.name = "k_bit",
+		.help = "key bit (K)",
+		.next = NEXT(item_gre, NEXT_ENTRY(BOOLEAN), item_param),
+		.args = ARGS(ARGS_ENTRY_MASK_HTON(struct rte_flow_item_gre,
+						  c_rsvd0_ver,
+						  "\x20\x00\x00\x00")),
+	},
 	[ITEM_FUZZY] = {
 		.name = "fuzzy",
 		.help = "fuzzy pattern match, expect faster than default",
@@ -2193,6 +2243,19 @@ static const struct token token_list[] = {
 		.next = NEXT(item_meta, NEXT_ENTRY(UNSIGNED), item_param),
 		.args = ARGS(ARGS_ENTRY_MASK_HTON(struct rte_flow_item_meta,
 						  data, "\xff\xff\xff\xff")),
+	},
+	[ITEM_GRE_KEY] = {
+		.name = "gre_key",
+		.help = "match GRE key",
+		.priv = PRIV_ITEM(GRE_KEY, sizeof(rte_be32_t)),
+		.next = NEXT(item_gre_key),
+		.call = parse_vc,
+	},
+	[ITEM_GRE_KEY_VALUE] = {
+		.name = "value",
+		.help = "key value",
+		.next = NEXT(item_gre_key, NEXT_ENTRY(UNSIGNED), item_param),
+		.args = ARGS(ARG_ENTRY_HTON(rte_be32_t)),
 	},
 
 	/* Validate/create actions. */
@@ -4734,8 +4797,8 @@ parse_mac_addr(struct context *ctx, const struct token *token,
 	/* Only network endian is supported. */
 	if (!arg->hton)
 		goto error;
-	ret = cmdline_parse_etheraddr(NULL, str, &tmp, size);
-	if (ret < 0 || (unsigned int)ret != len)
+	ret = rte_ether_unformat_addr(str, &tmp);
+	if (ret < 0)
 		goto error;
 	if (!ctx->object)
 		return len;

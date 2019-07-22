@@ -111,6 +111,7 @@ New Features
 
   * Updated the packet header modification feature. Added support of TCP header
     sequence number and acknowledgment number modification.
+  * Added support for match on ICMP/ICMP6 code and type.
 
 * **Updated Solarflare network PMD.**
 
@@ -168,6 +169,19 @@ New Features
   of via software, reducing cycles spent copying large blocks of data in
   applications.
 
+* **Added Marvell OCTEON TX2 drivers.**
+
+  Added the new ``ethdev``, ``eventdev``, ``mempool``, ``eventdev Rx adapter``,
+  ``eventdev Tx adapter``, ``eventdev Timer adapter`` and ``rawdev DMA``
+  drivers for various HW coprocessors available in ``OCTEON TX2`` SoC.
+
+  See :doc:`../platform/octeontx2` and driver informations:
+
+  * :doc:`../nics/octeontx2`
+  * :doc:`../mempool/octeontx2`
+  * :doc:`../eventdevs/octeontx2`
+  * :doc:`../rawdevs/octeontx2_dma`
+
 * **Introduced NTB PMD.**
 
   Added a PMD for Intel NTB (Non-transparent Bridge). This PMD implemented
@@ -189,6 +203,14 @@ New Features
 
   Added telemetry mode to l3fwd-power application to report
   application level busyness, empty and full polls of rte_eth_rx_burst().
+
+* **Updated the pdump application.**
+
+  Add support for pdump to exit with primary process.
+
+* **Updated test-compress-perf tool application.**
+
+  Added multiple cores feature to compression perf tool application.
 
 
 Removed Items
@@ -232,6 +254,10 @@ API Changes
 
 * malloc: The function ``rte_malloc_set_limit`` was never implemented
   is deprecated and will be removed in a future release.
+
+* cryptodev: the ``uint8_t *data`` member of ``key`` structure in the xforms
+  structure (``rte_crypto_cipher_xform``, ``rte_crypto_auth_xform``, and
+  ``rte_crypto_aead_xform``) have been changed to ``const uint8_t *data``.
 
 * eventdev: No longer marked as experimental.
 

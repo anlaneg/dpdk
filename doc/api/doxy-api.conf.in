@@ -4,6 +4,7 @@
 PROJECT_NAME            = DPDK
 PROJECT_NUMBER          = @VERSION@
 INPUT                   = @TOPDIR@/doc/api/doxy-api-index.md \
+                          @TOPDIR@/drivers/bus/vdev \
                           @TOPDIR@/drivers/crypto/scheduler \
                           @TOPDIR@/drivers/mempool/dpaa2 \
                           @TOPDIR@/drivers/net/bnxt \
@@ -83,7 +84,7 @@ ALPHABETICAL_INDEX      = NO
 
 HTML_TIMESTAMP          = NO
 HTML_DYNAMIC_SECTIONS   = YES
-SEARCHENGINE            = NO
+SEARCHENGINE            = YES
 SORT_MEMBER_DOCS        = NO
 SOURCE_BROWSER          = YES
 
