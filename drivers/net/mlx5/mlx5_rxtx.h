@@ -191,6 +191,7 @@ struct mlx5_hrxq {
 /* TX queue descriptor. */
 __extension__
 struct mlx5_txq_data {
+	//当前可存入报文的指针位置
 	uint16_t elts_head; /* Current counter in (*elts)[]. */
 	uint16_t elts_tail; /* Counter of first element awaiting completion. */
 	uint16_t elts_comp; /* Counter since last completion request. */

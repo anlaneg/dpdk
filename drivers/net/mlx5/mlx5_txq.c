@@ -199,6 +199,7 @@ mlx5_tx_queue_setup(struct rte_eth_dev *dev, uint16_t idx, uint16_t desc,
 	}
 	DRV_LOG(DEBUG, "port %u adding Tx queue %u to list",
 		dev->data->port_id, idx);
+	//登记idx号tx队列
 	(*priv->txqs)[idx] = &txq_ctrl->txq;
 	return 0;
 }
@@ -808,6 +809,7 @@ struct mlx5_txq_ctrl *
 mlx5_txq_new(struct rte_eth_dev *dev, uint16_t idx, uint16_t desc,
 	     unsigned int socket, const struct rte_eth_txconf *conf)
 {
+	//申请txq队列
 	struct mlx5_priv *priv = dev->data->dev_private;
 	struct mlx5_txq_ctrl *tmpl;
 

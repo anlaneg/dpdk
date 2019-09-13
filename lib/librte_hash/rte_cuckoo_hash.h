@@ -149,6 +149,7 @@ enum rte_hash_sig_compare_function {
 struct rte_hash_bucket {
 	uint16_t sig_current[RTE_HASH_BUCKET_ENTRIES];
 
+	//每个key的针对key_store的offset
 	uint32_t key_idx[RTE_HASH_BUCKET_ENTRIES];
 
 	uint8_t flag[RTE_HASH_BUCKET_ENTRIES];
@@ -191,6 +192,7 @@ struct rte_hash {
 	/**< If read-write concurrency lock free support is enabled */
 	uint8_t writer_takes_lock;
 	/**< Indicates if the writer threads need to take lock */
+	//hash函数
 	rte_hash_function hash_func;    /**< Function used to calculate hash. */
 	uint32_t hash_func_init_val;    /**< Init value used by hash_func. */
 	rte_hash_cmp_eq_t rte_hash_custom_cmp_eq;

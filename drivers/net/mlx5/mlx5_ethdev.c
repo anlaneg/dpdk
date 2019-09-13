@@ -507,6 +507,7 @@ mlx5_dev_configure(struct rte_eth_dev *dev)
 	       MLX5_RSS_HASH_KEY_LEN);
 	priv->rss_conf.rss_key_len = MLX5_RSS_HASH_KEY_LEN;
 	priv->rss_conf.rss_hf = dev->data->dev_conf.rx_adv_conf.rss_conf.rss_hf;
+	//setup rx/tx队列时，这些数据将被填充
 	priv->rxqs = (void *)dev->data->rx_queues;
 	priv->txqs = (void *)dev->data->tx_queues;
 	if (txqs_n != priv->txqs_n) {

@@ -645,6 +645,7 @@ search_and_update(const struct rte_hash *h, void *data, const void *key,
 
 	for (i = 0; i < RTE_HASH_BUCKET_ENTRIES; i++) {
 		if (bkt->sig_current[i] == sig) {
+			//取出key
 			k = (struct rte_hash_key *) ((char *)keys +
 					bkt->key_idx[i] * h->key_entry_size);
 			if (rte_hash_cmp_eq(key, k->key, h) == 0) {
@@ -691,11 +692,13 @@ rte_hash_cuckoo_insert_mw(const struct rte_hash *h,
 	 */
 	ret = search_and_update(h, data, key, prim_bkt, sig);
 	if (ret != -1) {
+		//已存在，更新
 		__hash_rw_writer_unlock(h);
 		*ret_val = ret;
 		return 1;
 	}
 
+	//防止其它cpu添加进从桶
 	FOR_EACH_BUCKET(cur_bkt, sec_bkt) {
 		ret = search_and_update(h, data, key, cur_bkt, sig);
 		if (ret != -1) {
@@ -708,6 +711,7 @@ rte_hash_cuckoo_insert_mw(const struct rte_hash *h,
 	/* Insert new entry if there is room in the primary
 	 * bucket.
 	 */
+	//自主桶中找出一个空闲的key_idx位置
 	for (i = 0; i < RTE_HASH_BUCKET_ENTRIES; i++) {
 		/* Check if slot is available */
 		if (likely(prim_bkt->key_idx[i] == EMPTY_SLOT)) {
@@ -725,6 +729,7 @@ rte_hash_cuckoo_insert_mw(const struct rte_hash *h,
 	}
 	__hash_rw_writer_unlock(h);
 
+	//检查是否有主桶中找到了合适的位置
 	if (i != RTE_HASH_BUCKET_ENTRIES)
 		return 0;
 
@@ -771,6 +776,7 @@ rte_hash_cuckoo_move_insert_mw(const struct rte_hash *h,
 		return 1;
 	}
 
+	//防其它cpu,将其加入到从
 	FOR_EACH_BUCKET(cur_bkt, alt_bkt) {
 		ret = search_and_update(h, data, key, cur_bkt, sig);
 		if (ret != -1) {
@@ -780,6 +786,7 @@ rte_hash_cuckoo_move_insert_mw(const struct rte_hash *h,
 		}
 	}
 
+	//把堆放在队列里的那些元素，按出堆顺序，加入到应的slot里
 	while (likely(curr_node->prev != NULL)) {
 		prev_node = curr_node->prev;
 		prev_bkt = prev_node->bkt;
@@ -865,10 +872,10 @@ rte_hash_cuckoo_move_insert_mw(const struct rte_hash *h,
  */
 static inline int
 rte_hash_cuckoo_make_space_mw(const struct rte_hash *h,
-			struct rte_hash_bucket *bkt,
-			struct rte_hash_bucket *sec_bkt,
+			struct rte_hash_bucket *bkt/*主桶*/,
+			struct rte_hash_bucket *sec_bkt/*从桶*/,
 			const struct rte_hash_key *key, void *data,
-			uint16_t sig, uint32_t bucket_idx,
+			uint16_t sig, uint32_t bucket_idx/*主桶index*/,
 			uint32_t new_idx, int32_t *ret_val)
 {
 	unsigned int i;
@@ -877,10 +884,12 @@ rte_hash_cuckoo_make_space_mw(const struct rte_hash *h,
 	struct rte_hash_bucket *curr_bkt, *alt_bkt;
 	uint32_t cur_idx, alt_idx;
 
+	/*队尾*/
 	tail = queue;
+	/*队头*/
 	head = queue + 1;
 	tail->bkt = bkt;
-	tail->prev = NULL;
+	tail->prev = NULL;/*尾部没有更多备选*/
 	tail->prev_slot = -1;
 	tail->cur_bkt_idx = bucket_idx;
 
@@ -892,11 +901,13 @@ rte_hash_cuckoo_make_space_mw(const struct rte_hash *h,
 		cur_idx = tail->cur_bkt_idx;
 		for (i = 0; i < RTE_HASH_BUCKET_ENTRIES; i++) {
 			if (curr_bkt->key_idx[i] == EMPTY_SLOT) {
+				//当前桶上的key_idx为空，可以insert到此位置
 				int32_t ret = rte_hash_cuckoo_move_insert_mw(h,
 						bkt, sec_bkt, key, data,
 						tail, i, sig,
 						new_idx, ret_val);
 				if (likely(ret != -1))
+					/*添加成功*/
 					return ret;
 			}
 
@@ -918,7 +929,7 @@ rte_hash_cuckoo_make_space_mw(const struct rte_hash *h,
 
 static inline int32_t
 __rte_hash_add_key_with_hash(const struct rte_hash *h, const void *key,
-						hash_sig_t sig, void *data)
+						hash_sig_t sig/*指代hashcode*/, void *data)
 {
 	uint16_t short_sig;
 	uint32_t prim_bucket_idx, sec_bucket_idx;
@@ -935,9 +946,13 @@ __rte_hash_add_key_with_hash(const struct rte_hash *h, const void *key,
 	int32_t ret_val;
 	struct rte_hash_bucket *last;
 
+	//第二个hash
 	short_sig = get_short_sig(sig);
+	//对应的桶index
 	prim_bucket_idx = get_prim_bucket_index(h, sig);
+	//第二个桶的index
 	sec_bucket_idx = get_alt_bucket_index(h, prim_bucket_idx, short_sig);
+	//取主备两个桶头指针
 	prim_bkt = &h->buckets[prim_bucket_idx];
 	sec_bkt = &h->buckets[sec_bucket_idx];
 	rte_prefetch0(prim_bkt);
@@ -945,13 +960,16 @@ __rte_hash_add_key_with_hash(const struct rte_hash *h, const void *key,
 
 	/* Check if key is already inserted in primary location */
 	__hash_rw_writer_lock(h);
-	ret = search_and_update(h, data, key, prim_bkt, short_sig);
+	//先查有没有，如果有就更新
+	ret = search_and_update(h, data, key, prim_bkt/*主桶*/, short_sig);
 	if (ret != -1) {
+		//查找，并已更新，直接返回
 		__hash_rw_writer_unlock(h);
 		return ret;
 	}
 
 	/* Check if key is already inserted in secondary location */
+	//查询从索引
 	FOR_EACH_BUCKET(cur_bkt, sec_bkt) {
 		ret = search_and_update(h, data, key, cur_bkt, short_sig);
 		if (ret != -1) {
@@ -968,6 +986,7 @@ __rte_hash_add_key_with_hash(const struct rte_hash *h, const void *key,
 		cached_free_slots = &h->local_free_slots[lcore_id];
 		/* Try to get a free slot from the local cache */
 		if (cached_free_slots->len == 0) {
+			//如果不存在空闲的slots,就自h->free_slots中出一组objs出来
 			/* Need to get another burst of free slots from global ring */
 			n_slots = rte_ring_mc_dequeue_burst(h->free_slots,
 					cached_free_slots->objs,
@@ -983,11 +1002,13 @@ __rte_hash_add_key_with_hash(const struct rte_hash *h, const void *key,
 		cached_free_slots->len--;
 		slot_id = cached_free_slots->objs[cached_free_slots->len];
 	} else {
+		//有，直接出队分配
 		if (rte_ring_sc_dequeue(h->free_slots, &slot_id) != 0) {
 			return -ENOSPC;
 		}
 	}
 
+	//分配出key内存，并填充key,data到new_k
 	new_k = RTE_PTR_ADD(keys, (uintptr_t)slot_id * h->key_entry_size);
 	new_idx = (uint32_t)((uintptr_t) slot_id);
 	/* The store to application data (by the application) at *data should
@@ -1002,39 +1023,46 @@ __rte_hash_add_key_with_hash(const struct rte_hash *h, const void *key,
 
 	/* Find an empty slot and insert */
 	ret = rte_hash_cuckoo_insert_mw(h, prim_bkt, sec_bkt, key, data,
-					short_sig, new_idx, &ret_val);
+					short_sig, new_idx/*找到的空slot id*/, &ret_val);
 	if (ret == 0)
+		//当前cpu已成功insert,返回
 		return new_idx - 1;
 	else if (ret == 1) {
+		//其它cpu已添加，退还申请的slot，并返回
 		enqueue_slot_back(h, cached_free_slots, slot_id);
 		return ret_val;
 	}
 
 	/* Primary bucket full, need to make space for new entry */
+	//通过搬家，给key找一个主桶insert进去
 	ret = rte_hash_cuckoo_make_space_mw(h, prim_bkt, sec_bkt, key, data,
-				short_sig, prim_bucket_idx, new_idx, &ret_val);
+				short_sig, prim_bucket_idx/*主桶的index*/, new_idx/*空闲的slot id*/, &ret_val);
 	if (ret == 0)
 		return new_idx - 1;
 	else if (ret == 1) {
+		/*其它cpu已帮助加入，返回*/
 		enqueue_slot_back(h, cached_free_slots, slot_id);
 		return ret_val;
 	}
 
+	//搬家也解决不了，在从上尝试搬家
 	/* Also search secondary bucket to get better occupancy */
-	ret = rte_hash_cuckoo_make_space_mw(h, sec_bkt, prim_bkt, key, data,
+	ret = rte_hash_cuckoo_make_space_mw(h, sec_bkt/*从桶*/, prim_bkt, key, data,
 				short_sig, sec_bucket_idx, new_idx, &ret_val);
 
 	if (ret == 0)
 		return new_idx - 1;
 	else if (ret == 1) {
+		//其它cpu已帮助加入，返回
 		enqueue_slot_back(h, cached_free_slots, slot_id);
 		return ret_val;
 	}
 
+	//从通过搬家也加不进去，尝试扩展表
 	/* if ext table not enabled, we failed the insertion */
 	if (!h->ext_table_support) {
 		enqueue_slot_back(h, cached_free_slots, slot_id);
-		return ret;
+		return ret;//返回-1
 	}
 
 	/* Now we need to go through the extendable bucket. Protection is needed
@@ -1057,6 +1085,7 @@ __rte_hash_add_key_with_hash(const struct rte_hash *h, const void *key,
 	}
 
 	/* Search sec and ext buckets to find an empty entry to insert. */
+	//防止此期间有删除操作，检查下是否有空闲slot
 	FOR_EACH_BUCKET(cur_bkt, sec_bkt) {
 		for (i = 0; i < RTE_HASH_BUCKET_ENTRIES; i++) {
 			/* Check if slot is available */
@@ -1079,6 +1108,7 @@ __rte_hash_add_key_with_hash(const struct rte_hash *h, const void *key,
 	/* Failed to get an empty entry from extendable buckets. Link a new
 	 * extendable bucket. We first get a free bucket from ring.
 	 */
+	//终于可以从ext buckets中出一个，并将其加入
 	if (rte_ring_sc_dequeue(h->free_ext_bkts, &ext_bkt_id) != 0) {
 		ret = -ENOSPC;
 		goto failure;

@@ -223,7 +223,7 @@ enum mlx5_mpw_state {
 /* MPW session descriptor. */
 struct mlx5_mpw {
 	enum mlx5_mpw_state state;
-	unsigned int pkts_n;
+	unsigned int pkts_n;//报文描述符信息
 	unsigned int len;
 	unsigned int total_len;
 	volatile struct mlx5_wqe *wqe;

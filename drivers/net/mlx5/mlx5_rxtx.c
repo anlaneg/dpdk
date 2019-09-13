@@ -1148,7 +1148,9 @@ mlx5_tx_burst_mpw(void *dpdk_txq, struct rte_mbuf **pkts, uint16_t pkts_n)
 {
 	struct mlx5_txq_data *txq = (struct mlx5_txq_data *)dpdk_txq;
 	uint16_t elts_head = txq->elts_head;
+	//txq队列大小（2的N次方）
 	const uint16_t elts_n = 1 << txq->elts_n;
+	//txq队列大小掩码
 	const uint16_t elts_m = elts_n - 1;
 	unsigned int i = 0;
 	unsigned int j = 0;
@@ -1171,8 +1173,10 @@ mlx5_tx_burst_mpw(void *dpdk_txq, struct rte_mbuf **pkts, uint16_t pkts_n)
 	if (unlikely(!max_wqe))
 		return 0;
 	do {
+		//待发送报文
 		struct rte_mbuf *buf = *(pkts++);
 		uint32_t length;
+		//待发送报文分片（seg)数目
 		unsigned int segs_n = buf->nb_segs;
 		uint32_t cs_flags;
 		rte_be32_t metadata;
@@ -1182,14 +1186,19 @@ mlx5_tx_burst_mpw(void *dpdk_txq, struct rte_mbuf **pkts, uint16_t pkts_n)
 		 * that one ring entry remains unused.
 		 */
 		assert(segs_n);
+		//空间不足，不够发送
 		if (max_elts < segs_n)
 			break;
 		/* Do not bother with large packets MPW cannot handle. */
 		if (segs_n > MLX5_MPW_DSEG_MAX) {
+			//不支持segs数量过大的情况
 			txq->stats.oerrors++;
 			break;
 		}
+
+		//更新可容纳报文的空间大小
 		max_elts -= segs_n;
+		//待发送报文数减少
 		--pkts_n;
 		cs_flags = txq_ol_cksum_to_cs(buf);
 		/* Copy metadata from mbuf if valid */
@@ -1228,7 +1237,9 @@ mlx5_tx_burst_mpw(void *dpdk_txq, struct rte_mbuf **pkts, uint16_t pkts_n)
 			uintptr_t addr;
 
 			assert(buf);
+			//将报文存入tx队列
 			(*txq->elts)[elts_head++ & elts_m] = buf;
+			//填充此报文的描述信息（报文大小，报文地址，）
 			dseg = mpw.data.dseg[mpw.pkts_n];
 			addr = rte_pktmbuf_mtod(buf, uintptr_t);
 			*dseg = (struct mlx5_wqe_data_seg){
@@ -1280,6 +1291,7 @@ mlx5_tx_burst_mpw(void *dpdk_txq, struct rte_mbuf **pkts, uint16_t pkts_n)
 	if (mpw.state == MLX5_MPW_STATE_OPENED)
 		mlx5_mpw_close(txq, &mpw);
 	mlx5_tx_dbrec(txq, mpw.wqe);
+	//更新tx队列的可写入指针位置
 	txq->elts_head = elts_head;
 	return i;
 }
