@@ -20,21 +20,21 @@ There is also a `section dedicated to this poll mode driver
 
 .. note::
 
-   Due to external dependencies, this driver is disabled by default. It must
-   be enabled manually by setting ``CONFIG_RTE_LIBRTE_MLX5_PMD=y`` and
-   recompiling DPDK.
+   Due to external dependencies, this driver is disabled in default configuration
+   of the "make" build. It can be enabled with ``CONFIG_RTE_LIBRTE_MLX5_PMD=y``
+   or by using "meson" build system which will detect dependencies.
 
-Implementation details
-----------------------
+Design
+------
 
 Besides its dependency on libibverbs (that implies libmlx5 and associated
 kernel support), librte_pmd_mlx5 relies heavily on system calls for control
 operations such as querying/updating the MTU and flow control parameters.
 
 For security reasons and robustness, this driver only deals with virtual
-memory addresses. The way resources allocations are handled by the kernel
-combined with hardware specifications that allow it to handle virtual memory
-addresses directly ensure that DPDK applications cannot access random
+memory addresses. The way resources allocations are handled by the kernel,
+combined with hardware specifications that allow to handle virtual memory
+addresses directly, ensure that DPDK applications cannot access random
 physical memory (or memory that does not belong to the current process).
 
 This capability allows the PMD to coexist with kernel network interfaces
@@ -43,6 +43,16 @@ long as they share the same MAC address.
 This means legacy linux control tools (for example: ethtool, ifconfig and
 more) can operate on the same network interfaces that owned by the DPDK
 application.
+
+The PMD can use libibverbs and libmlx5 to access the device firmware
+or directly the hardware components.
+There are different levels of objects and bypassing abilities
+to get the best performances:
+
+- Verbs is a complete high-level generic API
+- Direct Verbs is a device-specific API
+- DevX allows to access firmware objects
+- Direct Rules manages flow steering at low-level hardware layer
 
 Enabling librte_pmd_mlx5 causes DPDK applications to be linked against
 libibverbs.
@@ -57,6 +67,7 @@ Features
 - Several RSS hash keys, one for each flow type.
 - Default RSS operation with no hash key specification.
 - Configurable RETA table.
+- Link flow control (pause frame).
 - Support for multiple MAC addresses.
 - VLAN filtering.
 - RX VLAN stripping.
@@ -76,12 +87,13 @@ Features
 - RX interrupts.
 - Statistics query including Basic, Extended and per queue.
 - Rx HW timestamp.
-- Tunnel types: VXLAN, L3 VXLAN, VXLAN-GPE, GRE, MPLSoGRE, MPLSoUDP.
+- Tunnel types: VXLAN, L3 VXLAN, VXLAN-GPE, GRE, MPLSoGRE, MPLSoUDP, IP-in-IP, Geneve.
 - Tunnel HW offloads: packet type, inner/outer RSS, IP and UDP checksum verification.
 - NIC HW offloads: encapsulation (vxlan, gre, mplsoudp, mplsogre), NAT, routing, TTL
-  increment/decrement, count, drop, mark. For details please see :ref:`Supported hardware offloads using rte_flow API`.
+  increment/decrement, count, drop, mark. For details please see :ref:`mlx5_offloads_support`.
 - Flow insertion rate of more then million flows per second, when using Direct Rules.
 - Support for multiple rte_flow groups.
+- Hardware LRO.
 
 Limitations
 -----------
@@ -112,9 +124,20 @@ Limitations
 
   Will match any ipv4 packet (VLAN included).
 
-- A multi segment packet must have less than 6 segments in case the Tx burst function
-  is set to multi-packet send or Enhanced multi-packet send. Otherwise it must have
-  less than 50 segments.
+- VLAN pop offload command:
+
+  - Flow rules having a VLAN pop offload command as one of their actions and
+    are lacking a match on VLAN as one of their items are not supported.
+  - The command is not supported on egress traffic.
+
+- VLAN push offload is not supported on ingress traffic.
+
+- VLAN set PCP offload is not supported on existing headers.
+
+- A multi segment packet must have not more segments than reported by dev_infos_get()
+  in tx_desc_lim.nb_seg_max field. This value depends on maximal supported Tx descriptor
+  size and ``txq_inline_min`` settings and may be from 2 (worst case forced by maximal
+  inline settings) to 58.
 
 - Flows with a VXLAN Network Identifier equal (or ends to be equal)
   to 0 are not supported.
@@ -122,6 +145,14 @@ Limitations
 - VXLAN TSO and checksum offloads are not supported on VM.
 
 - L3 VXLAN and VXLAN-GPE tunnels cannot be supported together with MPLSoGRE and MPLSoUDP.
+
+- Match on Geneve header supports the following fields only:
+
+     - VNI
+     - OAM
+     - protocol type
+     - options length
+       Currently, the only supported options length value is 0.
 
 - VF: flow rules created on VF devices can only match traffic targeted at the
   configured MAC addresses (see ``rte_eth_dev_mac_addr_add()``).
@@ -149,6 +180,12 @@ Limitations
   To receive IPv6 Multicast messages on VM, explicitly set the relevant
   MAC address using rte_eth_dev_mac_addr_add() API.
 
+- The amount of descriptors in Tx queue may be limited by data inline settings.
+  Inline data require the more descriptor building blocks and overall block
+  amount may exceed the hardware supported limits. The application should
+  reduce the requested Tx size or adjust data inline settings with
+  ``txq_inline_max`` and ``txq_inline_mpw`` devargs keys.
+
 - E-Switch decapsulation Flow:
 
   - can be applied to PF port only.
@@ -160,12 +197,21 @@ Limitations
   - can be applied to VF ports only.
   - must specify PF port action (packet redirection from VF to PF).
 
-- ICMP/ICMP6 code/type matching cannot be supported togeter with IP-in-IP tunnel.
+- ICMP/ICMP6 code/type matching, IP-in-IP and MPLS flow matching are all
+  mutually exclusive features which cannot be supported together
+  (see :ref:`mlx5_firmware_config`).
+
+- LRO:
+
+  - Requires DevX to be enabled.
+  - KEEP_CRC offload cannot be supported with LRO.
+  - The first mbuf length, without head-room,  must be big enough to include the
+    TCP header (122B).
 
 Statistics
 ----------
 
-MLX5 supports various of methods to report statistics:
+MLX5 supports various methods to report statistics:
 
 Port statistics can be queried using ``rte_eth_stats_get()``. The received and sent statistics are through SW only and counts the number of packets received or sent successfully by the PMD. The imissed counter is the amount of packets that could not be delivered to SW because a queue was full. Packets not received due to congestion in the bus or on the NIC can be queried via the rx_discards_phy xstats counter.
 
@@ -350,97 +396,163 @@ Run-time configuration
 
 - ``txq_inline`` parameter [int]
 
-  Amount of data to be inlined during TX operations. Improves latency.
-  Can improve PPS performance when PCI back pressure is detected and may be
-  useful for scenarios involving heavy traffic on many queues.
-
-  Because additional software logic is necessary to handle this mode, this
-  option should be used with care, as it can lower performance when back
-  pressure is not expected.
+  Amount of data to be inlined during TX operations. This parameter is
+  deprecated and converted to the new parameter ``txq_inline_max`` providing
+  partial compatibility.
 
 - ``txqs_min_inline`` parameter [int]
 
-  Enable inline send only when the number of TX queues is greater or equal
+  Enable inline data send only when the number of TX queues is greater or equal
   to this value.
 
-  This option should be used in combination with ``txq_inline`` above.
+  This option should be used in combination with ``txq_inline_max`` and
+  ``txq_inline_mpw`` below and does not affect ``txq_inline_min`` settings above.
 
-  On ConnectX-4, ConnectX-4 LX, ConnectX-5, ConnectX-6 and BlueField without
-  Enhanced MPW:
+  If this option is not specified the default value 16 is used for BlueField
+  and 8 for other platforms
 
-        - Disabled by default.
-        - In case ``txq_inline`` is set recommendation is 4.
+  The data inlining consumes the CPU cycles, so this option is intended to
+  auto enable inline data if we have enough Tx queues, which means we have
+  enough CPU cores and PCI bandwidth is getting more critical and CPU
+  is not supposed to be bottleneck anymore.
 
-  On ConnectX-5, ConnectX-6 and BlueField with Enhanced MPW:
+  The copying data into WQE improves latency and can improve PPS performance
+  when PCI back pressure is detected and may be useful for scenarios involving
+  heavy traffic on many queues.
 
-        - Set to 8 by default.
+  Because additional software logic is necessary to handle this mode, this
+  option should be used with care, as it may lower performance when back
+  pressure is not expected.
+
+  If inline data are enabled it may affect the maximal size of Tx queue in
+  descriptors because the inline data increase the descriptor size and
+  queue size limits supported by hardware may be exceeded.
+
+- ``txq_inline_min`` parameter [int]
+
+  Minimal amount of data to be inlined into WQE during Tx operations. NICs
+  may require this minimal data amount to operate correctly. The exact value
+  may depend on NIC operation mode, requested offloads, etc. It is strongly
+  recommended to omit this parameter and use the default values. Anyway,
+  applications using this parameter should take into consideration that
+  specifying an inconsistent value may prevent the NIC from sending packets.
+
+  If ``txq_inline_min`` key is present the specified value (may be aligned
+  by the driver in order not to exceed the limits and provide better descriptor
+  space utilization) will be used by the driver and it is guaranteed that
+  requested amount of data bytes are inlined into the WQE beside other inline
+  settings. This key also may update ``txq_inline_max`` value (default
+  or specified explicitly in devargs) to reserve the space for inline data.
+
+  If ``txq_inline_min`` key is not present, the value may be queried by the
+  driver from the NIC via DevX if this feature is available. If there is no DevX
+  enabled/supported the value 18 (supposing L2 header including VLAN) is set
+  for ConnectX-4 and ConnectX-4LX, and 0 is set by default for ConnectX-5
+  and newer NICs. If packet is shorter the ``txq_inline_min`` value, the entire
+  packet is inlined.
+
+  For ConnectX-4 NIC, driver does not allow specifying value below 18
+  (minimal L2 header, including VLAN), error will be raised.
+
+  For ConnectX-4LX NIC, it is allowed to specify values below 18, but
+  it is not recommended and may prevent NIC from sending packets over
+  some configurations.
+
+  Please, note, this minimal data inlining disengages eMPW feature (Enhanced
+  Multi-Packet Write), because last one does not support partial packet inlining.
+  This is not very critical due to minimal data inlining is mostly required
+  by ConnectX-4 and ConnectX-4 Lx, these NICs do not support eMPW feature.
+
+- ``txq_inline_max`` parameter [int]
+
+  Specifies the maximal packet length to be completely inlined into WQE
+  Ethernet Segment for ordinary SEND method. If packet is larger than specified
+  value, the packet data won't be copied by the driver at all, data buffer
+  is addressed with a pointer. If packet length is less or equal all packet
+  data will be copied into WQE. This may improve PCI bandwidth utilization for
+  short packets significantly but requires the extra CPU cycles.
+
+  The data inline feature is controlled by number of Tx queues, if number of Tx
+  queues is larger than ``txqs_min_inline`` key parameter, the inline feature
+  is engaged, if there are not enough Tx queues (which means not enough CPU cores
+  and CPU resources are scarce), data inline is not performed by the driver.
+  Assigning ``txqs_min_inline`` with zero always enables the data inline.
+
+  The default ``txq_inline_max`` value is 290. The specified value may be adjusted
+  by the driver in order not to exceed the limit (930 bytes) and to provide better
+  WQE space filling without gaps, the adjustment is reflected in the debug log.
+  Also, the default value (290) may be decreased in run-time if the large transmit
+  queue size is requested and hardware does not support enough descriptor
+  amount, in this case warning is emitted. If ``txq_inline_max`` key is
+  specified and requested inline settings can not be satisfied then error
+  will be raised.
+
+- ``txq_inline_mpw`` parameter [int]
+
+  Specifies the maximal packet length to be completely inlined into WQE for
+  Enhanced MPW method. If packet is large the specified value, the packet data
+  won't be copied, and data buffer is addressed with pointer. If packet length
+  is less or equal, all packet data will be copied into WQE. This may improve PCI
+  bandwidth utilization for short packets significantly but requires the extra
+  CPU cycles.
+
+  The data inline feature is controlled by number of TX queues, if number of Tx
+  queues is larger than ``txqs_min_inline`` key parameter, the inline feature
+  is engaged, if there are not enough Tx queues (which means not enough CPU cores
+  and CPU resources are scarce), data inline is not performed by the driver.
+  Assigning ``txqs_min_inline`` with zero always enables the data inline.
+
+  The default ``txq_inline_mpw`` value is 268. The specified value may be adjusted
+  by the driver in order not to exceed the limit (930 bytes) and to provide better
+  WQE space filling without gaps, the adjustment is reflected in the debug log.
+  Due to multiple packets may be included to the same WQE with Enhanced Multi
+  Packet Write Method and overall WQE size is limited it is not recommended to
+  specify large values for the ``txq_inline_mpw``. Also, the default value (268)
+  may be decreased in run-time if the large transmit queue size is requested
+  and hardware does not support enough descriptor amount, in this case warning
+  is emitted. If ``txq_inline_mpw`` key is  specified and requested inline
+  settings can not be satisfied then error will be raised.
 
 - ``txqs_max_vec`` parameter [int]
 
   Enable vectorized Tx only when the number of TX queues is less than or
-  equal to this value. Effective only when ``tx_vec_en`` is enabled.
-
-  On ConnectX-5:
-
-        - Set to 8 by default on ARMv8.
-        - Set to 4 by default otherwise.
-
-  On BlueField
-
-        - Set to 16 by default.
-
-- ``txq_mpw_en`` parameter [int]
-
-  A nonzero value enables multi-packet send (MPS) for ConnectX-4 Lx and
-  enhanced multi-packet send (Enhanced MPS) for ConnectX-5, ConnectX-6 and BlueField.
-  MPS allows the TX burst function to pack up multiple packets in a
-  single descriptor session in order to save PCI bandwidth and improve
-  performance at the cost of a slightly higher CPU usage. When
-  ``txq_inline`` is set along with ``txq_mpw_en``, TX burst function tries
-  to copy entire packet data on to TX descriptor instead of including
-  pointer of packet only if there is enough room remained in the
-  descriptor. ``txq_inline`` sets per-descriptor space for either pointers
-  or inlined packets. In addition, Enhanced MPS supports hybrid mode -
-  mixing inlined packets and pointers in the same descriptor.
-
-  This option cannot be used with certain offloads such as ``DEV_TX_OFFLOAD_TCP_TSO,
-  DEV_TX_OFFLOAD_VXLAN_TNL_TSO, DEV_TX_OFFLOAD_GRE_TNL_TSO, DEV_TX_OFFLOAD_VLAN_INSERT``.
-  When those offloads are requested the MPS send function will not be used.
-
-  It is currently only supported on the ConnectX-4 Lx, ConnectX-5, ConnectX-6 and BlueField
-  families of adapters.
-  On ConnectX-4 Lx the MPW is considered un-secure hence disabled by default.
-  Users which enable the MPW should be aware that application which provides incorrect
-  mbuf descriptors in the Tx burst can lead to serious errors in the host including, on some cases,
-  NIC to get stuck.
-  On ConnectX-5, ConnectX-6 and BlueField the MPW is secure and enabled by default.
+  equal to this value. This parameter is deprecated and ignored, kept
+  for compatibility issue to not prevent driver from probing.
 
 - ``txq_mpw_hdr_dseg_en`` parameter [int]
 
   A nonzero value enables including two pointers in the first block of TX
-  descriptor. This can be used to lessen CPU load for memory copy.
-
-  Effective only when Enhanced MPS is supported. Disabled by default.
+  descriptor. The parameter is deprecated and ignored, kept for compatibility
+  issue.
 
 - ``txq_max_inline_len`` parameter [int]
 
   Maximum size of packet to be inlined. This limits the size of packet to
   be inlined. If the size of a packet is larger than configured value, the
   packet isn't inlined even though there's enough space remained in the
-  descriptor. Instead, the packet is included with pointer.
+  descriptor. Instead, the packet is included with pointer. This parameter
+  is deprecated and converted directly to ``txq_inline_mpw`` providing full
+  compatibility. Valid only if eMPW feature is engaged.
 
-  Effective only when Enhanced MPS is supported. The default value is 256.
+- ``txq_mpw_en`` parameter [int]
+
+  A nonzero value enables Enhanced Multi-Packet Write (eMPW) for ConnectX-5,
+  ConnectX-6 and BlueField. eMPW allows the TX burst function to pack up multiple
+  packets in a single descriptor session in order to save PCI bandwidth and improve
+  performance at the cost of a slightly higher CPU usage. When ``txq_inline_mpw``
+  is set along with ``txq_mpw_en``, TX burst function copies entire packet
+  data on to TX descriptor instead of including pointer of packet.
+
+  The Enhanced Multi-Packet Write feature is enabled by default if NIC supports
+  it, can be disabled by explicit specifying 0 value for ``txq_mpw_en`` option.
+  Also, if minimal data inlining is requested by non-zero ``txq_inline_min``
+  option or reported by the NIC, the eMPW feature is disengaged.
 
 - ``tx_vec_en`` parameter [int]
 
-  A nonzero value enables Tx vector on ConnectX-5, ConnectX-6 and BlueField NICs if the number of
-  global Tx queues on the port is less than ``txqs_max_vec``.
-
-  This option cannot be used with certain offloads such as ``DEV_TX_OFFLOAD_TCP_TSO,
-  DEV_TX_OFFLOAD_VXLAN_TNL_TSO, DEV_TX_OFFLOAD_GRE_TNL_TSO, DEV_TX_OFFLOAD_VLAN_INSERT``.
-  When those offloads are requested the MPS send function will not be used.
-
-  Enabled by default on ConnectX-5, ConnectX-6 and BlueField.
+  A nonzero value enables Tx vector on ConnectX-5, ConnectX-6 and BlueField
+  NICs if the number of global Tx queues on the port is less than
+  ``txqs_max_vec``. The parameter is deprecated and ignored.
 
 - ``rx_vec_en`` parameter [int]
 
@@ -509,36 +621,78 @@ Run-time configuration
 
   set to 128 by default.
 
+- ``lro_timeout_usec`` parameter [int]
+
+  The maximum allowed duration of an LRO session, in micro-seconds.
+  PMD will set the nearest value supported by HW, which is not bigger than
+  the input ``lro_timeout_usec`` value.
+  If this parameter is not specified, by default PMD will set
+  the smallest value supported by HW.
+
+.. _mlx5_firmware_config:
+
 Firmware configuration
 ~~~~~~~~~~~~~~~~~~~~~~
 
-- L3 VXLAN and VXLAN-GPE destination UDP port
+Firmware features can be configured as key/value pairs.
 
-   .. code-block:: console
+The command to set a value is::
 
-     mlxconfig -d <mst device> set IP_OVER_VXLAN_EN=1
-     mlxconfig -d <mst device> set IP_OVER_VXLAN_PORT=<udp dport>
+  mlxconfig -d <device> set <key>=<value>
 
-  Verify configurations are set:
+The command to query a value is::
 
-   .. code-block:: console
+  mlxconfig -d <device> query | grep <key>
 
-     mlxconfig -d <mst device> query | grep IP_OVER_VXLAN
-     IP_OVER_VXLAN_EN                    True(1)
-     IP_OVER_VXLAN_PORT                  <udp dport>
+The device name for the command ``mlxconfig`` can be either the PCI address,
+or the mst device name found with::
 
-- enable ICMP/ICMP6's code/type field matching
+  mst status
 
-   .. code-block:: console
+Below are some firmware configurations listed.
 
-     mlxconfig -d <mst device> set FLEX_PARSER_PROFILE_ENABLE=2
+- link type::
 
-  Verify configurations are set:
+    LINK_TYPE_P1
+    LINK_TYPE_P2
+    value: 1=Infiniband 2=Ethernet 3=VPI(auto-sense)
 
-   .. code-block:: console
+- enable SR-IOV::
 
-     mlxconfig -d <mst device> query | grep FLEX_PARSER_PROFILE_ENABLE
-     FLEX_PARSER_PROFILE_ENABLE         2
+    SRIOV_EN=1
+
+- maximum number of SR-IOV virtual functions::
+
+    NUM_OF_VFS=<max>
+
+- enable DevX (required by Direct Rules and other features)::
+
+    UCTX_EN=1
+
+- aggressive CQE zipping::
+
+    CQE_COMPRESSION=1
+
+- L3 VXLAN and VXLAN-GPE destination UDP port::
+
+    IP_OVER_VXLAN_EN=1
+    IP_OVER_VXLAN_PORT=<udp dport>
+
+- enable IP-in-IP tunnel flow matching::
+
+    FLEX_PARSER_PROFILE_ENABLE=0
+
+- enable MPLS flow matching::
+
+    FLEX_PARSER_PROFILE_ENABLE=1
+
+- enable ICMP/ICMP6 code/type fields matching::
+
+    FLEX_PARSER_PROFILE_ENABLE=2
+
+- enable Geneve flow matching::
+
+   FLEX_PARSER_PROFILE_ENABLE=0
 
 Prerequisites
 -------------
@@ -691,72 +845,52 @@ Quick Start Guide on OFED/EN
 
 
 2. Install the required libraries and kernel modules either by installing
-   only the required set, or by installing the entire Mellanox OFED/EN:
-
-   .. code-block:: console
+   only the required set, or by installing the entire Mellanox OFED/EN::
 
         ./mlnxofedinstall --upstream-libs --dpdk
 
-3. Verify the firmware is the correct one:
-
-   .. code-block:: console
+3. Verify the firmware is the correct one::
 
         ibv_devinfo
 
-4. Verify all ports links are set to Ethernet:
-
-   .. code-block:: console
+4. Verify all ports links are set to Ethernet::
 
         mlxconfig -d <mst device> query | grep LINK_TYPE
         LINK_TYPE_P1                        ETH(2)
         LINK_TYPE_P2                        ETH(2)
 
-   Link types may have to be configured to Ethernet:
-
-   .. code-block:: console
+   Link types may have to be configured to Ethernet::
 
         mlxconfig -d <mst device> set LINK_TYPE_P1/2=1/2/3
 
         * LINK_TYPE_P1=<1|2|3> , 1=Infiniband 2=Ethernet 3=VPI(auto-sense)
 
-   For hypervisors verify SR-IOV is enabled on the NIC:
-
-   .. code-block:: console
+   For hypervisors, verify SR-IOV is enabled on the NIC::
 
         mlxconfig -d <mst device> query | grep SRIOV_EN
         SRIOV_EN                            True(1)
 
-   If needed, set enable the set the relevant fields:
-
-   .. code-block:: console
+   If needed, configure SR-IOV::
 
         mlxconfig -d <mst device> set SRIOV_EN=1 NUM_OF_VFS=16
         mlxfwreset -d <mst device> reset
 
-5. Restart the driver:
-
-   .. code-block:: console
+5. Restart the driver::
 
         /etc/init.d/openibd restart
 
-   or:
-
-   .. code-block:: console
+   or::
 
         service openibd restart
 
-   If link type was changed, firmware must be reset as well:
-
-   .. code-block:: console
+   If link type was changed, firmware must be reset as well::
 
         mlxfwreset -d <mst device> reset
 
    For hypervisors, after reset write the sysfs number of virtual functions
    needed for the PF.
 
-   To dynamically instantiate a given number of virtual functions (VFs):
-
-   .. code-block:: console
+   To dynamically instantiate a given number of virtual functions (VFs)::
 
         echo [num_vfs] > /sys/class/infiniband/mlx5_0/device/sriov_numvfs
 
@@ -777,54 +911,38 @@ flow should be offloaded to the E-Switch. After offloading the flow packet
 that the VF that are matching the flow will not be received any more by
 the DPDK application.
 
-1. Enable SRIOV mode:
-
-  .. code-block:: console
+1. Enable SRIOV mode::
 
         mlxconfig -d <mst device> set SRIOV_EN=true
 
-2. Configure the max number of VFs:
-
-  .. code-block:: console
+2. Configure the max number of VFs::
 
         mlxconfig -d <mst device> set NUM_OF_VFS=<num of vfs>
 
-3. Reset the FW:
-
-  .. code-block:: console
+3. Reset the FW::
 
         mlxfwreset -d <mst device> reset
 
-3. Configure the actual number of VFs:
-
-  .. code-block:: console
+3. Configure the actual number of VFs::
 
         echo <num of vfs > /sys/class/net/<net device>/device/sriov_numvfs
 
-4. Unbind the device (can be rebind after the switchdev mode):
-
-  .. code-block:: console
+4. Unbind the device (can be rebind after the switchdev mode)::
 
         echo -n "<device pci address" > /sys/bus/pci/drivers/mlx5_core/unbind
 
-5. Enbale switchdev mode:
-
-  .. code-block:: console
+5. Enbale switchdev mode::
 
         echo switchdev > /sys/class/net/<net device>/compat/devlink/mode
 
 Performance tuning
 ------------------
 
-1. Configure aggressive CQE Zipping for maximum performance:
-
-  .. code-block:: console
+1. Configure aggressive CQE Zipping for maximum performance::
 
         mlxconfig -d <mst device> s CQE_COMPRESSION=1
 
-  To set it back to the default CQE Zipping mode use:
-
-  .. code-block:: console
+  To set it back to the default CQE Zipping mode use::
 
         mlxconfig -d <mst device> s CQE_COMPRESSION=0
 
@@ -838,9 +956,7 @@ Performance tuning
 
 3. Use the CPU near local NUMA node to which the PCIe adapter is connected,
    for better performance. For VMs, verify that the right CPU
-   and NUMA node are pinned according to the above. Run:
-
-   .. code-block:: console
+   and NUMA node are pinned according to the above. Run::
 
         lstopo-no-graphics
 
@@ -852,9 +968,7 @@ Performance tuning
    This in order to forward packets from one to the other without
    NUMA performance penalty.
 
-5. Disable pause frames:
-
-   .. code-block:: console
+5. Disable pause frames::
 
         ethtool -A <netdev> rx off tx off
 
@@ -868,15 +982,11 @@ Performance tuning
         to set the PCI max read request parameter to 1K. This can be
         done in the following way:
 
-        To query the read request size use:
-
-        .. code-block:: console
+        To query the read request size use::
 
                 setpci -s <NIC PCI address> 68.w
 
-        If the output is different than 3XXX, set it by:
-
-        .. code-block:: console
+        If the output is different than 3XXX, set it by::
 
                 setpci -s <NIC PCI address> 68.w=3XXX
 
@@ -889,61 +999,80 @@ Performance tuning
    - Configure per-lcore cache when creating Mempools for packet buffer.
    - Refrain from dynamically allocating/freeing memory in run-time.
 
-Supported hardware offloads using rte_flow API
-----------------------------------------------
+.. _mlx5_offloads_support:
 
-.. _Supported hardware offloads using rte_flow API:
+Supported hardware offloads
+---------------------------
 
-.. table:: Supported hardware offloads using rte_flow API
+.. table:: Minimal SW/HW versions for queue offloads
+
+   ============== ===== ===== ========= ===== ========== ==========
+   Offload        DPDK  Linux rdma-core OFED   firmware   hardware
+   ============== ===== ===== ========= ===== ========== ==========
+   common base    17.11  4.14    16     4.2-1 12.21.1000 ConnectX-4
+   checksums      17.11  4.14    16     4.2-1 12.21.1000 ConnectX-4
+   Rx timestamp   17.11  4.14    16     4.2-1 12.21.1000 ConnectX-4
+   TSO            17.11  4.14    16     4.2-1 12.21.1000 ConnectX-4
+   LRO            19.08  N/A     N/A    4.6-4 16.25.6406 ConnectX-5
+   ============== ===== ===== ========= ===== ========== ==========
+
+.. table:: Minimal SW/HW versions for rte_flow offloads
 
    +-----------------------+-----------------+-----------------+
-   | Offload               | E-Switch        | NIC             |
-   |                       |                 |                 |
+   | Offload               | with E-Switch   | with vNIC       |
    +=======================+=================+=================+
    | Count                 | | DPDK 19.05    | | DPDK 19.02    |
    |                       | | OFED 4.6      | | OFED 4.6      |
-   |                       | | RDMA-CORE V24 | | RDMA-CORE V23 |
+   |                       | | rdma-core 24  | | rdma-core 23  |
    |                       | | ConnectX-5    | | ConnectX-5    |
    +-----------------------+-----------------+-----------------+
    | Drop / Queue / RSS    | | DPDK 19.05    | | DPDK 18.11    |
    |                       | | OFED 4.6      | | OFED 4.5      |
-   |                       | | RDMA-CORE V24 | | RDMA-CORE V23 |
+   |                       | | rdma-core 24  | | rdma-core 23  |
    |                       | | ConnectX-5    | | ConnectX-4    |
    +-----------------------+-----------------+-----------------+
    | Encapsulation         | | DPDK 19.05    | | DPDK 19.02    |
-   | (VXLAN / NVGRE / RAW) | | OFED 4.6.2    | | OFED 4.6      |
-   |                       | | RDMA-CORE V24 | | RDMA-CORE V23 |
+   | (VXLAN / NVGRE / RAW) | | OFED 4.6-2    | | OFED 4.6      |
+   |                       | | rdma-core 24  | | rdma-core 23  |
    |                       | | ConnectX-5    | | ConnectX-5    |
    +-----------------------+-----------------+-----------------+
-   | Header rewrite        | | DPDK 19.05    | | DPDK 19.02    |
-   | (set_ipv4_src /       | | OFED 4.6.2    | | OFED 4.6.2    |
-   | set_ipv4_dst /        | | RDMA-CORE V24 | | RDMA-CORE V23 |
-   | set_ipv6_src /        | | ConnectX-5    | | ConnectX-5    |
-   | set_ipv6_dst /        |                 |                 |
-   | set_tp_src /          |                 |                 |
-   | set_tp_dst /          |                 |                 |
-   | dec_ttl /             |                 |                 |
-   | set_ttl /             |                 |                 |
-   | set_mac_src /         |                 |                 |
-   | set_mac_dst)          |                 |                 |
+   | | Header rewrite      | | DPDK 19.05    | | DPDK 19.02    |
+   | | (set_ipv4_src /     | | OFED 4.6-2    | | OFED 4.6-2    |
+   | | set_ipv4_dst /      | | rdma-core 24  | | rdma-core 23  |
+   | | set_ipv6_src /      | | ConnectX-5    | | ConnectX-5    |
+   | | set_ipv6_dst /      | |               | |               |
+   | | set_tp_src /        | |               | |               |
+   | | set_tp_dst /        | |               | |               |
+   | | dec_ttl /           | |               | |               |
+   | | set_ttl /           | |               | |               |
+   | | set_mac_src /       | |               | |               |
+   | | set_mac_dst)        | |               | |               |
+   | |                     | |               | |               |
+   | | (of_set_vlan_vid)   | | DPDK 19.11    | | DPDK 19.11    |
+   |                       | | OFED 4.6-4    | | OFED 4.6-4    |
+   |                       | | ConnectX-5    | | ConnectX-5    |
    +-----------------------+-----------------+-----------------+
    | Jump                  | | DPDK 19.05    | | DPDK 19.02    |
-   |                       | | OFED 4.6.2    | | OFED 4.6.2    |
-   |                       | | RDMA-CORE V24 | | N/A           |
+   |                       | | OFED 4.6-4    | | OFED 4.6-4    |
+   |                       | | rdma-core 24  | | N/A           |
    |                       | | ConnectX-5    | | ConnectX-5    |
    +-----------------------+-----------------+-----------------+
    | Mark / Flag           | | DPDK 19.05    | | DPDK 18.11    |
    |                       | | OFED 4.6      | | OFED 4.5      |
-   |                       | | RDMA-CORE V24 | | RDMA-CORE V23 |
+   |                       | | rdma-core 24  | | rdma-core 23  |
    |                       | | ConnectX-5    | | ConnectX-4    |
    +-----------------------+-----------------+-----------------+
    | Port ID               | | DPDK 19.05    |     | N/A       |
    |                       | | OFED 4.6      |     | N/A       |
-   |                       | | RDMA-CORE V24 |     | N/A       |
+   |                       | | rdma-core 24  |     | N/A       |
    |                       | | ConnectX-5    |     | N/A       |
    +-----------------------+-----------------+-----------------+
-
-* Minimum version for each component and nic.
+   | | VLAN                | | DPDK 19.11    | | DPDK 19.11    |
+   | | (of_pop_vlan /      | | OFED 4.6-4    | | OFED 4.6-4    |
+   | | of_push_vlan /      | | ConnectX-5    | | ConnectX-5    |
+   | | of_set_vlan_pcp /   |                 |                 |
+   | | of_set_vlan_vid)    |                 |                 |
+   +-----------------------+-----------------+-----------------+
 
 Notes for testpmd
 -----------------
@@ -954,9 +1083,7 @@ port, librte_pmd_mlx5 supports per-protocol RSS configuration.
 Since ``testpmd`` defaults to IP RSS mode and there is currently no
 command-line parameter to enable additional protocols (UDP and TCP as well
 as IP), the following commands must be entered from its CLI to get the same
-behavior as librte_pmd_mlx4:
-
-.. code-block:: console
+behavior as librte_pmd_mlx4::
 
    > port stop all
    > port config all rss all
@@ -968,16 +1095,12 @@ Usage example
 This section demonstrates how to launch **testpmd** with Mellanox
 ConnectX-4/ConnectX-5/ConnectX-6/BlueField devices managed by librte_pmd_mlx5.
 
-#. Load the kernel modules:
-
-   .. code-block:: console
+#. Load the kernel modules::
 
       modprobe -a ib_uverbs mlx5_core mlx5_ib
 
    Alternatively if MLNX_OFED/MLNX_EN is fully installed, the following script
-   can be run:
-
-   .. code-block:: console
+   can be run::
 
       /etc/init.d/openibd restart
 
@@ -987,24 +1110,18 @@ ConnectX-4/ConnectX-5/ConnectX-6/BlueField devices managed by librte_pmd_mlx5.
       not have to be loaded.
 
 #. Make sure Ethernet interfaces are in working order and linked to kernel
-   verbs. Related sysfs entries should be present:
-
-   .. code-block:: console
+   verbs. Related sysfs entries should be present::
 
       ls -d /sys/class/net/*/device/infiniband_verbs/uverbs* | cut -d / -f 5
 
-   Example output:
-
-   .. code-block:: console
+   Example output::
 
       eth30
       eth31
       eth32
       eth33
 
-#. Optionally, retrieve their PCI bus addresses for whitelisting:
-
-   .. code-block:: console
+#. Optionally, retrieve their PCI bus addresses for whitelisting::
 
       {
           for intf in eth2 eth3 eth4 eth5;
@@ -1014,30 +1131,22 @@ ConnectX-4/ConnectX-5/ConnectX-6/BlueField devices managed by librte_pmd_mlx5.
       } |
       sed -n 's,.*/\(.*\),-w \1,p'
 
-   Example output:
-
-   .. code-block:: console
+   Example output::
 
       -w 0000:05:00.1
       -w 0000:06:00.0
       -w 0000:06:00.1
       -w 0000:05:00.0
 
-#. Request huge pages:
-
-   .. code-block:: console
+#. Request huge pages::
 
       echo 1024 > /sys/kernel/mm/hugepages/hugepages-2048kB/nr_hugepages/nr_hugepages
 
-#. Start testpmd with basic parameters:
-
-   .. code-block:: console
+#. Start testpmd with basic parameters::
 
       testpmd -l 8-15 -n 4 -w 05:00.0 -w 05:00.1 -w 06:00.0 -w 06:00.1 -- --rxq=2 --txq=2 -i
 
-   Example output:
-
-   .. code-block:: console
+   Example output::
 
       [...]
       EAL: PCI device 0000:05:00.0 on NUMA socket 0

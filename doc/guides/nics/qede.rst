@@ -7,7 +7,7 @@ QEDE Poll Mode Driver
 
 The QEDE poll mode driver library (**librte_pmd_qede**) implements support
 for **QLogic FastLinQ QL4xxxx 10G/25G/40G/50G/100G Intelligent Ethernet Adapters (IEA) and Converged Network Adapters (CNA)** family of adapters as well as SR-IOV virtual functions (VF). It is supported on
-several standard Linux distros like RHEL7.x, SLES12.x and Ubuntu.
+several standard Linux distros like RHEL, SLES, Ubuntu etc.
 It is compile-tested under FreeBSD OS.
 
 More information can be found at `QLogic Corporation's Website
@@ -39,6 +39,7 @@ Supported Features
 - GENEVE Tunneling offload
 - VXLAN Tunneling offload
 - MPLSoUDP Tx Tunneling offload
+- Generic flow API
 
 Non-supported Features
 ----------------------
@@ -47,8 +48,27 @@ Non-supported Features
 
 Co-existence considerations
 ---------------------------
-- QLogic FastLinQ QL4xxxx CNAs can have both NIC and Storage personalities. However, coexistence with storage protocol drivers (qedi and qedf) is not supported on the same adapter. So storage personality has to be disabled on that adapter when used in DPDK applications.
-- For SR-IOV case, qede PMD will be used to bind to SR-IOV VF device and Linux native kernel driver (qede) will be attached to SR-IOV PF.
+
+- QLogic FastLinQ QL4xxxx CNAs support Ethernet, RDMA, iSCSI and FCoE
+  functionalities. These functionalities are supported using
+  QLogic Linux kernel drivers qed, qede, qedr, qedi and qedf. DPDK is
+  supported on these adapters using qede PMD.
+
+- When SR-IOV is not enabled on the adapter,
+  QLogic Linux kernel drivers (qed, qede, qedr, qedi and qedf) and qede
+  PMD can’t be attached to different PFs on a given QLogic FastLinQ
+  QL4xxx adapter.
+  A given adapter needs to be completely used by DPDK or Linux drivers
+  Before binding DPDK driver to one or more PFs on the adapter,
+  please make sure to unbind Linux drivers from all PFs of the adapter.
+  If there are multiple adapters on the system, one or more adapters
+  can be used by DPDK driver completely and other adapters can be used
+  by Linux drivers completely.
+
+- When SR-IOV is enabled on the adapter,
+  Linux kernel drivers (qed, qede, qedr, qedi and qedf) can be bound
+  to the PFs of a given adapter and either qede PMD or Linux drivers
+  (qed and qede) can be bound to the VFs of the adapter.
 
 Supported QLogic Adapters
 -------------------------
@@ -117,6 +137,44 @@ Driver compilation and testing
 
 Refer to the document :ref:`compiling and testing a PMD for a NIC <pmd_build_and_test>`
 for details.
+
+RTE Flow Support
+----------------
+
+QLogic FastLinQ QL4xxxx NICs has support for the following patterns and
+actions.
+
+Patterns:
+
+.. _table_qede_supported_flow_item_types:
+
+.. table:: Item types
+
+   +----+--------------------------------+
+   | #  | Pattern Type                   |
+   +====+================================+
+   | 1  | RTE_FLOW_ITEM_TYPE_IPV4        |
+   +----+--------------------------------+
+   | 2  | RTE_FLOW_ITEM_TYPE_IPV6        |
+   +----+--------------------------------+
+   | 3  | RTE_FLOW_ITEM_TYPE_UDP         |
+   +----+--------------------------------+
+   | 4  | RTE_FLOW_ITEM_TYPE_TCP         |
+   +----+--------------------------------+
+
+Actions:
+
+.. _table_qede_supported_ingress_action_types:
+
+.. table:: Ingress action types
+
+   +----+--------------------------------+
+   | #  | Action Type                    |
+   +====+================================+
+   | 1  | RTE_FLOW_ACTION_TYPE_QUEUE     |
+   +----+--------------------------------+
+   | 2  | RTE_FLOW_ACTION_TYPE_DROP      |
+   +----+--------------------------------+
 
 SR-IOV: Prerequisites and Sample Application Notes
 --------------------------------------------------

@@ -25,8 +25,8 @@
 #include <rte_pause.h>
 #include <rte_memzone.h>
 #include <rte_malloc.h>
-#include <rte_compat.h>
 #include <rte_errno.h>
+#include <rte_function_versioning.h>
 
 #include "rte_timer.h"
 
@@ -132,8 +132,8 @@ rte_timer_data_dealloc(uint32_t id)
 	return 0;
 }
 
+void __vsym
 //timer库初始化
-void
 rte_timer_subsystem_init_v20(void)
 {
 	unsigned lcore_id;
@@ -156,7 +156,7 @@ VERSION_SYMBOL(rte_timer_subsystem_init, _v20, 2.0);
  * secondary processes should be empty, the zeroth entry can be shared by
  * multiple processes.
  */
-int
+int __vsym
 rte_timer_subsystem_init_v1905(void)
 {
 	const struct rte_memzone *mz;
@@ -566,7 +566,7 @@ __rte_timer_reset(struct rte_timer *tim, uint64_t expire,//timer及过期时间
 /* Reset and start the timer associated with the timer handle tim */
 //重置timer,将其过期时间定在ticks之后，定时器类型，定时器位于那个core,定时器过期回调
 //定时器过期回调参数
-int
+int __vsym
 rte_timer_reset_v20(struct rte_timer *tim, uint64_t ticks,
 		    enum rte_timer_type type, unsigned int tim_lcore,
 		    rte_timer_cb_t fct, void *arg)
@@ -590,7 +590,7 @@ rte_timer_reset_v20(struct rte_timer *tim, uint64_t ticks,
 }
 VERSION_SYMBOL(rte_timer_reset, _v20, 2.0);
 
-int
+int __vsym
 rte_timer_reset_v1905(struct rte_timer *tim, uint64_t ticks,
 		      enum rte_timer_type type, unsigned int tim_lcore,
 		      rte_timer_cb_t fct, void *arg)
@@ -673,14 +673,14 @@ __rte_timer_stop(struct rte_timer *tim, int local_is_locked,
 }
 
 /* Stop the timer associated with the timer handle tim */
-int
+int __vsym
 rte_timer_stop_v20(struct rte_timer *tim)
 {
 	return __rte_timer_stop(tim, 0, &default_timer_data);
 }
 VERSION_SYMBOL(rte_timer_stop, _v20, 2.0);
 
-int
+int __vsym
 rte_timer_stop_v1905(struct rte_timer *tim)
 {
 	return rte_timer_alt_stop(default_data_id, tim);
@@ -836,14 +836,14 @@ __rte_timer_manage(struct rte_timer_data *timer_data)
 	priv_timer[lcore_id].running_tim = NULL;
 }
 
-void
+void __vsym
 rte_timer_manage_v20(void)
 {
 	__rte_timer_manage(&default_timer_data);
 }
 VERSION_SYMBOL(rte_timer_manage, _v20, 2.0);
 
-int
+int __vsym
 rte_timer_manage_v1905(void)
 {
 	struct rte_timer_data *timer_data;
@@ -1093,14 +1093,14 @@ __rte_timer_dump_stats(struct rte_timer_data *timer_data __rte_unused, FILE *f)
 #endif
 }
 
-void
+void __vsym
 rte_timer_dump_stats_v20(FILE *f)
 {
 	__rte_timer_dump_stats(&default_timer_data, f);
 }
 VERSION_SYMBOL(rte_timer_dump_stats, _v20, 2.0);
 
-int
+int __vsym
 rte_timer_dump_stats_v1905(FILE *f)
 {
 	return rte_timer_alt_dump_stats(default_data_id, f);

@@ -55,7 +55,9 @@ typedef enum VhostUserRequest {
 	VHOST_USER_POSTCOPY_ADVISE = 28,
 	VHOST_USER_POSTCOPY_LISTEN = 29,
 	VHOST_USER_POSTCOPY_END = 30,
-	VHOST_USER_MAX = 31
+	VHOST_USER_GET_INFLIGHT_FD = 31,
+	VHOST_USER_SET_INFLIGHT_FD = 32,
+	VHOST_USER_MAX = 33
 } VhostUserRequest;
 
 typedef enum VhostUserSlaveRequest {
@@ -113,6 +115,13 @@ typedef struct VhostUserVringArea {
 	uint64_t offset;
 } VhostUserVringArea;
 
+typedef struct VhostUserInflight {
+	uint64_t mmap_size;
+	uint64_t mmap_offset;
+	uint16_t num_queues;
+	uint16_t queue_size;
+} VhostUserInflight;
+
 typedef struct VhostUserMsg {
 	union {
 		uint32_t master; /* a VhostUserRequest value */
@@ -135,6 +144,7 @@ typedef struct VhostUserMsg {
 		struct vhost_iotlb_msg iotlb;//iotlb信息
 		VhostUserCryptoSessionParam crypto_session;
 		VhostUserVringArea area;
+		VhostUserInflight inflight;
 	} payload;
 	int fds[VHOST_MEMORY_MAX_NREGIONS];//对端传送过来的fd
 	int fd_num;

@@ -49,14 +49,137 @@ Please note that enabling debugging options may affect system performance.
 Runtime Config Options
 ~~~~~~~~~~~~~~~~~~~~~~
 
-- ``Maximum Number of Queue Pairs``
+- ``Safe Mode Support`` (default ``0``)
 
-  The maximum number of queue pairs is decided by HW. If not configured, APP
-  uses the number from HW. Users can check the number by calling the API
-  ``rte_eth_dev_info_get``.
-  If users want to limit the number of queues, they can set a smaller number
-  using EAL parameter like ``max_queue_pair_num=n``.
+  If driver failed to load OS package, by default driver's initialization failed.
+  But if user intend to use the device without OS package, user can take ``devargs``
+  parameter ``safe-mode-support``, for example::
 
+    -w 80:00.0,safe-mode-support=1
+
+  Then the driver will be initialized successfully and the device will enter Safe Mode.
+  NOTE: In Safe mode, only very limited features are available, features like RSS,
+  checksum, fdir, tunneling ... are all disabled.
+
+- ``Generic Flow Pipeline Mode Support`` (default ``0``)
+
+  In pipeline mode, a flow can be set at one specific stage by setting parameter
+  ``priority``. Currently, we support two stages: priority = 0 or !0. Flows with
+  priority 0 located at the first pipeline stage which typically be used as a firewall
+  to drop the packet on a blacklist(we called it permission stage). At this stage,
+  flow rules are created for the device's exact match engine: switch. Flows with priority
+  !0 located at the second stage, typically packets are classified here and be steered to
+  specific queue or queue group (we called it distribution stage), At this stage, flow
+  rules are created for device's flow director engine.
+  For none-pipeline mode, ``priority`` is ignored, a flow rule can be created as a flow director
+  rule or a switch rule depends on its pattern/action and the resource allocation situation,
+  all flows are virtually at the same pipeline stage.
+  By default, generic flow API is enabled in none-pipeline mode, user can choose to
+  use pipeline mode by setting ``devargs`` parameter ``pipeline-mode-support``,
+  for example::
+
+    -w 80:00.0,pipeline-mode-support=1
+
+- ``Protocol extraction for per queue``
+
+  Configure the RX queues to do protocol extraction into ``rte_mbuf::udata64``
+  for protocol handling acceleration, like checking the TCP SYN packets quickly.
+
+  The argument format is::
+
+      -w 18:00.0,proto_xtr=<queues:protocol>[<queues:protocol>...]
+      -w 18:00.0,proto_xtr=<protocol>
+
+  Queues are grouped by ``(`` and ``)`` within the group. The ``-`` character
+  is used as a range separator and ``,`` is used as a single number separator.
+  The grouping ``()`` can be omitted for single element group. If no queues are
+  specified, PMD will use this protocol extraction type for all queues.
+
+  Protocol is : ``vlan, ipv4, ipv6, ipv6_flow, tcp``.
+
+  .. code-block:: console
+
+    testpmd -w 18:00.0,proto_xtr='[(1,2-3,8-9):tcp,10-13:vlan]'
+
+  This setting means queues 1, 2-3, 8-9 are TCP extraction, queues 10-13 are
+  VLAN extraction, other queues run with no protocol extraction.
+
+  .. code-block:: console
+
+    testpmd -w 18:00.0,proto_xtr=vlan,proto_xtr='[(1,2-3,8-9):tcp,10-23:ipv6]'
+
+  This setting means queues 1, 2-3, 8-9 are TCP extraction, queues 10-23 are
+  IPv6 extraction, other queues use the default VLAN extraction.
+
+  The extraction will be copied into the lower 32 bit of ``rte_mbuf::udata64``.
+
+  .. table:: Protocol extraction : ``vlan``
+
+   +----------------------------+----------------------------+
+   |           VLAN2            |           VLAN1            |
+   +======+===+=================+======+===+=================+
+   |  PCP | D |       VID       |  PCP | D |       VID       |
+   +------+---+-----------------+------+---+-----------------+
+
+  VLAN1 - single or EVLAN (first for QinQ).
+
+  VLAN2 - C-VLAN (second for QinQ).
+
+  .. table:: Protocol extraction : ``ipv4``
+
+   +----------------------------+----------------------------+
+   |           IPHDR2           |           IPHDR1           |
+   +======+=======+=============+==============+=============+
+   |  Ver |Hdr Len|    ToS      |      TTL     |  Protocol   |
+   +------+-------+-------------+--------------+-------------+
+
+  IPHDR1 - IPv4 header word 4, "TTL" and "Protocol" fields.
+
+  IPHDR2 - IPv4 header word 0, "Ver", "Hdr Len" and "Type of Service" fields.
+
+  .. table:: Protocol extraction : ``ipv6``
+
+   +----------------------------+----------------------------+
+   |           IPHDR2           |           IPHDR1           |
+   +=====+=============+========+=============+==============+
+   | Ver |Traffic class|  Flow  | Next Header |   Hop Limit  |
+   +-----+-------------+--------+-------------+--------------+
+
+  IPHDR1 - IPv6 header word 3, "Next Header" and "Hop Limit" fields.
+
+  IPHDR2 - IPv6 header word 0, "Ver", "Traffic class" and high 4 bits of
+  "Flow Label" fields.
+
+  .. table:: Protocol extraction : ``ipv6_flow``
+
+   +----------------------------+----------------------------+
+   |           IPHDR2           |           IPHDR1           |
+   +=====+=============+========+============================+
+   | Ver |Traffic class|            Flow Label               |
+   +-----+-------------+-------------------------------------+
+
+  IPHDR1 - IPv6 header word 1, 16 low bits of the "Flow Label" field.
+
+  IPHDR2 - IPv6 header word 0, "Ver", "Traffic class" and high 4 bits of
+  "Flow Label" fields.
+
+  .. table:: Protocol extraction : ``tcp``
+
+   +----------------------------+----------------------------+
+   |           TCPHDR2          |           TCPHDR1          |
+   +============================+======+======+==============+
+   |          Reserved          |Offset|  RSV |     Flags    |
+   +----------------------------+------+------+--------------+
+
+  TCPHDR1 - TCP header word 6, "Data Offset" and "Flags" fields.
+
+  TCPHDR2 - Reserved
+
+  Use ``get_proto_xtr_flds(struct rte_mbuf *mb)`` to access the protocol
+  extraction, do not use ``rte_mbuf::udata64`` directly.
+
+  The ``dump_proto_xtr_flds(struct rte_mbuf *mb)`` routine shows how to
+  access the protocol extraction result in ``struct rte_mbuf``.
 
 Driver compilation and testing
 ------------------------------
@@ -115,10 +238,22 @@ The Intel E810 requires a programmable pipeline package be downloaded
 by the driver to support normal operations. The E810 has a limited
 functionality built in to allow PXE boot and other use cases, but the
 driver must download a package file during the driver initialization
-stage. The file must be in the /lib/firmware/intel/ice/ddp directory
-and it must be named ice.pkg. A symbolic link to this file is also ok.
-The same package file is used by both the kernel driver and the DPDK PMD.
+stage.
 
+The default DDP package file name is ice.pkg. For a specific NIC, the
+DDP package supposed to be loaded can have a filename: ice-xxxxxx.pkg,
+where 'xxxxxx' is the 64-bit PCIe Device Serial Number of the NIC. For
+example, if the NIC's device serial number is 00-CC-BB-FF-FF-AA-05-68,
+the device-specific DDP package filename is ice-00ccbbffffaa0568.pkg
+(in hex and all low case). During initialization, the driver searches
+in the following paths in order: /lib/firmware/updates/intel/ice/ddp
+and /lib/firmware/intel/ice/ddp. The corresponding device-specific DDP
+package will be downloaded first if the file exists. If not, then the
+driver tries to load the default package. The type of loaded package
+is stored in ``ice_adapter->active_pkg_type``.
+
+A symbolic link to the DDP package file is also ok. The same package
+file is used by both the kernel driver and the DPDK PMD.
 
 19.02 limitation
 ~~~~~~~~~~~~~~~~

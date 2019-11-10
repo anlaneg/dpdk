@@ -46,7 +46,6 @@
 #define RTE_PMD_PCAP_MAX_QUEUES 16
 
 static char errbuf[PCAP_ERRBUF_SIZE];
-static unsigned char tx_pcap_data[RTE_ETH_PCAP_SNAPLEN];
 static struct timeval start_time;
 static uint64_t start_cycles;
 static uint64_t hz;
@@ -112,6 +111,8 @@ struct pmd_devargs_all {
 	int single_iface;
 	unsigned int is_tx_pcap;
 	unsigned int is_tx_iface;
+	unsigned int is_rx_pcap;
+	unsigned int is_rx_iface;
 	unsigned int infinite_rx;
 };
 
@@ -178,21 +179,6 @@ eth_pcap_rx_jumbo(struct rte_mempool *mb_pool, struct rte_mbuf *mbuf,
 	return mbuf->nb_segs;
 }
 
-/* Copy data from mbuf chain to a buffer suitable for writing to a PCAP file. */
-static void
-eth_pcap_gather_data(unsigned char *data, struct rte_mbuf *mbuf)
-{
-	uint16_t data_len = 0;
-
-	while (mbuf) {
-		rte_memcpy(data + data_len, rte_pktmbuf_mtod(mbuf, void *),
-			mbuf->data_len);
-
-		data_len += mbuf->data_len;
-		mbuf = mbuf->next;
-	}
-}
-
 static uint16_t
 eth_pcap_rx_infinite(void *queue, struct rte_mbuf **bufs, uint16_t nb_pkts)
 {
@@ -240,7 +226,6 @@ eth_pcap_rx(void *queue, struct rte_mbuf **bufs, uint16_t nb_pkts)
 	struct rte_mbuf *mbuf;
 	struct pcap_rx_queue *pcap_q = queue;
 	uint16_t num_rx = 0;
-	uint16_t buf_size;
 	uint32_t rx_bytes = 0;
 	pcap_t *pcap;
 
@@ -263,11 +248,7 @@ eth_pcap_rx(void *queue, struct rte_mbuf **bufs, uint16_t nb_pkts)
 		if (unlikely(mbuf == NULL))
 			break;
 
-		/* Now get the space available for data in the mbuf */
-		buf_size = rte_pktmbuf_data_room_size(pcap_q->mb_pool) -
-				RTE_PKTMBUF_HEADROOM;
-
-		if (header.caplen <= buf_size) {
+		if (header.caplen <= rte_pktmbuf_tailroom(mbuf)) {
 			/* pcap packet will fit in the mbuf, can copy it */
 			rte_memcpy(rte_pktmbuf_mtod(mbuf, void *), packet,
 					header.caplen);
@@ -284,6 +265,9 @@ eth_pcap_rx(void *queue, struct rte_mbuf **bufs, uint16_t nb_pkts)
 		}
 
 		mbuf->pkt_len = (uint16_t)header.caplen;
+		mbuf->timestamp = (uint64_t)header.ts.tv_sec * 1000000
+							+ header.ts.tv_usec;
+		mbuf->ol_flags |= PKT_RX_TIMESTAMP;
 		mbuf->port = pcap_q->port_id;
 		bufs[num_rx] = mbuf;
 		num_rx++;
@@ -293,6 +277,14 @@ eth_pcap_rx(void *queue, struct rte_mbuf **bufs, uint16_t nb_pkts)
 	pcap_q->rx_stat.bytes += rx_bytes;
 
 	return num_rx;
+}
+
+static uint16_t
+eth_null_rx(void *queue __rte_unused,
+		struct rte_mbuf **bufs __rte_unused,
+		uint16_t nb_pkts __rte_unused)
+{
+	return 0;
 }
 
 static inline void
@@ -320,6 +312,8 @@ eth_pcap_tx_dumper(void *queue, struct rte_mbuf **bufs, uint16_t nb_pkts)
 	uint32_t tx_bytes = 0;
 	struct pcap_pkthdr header;
 	pcap_dumper_t *dumper;
+	unsigned char temp_data[RTE_ETH_PCAP_SNAPLEN];
+	size_t len;
 
 	pp = rte_eth_devices[dumper_q->port_id].process_private;
 	dumper = pp->tx_dumper[dumper_q->queue_id];
@@ -331,31 +325,28 @@ eth_pcap_tx_dumper(void *queue, struct rte_mbuf **bufs, uint16_t nb_pkts)
 	 * dumper */
 	for (i = 0; i < nb_pkts; i++) {
 		mbuf = bufs[i];
-		calculate_timestamp(&header.ts);
-		header.len = mbuf->pkt_len;
-		header.caplen = header.len;
-
-		if (likely(mbuf->nb_segs == 1)) {
-			pcap_dump((u_char *)dumper, &header,
-				  rte_pktmbuf_mtod(mbuf, void*));
-		} else {
-			if (mbuf->pkt_len <= RTE_ETHER_MAX_JUMBO_FRAME_LEN) {
-				eth_pcap_gather_data(tx_pcap_data, mbuf);
-				pcap_dump((u_char *)dumper, &header,
-					  tx_pcap_data);
-			} else {
-				PMD_LOG(ERR,
-					"Dropping PCAP packet. Size (%d) > max jumbo size (%d).",
-					mbuf->pkt_len,
-					RTE_ETHER_MAX_JUMBO_FRAME_LEN);
-
-				rte_pktmbuf_free(mbuf);
-				break;
-			}
+		len = rte_pktmbuf_pkt_len(mbuf);
+		if (unlikely(!rte_pktmbuf_is_contiguous(mbuf) &&
+				len > sizeof(temp_data))) {
+			PMD_LOG(ERR,
+				"Dropping multi segment PCAP packet. Size (%zd) > max size (%zd).",
+				len, sizeof(temp_data));
+			rte_pktmbuf_free(mbuf);
+			continue;
 		}
 
+		calculate_timestamp(&header.ts);
+		header.len = len;
+		header.caplen = header.len;
+		/* rte_pktmbuf_read() returns a pointer to the data directly
+		 * in the mbuf (when the mbuf is contiguous) or, otherwise,
+		 * a pointer to temp_data after copying into it.
+		 */
+		pcap_dump((u_char *)dumper, &header,
+			rte_pktmbuf_read(mbuf, 0, len, temp_data));
+
 		num_tx++;
-		tx_bytes += mbuf->pkt_len;
+		tx_bytes += len;
 		rte_pktmbuf_free(mbuf);
 	}
 
@@ -369,7 +360,7 @@ eth_pcap_tx_dumper(void *queue, struct rte_mbuf **bufs, uint16_t nb_pkts)
 	dumper_q->tx_stat.bytes += tx_bytes;
 	dumper_q->tx_stat.err_pkts += nb_pkts - num_tx;
 
-	return num_tx;
+	return nb_pkts;
 }
 
 /*
@@ -410,6 +401,8 @@ eth_pcap_tx(void *queue, struct rte_mbuf **bufs, uint16_t nb_pkts)
 	uint16_t num_tx = 0;
 	uint32_t tx_bytes = 0;
 	pcap_t *pcap;
+	unsigned char temp_data[RTE_ETH_PCAP_SNAPLEN];
+	size_t len;
 
 	pp = rte_eth_devices[tx_queue->port_id].process_private;
 	pcap = pp->tx_pcap[tx_queue->queue_id];
@@ -419,39 +412,34 @@ eth_pcap_tx(void *queue, struct rte_mbuf **bufs, uint16_t nb_pkts)
 
 	for (i = 0; i < nb_pkts; i++) {
 		mbuf = bufs[i];
-
-		if (likely(mbuf->nb_segs == 1)) {
-			ret = pcap_sendpacket(pcap,
-					rte_pktmbuf_mtod(mbuf, u_char *),
-					mbuf->pkt_len);
-		} else {
-			if (mbuf->pkt_len <= RTE_ETHER_MAX_JUMBO_FRAME_LEN) {
-				eth_pcap_gather_data(tx_pcap_data, mbuf);
-				ret = pcap_sendpacket(pcap,
-						tx_pcap_data, mbuf->pkt_len);
-			} else {
-				PMD_LOG(ERR,
-					"Dropping PCAP packet. Size (%d) > max jumbo size (%d).",
-					mbuf->pkt_len,
-					RTE_ETHER_MAX_JUMBO_FRAME_LEN);
-
-				rte_pktmbuf_free(mbuf);
-				break;
-			}
+		len = rte_pktmbuf_pkt_len(mbuf);
+		if (unlikely(!rte_pktmbuf_is_contiguous(mbuf) &&
+				len > sizeof(temp_data))) {
+			PMD_LOG(ERR,
+				"Dropping multi segment PCAP packet. Size (%zd) > max size (%zd).",
+				len, sizeof(temp_data));
+			rte_pktmbuf_free(mbuf);
+			continue;
 		}
 
+		/* rte_pktmbuf_read() returns a pointer to the data directly
+		 * in the mbuf (when the mbuf is contiguous) or, otherwise,
+		 * a pointer to temp_data after copying into it.
+		 */
+		ret = pcap_sendpacket(pcap,
+			rte_pktmbuf_read(mbuf, 0, len, temp_data), len);
 		if (unlikely(ret != 0))
 			break;
 		num_tx++;
-		tx_bytes += mbuf->pkt_len;
+		tx_bytes += len;
 		rte_pktmbuf_free(mbuf);
 	}
 
 	tx_queue->tx_stat.pkts += num_tx;
 	tx_queue->tx_stat.bytes += tx_bytes;
-	tx_queue->tx_stat.err_pkts += nb_pkts - num_tx;
+	tx_queue->tx_stat.err_pkts += i - num_tx;
 
-	return num_tx;
+	return i;
 }
 
 /*
@@ -664,7 +652,7 @@ eth_dev_configure(struct rte_eth_dev *dev __rte_unused)
 	return 0;
 }
 
-static void
+static int
 eth_dev_info(struct rte_eth_dev *dev,
 		struct rte_eth_dev_info *dev_info)
 {
@@ -676,6 +664,8 @@ eth_dev_info(struct rte_eth_dev *dev,
 	dev_info->max_rx_queues = dev->data->nb_rx_queues;
 	dev_info->max_tx_queues = dev->data->nb_tx_queues;
 	dev_info->min_rx_bufsize = 0;
+
+	return 0;
 }
 
 static int
@@ -713,7 +703,7 @@ eth_stats_get(struct rte_eth_dev *dev, struct rte_eth_stats *stats)
 	return 0;
 }
 
-static void
+static int
 eth_stats_reset(struct rte_eth_dev *dev)
 {
 	unsigned int i;
@@ -729,6 +719,8 @@ eth_stats_reset(struct rte_eth_dev *dev)
 		internal->tx_queue[i].tx_stat.bytes = 0;
 		internal->tx_queue[i].tx_stat.err_pkts = 0;
 	}
+
+	return 0;
 }
 
 static void
@@ -1085,8 +1077,6 @@ get_infinite_rx_arg(const char *key __rte_unused,
 	return 0;
 }
 
-static struct rte_vdev_driver pmd_pcap_drv;
-
 static int
 pmd_init_internals(struct rte_vdev_device *vdev,
 		const unsigned int nb_rx_queues,
@@ -1139,6 +1129,8 @@ pmd_init_internals(struct rte_vdev_device *vdev,
 	data->nb_tx_queues = (uint16_t)nb_tx_queues;
 	data->dev_link = pmd_link;
 	data->mac_addrs = &(*internals)->eth_addr;
+	data->promiscuous = 1;
+	data->all_multicast = 1;
 
 	/*
 	 * NOTE: we'll replace the data element, of originally allocated
@@ -1248,12 +1240,6 @@ eth_from_pcaps_common(struct rte_vdev_device *vdev,
 	const unsigned int nb_tx_queues = tx_queues->num_of_queue;
 	unsigned int i;
 
-	/* do some parameter checking */
-	if (rx_queues == NULL && nb_rx_queues > 0)
-		return -1;
-	if (tx_queues == NULL && nb_tx_queues > 0)
-		return -1;
-
 	if (pmd_init_internals(vdev, nb_rx_queues, nb_tx_queues, internals,
 			eth_dev) < 0)
 		return -1;
@@ -1316,13 +1302,16 @@ eth_from_pcaps(struct rte_vdev_device *vdev,
 	/* Assign rx ops. */
 	if (infinite_rx)
 		eth_dev->rx_pkt_burst = eth_pcap_rx_infinite;
-	else
+	else if (devargs_all->is_rx_pcap || devargs_all->is_rx_iface ||
+			single_iface)
 		eth_dev->rx_pkt_burst = eth_pcap_rx;
+	else
+		eth_dev->rx_pkt_burst = eth_null_rx;
 
 	/* Assign tx ops. */
 	if (devargs_all->is_tx_pcap)
 		eth_dev->tx_pkt_burst = eth_pcap_tx_dumper;
-	else if (devargs_all->is_tx_iface)
+	else if (devargs_all->is_tx_iface || single_iface)
 		eth_dev->tx_pkt_burst = eth_pcap_tx;
 	else
 		eth_dev->tx_pkt_burst = eth_tx_drop;
@@ -1335,13 +1324,12 @@ static int
 pmd_pcap_probe(struct rte_vdev_device *dev)
 {
 	const char *name;
-	unsigned int is_rx_pcap = 0;
 	struct rte_kvargs *kvlist;
 	struct pmd_devargs pcaps = {0};
 	struct pmd_devargs dumpers = {0};
 	struct rte_eth_dev *eth_dev =  NULL;
 	struct pmd_internals *internal;
-	int ret;
+	int ret = 0;
 
 	struct pmd_devargs_all devargs_all = {
 		.single_iface = 0,
@@ -1404,13 +1392,22 @@ pmd_pcap_probe(struct rte_vdev_device *dev)
 	}
 
 	/*
-	 * We check whether we want to open a RX stream from a real NIC or a
-	 * pcap file
+	 * We check whether we want to open a RX stream from a real NIC, a
+	 * pcap file or open a dummy RX stream
 	 */
-	is_rx_pcap = rte_kvargs_count(kvlist, ETH_PCAP_RX_PCAP_ARG) ? 1 : 0;
+	devargs_all.is_rx_pcap =
+		rte_kvargs_count(kvlist, ETH_PCAP_RX_PCAP_ARG) ? 1 : 0;
+	devargs_all.is_rx_iface =
+		rte_kvargs_count(kvlist, ETH_PCAP_RX_IFACE_ARG) ? 1 : 0;
 	pcaps.num_of_queue = 0;
 
-	if (is_rx_pcap) {
+	devargs_all.is_tx_pcap =
+		rte_kvargs_count(kvlist, ETH_PCAP_TX_PCAP_ARG) ? 1 : 0;
+	devargs_all.is_tx_iface =
+		rte_kvargs_count(kvlist, ETH_PCAP_TX_IFACE_ARG) ? 1 : 0;
+	dumpers.num_of_queue = 0;
+
+	if (devargs_all.is_rx_pcap) {
 		/*
 		 * We check whether we want to infinitely rx the pcap file.
 		 */
@@ -1436,11 +1433,29 @@ pmd_pcap_probe(struct rte_vdev_device *dev)
 
 		ret = rte_kvargs_process(kvlist, ETH_PCAP_RX_PCAP_ARG,
 				&open_rx_pcap, &pcaps);
-	} else {
+	} else if (devargs_all.is_rx_iface) {
 		ret = rte_kvargs_process(kvlist, NULL,
 				&rx_iface_args_process, &pcaps);
-	}
+	} else if (devargs_all.is_tx_iface || devargs_all.is_tx_pcap) {
+		unsigned int i;
 
+		/* Count number of tx queue args passed before dummy rx queue
+		 * creation so a dummy rx queue can be created for each tx queue
+		 */
+		unsigned int num_tx_queues =
+			(rte_kvargs_count(kvlist, ETH_PCAP_TX_PCAP_ARG) +
+			rte_kvargs_count(kvlist, ETH_PCAP_TX_IFACE_ARG));
+
+		PMD_LOG(INFO, "Creating null rx queue since no rx queues were provided.");
+
+		/* Creating a dummy rx queue for each tx queue passed */
+		for (i = 0; i < num_tx_queues; i++)
+			ret = add_queue(&pcaps, "dummy_rx", "rx_null", NULL,
+					NULL);
+	} else {
+		PMD_LOG(ERR, "Error - No rx or tx queues provided");
+		ret = -ENOENT;
+	}
 	if (ret < 0)
 		goto free_kvlist;
 
@@ -1448,12 +1463,6 @@ pmd_pcap_probe(struct rte_vdev_device *dev)
 	 * We check whether we want to open a TX stream to a real NIC,
 	 * a pcap file, or drop packets on tx
 	 */
-	devargs_all.is_tx_pcap =
-		rte_kvargs_count(kvlist, ETH_PCAP_TX_PCAP_ARG) ? 1 : 0;
-	devargs_all.is_tx_iface =
-		rte_kvargs_count(kvlist, ETH_PCAP_TX_IFACE_ARG) ? 1 : 0;
-	dumpers.num_of_queue = 0;
-
 	if (devargs_all.is_tx_pcap) {
 		ret = rte_kvargs_process(kvlist, ETH_PCAP_TX_PCAP_ARG,
 				&open_tx_pcap, &dumpers);
@@ -1467,7 +1476,7 @@ pmd_pcap_probe(struct rte_vdev_device *dev)
 
 		/* Add 1 dummy queue per rxq which counts and drops packets. */
 		for (i = 0; i < pcaps.num_of_queue; i++)
-			ret = add_queue(&dumpers, "dummy", "tx_drop", NULL,
+			ret = add_queue(&dumpers, "dummy_tx", "tx_drop", NULL,
 					NULL);
 	}
 

@@ -61,14 +61,16 @@ nix_recv_pkts(void *rx_queue, struct rte_mbuf **rx_pkts,
 
 	while (packets < nb_pkts) {
 		/* Prefetch N desc ahead */
-		rte_prefetch_non_temporal((void *)(desc + (CQE_SZ(head + 2))));
+		rte_prefetch_non_temporal((void *)(desc +
+					(CQE_SZ((head + 2) & qmask))));
 		cq = (struct nix_cqe_hdr_s *)(desc + CQE_SZ(head));
 
 		mbuf = nix_get_mbuf_from_cqe(cq, data_off);
 
 		otx2_nix_cqe_to_mbuf(cq, cq->tag, mbuf, lookup_mem, mbuf_init,
 				     flags);
-		otx2_nix_mbuf_to_tstamp(mbuf, rxq->tstamp, flags);
+		otx2_nix_mbuf_to_tstamp(mbuf, rxq->tstamp, flags,
+				(uint64_t *)((uint8_t *)mbuf + data_off));
 		rx_pkts[packets++] = mbuf;
 		otx2_prefetch_store_keep(mbuf);
 		head++;

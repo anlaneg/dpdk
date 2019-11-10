@@ -355,14 +355,14 @@ npa_lf_aura_pool_init(struct otx2_mbox *mbox, uint32_t aura_id,
 	aura_init_req->aura_id = aura_id;
 	aura_init_req->ctype = NPA_AQ_CTYPE_AURA;
 	aura_init_req->op = NPA_AQ_INSTOP_INIT;
-	memcpy(&aura_init_req->aura, aura, sizeof(*aura));
+	otx2_mbox_memcpy(&aura_init_req->aura, aura, sizeof(*aura));
 
 	pool_init_req = otx2_mbox_alloc_msg_npa_aq_enq(mbox);
 
 	pool_init_req->aura_id = aura_id;
 	pool_init_req->ctype = NPA_AQ_CTYPE_POOL;
 	pool_init_req->op = NPA_AQ_INSTOP_INIT;
-	memcpy(&pool_init_req->pool, pool, sizeof(*pool));
+	otx2_mbox_memcpy(&pool_init_req->pool, pool, sizeof(*pool));
 
 	otx2_mbox_msg_send(mbox, 0);
 	rc = otx2_mbox_wait_for_rsp(mbox, 0);
@@ -605,9 +605,9 @@ npa_lf_aura_range_update_check(uint64_t aura_handle)
 	uint64_t aura_id = npa_lf_aura_handle_to_aura(aura_handle);
 	struct otx2_npa_lf *lf = otx2_npa_lf_obj_get();
 	struct npa_aura_lim *lim = lf->aura_lim;
+	__otx2_io struct npa_pool_s *pool;
 	struct npa_aq_enq_req *req;
 	struct npa_aq_enq_rsp *rsp;
-	struct npa_pool_s *pool;
 	int rc;
 
 	req  = otx2_mbox_alloc_msg_npa_aq_enq(lf->mbox);
@@ -713,24 +713,15 @@ static ssize_t
 otx2_npa_calc_mem_size(const struct rte_mempool *mp, uint32_t obj_num,
 		       uint32_t pg_shift, size_t *min_chunk_size, size_t *align)
 {
-	ssize_t mem_size;
+	size_t total_elt_sz;
 
-	/*
-	 * Simply need space for one more object to be able to
-	 * fulfill alignment requirements.
+	/* Need space for one more obj on each chunk to fulfill
+	 * alignment requirements.
 	 */
-	mem_size = rte_mempool_op_calc_mem_size_default(mp, obj_num + 1,
-							pg_shift,
-							min_chunk_size, align);
-	if (mem_size >= 0) {
-		/*
-		 * Memory area which contains objects must be physically
-		 * contiguous.
-		 */
-		*min_chunk_size = mem_size;
-	}
-
-	return mem_size;
+	total_elt_sz = mp->header_size + mp->elt_size + mp->trailer_size;
+	return rte_mempool_op_calc_mem_size_helper(mp, obj_num, pg_shift,
+						total_elt_sz, min_chunk_size,
+						align);
 }
 
 static int
@@ -747,7 +738,7 @@ otx2_npa_populate(struct rte_mempool *mp, unsigned int max_objs, void *vaddr,
 	total_elt_sz = mp->header_size + mp->elt_size + mp->trailer_size;
 
 	/* Align object start address to a multiple of total_elt_sz */
-	off = total_elt_sz - ((uintptr_t)vaddr % total_elt_sz);
+	off = total_elt_sz - ((((uintptr_t)vaddr - 1) % total_elt_sz) + 1);
 
 	if (len < off)
 		return -EINVAL;
@@ -761,8 +752,10 @@ otx2_npa_populate(struct rte_mempool *mp, unsigned int max_objs, void *vaddr,
 	if (npa_lf_aura_range_update_check(mp->pool_id) < 0)
 		return -EBUSY;
 
-	return rte_mempool_op_populate_default(mp, max_objs, vaddr, iova, len,
-					       obj_cb, obj_cb_arg);
+	return rte_mempool_op_populate_helper(mp,
+					RTE_MEMPOOL_POPULATE_F_ALIGN_OBJ,
+					max_objs, vaddr, iova, len,
+					obj_cb, obj_cb_arg);
 }
 
 static struct rte_mempool_ops otx2_npa_ops = {

@@ -238,29 +238,29 @@ Example of an item specification matching an Ethernet header:
 
 .. table:: Ethernet item
 
-   +----------+----------+--------------------+
-   | Field    | Subfield | Value              |
-   +==========+==========+====================+
-   | ``spec`` | ``src``  | ``00:01:02:03:04`` |
-   |          +----------+--------------------+
-   |          | ``dst``  | ``00:2a:66:00:01`` |
-   |          +----------+--------------------+
-   |          | ``type`` | ``0x22aa``         |
-   +----------+----------+--------------------+
-   | ``last`` | unspecified                   |
-   +----------+----------+--------------------+
-   | ``mask`` | ``src``  | ``00:ff:ff:ff:00`` |
-   |          +----------+--------------------+
-   |          | ``dst``  | ``00:00:00:00:ff`` |
-   |          +----------+--------------------+
-   |          | ``type`` | ``0x0000``         |
-   +----------+----------+--------------------+
+   +----------+----------+-----------------------+
+   | Field    | Subfield | Value                 |
+   +==========+==========+=======================+
+   | ``spec`` | ``src``  | ``00:00:01:02:03:04`` |
+   |          +----------+-----------------------+
+   |          | ``dst``  | ``00:00:2a:66:00:01`` |
+   |          +----------+-----------------------+
+   |          | ``type`` | ``0x22aa``            |
+   +----------+----------+-----------------------+
+   | ``last`` | unspecified                      |
+   +----------+----------+-----------------------+
+   | ``mask`` | ``src``  | ``00:00:ff:ff:ff:00`` |
+   |          +----------+-----------------------+
+   |          | ``dst``  | ``00:00:00:00:00:ff`` |
+   |          +----------+-----------------------+
+   |          | ``type`` | ``0x0000``            |
+   +----------+----------+-----------------------+
 
 Non-masked bits stand for any value (shown as ``?`` below), Ethernet headers
 with the following properties are thus matched:
 
-- ``src``: ``??:01:02:03:??``
-- ``dst``: ``??:??:??:??:01``
+- ``src``: ``??:??:01:02:03:??``
+- ``dst``: ``??:??:??:??:??:01``
 - ``type``: ``0x????``
 
 Matching pattern
@@ -1205,6 +1205,34 @@ Matches an application specific 32 bit metadata item.
 
 - Default ``mask`` matches the specified metadata value.
 
+Item: ``GTP_PSC``
+^^^^^^^^^^^^^^^^^
+
+Matches a GTP PDU extension header with type 0x85.
+
+- ``pdu_type``: PDU type.
+- ``qfi``: QoS flow identifier.
+- Default ``mask`` matches QFI only.
+
+Item: ``PPPOES``, ``PPPOED``
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Matches a PPPoE header.
+
+- ``version_type``: version (4b), type (4b).
+- ``code``: message type.
+- ``session_id``: session identifier.
+- ``length``: payload length.
+
+Item: ``PPPOE_PROTO_ID``
+^^^^^^^^^^^^^^^^^^^^^^^^
+
+Matches a PPPoE session protocol identifier.
+
+- ``proto_id``: PPP protocol identifier.
+- Default ``mask`` matches proto_id only.
+
+
 .. _table_rte_flow_item_meta:
 
 .. table:: META
@@ -1218,6 +1246,57 @@ Matches an application specific 32 bit metadata item.
    +----------+----------+---------------------------------------+
    | ``mask`` | ``data`` | bit-mask applies to "spec" and "last" |
    +----------+----------+---------------------------------------+
+
+Item: ``NSH``
+^^^^^^^^^^^^^
+
+Matches a network service header (RFC 8300).
+
+- ``version``: normally 0x0 (2 bits).
+- ``oam_pkt``: indicate oam packet (1 bit).
+- ``reserved``: reserved bit (1 bit).
+- ``ttl``: maximum SFF hopes (6 bits).
+- ``length``: total length in 4 bytes words (6 bits).
+- ``reserved1``: reserved1 bits (4 bits).
+- ``mdtype``: ndicates format of NSH header (4 bits).
+- ``next_proto``: indicates protocol type of encap data (8 bits).
+- ``spi``: service path identifier (3 bytes).
+- ``sindex``: service index (1 byte).
+- Default ``mask`` matches mdtype, next_proto, spi, sindex.
+
+
+Item: ``IGMP``
+^^^^^^^^^^^^^^
+
+Matches a Internet Group Management Protocol (RFC 2236).
+
+- ``type``: IGMP message type (Query/Report).
+- ``max_resp_time``: max time allowed before sending report.
+- ``checksum``: checksum, 1s complement of whole IGMP message.
+- ``group_addr``: group address, for Query value will be 0.
+- Default ``mask`` matches group_addr.
+
+
+Item: ``AH``
+^^^^^^^^^^^^
+
+Matches a IP Authentication Header (RFC 4302).
+
+- ``next_hdr``: next payload after AH.
+- ``payload_len``: total length of AH in 4B words.
+- ``reserved``: reserved bits.
+- ``spi``: security parameters index.
+- ``seq_num``: counter value increased by 1 on each packet sent.
+- Default ``mask`` matches spi.
+
+Item: ``HIGIG2``
+^^^^^^^^^^^^^^^^^
+
+Matches a HIGIG2 header field. It is layer 2.5 protocol and used in
+Broadcom switches.
+
+- Default ``mask`` matches classification and vlan.
+
 
 Actions
 ~~~~~~~

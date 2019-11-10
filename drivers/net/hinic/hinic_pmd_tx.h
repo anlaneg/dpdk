@@ -29,19 +29,20 @@ enum sq_wqe_type {
 struct hinic_tx_offload_info {
 	u8 outer_l2_len;
 	u8 outer_l3_type;
-	u8 outer_l3_len;
+	u16 outer_l3_len;
 
 	u8 inner_l2_len;
 	u8 inner_l3_type;
-	u8 inner_l3_len;
+	u16 inner_l3_len;
 
 	u8 tunnel_length;
 	u8 tunnel_type;
 	u8 inner_l4_type;
 	u8 inner_l4_len;
 
-	u8 payload_offset;
+	u16 payload_offset;
 	u8 inner_l4_tcp_udp;
+	u8 rsvd0;
 };
 
 /* tx sge info */
@@ -130,7 +131,7 @@ void hinic_free_tx_resources(struct hinic_txq *txq);
 
 u16 hinic_xmit_pkts(void *tx_queue, struct rte_mbuf **tx_pkts, u16 nb_pkts);
 
-void hinic_free_all_tx_skbs(struct hinic_txq *txq);
+void hinic_free_all_tx_mbufs(struct hinic_txq *txq);
 
 void hinic_txq_get_stats(struct hinic_txq *txq, struct hinic_txq_stats *stats);
 

@@ -18,6 +18,7 @@ otx2_ssogws_get_work(struct otx2_ssogws *ws, struct rte_event *ev,
 		     const uint32_t flags, const void * const lookup_mem)
 {
 	union otx2_sso_event event;
+	uint64_t tstamp_ptr;
 	uint64_t get_work1;
 	uint64_t mbuf;
 
@@ -69,8 +70,10 @@ otx2_ssogws_get_work(struct otx2_ssogws *ws, struct rte_event *ev,
 		otx2_wqe_to_mbuf(get_work1, mbuf, event.sub_event_type,
 				 (uint32_t) event.get_work0, flags, lookup_mem);
 		/* Extracting tstamp, if PTP enabled*/
+		tstamp_ptr = *(uint64_t *)(((struct nix_wqe_hdr_s *)get_work1)
+					     + OTX2_SSO_WQE_SG_PTR);
 		otx2_nix_mbuf_to_tstamp((struct rte_mbuf *)mbuf, ws->tstamp,
-					flags);
+					flags, (uint64_t *)tstamp_ptr);
 		get_work1 = mbuf;
 	}
 
@@ -86,6 +89,7 @@ otx2_ssogws_get_work_empty(struct otx2_ssogws *ws, struct rte_event *ev,
 			   const uint32_t flags)
 {
 	union otx2_sso_event event;
+	uint64_t tstamp_ptr;
 	uint64_t get_work1;
 	uint64_t mbuf;
 
@@ -131,8 +135,10 @@ otx2_ssogws_get_work_empty(struct otx2_ssogws *ws, struct rte_event *ev,
 		otx2_wqe_to_mbuf(get_work1, mbuf, event.sub_event_type,
 				 (uint32_t) event.get_work0, flags, NULL);
 		/* Extracting tstamp, if PTP enabled*/
+		tstamp_ptr = *(uint64_t *)(((struct nix_wqe_hdr_s *)get_work1)
+					     + OTX2_SSO_WQE_SG_PTR);
 		otx2_nix_mbuf_to_tstamp((struct rte_mbuf *)mbuf, ws->tstamp,
-					flags);
+					flags, (uint64_t *)tstamp_ptr);
 		get_work1 = mbuf;
 	}
 
@@ -220,10 +226,34 @@ otx2_ssogws_swtag_wait(struct otx2_ssogws *ws)
 }
 
 static __rte_always_inline void
-otx2_ssogws_head_wait(struct otx2_ssogws *ws, const uint8_t wait_flag)
+otx2_ssogws_head_wait(struct otx2_ssogws *ws)
 {
-	while (wait_flag && !(otx2_read64(ws->tag_op) & BIT_ULL(35)))
+#ifdef RTE_ARCH_ARM64
+	uint64_t tag;
+
+	asm volatile (
+			"	ldr %[tag], [%[tag_op]]		\n"
+			"	tbnz %[tag], 35, done%=		\n"
+			"	sevl				\n"
+			"rty%=:	wfe				\n"
+			"	ldr %[tag], [%[tag_op]]		\n"
+			"	tbz %[tag], 35, rty%=		\n"
+			"done%=:				\n"
+			: [tag] "=&r" (tag)
+			: [tag_op] "r" (ws->tag_op)
+			);
+#else
+	/* Wait for the HEAD to be set */
+	while (!(otx2_read64(ws->tag_op) & BIT_ULL(35)))
 		;
+#endif
+}
+
+static __rte_always_inline void
+otx2_ssogws_order(struct otx2_ssogws *ws, const uint8_t wait_flag)
+{
+	if (wait_flag)
+		otx2_ssogws_head_wait(ws);
 
 	rte_cio_wmb();
 }
@@ -250,7 +280,10 @@ otx2_ssogws_event_tx(struct otx2_ssogws *ws, struct rte_event ev[],
 	struct rte_mbuf *m = ev[0].mbuf;
 	const struct otx2_eth_txq *txq = otx2_ssogws_xtract_meta(m);
 
-	otx2_ssogws_head_wait(ws, !ev->sched_type);
+	rte_prefetch_non_temporal(txq);
+	/* Perform header writes before barrier for TSO */
+	otx2_nix_xmit_prepare_tso(m, flags);
+	otx2_ssogws_order(ws, !ev->sched_type);
 	otx2_ssogws_prepare_pkt(txq, m, cmd, flags);
 
 	if (flags & NIX_TX_MULTI_SEG_F) {

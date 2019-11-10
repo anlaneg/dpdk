@@ -21,7 +21,7 @@
 #define NUM_MAX_INFLIGHT_OPS 512
 
 __extension__
-const char *cperf_test_type_strs[] = {
+const char *comp_perf_test_type_strs[] = {
 	[CPERF_TEST_TYPE_BENCHMARK] = "benchmark",
 	[CPERF_TEST_TYPE_VERIFY] = "verify"
 };
@@ -127,9 +127,13 @@ comp_perf_initialize_compressdev(struct comp_test_data *test_data,
 	 * if there are more available than cores.
 	 */
 	if (enabled_cdev_count > nb_lcores) {
+		if (nb_lcores == 0) {
+			RTE_LOG(ERR, USER1, "Cannot run with 0 cores! Increase the number of cores\n");
+			return -EINVAL;
+		}
 		enabled_cdev_count = nb_lcores;
 		RTE_LOG(INFO, USER1,
-			" There's more available devices than cores!"
+			"There's more available devices than cores!"
 			" The number of devices has been aligned to %d cores\n",
 			nb_lcores);
 	}
@@ -363,7 +367,7 @@ main(int argc, char **argv)
 
 	printf("App uses socket: %u\n", rte_socket_id());
 	printf("Burst size = %u\n", test_data->burst_sz);
-	printf("File size = %zu\n", test_data->input_data_sz);
+	printf("Input data size = %zu\n", test_data->input_data_sz);
 
 	test_data->cleanup = ST_DURING_TEST;
 	total_nb_qps = nb_compressdevs * test_data->nb_qps;
@@ -389,6 +393,8 @@ main(int argc, char **argv)
 			cdev_index++;
 		i++;
 	}
+
+	print_test_dynamics(); /* constructors must be executed first */
 
 	while (test_data->level <= test_data->level_lst.max) {
 

@@ -48,12 +48,6 @@ flags_dpaa = [
 	['RTE_USE_C11_MEM_MODEL', true],
 	['RTE_CACHE_LINE_SIZE', 64],
 	['RTE_MAX_NUMA_NODES', 1],
-	['RTE_MAX_LCORE', 16]]
-flags_dpaa2 = [
-	['RTE_MACHINE', '"dpaa2"'],
-	['RTE_USE_C11_MEM_MODEL', true],
-	['RTE_CACHE_LINE_SIZE', 64],
-	['RTE_MAX_NUMA_NODES', 1],
 	['RTE_MAX_LCORE', 16],
 	['RTE_LIBRTE_DPAA2_USE_PHYS_IOVA', false]]
 flags_armada = [
@@ -71,11 +65,13 @@ flags_thunderx2_extra = [
 	['RTE_CACHE_LINE_SIZE', 64],
 	['RTE_MAX_NUMA_NODES', 2],
 	['RTE_MAX_LCORE', 256],
+	['RTE_ARM_FEATURE_ATOMICS', true],
 	['RTE_USE_C11_MEM_MODEL', true]]
 flags_octeontx2_extra = [
 	['RTE_MACHINE', '"octeontx2"'],
 	['RTE_MAX_NUMA_NODES', 1],
 	['RTE_MAX_LCORE', 24],
+	['RTE_ARM_FEATURE_ATOMICS', true],
 	['RTE_EAL_IGB_UIO', false],
 	['RTE_USE_C11_MEM_MODEL', true]]
 
@@ -96,7 +92,7 @@ machine_args_cavium = [
 	['0xa2', ['-mcpu=thunderxt81'], flags_thunderx_extra],
 	['0xa3', ['-mcpu=thunderxt83'], flags_thunderx_extra],
 	['0xaf', ['-march=armv8.1-a+crc+crypto','-mcpu=thunderx2t99'], flags_thunderx2_extra],
-	['0xb2', ['-mcpu=octeontx2'], flags_octeontx2_extra]]
+	['0xb2', ['-march=armv8.2-a+crc+crypto+lse','-mcpu=octeontx2'], flags_octeontx2_extra]]
 
 ## Arm implementer ID (ARM DDI 0487C.a, Section G7.2.106, Page G7-5321)
 impl_generic = ['Generic armv8', flags_generic, machine_args_generic]
@@ -113,7 +109,6 @@ impl_0x53 = ['Samsung', flags_generic, machine_args_generic]
 impl_0x56 = ['Marvell ARMADA', flags_armada, machine_args_generic]
 impl_0x69 = ['Intel', flags_generic, machine_args_generic]
 impl_dpaa = ['NXP DPAA', flags_dpaa, machine_args_generic]
-impl_dpaa2 = ['NXP DPAA2', flags_dpaa2, machine_args_generic]
 
 dpdk_conf.set('RTE_FORCE_INTRINSICS', 1)
 

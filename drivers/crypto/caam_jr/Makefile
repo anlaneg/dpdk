@@ -17,9 +17,9 @@ CFLAGS += -O3
 CFLAGS += $(WERROR_FLAGS)
 
 CFLAGS += -I$(RTE_SDK)/drivers/bus/dpaa/include
+CFLAGS += -I$(RTE_SDK)/drivers/common/dpaax
+CFLAGS += -I$(RTE_SDK)/drivers/common/dpaax/caamflib/
 CFLAGS += -I$(RTE_SDK)/drivers/crypto/caam_jr
-#sharing the hw flib headers from dpaa2_sec pmd
-CFLAGS += -I$(RTE_SDK)/drivers/crypto/dpaa2_sec/
 CFLAGS += -I$(RTE_SDK)/lib/librte_eal/common/include
 
 # versioning export map
@@ -39,5 +39,6 @@ LDLIBS += -lrte_eal -lrte_mbuf -lrte_mempool -lrte_ring
 LDLIBS += -lrte_cryptodev
 LDLIBS += -lrte_bus_dpaa
 LDLIBS += -lrte_bus_vdev
+LDLIBS += -lrte_common_dpaax
 
 include $(RTE_SDK)/mk/rte.lib.mk

@@ -40,6 +40,8 @@ struct vhost_user_socket {
 	bool dequeue_zero_copy;//是否开启出队zero copy
 	bool iommu_support;
 	bool use_builtin_virtio_net;//是否使用内建的virtio_net
+	bool extbuf;
+	bool linearbuf;
 
 	/*
 	 * The "supported_features" indicates the feature bits the
@@ -242,6 +244,12 @@ vhost_user_add_connection(int fd, struct vhost_user_socket *vsocket)
 	//如果vsocket开启了入队zero copy,则设置在dev上
 	if (vsocket->dequeue_zero_copy)
 		vhost_enable_dequeue_zero_copy(vid);
+
+	if (vsocket->extbuf)
+		vhost_enable_extbuf(vid);
+
+	if (vsocket->linearbuf)
+		vhost_enable_linearbuf(vid);
 
 	RTE_LOG(INFO, VHOST_CONFIG, "new device, handle is %d\n", vid);
 
@@ -941,6 +949,16 @@ rte_vhost_driver_register(const char *path, uint64_t flags)
 
 	//是否开启出队zero copy
 	vsocket->dequeue_zero_copy = flags & RTE_VHOST_USER_DEQUEUE_ZERO_COPY;
+	vsocket->extbuf = flags & RTE_VHOST_USER_EXTBUF_SUPPORT;
+	vsocket->linearbuf = flags & RTE_VHOST_USER_LINEARBUF_SUPPORT;
+
+	if (vsocket->dequeue_zero_copy &&
+	    (flags & RTE_VHOST_USER_IOMMU_SUPPORT)) {
+		RTE_LOG(ERR, VHOST_CONFIG,
+			"error: enabling dequeue zero copy and IOMMU features "
+			"simultaneously is not supported\n");
+		goto out_mutex;
+	}
 
 	/*
 	 * Set the supported features correctly for the builtin vhost-user
@@ -967,6 +985,18 @@ rte_vhost_driver_register(const char *path, uint64_t flags)
 	 * not compatible with postcopy.
 	 */
 	if (vsocket->dequeue_zero_copy) {
+		if (vsocket->extbuf) {
+			RTE_LOG(ERR, VHOST_CONFIG,
+			"error: zero copy is incompatible with external buffers\n");
+			ret = -1;
+			goto out_mutex;
+		}
+		if (vsocket->linearbuf) {
+			RTE_LOG(ERR, VHOST_CONFIG,
+			"error: zero copy is incompatible with linear buffers\n");
+			ret = -1;
+			goto out_mutex;
+		}
 		vsocket->supported_features &= ~(1ULL << VIRTIO_F_IN_ORDER);
 		vsocket->features &= ~(1ULL << VIRTIO_F_IN_ORDER);
 
@@ -974,6 +1004,24 @@ rte_vhost_driver_register(const char *path, uint64_t flags)
 			"Dequeue zero copy requested, disabling postcopy support\n");
 		vsocket->protocol_features &=
 			~(1ULL << VHOST_USER_PROTOCOL_F_PAGEFAULT);
+	}
+
+	/*
+	 * We'll not be able to receive a buffer from guest in linear mode
+	 * without external buffer if it will not fit in a single mbuf, which is
+	 * likely if segmentation offloading enabled.
+	 */
+	if (vsocket->linearbuf && !vsocket->extbuf) {
+		uint64_t seg_offload_features =
+				(1ULL << VIRTIO_NET_F_HOST_TSO4) |
+				(1ULL << VIRTIO_NET_F_HOST_TSO6) |
+				(1ULL << VIRTIO_NET_F_HOST_UFO);
+
+		RTE_LOG(INFO, VHOST_CONFIG,
+			"Linear buffers requested without external buffers, "
+			"disabling host segmentation offloading support\n");
+		vsocket->supported_features &= ~seg_offload_features;
+		vsocket->features &= ~seg_offload_features;
 	}
 
 	if (!(flags & RTE_VHOST_USER_IOMMU_SUPPORT)) {

@@ -439,7 +439,7 @@ perf_event_timer_adapter_setup(struct test_perf *t)
 
 		if (!(adapter_info.caps &
 				RTE_EVENT_TIMER_ADAPTER_CAP_INTERNAL_PORT)) {
-			uint32_t service_id;
+			uint32_t service_id = -1U;
 
 			rte_event_timer_adapter_service_id_get(wl,
 					&service_id);
@@ -660,6 +660,7 @@ int
 perf_ethdev_setup(struct evt_test *test, struct evt_options *opt)
 {
 	uint16_t i;
+	int ret;
 	struct test_perf *t = evt_test_priv(test);
 	struct rte_eth_conf port_conf = {
 		.rxmode = {
@@ -688,7 +689,12 @@ perf_ethdev_setup(struct evt_test *test, struct evt_options *opt)
 		struct rte_eth_dev_info dev_info;
 		struct rte_eth_conf local_port_conf = port_conf;
 
-		rte_eth_dev_info_get(i, &dev_info);
+		ret = rte_eth_dev_info_get(i, &dev_info);
+		if (ret != 0) {
+			evt_err("Error during getting device (port %u) info: %s\n",
+					i, strerror(-ret));
+			return ret;
+		}
 
 		local_port_conf.rx_adv_conf.rss_conf.rss_hf &=
 			dev_info.flow_type_rss_offloads;
@@ -720,7 +726,12 @@ perf_ethdev_setup(struct evt_test *test, struct evt_options *opt)
 			return -EINVAL;
 		}
 
-		rte_eth_promiscuous_enable(i);
+		ret = rte_eth_promiscuous_enable(i);
+		if (ret != 0) {
+			evt_err("Failed to enable promiscuous mode for eth port [%d]: %s",
+				i, rte_strerror(-ret));
+			return ret;
+		}
 	}
 
 	return 0;

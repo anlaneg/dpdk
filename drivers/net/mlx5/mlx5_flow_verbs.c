@@ -124,7 +124,7 @@ flow_verbs_counter_new(struct rte_eth_dev *dev, uint32_t shared, uint32_t id)
 	int ret;
 
 	if (shared) {
-		LIST_FOREACH(cnt, &priv->flow_counters, next) {
+		TAILQ_FOREACH(cnt, &priv->sh->cmng.flow_counters, next) {
 			if (cnt->shared && cnt->id == id) {
 				cnt->ref_cnt++;
 				return cnt;
@@ -144,7 +144,7 @@ flow_verbs_counter_new(struct rte_eth_dev *dev, uint32_t shared, uint32_t id)
 	/* Create counter with Verbs. */
 	ret = flow_verbs_counter_create(dev, cnt);
 	if (!ret) {
-		LIST_INSERT_HEAD(&priv->flow_counters, cnt, next);
+		TAILQ_INSERT_HEAD(&priv->sh->cmng.flow_counters, cnt, next);
 		return cnt;
 	}
 	/* Some error occurred in Verbs library. */
@@ -156,19 +156,24 @@ flow_verbs_counter_new(struct rte_eth_dev *dev, uint32_t shared, uint32_t id)
 /**
  * Release a flow counter.
  *
+ * @param[in] dev
+ *   Pointer to the Ethernet device structure.
  * @param[in] counter
  *   Pointer to the counter handler.
  */
 static void
-flow_verbs_counter_release(struct mlx5_flow_counter *counter)
+flow_verbs_counter_release(struct rte_eth_dev *dev,
+			   struct mlx5_flow_counter *counter)
 {
+	struct mlx5_priv *priv = dev->data->dev_private;
+
 	if (--counter->ref_cnt == 0) {
 #if defined(HAVE_IBV_DEVICE_COUNTERS_SET_V42)
 		claim_zero(mlx5_glue->destroy_counter_set(counter->cs));
 #elif defined(HAVE_IBV_DEVICE_COUNTERS_SET_V45)
 		claim_zero(mlx5_glue->destroy_counters(counter->cs));
 #endif
-		LIST_REMOVE(counter, next);
+		TAILQ_REMOVE(&priv->sh->cmng.flow_counters, counter, next);
 		rte_free(counter);
 	}
 }
@@ -386,6 +391,9 @@ flow_verbs_translate_item_vlan(struct mlx5_flow *dev_flow,
 		flow_verbs_spec_add(&dev_flow->verbs, &eth, size);
 	else
 		flow_verbs_item_vlan_update(dev_flow->verbs.attr, &eth);
+	if (!tunnel)
+		dev_flow->verbs.vf_vlan.tag =
+			rte_be_to_cpu_16(spec->tci) & 0x0fff;
 }
 
 /**
@@ -1008,6 +1016,8 @@ flow_verbs_translate_action_count(struct mlx5_flow *dev_flow,
  *   Pointer to the list of items.
  * @param[in] actions
  *   Pointer to the list of actions.
+ * @param[in] external
+ *   This flow rule is created by request external to PMD.
  * @param[out] error
  *   Pointer to the error structure.
  *
@@ -1019,6 +1029,7 @@ flow_verbs_validate(struct rte_eth_dev *dev,
 		    const struct rte_flow_attr *attr,
 		    const struct rte_flow_item items[],
 		    const struct rte_flow_action actions[],
+		    bool external __rte_unused,
 		    struct rte_flow_error *error)
 {
 	int ret;
@@ -1049,7 +1060,7 @@ flow_verbs_validate(struct rte_eth_dev *dev,
 			break;
 		case RTE_FLOW_ITEM_TYPE_VLAN:
 			ret = mlx5_flow_validate_item_vlan(items, item_flags,
-							   error);
+							   dev, error);
 			if (ret < 0)
 				return ret;
 			last_item = tunnel ? (MLX5_FLOW_LAYER_INNER_L2 |
@@ -1587,6 +1598,10 @@ flow_verbs_remove(struct rte_eth_dev *dev, struct rte_flow *flow)
 				mlx5_hrxq_release(dev, verbs->hrxq);
 			verbs->hrxq = NULL;
 		}
+		if (dev_flow->verbs.vf_vlan.tag &&
+		    dev_flow->verbs.vf_vlan.created) {
+			mlx5_vlan_vmwa_release(dev, &dev_flow->verbs.vf_vlan);
+		}
 	}
 }
 
@@ -1612,7 +1627,7 @@ flow_verbs_destroy(struct rte_eth_dev *dev, struct rte_flow *flow)
 		rte_free(dev_flow);
 	}
 	if (flow->counter) {
-		flow_verbs_counter_release(flow->counter);
+		flow_verbs_counter_release(dev, flow->counter);
 		flow->counter = NULL;
 	}
 }
@@ -1634,6 +1649,7 @@ static int
 flow_verbs_apply(struct rte_eth_dev *dev, struct rte_flow *flow,
 		 struct rte_flow_error *error)
 {
+	struct mlx5_priv *priv = dev->data->dev_private;
 	struct mlx5_flow_verbs *verbs;
 	struct mlx5_flow *dev_flow;
 	int err;
@@ -1664,7 +1680,7 @@ flow_verbs_apply(struct rte_eth_dev *dev, struct rte_flow *flow,
 						     (*flow->queue),
 						     flow->rss.queue_num,
 						     !!(dev_flow->layers &
-						      MLX5_FLOW_LAYER_TUNNEL));
+						       MLX5_FLOW_LAYER_TUNNEL));
 			if (!hrxq) {
 				rte_flow_error_set
 					(error, rte_errno,
@@ -1683,6 +1699,17 @@ flow_verbs_apply(struct rte_eth_dev *dev, struct rte_flow *flow,
 					   "hardware refuses to create flow");
 			goto error;
 		}
+		if (priv->vmwa_context &&
+		    dev_flow->verbs.vf_vlan.tag &&
+		    !dev_flow->verbs.vf_vlan.created) {
+			/*
+			 * The rule contains the VLAN pattern.
+			 * For VF we are going to create VLAN
+			 * interface to make hypervisor set correct
+			 * e-Switch vport context.
+			 */
+			mlx5_vlan_vmwa_acquire(dev, &dev_flow->verbs.vf_vlan);
+		}
 	}
 	return 0;
 error:
@@ -1695,6 +1722,10 @@ error:
 			else
 				mlx5_hrxq_release(dev, verbs->hrxq);
 			verbs->hrxq = NULL;
+		}
+		if (dev_flow->verbs.vf_vlan.tag &&
+		    dev_flow->verbs.vf_vlan.created) {
+			mlx5_vlan_vmwa_release(dev, &dev_flow->verbs.vf_vlan);
 		}
 	}
 	rte_errno = err; /* Restore rte_errno. */

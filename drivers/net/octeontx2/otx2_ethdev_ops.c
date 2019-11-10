@@ -129,18 +129,22 @@ otx2_nix_promisc_config(struct rte_eth_dev *eth_dev, int en)
 	otx2_nix_vlan_update_promisc(eth_dev, en);
 }
 
-void
+int
 otx2_nix_promisc_enable(struct rte_eth_dev *eth_dev)
 {
 	otx2_nix_promisc_config(eth_dev, 1);
 	nix_cgx_promisc_config(eth_dev, 1);
+
+	return 0;
 }
 
-void
+int
 otx2_nix_promisc_disable(struct rte_eth_dev *eth_dev)
 {
 	otx2_nix_promisc_config(eth_dev, 0);
 	nix_cgx_promisc_config(eth_dev, 0);
+
+	return 0;
 }
 
 static void
@@ -163,16 +167,20 @@ nix_allmulticast_config(struct rte_eth_dev *eth_dev, int en)
 	otx2_mbox_process(mbox);
 }
 
-void
+int
 otx2_nix_allmulticast_enable(struct rte_eth_dev *eth_dev)
 {
 	nix_allmulticast_config(eth_dev, 1);
+
+	return 0;
 }
 
-void
+int
 otx2_nix_allmulticast_disable(struct rte_eth_dev *eth_dev)
 {
 	nix_allmulticast_config(eth_dev, 0);
+
+	return 0;
 }
 
 void
@@ -274,7 +282,7 @@ otx2_nix_rx_descriptor_status(void *rx_queue, uint16_t offset)
 	struct otx2_eth_rxq *rxq = rx_queue;
 	uint32_t head, tail;
 
-	if (rxq->qlen >= offset)
+	if (rxq->qlen <= offset)
 		return -EINVAL;
 
 	nix_rx_head_tail_get(otx2_eth_pmd_priv(rxq->eth_dev),
@@ -284,6 +292,42 @@ otx2_nix_rx_descriptor_status(void *rx_queue, uint16_t offset)
 		return RTE_ETH_RX_DESC_DONE;
 	else
 		return RTE_ETH_RX_DESC_AVAIL;
+}
+
+static void
+nix_tx_head_tail_get(struct otx2_eth_dev *dev,
+		     uint32_t *head, uint32_t *tail, uint16_t queue_idx)
+{
+	uint64_t reg, val;
+
+	if (head == NULL || tail == NULL)
+		return;
+
+	reg = (((uint64_t)queue_idx) << 32);
+	val = otx2_atomic64_add_nosync(reg, (int64_t *)
+				       (dev->base + NIX_LF_SQ_OP_STATUS));
+	if (val & OP_ERR)
+		val = 0;
+
+	*tail = (uint32_t)((val >> 28) & 0x3F);
+	*head = (uint32_t)((val >> 20) & 0x3F);
+}
+
+int
+otx2_nix_tx_descriptor_status(void *tx_queue, uint16_t offset)
+{
+	struct otx2_eth_txq *txq = tx_queue;
+	uint32_t head, tail;
+
+	if (txq->qconf.nb_desc <= offset)
+		return -EINVAL;
+
+	nix_tx_head_tail_get(txq->dev, &head, &tail, txq->sq);
+
+	if (nix_offset_has_packet(head, tail, offset))
+		return RTE_ETH_TX_DESC_DONE;
+	else
+		return RTE_ETH_TX_DESC_FULL;
 }
 
 /* It is a NOP for octeontx2 as HW frees the buffer on xmit */
@@ -352,10 +396,15 @@ nix_get_fwdata(struct otx2_eth_dev *dev)
 {
 	struct otx2_mbox *mbox = dev->mbox;
 	struct cgx_fw_data *rsp = NULL;
+	int rc;
 
 	otx2_mbox_alloc_msg_cgx_get_aux_link_info(mbox);
 
-	otx2_mbox_process_msg(mbox, (void *)&rsp);
+	rc = otx2_mbox_process_msg(mbox, (void *)&rsp);
+	if (rc) {
+		otx2_err("Failed to get fw data: %d", rc);
+		return NULL;
+	}
 
 	return rsp;
 }
@@ -398,7 +447,7 @@ otx2_nix_get_module_eeprom(struct rte_eth_dev *eth_dev,
 	return 0;
 }
 
-void
+int
 otx2_nix_info_get(struct rte_eth_dev *eth_dev, struct rte_eth_dev_info *devinfo)
 {
 	struct rte_pci_device *pci_dev = RTE_ETH_DEV_TO_PCI(eth_dev);
@@ -431,6 +480,10 @@ otx2_nix_info_get(struct rte_eth_dev *eth_dev, struct rte_eth_dev_info *devinfo)
 		.offloads = 0,
 	};
 
+	devinfo->default_rxportconf = (struct rte_eth_dev_portconf) {
+		.ring_size = NIX_RX_DEFAULT_RING_SZ,
+	};
+
 	devinfo->rx_desc_lim = (struct rte_eth_desc_lim) {
 		.nb_max = UINT16_MAX,
 		.nb_min = NIX_RX_MIN_DESC,
@@ -458,4 +511,6 @@ otx2_nix_info_get(struct rte_eth_dev *eth_dev, struct rte_eth_dev_info *devinfo)
 
 	devinfo->dev_capa = RTE_ETH_DEV_CAPA_RUNTIME_RX_QUEUE_SETUP |
 				RTE_ETH_DEV_CAPA_RUNTIME_TX_QUEUE_SETUP;
+
+	return 0;
 }

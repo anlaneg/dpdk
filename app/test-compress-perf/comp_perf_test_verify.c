@@ -14,7 +14,9 @@ void
 cperf_verify_test_destructor(void *arg)
 {
 	if (arg) {
-		comp_perf_free_memory(&((struct cperf_verify_ctx *)arg)->mem);
+		comp_perf_free_memory(
+				((struct cperf_verify_ctx *)arg)->options,
+				&((struct cperf_verify_ctx *)arg)->mem);
 		rte_free(arg);
 	}
 }
@@ -217,7 +219,16 @@ main_loop(struct cperf_verify_ctx *ctx, enum rte_comp_xform_type type)
 			for (i = 0; i < num_deq; i++) {
 				struct rte_comp_op *op = deq_ops[i];
 
-				if (op->status != RTE_COMP_OP_STATUS_SUCCESS) {
+				if (op->status ==
+				  RTE_COMP_OP_STATUS_OUT_OF_SPACE_TERMINATED ||
+				  op->status ==
+				  RTE_COMP_OP_STATUS_OUT_OF_SPACE_RECOVERABLE) {
+					RTE_LOG(ERR, USER1,
+"Out of space error occurred due to uncompressible input data expanding to larger than destination buffer. Increase the EXPANSE_RATIO constant to use this data.\n");
+					res = -1;
+					goto end;
+				} else if (op->status !=
+						RTE_COMP_OP_STATUS_SUCCESS) {
 					RTE_LOG(ERR, USER1,
 						"Some operations were not successful\n");
 					goto end;
@@ -293,12 +304,20 @@ main_loop(struct cperf_verify_ctx *ctx, enum rte_comp_xform_type type)
 			for (i = 0; i < num_deq; i++) {
 				struct rte_comp_op *op = deq_ops[i];
 
-				if (op->status != RTE_COMP_OP_STATUS_SUCCESS) {
+				if (op->status ==
+				  RTE_COMP_OP_STATUS_OUT_OF_SPACE_TERMINATED ||
+				  op->status ==
+				  RTE_COMP_OP_STATUS_OUT_OF_SPACE_RECOVERABLE) {
+					RTE_LOG(ERR, USER1,
+"Out of space error occurred due to uncompressible input data expanding to larger than destination buffer. Increase the EXPANSE_RATIO constant to use this data.\n");
+					res = -1;
+					goto end;
+				} else if (op->status !=
+						RTE_COMP_OP_STATUS_SUCCESS) {
 					RTE_LOG(ERR, USER1,
 						"Some operations were not successful\n");
 					goto end;
 				}
-
 				const void *read_data_addr =
 						rte_pktmbuf_read(op->m_dst,
 								 op->dst.offset,

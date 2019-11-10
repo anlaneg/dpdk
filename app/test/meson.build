@@ -30,6 +30,7 @@ test_sources = files('commands.c',
 	'test_cryptodev.c',
 	'test_cryptodev_asym.c',
 	'test_cryptodev_blockcipher.c',
+	'test_cryptodev_security_pdcp.c',
 	'test_cycles.c',
 	'test_debug.c',
 	'test_distributor.c',
@@ -47,6 +48,10 @@ test_sources = files('commands.c',
 	'test_eventdev.c',
 	'test_external_mem.c',
 	'test_fbarray.c',
+	'test_fib.c',
+	'test_fib_perf.c',
+	'test_fib6.c',
+	'test_fib6_perf.c',
 	'test_func_reentrancy.c',
 	'test_flow_classify.c',
 	'test_hash.c',
@@ -57,6 +62,7 @@ test_sources = files('commands.c',
 	'test_hash_readwrite_lf.c',
 	'test_interrupts.c',
 	'test_ipsec.c',
+	'test_ipsec_sad.c',
 	'test_kni.c',
 	'test_kvargs.c',
 	'test_latencystats.c',
@@ -99,6 +105,8 @@ test_sources = files('commands.c',
 	'test_reciprocal_division_perf.c',
 	'test_red.c',
 	'test_reorder.c',
+	'test_rib.c',
+	'test_rib6.c',
 	'test_ring.c',
 	'test_ring_perf.c',
 	'test_rwlock.c',
@@ -135,6 +143,7 @@ test_deps = ['acl',
 	'efd',
 	'ethdev',
 	'eventdev',
+	'fib',
 	'flow_classify',
 	'hash',
 	'ipsec',
@@ -147,6 +156,7 @@ test_deps = ['acl',
 	'rawdev',
 	'rcu',
 	'reorder',
+	'rib',
 	'ring',
 	'stack',
 	'timer'
@@ -177,6 +187,8 @@ fast_test_names = [
         'eal_fs_autotest',
         'errno_autotest',
         'event_ring_autotest',
+        'fib_autotest',
+        'fib6_autotest',
         'func_reentrancy_autotest',
         'flow_classify_autotest',
         'hash_autotest',
@@ -197,6 +209,8 @@ fast_test_names = [
         'prefetch_autotest',
         'rcu_qsbr_autotest',
         'red_autotest',
+        'rib_autotest',
+        'rib6_autotest',
         'ring_autotest',
         'ring_pmd_autotest',
         'rwlock_test1_autotest',
@@ -245,6 +259,9 @@ perf_test_names = [
         'reciprocal_division',
         'reciprocal_division_perf',
         'lpm_perf_autotest',
+        'rib_slow_autotest',
+        'fib_slow_autotest',
+        'fib_perf_autotest',
         'red_all',
         'barrier_autotest',
         'hash_multiwriter_autotest',
@@ -254,6 +271,9 @@ perf_test_names = [
         'member_perf_autotest',
         'efd_perf_autotest',
         'lpm6_perf_autotest',
+        'rib6_slow_autotest',
+        'fib6_slow_autotest',
+        'fib6_perf_autotest',
         'rcu_qsbr_perf_autotest',
         'red_perf',
         'distributor_perf_autotest',
@@ -270,6 +290,7 @@ driver_test_names = [
         'cryptodev_dpaa_sec_autotest',
         'cryptodev_dpaa2_sec_autotest',
         'cryptodev_null_autotest',
+        'cryptodev_octeontx2_autotest',
         'cryptodev_openssl_autotest',
         'cryptodev_openssl_asym_autotest',
         'cryptodev_qat_autotest',
@@ -297,26 +318,37 @@ dump_test_names = [
         'dump_memzone',
 ]
 
-if dpdk_conf.has('RTE_LIBRTE_PDUMP')
-	test_deps += 'pdump'
+# The following linkages are an exception to allow running the
+# unit tests without requiring that the developer install the
+# DPDK libraries.  Explicit linkage of drivers (plugin libraries)
+# in applications should not be used.
+if dpdk_conf.has('RTE_LIBRTE_RING_MEMPOOL')
+	test_deps += 'mempool_ring'
 endif
-if dpdk_conf.has('RTE_LIBRTE_I40E_PMD')
-	test_deps += 'pmd_i40e'
+if dpdk_conf.has('RTE_LIBRTE_STACK_MEMPOOL')
+	test_deps += 'mempool_stack'
 endif
-if dpdk_conf.has('RTE_LIBRTE_IXGBE_PMD')
-	test_deps += 'pmd_ixgbe'
+if dpdk_conf.has('RTE_LIBRTE_SKELETON_EVENTDEV_PMD')
+	test_deps += 'pmd_skeleton_event'
 endif
+
+# The following linkages of drivers are required because
+# they are used via a driver-specific API.
 if dpdk_conf.has('RTE_LIBRTE_BOND_PMD')
 	test_deps += 'pmd_bond'
 endif
 if dpdk_conf.has('RTE_LIBRTE_RING_PMD')
 	test_deps += 'pmd_ring'
 endif
+
 if dpdk_conf.has('RTE_LIBRTE_POWER')
 	test_deps += 'power'
 endif
 if dpdk_conf.has('RTE_LIBRTE_KNI')
 	test_deps += 'kni'
+endif
+if dpdk_conf.has('RTE_LIBRTE_PDUMP')
+	test_deps += 'pdump'
 endif
 
 cflags = machine_args
@@ -359,7 +391,7 @@ dpdk_test = executable('dpdk-test',
 	dependencies: test_dep_objs,
 	c_args: [cflags, '-DALLOW_EXPERIMENTAL_API'],
 	install_rpath: driver_install_path,
-	install: false)
+	install: true)
 
 # some perf tests (eg: memcpy perf autotest)take very long
 # to complete, so timeout to 10 minutes

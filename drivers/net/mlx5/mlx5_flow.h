@@ -21,6 +21,9 @@
 #pragma GCC diagnostic error "-Wpedantic"
 #endif
 
+#include <rte_atomic.h>
+#include <rte_alarm.h>
+
 #include "mlx5.h"
 #include "mlx5_prm.h"
 
@@ -45,6 +48,7 @@
 #define MLX5_FLOW_LAYER_VXLAN_GPE (1u << 13)
 #define MLX5_FLOW_LAYER_GRE (1u << 14)
 #define MLX5_FLOW_LAYER_MPLS (1u << 15)
+/* List of tunnel Layer bits continued below. */
 
 /* General pattern items bits. */
 #define MLX5_FLOW_ITEM_METADATA (1u << 16)
@@ -53,6 +57,13 @@
 /* Pattern MISC bits. */
 #define MLX5_FLOW_LAYER_ICMP (1u << 18)
 #define MLX5_FLOW_LAYER_ICMP6 (1u << 19)
+#define MLX5_FLOW_LAYER_GRE_KEY (1u << 20)
+
+/* Pattern tunnel Layer bits (continued). */
+#define MLX5_FLOW_LAYER_IPIP (1u << 21)
+#define MLX5_FLOW_LAYER_IPV6_ENCAP (1u << 22)
+#define MLX5_FLOW_LAYER_NVGRE (1u << 23)
+#define MLX5_FLOW_LAYER_GENEVE (1u << 24)
 
 /* Outer Masks. */
 #define MLX5_FLOW_LAYER_OUTER_L3 \
@@ -63,10 +74,18 @@
 	(MLX5_FLOW_LAYER_OUTER_L2 | MLX5_FLOW_LAYER_OUTER_L3 | \
 	 MLX5_FLOW_LAYER_OUTER_L4)
 
+/* LRO support mask, i.e. flow contains IPv4/IPv6 and TCP. */
+#define MLX5_FLOW_LAYER_IPV4_LRO \
+	(MLX5_FLOW_LAYER_OUTER_L3_IPV4 | MLX5_FLOW_LAYER_OUTER_L4_TCP)
+#define MLX5_FLOW_LAYER_IPV6_LRO \
+	(MLX5_FLOW_LAYER_OUTER_L3_IPV6 | MLX5_FLOW_LAYER_OUTER_L4_TCP)
+
 /* Tunnel Masks. */
 #define MLX5_FLOW_LAYER_TUNNEL \
 	(MLX5_FLOW_LAYER_VXLAN | MLX5_FLOW_LAYER_VXLAN_GPE | \
-	 MLX5_FLOW_LAYER_GRE | MLX5_FLOW_LAYER_MPLS)
+	 MLX5_FLOW_LAYER_GRE | MLX5_FLOW_LAYER_NVGRE | MLX5_FLOW_LAYER_MPLS | \
+	 MLX5_FLOW_LAYER_IPIP | MLX5_FLOW_LAYER_IPV6_ENCAP | \
+	 MLX5_FLOW_LAYER_GENEVE)
 
 /* Inner Masks. */
 #define MLX5_FLOW_LAYER_INNER_L3 \
@@ -133,11 +152,13 @@
 
 #define MLX5_FLOW_ENCAP_ACTIONS	(MLX5_FLOW_ACTION_VXLAN_ENCAP | \
 				 MLX5_FLOW_ACTION_NVGRE_ENCAP | \
-				 MLX5_FLOW_ACTION_RAW_ENCAP)
+				 MLX5_FLOW_ACTION_RAW_ENCAP | \
+				 MLX5_FLOW_ACTION_OF_PUSH_VLAN)
 
 #define MLX5_FLOW_DECAP_ACTIONS	(MLX5_FLOW_ACTION_VXLAN_DECAP | \
 				 MLX5_FLOW_ACTION_NVGRE_DECAP | \
-				 MLX5_FLOW_ACTION_RAW_DECAP)
+				 MLX5_FLOW_ACTION_RAW_DECAP | \
+				 MLX5_FLOW_ACTION_OF_POP_VLAN)
 
 #define MLX5_FLOW_MODIFY_HDR_ACTIONS (MLX5_FLOW_ACTION_SET_IPV4_SRC | \
 				      MLX5_FLOW_ACTION_SET_IPV4_DST | \
@@ -152,7 +173,11 @@
 				      MLX5_FLOW_ACTION_INC_TCP_SEQ | \
 				      MLX5_FLOW_ACTION_DEC_TCP_SEQ | \
 				      MLX5_FLOW_ACTION_INC_TCP_ACK | \
-				      MLX5_FLOW_ACTION_DEC_TCP_ACK)
+				      MLX5_FLOW_ACTION_DEC_TCP_ACK | \
+				      MLX5_FLOW_ACTION_OF_SET_VLAN_VID)
+
+#define MLX5_FLOW_VLAN_ACTIONS (MLX5_FLOW_ACTION_OF_POP_VLAN | \
+				MLX5_FLOW_ACTION_OF_PUSH_VLAN)
 
 #ifndef IPPROTO_MPLS
 #define IPPROTO_MPLS 137
@@ -164,6 +189,9 @@
 /* UDP port numbers for VxLAN. */
 #define MLX5_UDP_PORT_VXLAN 4789
 #define MLX5_UDP_PORT_VXLAN_GPE 4790
+
+/* UDP port numbers for GENEVE. */
+#define MLX5_UDP_PORT_GENEVE 6081
 
 /* Priority reserved for default flows. */
 #define MLX5_FLOW_PRIO_RSVD ((uint32_t)-1)
@@ -196,6 +224,33 @@
 
 /* IBV hash source bits  for IPV6. */
 #define MLX5_IPV6_IBV_RX_HASH (IBV_RX_HASH_SRC_IPV6 | IBV_RX_HASH_DST_IPV6)
+
+
+/* Geneve header first 16Bit */
+#define MLX5_GENEVE_VER_MASK 0x3
+#define MLX5_GENEVE_VER_SHIFT 14
+#define MLX5_GENEVE_VER_VAL(a) \
+		(((a) >> (MLX5_GENEVE_VER_SHIFT)) & (MLX5_GENEVE_VER_MASK))
+#define MLX5_GENEVE_OPTLEN_MASK 0x3F
+#define MLX5_GENEVE_OPTLEN_SHIFT 7
+#define MLX5_GENEVE_OPTLEN_VAL(a) \
+	    (((a) >> (MLX5_GENEVE_OPTLEN_SHIFT)) & (MLX5_GENEVE_OPTLEN_MASK))
+#define MLX5_GENEVE_OAMF_MASK 0x1
+#define MLX5_GENEVE_OAMF_SHIFT 7
+#define MLX5_GENEVE_OAMF_VAL(a) \
+		(((a) >> (MLX5_GENEVE_OAMF_SHIFT)) & (MLX5_GENEVE_OAMF_MASK))
+#define MLX5_GENEVE_CRITO_MASK 0x1
+#define MLX5_GENEVE_CRITO_SHIFT 6
+#define MLX5_GENEVE_CRITO_VAL(a) \
+		(((a) >> (MLX5_GENEVE_CRITO_SHIFT)) & (MLX5_GENEVE_CRITO_MASK))
+#define MLX5_GENEVE_RSVD_MASK 0x3F
+#define MLX5_GENEVE_RSVD_VAL(a) ((a) & (MLX5_GENEVE_RSVD_MASK))
+/*
+ * The length of the Geneve options fields, expressed in four byte multiples,
+ * not including the eight byte fixed tunnel.
+ */
+#define MLX5_GENEVE_OPT_LEN_0 14
+#define MLX5_GENEVE_OPT_LEN_1 63
 
 enum mlx5_flow_drv_type {
 	MLX5_FLOW_TYPE_MIN,
@@ -289,6 +344,16 @@ struct mlx5_flow_dv_port_id_action_resource {
 	uint32_t port_id; /**< Port ID value. */
 };
 
+/* Push VLAN action resource structure */
+struct mlx5_flow_dv_push_vlan_action_resource {
+	LIST_ENTRY(mlx5_flow_dv_push_vlan_action_resource) next;
+	/* Pointer to next element. */
+	rte_atomic32_t refcnt; /**< Reference counter. */
+	void *action; /**< Direct verbs action object. */
+	uint8_t ft_type; /**< Flow table type, Rx, Tx or FDB. */
+	rte_be32_t vlan_tag; /**< VLAN tag value. */
+};
+
 /*
  * Max number of actions per DV flow.
  * See CREATE_FLOW_MAX_FLOW_ACTIONS_SUPPORTED
@@ -313,6 +378,10 @@ struct mlx5_flow_dv {
 	/**< Pointer to the jump action resource. */
 	struct mlx5_flow_dv_port_id_action_resource *port_id_action;
 	/**< Pointer to port ID action resource. */
+	struct mlx5_vf_vlan vf_vlan;
+	/**< Structure for VF VLAN workaround. */
+	struct mlx5_flow_dv_push_vlan_action_resource *push_vlan_res;
+	/**< Pointer to push VLAN action resource in cache. */
 #ifdef HAVE_IBV_FLOW_DV_SUPPORT
 	void *actions[MLX5_DV_MAX_NUMBER_OF_ACTIONS];
 	/**< Action list. */
@@ -338,6 +407,8 @@ struct mlx5_flow_verbs {
 	struct ibv_flow *flow; /**< Verbs flow pointer. */
 	struct mlx5_hrxq *hrxq; /**< Hash Rx queue object. */
 	uint64_t hash_fields; /**< Verbs hash Rx queue hash fields. */
+	struct mlx5_vf_vlan vf_vlan;
+	/**< Structure for VF VLAN workaround. */
 };
 
 /** Device flow structure. */
@@ -352,25 +423,7 @@ struct mlx5_flow {
 #endif
 		struct mlx5_flow_verbs verbs;
 	};
-};
-
-/* Counters information. */
-struct mlx5_flow_counter {
-	LIST_ENTRY(mlx5_flow_counter) next; /**< Pointer to the next counter. */
-	uint32_t shared:1; /**< Share counter ID with other flow rules. */
-	uint32_t ref_cnt:31; /**< Reference counter. */
-	uint32_t id; /**< Counter ID. */
-	union {  /**< Holds the counters for the rule. */
-#if defined(HAVE_IBV_DEVICE_COUNTERS_SET_V42)
-		struct ibv_counter_set *cs;
-#elif defined(HAVE_IBV_DEVICE_COUNTERS_SET_V45)
-		struct ibv_counters *cs;
-#endif
-		struct mlx5_devx_counter_set *dcs;
-	};
-	uint64_t hits; /**< Number of packets matched by the rule. */
-	uint64_t bytes; /**< Number of bytes matched by the rule. */
-	void *action; /**< Pointer to the dv action. */
+	bool external; /**< true if the flow is created external to PMD. */
 };
 
 /* Flow structure. */
@@ -397,6 +450,7 @@ typedef int (*mlx5_flow_validate_t)(struct rte_eth_dev *dev,
 				    const struct rte_flow_attr *attr,
 				    const struct rte_flow_item items[],
 				    const struct rte_flow_action actions[],
+				    bool external,
 				    struct rte_flow_error *error);
 typedef struct mlx5_flow *(*mlx5_flow_prepare_t)
 	(const struct rte_flow_attr *attr, const struct rte_flow_item items[],
@@ -428,13 +482,24 @@ struct mlx5_flow_driver_ops {
 	mlx5_flow_query_t query;
 };
 
+#define MLX5_CNT_CONTAINER(sh, batch, thread) (&(sh)->cmng.ccont \
+	[(((sh)->cmng.mhi[batch] >> (thread)) & 0x1) * 2 + (batch)])
+#define MLX5_CNT_CONTAINER_UNUSED(sh, batch, thread) (&(sh)->cmng.ccont \
+	[(~((sh)->cmng.mhi[batch] >> (thread)) & 0x1) * 2 + (batch)])
+
 /* mlx5_flow.c */
 
+int mlx5_flow_group_to_table(const struct rte_flow_attr *attributes,
+			     bool external, uint32_t group, uint32_t *table,
+			     struct rte_flow_error *error);
 uint64_t mlx5_flow_hashfields_adjust(struct mlx5_flow *dev_flow, int tunnel,
 				     uint64_t layer_types,
 				     uint64_t hash_fields);
 uint32_t mlx5_flow_adjust_priority(struct rte_eth_dev *dev, int32_t priority,
 				   uint32_t subpriority);
+const struct rte_flow_action *mlx5_flow_find_action
+					(const struct rte_flow_action *actions,
+					 enum rte_flow_action_type action);
 int mlx5_flow_validate_action_count(struct rte_eth_dev *dev,
 				    const struct rte_flow_attr *attr,
 				    struct rte_flow_error *error);
@@ -474,6 +539,10 @@ int mlx5_flow_validate_item_gre(const struct rte_flow_item *item,
 				uint64_t item_flags,
 				uint8_t target_protocol,
 				struct rte_flow_error *error);
+int mlx5_flow_validate_item_gre_key(const struct rte_flow_item *item,
+				    uint64_t item_flags,
+				    const struct rte_flow_item *gre_item,
+				    struct rte_flow_error *error);
 int mlx5_flow_validate_item_ipv4(const struct rte_flow_item *item,
 				 uint64_t item_flags,
 				 const struct rte_flow_item_ipv4 *acc_mask,
@@ -498,6 +567,7 @@ int mlx5_flow_validate_item_udp(const struct rte_flow_item *item,
 				struct rte_flow_error *error);
 int mlx5_flow_validate_item_vlan(const struct rte_flow_item *item,
 				 uint64_t item_flags,
+				 struct rte_eth_dev *dev,
 				 struct rte_flow_error *error);
 int mlx5_flow_validate_item_vxlan(const struct rte_flow_item *item,
 				  uint64_t item_flags,
@@ -514,5 +584,12 @@ int mlx5_flow_validate_item_icmp6(const struct rte_flow_item *item,
 				   uint64_t item_flags,
 				   uint8_t target_protocol,
 				   struct rte_flow_error *error);
-
+int mlx5_flow_validate_item_nvgre(const struct rte_flow_item *item,
+				  uint64_t item_flags,
+				  uint8_t target_protocol,
+				  struct rte_flow_error *error);
+int mlx5_flow_validate_item_geneve(const struct rte_flow_item *item,
+				   uint64_t item_flags,
+				   struct rte_eth_dev *dev,
+				   struct rte_flow_error *error);
 #endif /* RTE_PMD_MLX5_FLOW_H_ */

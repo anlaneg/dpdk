@@ -225,10 +225,7 @@ mlx5_get_ifname(const struct rte_eth_dev *dev, char (*ifname)[IF_NAMESIZE])
 
 	assert(priv);
 	assert(priv->sh);
-	ifindex = priv->nl_socket_rdma >= 0 ?
-		  mlx5_nl_ifindex(priv->nl_socket_rdma,
-				  priv->sh->ibdev_name,
-				  priv->ibv_port) : 0;
+	ifindex = mlx5_ifindex(dev);
 	if (!ifindex) {
 		if (!priv->representor)
 			return mlx5_get_master_ifname(priv->sh->ibdev_path,
@@ -242,51 +239,6 @@ mlx5_get_ifname(const struct rte_eth_dev *dev, char (*ifname)[IF_NAMESIZE])
 	return -rte_errno;
 }
 
-/**
- * Get interface name for the specified device, uses the extra base
- * device resources to perform Netlink requests.
- *
- * This is a port representor-aware version of mlx5_get_master_ifname().
- *
- * @param[in] base
- *   Pointer to Ethernet device to use Netlink socket from
- *   to perfrom requests.
- * @param[in] dev
- *   Pointer to Ethernet device.
- * @param[out] ifname
- *   Interface name output buffer.
- *
- * @return
- *   0 on success, a negative errno value otherwise and rte_errno is set.
- */
-int
-mlx5_get_ifname_base(const struct rte_eth_dev *base,
-		     const struct rte_eth_dev *dev,
-		     char (*ifname)[IF_NAMESIZE])
-{
-	struct mlx5_priv *priv = dev->data->dev_private;
-	struct mlx5_priv *priv_base = base->data->dev_private;
-	unsigned int ifindex;
-
-	assert(priv);
-	assert(priv->sh);
-	assert(priv_base);
-	ifindex = priv_base->nl_socket_rdma >= 0 ?
-		  mlx5_nl_ifindex(priv_base->nl_socket_rdma,
-				  priv->sh->ibdev_name,
-				  priv->ibv_port) : 0;
-	if (!ifindex) {
-		if (!priv->representor)
-			return mlx5_get_master_ifname(priv->sh->ibdev_path,
-						      ifname);
-		rte_errno = ENXIO;
-		return -rte_errno;
-	}
-	if (if_indextoname(ifindex, &(*ifname)[0]))
-		return 0;
-	rte_errno = errno;
-	return -rte_errno;
-}
 /**
  * Get the interface index from device name.
  *
@@ -299,14 +251,14 @@ mlx5_get_ifname_base(const struct rte_eth_dev *base,
 unsigned int
 mlx5_ifindex(const struct rte_eth_dev *dev)
 {
-	char ifname[IF_NAMESIZE];
+	struct mlx5_priv *priv = dev->data->dev_private;
 	unsigned int ifindex;
 
-	if (mlx5_get_ifname(dev, &ifname))
-		return 0;
-	ifindex = if_nametoindex(ifname);
+	assert(priv);
+	assert(priv->if_index);
+	ifindex = priv->if_index;
 	if (!ifindex)
-		rte_errno = errno;
+		rte_errno = ENXIO;
 	return ifindex;
 }
 
@@ -334,51 +286,6 @@ mlx5_ifreq(const struct rte_eth_dev *dev, int req, struct ifreq *ifr)
 		return -rte_errno;
 	}
 	ret = mlx5_get_ifname(dev, &ifr->ifr_name);
-	if (ret)
-		goto error;
-	ret = ioctl(sock, req, ifr);
-	if (ret == -1) {
-		rte_errno = errno;
-		goto error;
-	}
-	close(sock);
-	return 0;
-error:
-	close(sock);
-	return -rte_errno;
-}
-
-/**
- * Perform ifreq ioctl() on specified Ethernet device,
- * ifindex, name and other attributes are requested
- * on the base device to avoid specified device Netlink
- * socket sharing (this is not thread-safe).
- *
- * @param[in] base
- *   Pointer to Ethernet device to get dev attributes.
- * @param[in] dev
- *   Pointer to Ethernet device to perform ioctl.
- * @param req
- *   Request number to pass to ioctl().
- * @param[out] ifr
- *   Interface request structure output buffer.
- *
- * @return
- *   0 on success, a negative errno value otherwise and rte_errno is set.
- */
-int
-mlx5_ifreq_base(const struct rte_eth_dev *base,
-		const struct rte_eth_dev *dev,
-		int req, struct ifreq *ifr)
-{
-	int sock = socket(PF_INET, SOCK_DGRAM, IPPROTO_IP);
-	int ret = 0;
-
-	if (sock == -1) {
-		rte_errno = errno;
-		return -rte_errno;
-	}
-	ret = mlx5_get_ifname_base(base, dev, &ifr->ifr_name);
 	if (ret)
 		goto error;
 	ret = ioctl(sock, req, ifr);
@@ -593,6 +500,42 @@ mlx5_set_default_params(struct rte_eth_dev *dev, struct rte_eth_dev_info *info)
 }
 
 /**
+ * Sets tx mbuf limiting parameters.
+ *
+ * @param dev
+ *   Pointer to Ethernet device.
+ * @param[out] info
+ *   Info structure output buffer.
+ */
+static void
+mlx5_set_txlimit_params(struct rte_eth_dev *dev, struct rte_eth_dev_info *info)
+{
+	struct mlx5_priv *priv = dev->data->dev_private;
+	struct mlx5_dev_config *config = &priv->config;
+	unsigned int inlen;
+	uint16_t nb_max;
+
+	inlen = (config->txq_inline_max == MLX5_ARG_UNSET) ?
+		MLX5_SEND_DEF_INLINE_LEN :
+		(unsigned int)config->txq_inline_max;
+	assert(config->txq_inline_min >= 0);
+	inlen = RTE_MAX(inlen, (unsigned int)config->txq_inline_min);
+	inlen = RTE_MIN(inlen, MLX5_WQE_SIZE_MAX +
+			       MLX5_ESEG_MIN_INLINE_SIZE -
+			       MLX5_WQE_CSEG_SIZE -
+			       MLX5_WQE_ESEG_SIZE -
+			       MLX5_WQE_DSEG_SIZE * 2);
+	nb_max = (MLX5_WQE_SIZE_MAX +
+		  MLX5_ESEG_MIN_INLINE_SIZE -
+		  MLX5_WQE_CSEG_SIZE -
+		  MLX5_WQE_ESEG_SIZE -
+		  MLX5_WQE_DSEG_SIZE -
+		  inlen) / MLX5_WSEG_SIZE;
+	info->tx_desc_lim.nb_seg_max = nb_max;
+	info->tx_desc_lim.nb_mtu_seg_max = nb_max;
+}
+
+/**
  * DPDK callback to get information about the device.
  *
  * @param dev
@@ -600,13 +543,12 @@ mlx5_set_default_params(struct rte_eth_dev *dev, struct rte_eth_dev_info *info)
  * @param[out] info
  *   Info structure output buffer.
  */
-void
+int
 mlx5_dev_infos_get(struct rte_eth_dev *dev, struct rte_eth_dev_info *info)
 {
 	struct mlx5_priv *priv = dev->data->dev_private;
 	struct mlx5_dev_config *config = &priv->config;
 	unsigned int max;
-	char ifname[IF_NAMESIZE];
 
 	/* FIXME: we should ask the device for these values. */
 	info->min_rx_bufsize = 32;
@@ -627,28 +569,46 @@ mlx5_dev_infos_get(struct rte_eth_dev *dev, struct rte_eth_dev_info *info)
 	info->rx_offload_capa = (mlx5_get_rx_port_offloads() |
 				 info->rx_queue_offload_capa);
 	info->tx_offload_capa = mlx5_get_tx_port_offloads(dev);
-	if (mlx5_get_ifname(dev, &ifname) == 0)
-		info->if_index = if_nametoindex(ifname);
+	info->if_index = mlx5_ifindex(dev);
 	info->reta_size = priv->reta_idx_n ?
 		priv->reta_idx_n : config->ind_table_max_size;
 	info->hash_key_size = MLX5_RSS_HASH_KEY_LEN;
 	info->speed_capa = priv->link_speed_capa;
 	info->flow_type_rss_offloads = ~MLX5_RSS_HF_MASK;
 	mlx5_set_default_params(dev, info);
+	mlx5_set_txlimit_params(dev, info);
 	info->switch_info.name = dev->data->name;
 	info->switch_info.domain_id = priv->domain_id;
 	info->switch_info.port_id = priv->representor_id;
 	if (priv->representor) {
-		unsigned int i = mlx5_dev_to_port_id(dev->device, NULL, 0);
-		uint16_t port_id[i];
+		uint16_t port_id;
 
-		i = RTE_MIN(mlx5_dev_to_port_id(dev->device, port_id, i), i);
-		while (i--) {
+		if (priv->pf_bond >= 0) {
+			/*
+			 * Switch port ID is opaque value with driver defined
+			 * format. Push the PF index in bonding configurations
+			 * in upper four bits of port ID. If we get too many
+			 * representors (more than 4K) or PFs (more than 15)
+			 * this approach must be reconsidered.
+			 */
+			if ((info->switch_info.port_id >>
+				MLX5_PORT_ID_BONDING_PF_SHIFT) ||
+			    priv->pf_bond > MLX5_PORT_ID_BONDING_PF_MASK) {
+				DRV_LOG(ERR, "can't update switch port ID"
+					     " for bonding device");
+				assert(false);
+				return -ENODEV;
+			}
+			info->switch_info.port_id |=
+				priv->pf_bond << MLX5_PORT_ID_BONDING_PF_SHIFT;
+		}
+		MLX5_ETH_FOREACH_DEV(port_id, priv->pci_dev) {
 			struct mlx5_priv *opriv =
-				rte_eth_devices[port_id[i]].data->dev_private;
+				rte_eth_devices[port_id].data->dev_private;
 
 			if (!opriv ||
 			    opriv->representor ||
+			    opriv->sh != priv->sh ||
 			    opriv->domain_id != priv->domain_id)
 				continue;
 			/*
@@ -659,6 +619,7 @@ mlx5_dev_infos_get(struct rte_eth_dev *dev, struct rte_eth_dev_info *info)
 			break;
 		}
 	}
+	return 0;
 }
 
 /**
@@ -774,11 +735,13 @@ mlx5_find_master_dev(struct rte_eth_dev *dev)
 	priv = dev->data->dev_private;
 	domain_id = priv->domain_id;
 	assert(priv->representor);
-	RTE_ETH_FOREACH_DEV_OF(port_id, dev->device) {
-		priv = rte_eth_devices[port_id].data->dev_private;
-		if (priv &&
-		    priv->master &&
-		    priv->domain_id == domain_id)
+	MLX5_ETH_FOREACH_DEV(port_id, priv->pci_dev) {
+		struct mlx5_priv *opriv =
+			rte_eth_devices[port_id].data->dev_private;
+		if (opriv &&
+		    opriv->master &&
+		    opriv->domain_id == domain_id &&
+		    opriv->sh == priv->sh)
 			return &rte_eth_devices[port_id];
 	}
 	return NULL;
@@ -841,15 +804,7 @@ mlx5_link_update_unlocked_gset(struct rte_eth_dev *dev,
 				ifr = (struct ifreq) {
 					.ifr_data = (void *)&edata,
 				};
-				/*
-				 * Use special version of mlx5_ifreq()
-				 * to get master device name with local
-				 * device Netlink socket. Using master
-				 * device Netlink socket is not thread
-				 * safe.
-				 */
-				ret = mlx5_ifreq_base(dev, master,
-						      SIOCETHTOOL, &ifr);
+				ret = mlx5_ifreq(master, SIOCETHTOOL, &ifr);
 			}
 		}
 		if (ret) {
@@ -946,12 +901,7 @@ mlx5_link_update_unlocked_gs(struct rte_eth_dev *dev,
 				ifr = (struct ifreq) {
 					.ifr_data = (void *)&gcmd,
 				};
-				/*
-				 * Avoid using master Netlink socket.
-				 * This is not thread-safe.
-				 */
-				ret = mlx5_ifreq_base(dev, master,
-						      SIOCETHTOOL, &ifr);
+				ret = mlx5_ifreq(master, SIOCETHTOOL, &ifr);
 			}
 		}
 		if (ret) {
@@ -972,7 +922,7 @@ mlx5_link_update_unlocked_gs(struct rte_eth_dev *dev,
 
 	*ecmd = gcmd;
 	ifr.ifr_data = (void *)ecmd;
-	ret = mlx5_ifreq_base(dev, master ? master : dev, SIOCETHTOOL, &ifr);
+	ret = mlx5_ifreq(master ? master : dev, SIOCETHTOOL, &ifr);
 	if (ret) {
 		DRV_LOG(DEBUG,
 			"port %u ioctl(SIOCETHTOOL,"
@@ -980,7 +930,8 @@ mlx5_link_update_unlocked_gs(struct rte_eth_dev *dev,
 			dev->data->port_id, strerror(rte_errno));
 		return ret;
 	}
-	dev_link.link_speed = ecmd->speed;
+	dev_link.link_speed = (ecmd->speed == UINT32_MAX) ? ETH_SPEED_NUM_NONE :
+							    ecmd->speed;
 	sc = ecmd->link_mode_masks[0] |
 		((uint64_t)ecmd->link_mode_masks[1] << 32);
 	priv->link_speed_capa = 0;
@@ -1049,6 +1000,7 @@ mlx5_link_update(struct rte_eth_dev *dev, int wait_to_complete)
 	int ret;
 	struct rte_eth_link dev_link;
 	time_t start_time = time(NULL);
+	int retry = MLX5_GET_LINK_STATUS_RETRY_COUNT;
 
 	do {
 		ret = mlx5_link_update_unlocked_gs(dev, &dev_link);
@@ -1057,7 +1009,7 @@ mlx5_link_update(struct rte_eth_dev *dev, int wait_to_complete)
 		if (ret == 0)
 			break;
 		/* Handle wait to complete situation. */
-		if (wait_to_complete && ret == -EAGAIN) {
+		if ((wait_to_complete || retry) && ret == -EAGAIN) {
 			if (abs((int)difftime(time(NULL), start_time)) <
 			    MLX5_LINK_STATUS_TIMEOUT) {
 				usleep(0);
@@ -1069,7 +1021,7 @@ mlx5_link_update(struct rte_eth_dev *dev, int wait_to_complete)
 		} else if (ret < 0) {
 			return ret;
 		}
-	} while (wait_to_complete);
+	} while (wait_to_complete || retry-- > 0);
 	ret = !!memcmp(&dev->data->dev_link, &dev_link,
 		       sizeof(struct rte_eth_link));
 	dev->data->dev_link = dev_link;
@@ -1200,10 +1152,10 @@ mlx5_dev_set_flow_ctrl(struct rte_eth_dev *dev, struct rte_eth_fc_conf *fc_conf)
 }
 
 /**
- * Get PCI information from struct ibv_device.
+ * Get PCI information by sysfs device path.
  *
- * @param device
- *   Pointer to Ethernet device structure.
+ * @param dev_path
+ *   Pointer to device sysfs folder name.
  * @param[out] pci_addr
  *   PCI bus address output buffer.
  *
@@ -1211,12 +1163,12 @@ mlx5_dev_set_flow_ctrl(struct rte_eth_dev *dev, struct rte_eth_fc_conf *fc_conf)
  *   0 on success, a negative errno value otherwise and rte_errno is set.
  */
 int
-mlx5_ibv_device_to_pci_addr(const struct ibv_device *device,
-			    struct rte_pci_addr *pci_addr)
+mlx5_dev_to_pci_addr(const char *dev_path,
+		     struct rte_pci_addr *pci_addr)
 {
 	FILE *file;
 	char line[32];
-	MKSTR(path, "%s/device/uevent", device->ibdev_path);
+	MKSTR(path, "%s/device/uevent", dev_path);
 
 	file = fopen(path, "rb");
 	if (file == NULL) {
@@ -1434,6 +1386,38 @@ mlx5_intr_callback_unregister(const struct rte_intr_handle *handle,
 }
 
 /**
+ * Handle DEVX interrupts from the NIC.
+ * This function is probably called from the DPDK host thread.
+ *
+ * @param cb_arg
+ *   Callback argument.
+ */
+void
+mlx5_dev_interrupt_handler_devx(void *cb_arg)
+{
+#ifndef HAVE_IBV_DEVX_ASYNC
+	(void)cb_arg;
+	return;
+#else
+	struct mlx5_ibv_shared *sh = cb_arg;
+	union {
+		struct mlx5dv_devx_async_cmd_hdr cmd_resp;
+		uint8_t buf[MLX5_ST_SZ_BYTES(query_flow_counter_out) +
+			    MLX5_ST_SZ_BYTES(traffic_counter) +
+			    sizeof(struct mlx5dv_devx_async_cmd_hdr)];
+	} out;
+	uint8_t *buf = out.buf + sizeof(out.cmd_resp);
+
+	while (!mlx5_glue->devx_get_async_cmd_comp(sh->devx_comp,
+						   &out.cmd_resp,
+						   sizeof(out.buf)))
+		mlx5_flow_async_pool_query_handle
+			(sh, (uint64_t)out.cmd_resp.wr_id,
+			 mlx5_devx_get_out_command_status(buf));
+#endif /* HAVE_IBV_DEVX_ASYNC */
+}
+
+/**
  * Uninstall shared asynchronous device events handler.
  * This function is implemented to support event sharing
  * between multiple ports of single IB device.
@@ -1470,6 +1454,48 @@ exit:
 }
 
 /**
+ * Uninstall devx shared asynchronous device events handler.
+ * This function is implemeted to support event sharing
+ * between multiple ports of single IB device.
+ *
+ * @param dev
+ *   Pointer to Ethernet device.
+ */
+static void
+mlx5_dev_shared_handler_devx_uninstall(struct rte_eth_dev *dev)
+{
+	struct mlx5_priv *priv = dev->data->dev_private;
+	struct mlx5_ibv_shared *sh = priv->sh;
+
+	if (rte_eal_process_type() != RTE_PROC_PRIMARY)
+		return;
+	pthread_mutex_lock(&sh->intr_mutex);
+	assert(priv->ibv_port);
+	assert(priv->ibv_port <= sh->max_port);
+	assert(dev->data->port_id < RTE_MAX_ETHPORTS);
+	if (sh->port[priv->ibv_port - 1].devx_ih_port_id >= RTE_MAX_ETHPORTS)
+		goto exit;
+	assert(sh->port[priv->ibv_port - 1].devx_ih_port_id ==
+					(uint32_t)dev->data->port_id);
+	sh->port[priv->ibv_port - 1].devx_ih_port_id = RTE_MAX_ETHPORTS;
+	if (!sh->devx_intr_cnt || --sh->devx_intr_cnt)
+		goto exit;
+	if (sh->intr_handle_devx.fd) {
+		rte_intr_callback_unregister(&sh->intr_handle_devx,
+					     mlx5_dev_interrupt_handler_devx,
+					     sh);
+		sh->intr_handle_devx.fd = 0;
+		sh->intr_handle_devx.type = RTE_INTR_HANDLE_UNKNOWN;
+	}
+	if (sh->devx_comp) {
+		mlx5_glue->devx_destroy_cmd_comp(sh->devx_comp);
+		sh->devx_comp = NULL;
+	}
+exit:
+	pthread_mutex_unlock(&sh->intr_mutex);
+}
+
+/**
  * Install shared asynchronous device events handler.
  * This function is implemented to support event sharing
  * between multiple ports of single IB device.
@@ -1496,8 +1522,9 @@ mlx5_dev_shared_handler_install(struct rte_eth_dev *dev)
 		assert(sh->intr_cnt);
 		goto exit;
 	}
-	sh->port[priv->ibv_port - 1].ih_port_id = (uint32_t)dev->data->port_id;
 	if (sh->intr_cnt) {
+		sh->port[priv->ibv_port - 1].ih_port_id =
+						(uint32_t)dev->data->port_id;
 		sh->intr_cnt++;
 		goto exit;
 	}
@@ -1506,19 +1533,81 @@ mlx5_dev_shared_handler_install(struct rte_eth_dev *dev)
 	flags = fcntl(sh->ctx->async_fd, F_GETFL);
 	ret = fcntl(sh->ctx->async_fd, F_SETFL, flags | O_NONBLOCK);
 	if (ret) {
-		DRV_LOG(INFO, "failed to change file descriptor"
-			      " async event queue");
+		DRV_LOG(INFO, "failed to change file descriptor async event"
+			" queue");
 		/* Indicate there will be no interrupts. */
 		dev->data->dev_conf.intr_conf.lsc = 0;
 		dev->data->dev_conf.intr_conf.rmv = 0;
-		sh->port[priv->ibv_port - 1].ih_port_id = RTE_MAX_ETHPORTS;
+	} else {
+		sh->intr_handle.fd = sh->ctx->async_fd;
+		sh->intr_handle.type = RTE_INTR_HANDLE_EXT;
+		rte_intr_callback_register(&sh->intr_handle,
+					   mlx5_dev_interrupt_handler, sh);
+		sh->intr_cnt++;
+		sh->port[priv->ibv_port - 1].ih_port_id =
+						(uint32_t)dev->data->port_id;
+	}
+exit:
+	pthread_mutex_unlock(&sh->intr_mutex);
+}
+
+/**
+ * Install devx shared asyncronous device events handler.
+ * This function is implemeted to support event sharing
+ * between multiple ports of single IB device.
+ *
+ * @param dev
+ *   Pointer to Ethernet device.
+ */
+static void
+mlx5_dev_shared_handler_devx_install(struct rte_eth_dev *dev)
+{
+	struct mlx5_priv *priv = dev->data->dev_private;
+	struct mlx5_ibv_shared *sh = priv->sh;
+
+	if (rte_eal_process_type() != RTE_PROC_PRIMARY)
+		return;
+	pthread_mutex_lock(&sh->intr_mutex);
+	assert(priv->ibv_port);
+	assert(priv->ibv_port <= sh->max_port);
+	assert(dev->data->port_id < RTE_MAX_ETHPORTS);
+	if (sh->port[priv->ibv_port - 1].devx_ih_port_id < RTE_MAX_ETHPORTS) {
+		/* The handler is already installed for this port. */
+		assert(sh->devx_intr_cnt);
 		goto exit;
 	}
-	sh->intr_handle.fd = sh->ctx->async_fd;
-	sh->intr_handle.type = RTE_INTR_HANDLE_EXT;
-	rte_intr_callback_register(&sh->intr_handle,
-				   mlx5_dev_interrupt_handler, sh);
-	sh->intr_cnt++;
+	if (sh->devx_intr_cnt) {
+		sh->devx_intr_cnt++;
+		sh->port[priv->ibv_port - 1].devx_ih_port_id =
+					(uint32_t)dev->data->port_id;
+		goto exit;
+	}
+	if (priv->config.devx) {
+#ifndef HAVE_IBV_DEVX_ASYNC
+		goto exit;
+#else
+		sh->devx_comp = mlx5_glue->devx_create_cmd_comp(sh->ctx);
+		if (sh->devx_comp) {
+			int flags = fcntl(sh->devx_comp->fd, F_GETFL);
+			int ret = fcntl(sh->devx_comp->fd, F_SETFL,
+				    flags | O_NONBLOCK);
+
+			if (ret) {
+				DRV_LOG(INFO, "failed to change file descriptor"
+					" devx async event queue");
+			} else {
+				sh->intr_handle_devx.fd = sh->devx_comp->fd;
+				sh->intr_handle_devx.type = RTE_INTR_HANDLE_EXT;
+				rte_intr_callback_register
+					(&sh->intr_handle_devx,
+					 mlx5_dev_interrupt_handler_devx, sh);
+				sh->devx_intr_cnt++;
+				sh->port[priv->ibv_port - 1].devx_ih_port_id =
+						(uint32_t)dev->data->port_id;
+			}
+		}
+#endif /* HAVE_IBV_DEVX_ASYNC */
+	}
 exit:
 	pthread_mutex_unlock(&sh->intr_mutex);
 }
@@ -1545,6 +1634,30 @@ void
 mlx5_dev_interrupt_handler_install(struct rte_eth_dev *dev)
 {
 	mlx5_dev_shared_handler_install(dev);
+}
+
+/**
+ * Devx uninstall interrupt handler.
+ *
+ * @param dev
+ *   Pointer to Ethernet device.
+ */
+void
+mlx5_dev_interrupt_handler_devx_uninstall(struct rte_eth_dev *dev)
+{
+	mlx5_dev_shared_handler_devx_uninstall(dev);
+}
+
+/**
+ * Devx install interrupt handler.
+ *
+ * @param dev
+ *   Pointer to Ethernet device.
+ */
+void
+mlx5_dev_interrupt_handler_devx_install(struct rte_eth_dev *dev)
+{
+	mlx5_dev_shared_handler_devx_install(dev);
 }
 
 /**
@@ -1575,64 +1688,6 @@ int
 mlx5_set_link_up(struct rte_eth_dev *dev)
 {
 	return mlx5_set_flags(dev, ~IFF_UP, IFF_UP);
-}
-
-/**
- * Configure the TX function to use.
- *
- * @param dev
- *   Pointer to private data structure.
- *
- * @return
- *   Pointer to selected Tx burst function.
- */
-eth_tx_burst_t
-mlx5_select_tx_function(struct rte_eth_dev *dev)
-{
-	struct mlx5_priv *priv = dev->data->dev_private;
-	eth_tx_burst_t tx_pkt_burst = mlx5_tx_burst;
-	struct mlx5_dev_config *config = &priv->config;
-	uint64_t tx_offloads = dev->data->dev_conf.txmode.offloads;
-	int tso = !!(tx_offloads & (DEV_TX_OFFLOAD_TCP_TSO |
-				    DEV_TX_OFFLOAD_VXLAN_TNL_TSO |
-				    DEV_TX_OFFLOAD_GRE_TNL_TSO |
-				    DEV_TX_OFFLOAD_IP_TNL_TSO |
-				    DEV_TX_OFFLOAD_UDP_TNL_TSO));
-	int swp = !!(tx_offloads & (DEV_TX_OFFLOAD_IP_TNL_TSO |
-				    DEV_TX_OFFLOAD_UDP_TNL_TSO |
-				    DEV_TX_OFFLOAD_OUTER_IPV4_CKSUM));
-	int vlan_insert = !!(tx_offloads & DEV_TX_OFFLOAD_VLAN_INSERT);
-
-	assert(priv != NULL);
-	/* Select appropriate TX function. */
-	if (vlan_insert || tso || swp)
-		return tx_pkt_burst;
-	if (config->mps == MLX5_MPW_ENHANCED) {
-		if (mlx5_check_vec_tx_support(dev) > 0) {
-			if (mlx5_check_raw_vec_tx_support(dev) > 0)
-				tx_pkt_burst = mlx5_tx_burst_raw_vec;
-			else
-				tx_pkt_burst = mlx5_tx_burst_vec;
-			DRV_LOG(DEBUG,
-				"port %u selected enhanced MPW Tx vectorized"
-				" function",
-				dev->data->port_id);
-		} else {
-			tx_pkt_burst = mlx5_tx_burst_empw;
-			DRV_LOG(DEBUG,
-				"port %u selected enhanced MPW Tx function",
-				dev->data->port_id);
-		}
-	} else if (config->mps && (config->txq_inline > 0)) {
-		tx_pkt_burst = mlx5_tx_burst_mpw_inline;
-		DRV_LOG(DEBUG, "port %u selected MPW inline Tx function",
-			dev->data->port_id);
-	} else if (config->mps) {
-		tx_pkt_burst = mlx5_tx_burst_mpw;
-		DRV_LOG(DEBUG, "port %u selected MPW Tx function",
-			dev->data->port_id);
-	}
-	return tx_pkt_burst;
 }
 
 /**
@@ -1681,37 +1736,7 @@ mlx5_is_removed(struct rte_eth_dev *dev)
 }
 
 /**
- * Get port ID list of mlx5 instances sharing a common device.
- *
- * @param[in] dev
- *   Device to look for.
- * @param[out] port_list
- *   Result buffer for collected port IDs.
- * @param port_list_n
- *   Maximum number of entries in result buffer. If 0, @p port_list can be
- *   NULL.
- *
- * @return
- *   Number of matching instances regardless of the @p port_list_n
- *   parameter, 0 if none were found.
- */
-unsigned int
-mlx5_dev_to_port_id(const struct rte_device *dev, uint16_t *port_list,
-		    unsigned int port_list_n)
-{
-	uint16_t id;
-	unsigned int n = 0;
-
-	RTE_ETH_FOREACH_DEV_OF(id, dev) {
-		if (n < port_list_n)
-			port_list[n] = id;
-		n++;
-	}
-	return n;
-}
-
-/**
- * Get the E-Switch domain id this port belongs to.
+ * Get the E-Switch parameters by port id.
  *
  * @param[in] port
  *   Device port id.
@@ -1721,34 +1746,57 @@ mlx5_dev_to_port_id(const struct rte_device *dev, uint16_t *port_list,
  *   The port id of the port in the E-Switch.
  *
  * @return
- *   0 on success, a negative errno value otherwise and rte_errno is set.
+ *   pointer to device private data structure containing data needed
+ *   on success, NULL otherwise and rte_errno is set.
  */
-int
-mlx5_port_to_eswitch_info(uint16_t port,
-			  uint16_t *es_domain_id, uint16_t *es_port_id)
+struct mlx5_priv *
+mlx5_port_to_eswitch_info(uint16_t port)
 {
 	struct rte_eth_dev *dev;
 	struct mlx5_priv *priv;
 
 	if (port >= RTE_MAX_ETHPORTS) {
 		rte_errno = EINVAL;
-		return -rte_errno;
+		return NULL;
 	}
 	if (!rte_eth_dev_is_valid_port(port)) {
 		rte_errno = ENODEV;
-		return -rte_errno;
+		return NULL;
 	}
 	dev = &rte_eth_devices[port];
 	priv = dev->data->dev_private;
 	if (!(priv->representor || priv->master)) {
 		rte_errno = EINVAL;
-		return -rte_errno;
+		return NULL;
 	}
-	if (es_domain_id)
-		*es_domain_id = priv->domain_id;
-	if (es_port_id)
-		*es_port_id = priv->vport_id;
-	return 0;
+	return priv;
+}
+
+/**
+ * Get the E-Switch parameters by device instance.
+ *
+ * @param[in] port
+ *   Device port id.
+ * @param[out] es_domain_id
+ *   E-Switch domain id.
+ * @param[out] es_port_id
+ *   The port id of the port in the E-Switch.
+ *
+ * @return
+ *   pointer to device private data structure containing data needed
+ *   on success, NULL otherwise and rte_errno is set.
+ */
+struct mlx5_priv *
+mlx5_dev_to_eswitch_info(struct rte_eth_dev *dev)
+{
+	struct mlx5_priv *priv;
+
+	priv = dev->data->dev_private;
+	if (!(priv->representor || priv->master)) {
+		rte_errno = EINVAL;
+		return NULL;
+	}
+	return priv;
 }
 
 /**
@@ -1980,4 +2028,90 @@ mlx5_translate_port_name(const char *port_name_in,
 	}
 	port_info_out->name_type = MLX5_PHYS_PORT_NAME_TYPE_UNKNOWN;
 	return;
+}
+
+/**
+ * DPDK callback to retrieve plug-in module EEPROM information (type and size).
+ *
+ * @param dev
+ *   Pointer to Ethernet device structure.
+ * @param[out] modinfo
+ *   Storage for plug-in module EEPROM information.
+ *
+ * @return
+ *   0 on success, a negative errno value otherwise and rte_errno is set.
+ */
+int
+mlx5_get_module_info(struct rte_eth_dev *dev,
+		     struct rte_eth_dev_module_info *modinfo)
+{
+	struct ethtool_modinfo info = {
+		.cmd = ETHTOOL_GMODULEINFO,
+	};
+	struct ifreq ifr = (struct ifreq) {
+		.ifr_data = (void *)&info,
+	};
+	int ret = 0;
+
+	if (!dev || !modinfo) {
+		DRV_LOG(WARNING, "missing argument, cannot get module info");
+		rte_errno = EINVAL;
+		return -rte_errno;
+	}
+	ret = mlx5_ifreq(dev, SIOCETHTOOL, &ifr);
+	if (ret) {
+		DRV_LOG(WARNING, "port %u ioctl(SIOCETHTOOL) failed: %s",
+			dev->data->port_id, strerror(rte_errno));
+		return ret;
+	}
+	modinfo->type = info.type;
+	modinfo->eeprom_len = info.eeprom_len;
+	return ret;
+}
+
+/**
+ * DPDK callback to retrieve plug-in module EEPROM data.
+ *
+ * @param dev
+ *   Pointer to Ethernet device structure.
+ * @param[out] info
+ *   Storage for plug-in module EEPROM data.
+ *
+ * @return
+ *   0 on success, a negative errno value otherwise and rte_errno is set.
+ */
+int mlx5_get_module_eeprom(struct rte_eth_dev *dev,
+			   struct rte_dev_eeprom_info *info)
+{
+	struct ethtool_eeprom *eeprom;
+	struct ifreq ifr;
+	int ret = 0;
+
+	if (!dev || !info) {
+		DRV_LOG(WARNING, "missing argument, cannot get module eeprom");
+		rte_errno = EINVAL;
+		return -rte_errno;
+	}
+	eeprom = rte_calloc(__func__, 1,
+			    (sizeof(struct ethtool_eeprom) + info->length), 0);
+	if (!eeprom) {
+		DRV_LOG(WARNING, "port %u cannot allocate memory for "
+			"eeprom data", dev->data->port_id);
+		rte_errno = ENOMEM;
+		return -rte_errno;
+	}
+	eeprom->cmd = ETHTOOL_GMODULEEEPROM;
+	eeprom->offset = info->offset;
+	eeprom->len = info->length;
+	ifr = (struct ifreq) {
+		.ifr_data = (void *)eeprom,
+	};
+	ret = mlx5_ifreq(dev, SIOCETHTOOL, &ifr);
+	if (ret)
+		DRV_LOG(WARNING, "port %u ioctl(SIOCETHTOOL) failed: %s",
+			dev->data->port_id, strerror(rte_errno));
+	else
+		rte_memcpy(info->data, eeprom->data, info->length);
+	rte_free(eeprom);
+	return ret;
 }

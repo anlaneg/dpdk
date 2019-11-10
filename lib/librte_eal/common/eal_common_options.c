@@ -20,6 +20,7 @@
 #include <rte_eal.h>
 #include <rte_log.h>
 #include <rte_lcore.h>
+#include <rte_memory.h>
 #include <rte_tailq.h>
 #include <rte_version.h>
 #include <rte_devargs.h>
@@ -1128,6 +1129,36 @@ eal_parse_iova_mode(const char *name)
 	return 0;
 }
 
+static int
+eal_parse_base_virtaddr(const char *arg)
+{
+	char *end;
+	uint64_t addr;
+
+	errno = 0;
+	addr = strtoull(arg, &end, 16);
+
+	/* check for errors */
+	if ((errno != 0) || (arg[0] == '\0') || end == NULL || (*end != '\0'))
+		return -1;
+
+	/* make sure we don't exceed 32-bit boundary on 32-bit target */
+#ifndef RTE_ARCH_64
+	if (addr >= UINTPTR_MAX)
+		return -1;
+#endif
+
+	/* align the addr on 16M boundary, 16MB is the minimum huge page
+	 * size on IBM Power architecture. If the addr is aligned to 16MB,
+	 * it can align to 2MB for x86. So this alignment can also be used
+	 * on x86 and other architectures.
+	 */
+	internal_config.base_virtaddr =
+		RTE_PTR_ALIGN_CEIL((uintptr_t)addr, (size_t)RTE_PGSIZE_16M);
+
+	return 0;
+}
+
 /* caller is responsible for freeing the returned string */
 static char *
 available_cores(void)
@@ -1451,6 +1482,13 @@ eal_parse_common_option(int opt, const char *optarg,
 			return -1;
 		}
 		break;
+	case OPT_BASE_VIRTADDR_NUM:
+		if (eal_parse_base_virtaddr(optarg) < 0) {
+			RTE_LOG(ERR, EAL, "invalid parameter for --"
+					OPT_BASE_VIRTADDR "\n");
+			return -1;
+		}
+		break;
 
 	/* don't know what to do, leave this to caller */
 	default:
@@ -1497,11 +1535,11 @@ compute_ctrl_threads_cpuset(struct internal_config *internal_cfg)
 	unsigned int lcore_id;
 
 	for (lcore_id = 0; lcore_id < RTE_MAX_LCORE; lcore_id++) {
-		if (eal_cpu_detected(lcore_id) &&
-				rte_lcore_has_role(lcore_id, ROLE_OFF)) {
-			CPU_SET(lcore_id, cpuset);
-		}
+		if (rte_lcore_has_role(lcore_id, ROLE_OFF))
+			continue;
+		RTE_CPU_OR(cpuset, cpuset, &lcore_config[lcore_id].cpuset);
 	}
+	RTE_CPU_NOT(cpuset, cpuset);
 
 	if (pthread_getaffinity_np(pthread_self(), sizeof(rte_cpuset_t),
 				&default_set))
@@ -1509,9 +1547,11 @@ compute_ctrl_threads_cpuset(struct internal_config *internal_cfg)
 
 	RTE_CPU_AND(cpuset, cpuset, &default_set);
 
-	/* if no detected CPU is off, use master core */
-	if (!CPU_COUNT(cpuset))
-		CPU_SET(rte_get_master_lcore(), cpuset);
+	/* if no remaining cpu, use master lcore cpu affinity */
+	if (!CPU_COUNT(cpuset)) {
+		memcpy(cpuset, &lcore_config[rte_get_master_lcore()].cpuset,
+			sizeof(*cpuset));
+	}
 }
 
 int
@@ -1647,6 +1687,11 @@ eal_check_common_options(struct internal_config *internal_cfg)
 				"with --"OPT_MATCH_ALLOCATIONS"\n");
 		return -1;
 	}
+	if (internal_cfg->legacy_mem && internal_cfg->memory == 0) {
+		RTE_LOG(NOTICE, EAL, "Static memory layout is selected, "
+			"amount of reserved memory can be adjusted with "
+			"-m or --"OPT_SOCKET_MEM"\n");
+	}
 
 	return 0;
 }
@@ -1699,6 +1744,7 @@ eal_common_usage(void)
 	       "  -h, --help          This help\n"
 	       "  --"OPT_IN_MEMORY"   Operate entirely in memory. This will\n"
 	       "                      disable secondary process support\n"
+	       "  --"OPT_BASE_VIRTADDR"     Base virtual address\n"
 	       "\nEAL options for DEBUG use only:\n"
 	       "  --"OPT_HUGE_UNLINK"       Unlink hugepage files after init\n"
 	       "  --"OPT_NO_HUGE"           Use malloc instead of hugetlbfs\n"

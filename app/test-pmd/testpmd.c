@@ -27,7 +27,6 @@
 #include <rte_log.h>
 #include <rte_debug.h>
 #include <rte_cycles.h>
-#include <rte_malloc_heap.h>
 #include <rte_memory.h>
 #include <rte_memcpy.h>
 #include <rte_launch.h>
@@ -347,6 +346,11 @@ uint8_t flow_isolate_all;
 uint8_t no_link_check = 0; /* check by default */
 
 /*
+ * Don't automatically start all ports in interactive mode.
+ */
+uint8_t no_device_start = 0;
+
+/*
  * Enable link status change notification
  */
 uint8_t lsc_interrupt = 1; /* enabled by default */
@@ -480,41 +484,6 @@ uint8_t bitrate_enabled;
 
 struct gro_status gro_ports[RTE_MAX_ETHPORTS];
 uint8_t gro_flush_cycles = GRO_DEFAULT_FLUSH_CYCLES;
-
-struct vxlan_encap_conf vxlan_encap_conf = {
-	.select_ipv4 = 1,
-	.select_vlan = 0,
-	.select_tos_ttl = 0,
-	.vni = "\x00\x00\x00",
-	.udp_src = 0,
-	.udp_dst = RTE_BE16(4789),
-	.ipv4_src = RTE_IPV4(127, 0, 0, 1),
-	.ipv4_dst = RTE_IPV4(255, 255, 255, 255),
-	.ipv6_src = "\x00\x00\x00\x00\x00\x00\x00\x00"
-		"\x00\x00\x00\x00\x00\x00\x00\x01",
-	.ipv6_dst = "\x00\x00\x00\x00\x00\x00\x00\x00"
-		"\x00\x00\x00\x00\x00\x00\x11\x11",
-	.vlan_tci = 0,
-	.ip_tos = 0,
-	.ip_ttl = 255,
-	.eth_src = "\x00\x00\x00\x00\x00\x00",
-	.eth_dst = "\xff\xff\xff\xff\xff\xff",
-};
-
-struct nvgre_encap_conf nvgre_encap_conf = {
-	.select_ipv4 = 1,
-	.select_vlan = 0,
-	.tni = "\x00\x00\x00",
-	.ipv4_src = RTE_IPV4(127, 0, 0, 1),
-	.ipv4_dst = RTE_IPV4(255, 255, 255, 255),
-	.ipv6_src = "\x00\x00\x00\x00\x00\x00\x00\x00"
-		"\x00\x00\x00\x00\x00\x00\x00\x01",
-	.ipv6_dst = "\x00\x00\x00\x00\x00\x00\x00\x00"
-		"\x00\x00\x00\x00\x00\x00\x11\x11",
-	.vlan_tci = 0,
-	.eth_src = "\x00\x00\x00\x00\x00\x00",
-	.eth_dst = "\xff\xff\xff\xff\xff\xff",
-};
 
 /* Forward function declarations */
 static void setup_attached_port(portid_t pi);
@@ -1024,17 +993,21 @@ queueid_t
 get_allowed_max_nb_rxq(portid_t *pid)
 {
 	queueid_t allowed_max_rxq = MAX_QUEUE_ID;
+	bool max_rxq_valid = false;
 	portid_t pi;
 	struct rte_eth_dev_info dev_info;
 
 	RTE_ETH_FOREACH_DEV(pi) {
-		rte_eth_dev_info_get(pi, &dev_info);
+		if (eth_dev_info_get_print_err(pi, &dev_info) != 0)
+			continue;
+
+		max_rxq_valid = true;
 		if (dev_info.max_rx_queues < allowed_max_rxq) {
 			allowed_max_rxq = dev_info.max_rx_queues;
 			*pid = pi;
 		}
 	}
-	return allowed_max_rxq;
+	return max_rxq_valid ? allowed_max_rxq : 0;
 }
 
 /*
@@ -1070,17 +1043,21 @@ queueid_t
 get_allowed_max_nb_txq(portid_t *pid)
 {
 	queueid_t allowed_max_txq = MAX_QUEUE_ID;
+	bool max_txq_valid = false;
 	portid_t pi;
 	struct rte_eth_dev_info dev_info;
 
 	RTE_ETH_FOREACH_DEV(pi) {
-		rte_eth_dev_info_get(pi, &dev_info);
+		if (eth_dev_info_get_print_err(pi, &dev_info) != 0)
+			continue;
+
+		max_txq_valid = true;
 		if (dev_info.max_tx_queues < allowed_max_txq) {
 			allowed_max_txq = dev_info.max_tx_queues;
 			*pid = pi;
 		}
 	}
-	return allowed_max_txq;
+	return max_txq_valid ? allowed_max_txq : 0;
 }
 
 /*
@@ -1121,6 +1098,7 @@ init_config(void)
 	uint16_t data_size;
 	bool warning = 0;
 	int k;
+	int ret;
 
 	memset(port_per_socket,0,RTE_MAX_NUMA_NODES);
 
@@ -1148,8 +1126,12 @@ init_config(void)
 		/* Apply default TxRx configuration for all ports */
 		port->dev_conf.txmode = tx_mode;
 		port->dev_conf.rxmode = rx_mode;
+
 		//取设备信息
-		rte_eth_dev_info_get(pid, &port->dev_info);
+		ret = eth_dev_info_get_print_err(pid, &port->dev_info);
+		if (ret != 0)
+			rte_exit(EXIT_FAILURE,
+				 "rte_eth_dev_info_get() failed\n");
 
 		if (!(port->dev_info.tx_offload_capa &
 		      DEV_TX_OFFLOAD_MBUF_FAST_FREE))
@@ -1312,10 +1294,14 @@ void
 reconfig(portid_t new_port_id, unsigned socket_id)
 {
 	struct rte_port *port;
+	int ret;
 
 	/* Reconfiguration of Ethernet ports. */
 	port = &ports[new_port_id];
-	rte_eth_dev_info_get(new_port_id, &port->dev_info);
+
+	ret = eth_dev_info_get_print_err(new_port_id, &port->dev_info);
+	if (ret != 0)
+		return;
 
 	/* set flag to initialize port/queue */
 	port->need_reconfig = 1;
@@ -2215,8 +2201,8 @@ start_port(portid_t pid)
 			printf("Port %d can not be set into started\n", pi);
 
 		//显示设备网卡
-		rte_eth_macaddr_get(pi, &mac_addr);
-		printf("Port %d: %02X:%02X:%02X:%02X:%02X:%02X\n", pi,
+		if (eth_macaddr_get_print_err(pi, &mac_addr) == 0)
+			printf("Port %d: %02X:%02X:%02X:%02X:%02X:%02X\n", pi,
 				mac_addr.addr_bytes[0], mac_addr.addr_bytes[1],
 				mac_addr.addr_bytes[2], mac_addr.addr_bytes[3],
 				mac_addr.addr_bytes[4], mac_addr.addr_bytes[5]);
@@ -2367,6 +2353,12 @@ reset_port(portid_t pid)
 	if (port_id_is_invalid(pid, ENABLED_WARN))
 		return;
 
+	if ((pid == (portid_t)RTE_PORT_ALL && !all_ports_stopped()) ||
+		(pid != (portid_t)RTE_PORT_ALL && !port_is_stopped(pid))) {
+		printf("Can not reset port(s), please stop port(s) first.\n");
+		return;
+	}
+
 	printf("Resetting ports...\n");
 
 	RTE_ETH_FOREACH_DEV(pi) {
@@ -2439,13 +2431,17 @@ static void
 setup_attached_port(portid_t pi)
 {
 	unsigned int socket_id;
+	int ret;
 
 	socket_id = (unsigned)rte_eth_dev_socket_id(pi);
 	/* if socket_id is invalid, set to the first available socket. */
 	if (check_socket_id(socket_id) < 0)
 		socket_id = socket_ids[0];
 	reconfig(pi, socket_id);
-	rte_eth_promiscuous_enable(pi);
+	ret = rte_eth_promiscuous_enable(pi);
+	if (ret != 0)
+		printf("Error during enabling promiscuous mode for port %u: %s - ignore\n",
+			pi, rte_strerror(-ret));
 
 	ports_ids[nb_ports++] = pi;
 	fwd_ports_ids[nb_fwd_ports++] = pi;
@@ -2501,6 +2497,51 @@ detach_port_device(portid_t port_id)
 	printf("Now total ports is %d\n", nb_ports);
 	printf("Done\n");
 	return;
+}
+
+void
+detach_device(char *identifier)
+{
+	struct rte_dev_iterator iterator;
+	struct rte_devargs da;
+	portid_t port_id;
+
+	printf("Removing a device...\n");
+
+	memset(&da, 0, sizeof(da));
+	if (rte_devargs_parsef(&da, "%s", identifier)) {
+		printf("cannot parse identifier\n");
+		if (da.args)
+			free(da.args);
+		return;
+	}
+
+	RTE_ETH_FOREACH_MATCHING_DEV(port_id, identifier, &iterator) {
+		if (ports[port_id].port_status != RTE_PORT_CLOSED) {
+			if (ports[port_id].port_status != RTE_PORT_STOPPED) {
+				printf("Port %u not stopped\n", port_id);
+				return;
+			}
+
+			/* sibling ports are forced to be closed */
+			if (ports[port_id].flow_list)
+				port_flow_flush(port_id);
+			ports[port_id].port_status = RTE_PORT_CLOSED;
+			printf("Port %u is now closed\n", port_id);
+		}
+	}
+
+	if (rte_eal_hotplug_remove(da.bus->name, da.name) != 0) {
+		TESTPMD_LOG(ERR, "Failed to detach device %s(%s)\n",
+			    da.name, da.bus->name);
+		return;
+	}
+
+	remove_invalid_ports();
+
+	printf("Device %s is detached\n", identifier);
+	printf("Now total ports is %d\n", nb_ports);
+	printf("Done\n");
 }
 
 void
@@ -2582,6 +2623,7 @@ check_all_ports_link_status(uint32_t port_mask)
 	portid_t portid;
 	uint8_t count, all_ports_up, print_flag = 0;
 	struct rte_eth_link link;
+	int ret;
 
 	printf("Checking link statuses...\n");
 	fflush(stdout);
@@ -2591,7 +2633,14 @@ check_all_ports_link_status(uint32_t port_mask)
 			if ((port_mask & (1 << portid)) == 0)
 				continue;
 			memset(&link, 0, sizeof(link));
-			rte_eth_link_get_nowait(portid, &link);
+			ret = rte_eth_link_get_nowait(portid, &link);
+			if (ret < 0) {
+				all_ports_up = 0;
+				if (print_flag == 1)
+					printf("Port %u link get failed: %s\n",
+						portid, rte_strerror(-ret));
+				continue;
+			}
 			/* print link status if flag set */
 			if (print_flag == 1) {
 				if (link.link_status)
@@ -2906,11 +2955,16 @@ init_port_config(void)
 {
 	portid_t pid;
 	struct rte_port *port;
+	int ret;
 
 	RTE_ETH_FOREACH_DEV(pid) {
 		port = &ports[pid];
 		port->dev_conf.fdir_conf = fdir_conf;
-		rte_eth_dev_info_get(pid, &port->dev_info);
+
+		ret = eth_dev_info_get_print_err(pid, &port->dev_info);
+		if (ret != 0)
+			return;
+
 		if (nb_rxq > 1) {
 			port->dev_conf.rx_adv_conf.rss_conf.rss_key = NULL;
 			port->dev_conf.rx_adv_conf.rss_conf.rss_hf =
@@ -2929,7 +2983,9 @@ init_port_config(void)
 
 		rxtx_port_config(port);
 
-		rte_eth_macaddr_get(pid, &port->eth_addr);
+		ret = eth_macaddr_get_print_err(pid, &port->eth_addr);
+		if (ret != 0)
+			return;
 
 		map_port_queue_stats_mapping_registers(pid, port);
 #if defined RTE_LIBRTE_IXGBE_PMD && defined RTE_LIBRTE_IXGBE_BYPASS
@@ -3085,7 +3141,10 @@ init_port_dcb_config(portid_t pid,
 	retval = rte_eth_dev_configure(pid, nb_rxq, nb_rxq, &port_conf);
 	if (retval < 0)
 		return retval;
-	rte_eth_dev_info_get(pid, &rte_port->dev_info);
+
+	retval = eth_dev_info_get_print_err(pid, &rte_port->dev_info);
+	if (retval != 0)
+		return retval;
 
 	/* If dev_info.vmdq_pool_base is greater than 0,
 	 * the queue id of vmdq pools is started after pf queues.
@@ -3129,7 +3188,10 @@ init_port_dcb_config(portid_t pid,
 	for (i = 0; i < RTE_DIM(vlan_tags); i++)
 		rx_vft_set(pid, vlan_tags[i], 1);
 
-	rte_eth_macaddr_get(pid, &rte_port->eth_addr);
+	retval = eth_macaddr_get_print_err(pid, &rte_port->eth_addr);
+	if (retval != 0)
+		return retval;
+
 	map_port_queue_stats_mapping_registers(pid, rte_port);
 
 	rte_port->dcb_flag = 1;
@@ -3192,7 +3254,8 @@ signal_handler(int signum)
 		rte_pdump_uninit();
 #endif
 #ifdef RTE_LIBRTE_LATENCY_STATS
-		rte_latencystats_uninit();
+		if (latencystats_enabled != 0)
+			rte_latencystats_uninit();
 #endif
 		force_quit();
 		/* Set flag to indicate the force termination. */
@@ -3216,19 +3279,24 @@ main(int argc, char** argv)
 	signal(SIGINT, signal_handler);
 	signal(SIGTERM, signal_handler);
 
-	diag = rte_eal_init(argc, argv);
-	if (diag < 0)
-		rte_panic("Cannot init EAL\n");
-
 	testpmd_logtype = rte_log_register("testpmd");
 	if (testpmd_logtype < 0)
-		rte_panic("Cannot register log type");
+		rte_exit(EXIT_FAILURE, "Cannot register log type");
 	//设置此模块的debug level
 	rte_log_set_level(testpmd_logtype, RTE_LOG_DEBUG);
 
+	diag = rte_eal_init(argc, argv);
+	if (diag < 0)
+		rte_exit(EXIT_FAILURE, "Cannot init EAL: %s\n",
+			 rte_strerror(rte_errno));
+
+	if (rte_eal_process_type() == RTE_PROC_SECONDARY)
+		rte_exit(EXIT_FAILURE,
+			 "Secondary process type not supported.\n");
+
 	ret = register_eth_event_callback();
 	if (ret != 0)
-		rte_panic("Cannot register for ethdev events");
+		rte_exit(EXIT_FAILURE, "Cannot register for ethdev events");
 
 #ifdef RTE_LIBRTE_PDUMP
 	/* initialize packet capture framework */
@@ -3250,8 +3318,8 @@ main(int argc, char** argv)
 
 	set_def_fwd_config();
 	if (nb_lcores == 0)
-		rte_panic("Empty set of forwarding logical cores - check the "
-			  "core mask supplied in the command parameters\n");
+		rte_exit(EXIT_FAILURE, "No cores defined for forwarding\n"
+			 "Check the core mask argument\n");
 
 	/* Bitrate/latency stats disabled by default */
 #ifdef RTE_LIBRTE_BITRATE
@@ -3327,13 +3395,17 @@ main(int argc, char** argv)
 	}
 
 	//启动所有port
-	if (start_port(RTE_PORT_ALL) != 0)
+	if (!no_device_start && start_port(RTE_PORT_ALL) != 0)
 		rte_exit(EXIT_FAILURE, "Start ports failed\n");
 
 	/* set all ports to promiscuous mode by default */
 	//所有接口开启混杂模式
-	RTE_ETH_FOREACH_DEV(port_id)
-		rte_eth_promiscuous_enable(port_id);
+	RTE_ETH_FOREACH_DEV(port_id) {
+		ret = rte_eth_promiscuous_enable(port_id);
+		if (ret != 0)
+			printf("Error during enabling promiscuous mode for port %u: %s - ignore\n",
+				port_id, rte_strerror(-ret));
+	}
 
 	/* Init metrics library */
 	rte_metrics_init(rte_socket_id());

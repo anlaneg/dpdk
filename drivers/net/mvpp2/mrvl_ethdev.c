@@ -144,6 +144,9 @@ static uint16_t mrvl_tx_pkt_burst(void *txq, struct rte_mbuf **tx_pkts,
 				  uint16_t nb_pkts);
 static uint16_t mrvl_tx_sg_pkt_burst(void *txq,	struct rte_mbuf **tx_pkts,
 				     uint16_t nb_pkts);
+static int rte_pmd_mrvl_remove(struct rte_vdev_device *vdev);
+static void mrvl_deinit_pp2(void);
+static void mrvl_deinit_hifs(void);
 
 
 #define MRVL_XSTATS_TBL_ENTRY(name) { \
@@ -898,6 +901,22 @@ mrvl_dev_close(struct rte_eth_dev *dev)
 		pp2_cls_plcr_deinit(priv->default_policer);
 		priv->default_policer = NULL;
 	}
+
+
+	if (priv->bpool) {
+		pp2_bpool_deinit(priv->bpool);
+		used_bpools[priv->pp_id] &= ~(1 << priv->bpool_bit);
+		priv->bpool = NULL;
+	}
+
+	mrvl_dev_num--;
+
+	if (mrvl_dev_num == 0) {
+		MRVL_LOG(INFO, "Perform MUSDK deinit");
+		mrvl_deinit_hifs();
+		mrvl_deinit_pp2();
+		rte_mvep_deinit(MVEP_MOD_T_PP2);
+	}
 }
 
 /**
@@ -975,22 +994,29 @@ mrvl_link_update(struct rte_eth_dev *dev, int wait_to_complete __rte_unused)
  *
  * @param dev
  *   Pointer to Ethernet device structure.
+ *
+ * @return
+ *   0 on success, negative error value otherwise.
  */
-static void
+static int
 mrvl_promiscuous_enable(struct rte_eth_dev *dev)
 {
 	struct mrvl_priv *priv = dev->data->dev_private;
 	int ret;
 
 	if (!priv->ppio)
-		return;
+		return 0;
 
 	if (priv->isolated)
-		return;
+		return 0;
 
 	ret = pp2_ppio_set_promisc(priv->ppio, 1);
-	if (ret)
+	if (ret) {
 		MRVL_LOG(ERR, "Failed to enable promiscuous mode");
+		return -EAGAIN;
+	}
+
+	return 0;
 }
 
 /**
@@ -998,22 +1024,29 @@ mrvl_promiscuous_enable(struct rte_eth_dev *dev)
  *
  * @param dev
  *   Pointer to Ethernet device structure.
+ *
+ * @return
+ *   0 on success, negative error value otherwise.
  */
-static void
+static int
 mrvl_allmulticast_enable(struct rte_eth_dev *dev)
 {
 	struct mrvl_priv *priv = dev->data->dev_private;
 	int ret;
 
 	if (!priv->ppio)
-		return;
+		return 0;
 
 	if (priv->isolated)
-		return;
+		return 0;
 
 	ret = pp2_ppio_set_mc_promisc(priv->ppio, 1);
-	if (ret)
+	if (ret) {
 		MRVL_LOG(ERR, "Failed enable all-multicast mode");
+		return -EAGAIN;
+	}
+
+	return 0;
 }
 
 /**
@@ -1021,19 +1054,26 @@ mrvl_allmulticast_enable(struct rte_eth_dev *dev)
  *
  * @param dev
  *   Pointer to Ethernet device structure.
+ *
+ * @return
+ *   0 on success, negative error value otherwise.
  */
-static void
+static int
 mrvl_promiscuous_disable(struct rte_eth_dev *dev)
 {
 	struct mrvl_priv *priv = dev->data->dev_private;
 	int ret;
 
 	if (!priv->ppio)
-		return;
+		return 0;
 
 	ret = pp2_ppio_set_promisc(priv->ppio, 0);
-	if (ret)
+	if (ret) {
 		MRVL_LOG(ERR, "Failed to disable promiscuous mode");
+		return -EAGAIN;
+	}
+
+	return 0;
 }
 
 /**
@@ -1041,19 +1081,26 @@ mrvl_promiscuous_disable(struct rte_eth_dev *dev)
  *
  * @param dev
  *   Pointer to Ethernet device structure.
+ *
+ * @return
+ *   0 on success, negative error value otherwise.
  */
-static void
+static int
 mrvl_allmulticast_disable(struct rte_eth_dev *dev)
 {
 	struct mrvl_priv *priv = dev->data->dev_private;
 	int ret;
 
 	if (!priv->ppio)
-		return;
+		return 0;
 
 	ret = pp2_ppio_set_mc_promisc(priv->ppio, 0);
-	if (ret)
+	if (ret) {
 		MRVL_LOG(ERR, "Failed to disable all-multicast mode");
+		return -EAGAIN;
+	}
+
+	return 0;
 }
 
 /**
@@ -1282,15 +1329,18 @@ mrvl_stats_get(struct rte_eth_dev *dev, struct rte_eth_stats *stats)
  *
  * @param dev
  *   Pointer to Ethernet device structure.
+ *
+ * @return
+ *   0 on success, negative error value otherwise.
  */
-static void
+static int
 mrvl_stats_reset(struct rte_eth_dev *dev)
 {
 	struct mrvl_priv *priv = dev->data->dev_private;
 	int i;
 
 	if (!priv->ppio)
-		return;
+		return 0;
 
 	for (i = 0; i < dev->data->nb_rx_queues; i++) {
 		struct mrvl_rxq *rxq = dev->data->rx_queues[i];
@@ -1308,7 +1358,7 @@ mrvl_stats_reset(struct rte_eth_dev *dev)
 		txq->bytes_sent = 0;
 	}
 
-	pp2_ppio_get_statistics(priv->ppio, NULL, 1);
+	return pp2_ppio_get_statistics(priv->ppio, NULL, 1);
 }
 
 /**
@@ -1359,11 +1409,14 @@ mrvl_xstats_get(struct rte_eth_dev *dev,
  *
  * @param dev
  *   Pointer to Ethernet device structure.
+ *
+ * @return
+ *   0 on success, negative error value otherwise.
  */
-static void
+static int
 mrvl_xstats_reset(struct rte_eth_dev *dev)
 {
-	mrvl_stats_reset(dev);
+	return mrvl_stats_reset(dev);
 }
 
 /**
@@ -1403,7 +1456,7 @@ mrvl_xstats_get_names(struct rte_eth_dev *dev __rte_unused,
  * @param info
  *   Info structure output buffer.
  */
-static void
+static int
 mrvl_dev_infos_get(struct rte_eth_dev *dev __rte_unused,
 		   struct rte_eth_dev_info *info)
 {
@@ -1438,6 +1491,8 @@ mrvl_dev_infos_get(struct rte_eth_dev *dev __rte_unused,
 	info->default_rxconf.rx_drop_en = 1;
 
 	info->max_rx_pktlen = MRVL_PKT_SIZE_MAX;
+
+	return 0;
 }
 
 /**
@@ -2809,34 +2864,15 @@ mrvl_eth_dev_create(struct rte_vdev_device *vdev, const char *name)
 	mrvl_set_tx_function(eth_dev);
 	eth_dev->dev_ops = &mrvl_ops;
 
+	/* Flag to call rte_eth_dev_release_port() in rte_eth_dev_close(). */
+	eth_dev->data->dev_flags |= RTE_ETH_DEV_CLOSE_REMOVE;
+
 	rte_eth_dev_probing_finish(eth_dev);
 	return 0;
 out_free:
 	rte_eth_dev_release_port(eth_dev);
 
 	return ret;
-}
-
-/**
- * Cleanup previously created device representing Ethernet port.
- *
- * @param name
- *   Pointer to the port name.
- */
-static void
-mrvl_eth_dev_destroy(const char *name)
-{
-	struct rte_eth_dev *eth_dev;
-	struct mrvl_priv *priv;
-
-	eth_dev = rte_eth_dev_allocated(name);
-	if (!eth_dev)
-		return;
-
-	priv = eth_dev->data->dev_private;
-	pp2_bpool_deinit(priv->bpool);
-	used_bpools[priv->pp_id] &= ~(1 << priv->bpool_bit);
-	rte_eth_dev_release_port(eth_dev);
 }
 
 /**
@@ -2959,20 +2995,15 @@ init_devices:
 		ret = mrvl_eth_dev_create(vdev, ifnames.names[i]);
 		if (ret)
 			goto out_cleanup;
+		mrvl_dev_num++;
 	}
-	mrvl_dev_num += ifnum;
 
 	rte_kvargs_free(kvlist);
 
 	return 0;
 out_cleanup:
-	for (; i > 0; i--)
-		mrvl_eth_dev_destroy(ifnames.names[i]);
+	rte_pmd_mrvl_remove(vdev);
 
-	if (mrvl_dev_num == 0) {
-		mrvl_deinit_pp2();
-		rte_mvep_deinit(MVEP_MOD_T_PP2);
-	}
 out_free_kvlist:
 	rte_kvargs_free(kvlist);
 
@@ -2991,28 +3022,12 @@ out_free_kvlist:
 static int
 rte_pmd_mrvl_remove(struct rte_vdev_device *vdev)
 {
-	int i;
-	const char *name;
+	uint16_t port_id;
 
-	name = rte_vdev_device_name(vdev);
-	if (!name)
-		return -EINVAL;
-
-	MRVL_LOG(INFO, "Removing %s", name);
-
-	RTE_ETH_FOREACH_DEV(i) { /* FIXME: removing all devices! */
-		char ifname[RTE_ETH_NAME_MAX_LEN];
-
-		rte_eth_dev_get_name_by_port(i, ifname);
-		mrvl_eth_dev_destroy(ifname);
-		mrvl_dev_num--;
-	}
-
-	if (mrvl_dev_num == 0) {
-		MRVL_LOG(INFO, "Perform MUSDK deinit");
-		mrvl_deinit_hifs();
-		mrvl_deinit_pp2();
-		rte_mvep_deinit(MVEP_MOD_T_PP2);
+	RTE_ETH_FOREACH_DEV(port_id) {
+		if (rte_eth_devices[port_id].device != &vdev->device)
+			continue;
+		rte_eth_dev_close(port_id);
 	}
 
 	return 0;

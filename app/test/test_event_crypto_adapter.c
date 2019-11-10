@@ -183,7 +183,7 @@ test_op_forward_mode(uint8_t session_less)
 	cipher_xform.type = RTE_CRYPTO_SYM_XFORM_CIPHER;
 	cipher_xform.next = NULL;
 
-	cipher_xform.cipher.algo = RTE_CRYPTO_CIPHER_NULL;
+	cipher_xform.cipher.algo = RTE_CRYPTO_CIPHER_AES_CBC;
 	cipher_xform.cipher.op = RTE_CRYPTO_CIPHER_OP_ENCRYPT;
 
 	op = rte_crypto_op_alloc(params.op_mpool,
@@ -199,8 +199,9 @@ test_op_forward_mode(uint8_t session_less)
 		TEST_ASSERT_NOT_NULL(sess, "Session creation failed\n");
 
 		/* Create Crypto session*/
-		rte_cryptodev_sym_session_init(TEST_CDEV_ID, sess,
+		ret = rte_cryptodev_sym_session_init(TEST_CDEV_ID, sess,
 				&cipher_xform, params.session_priv_mpool);
+		TEST_ASSERT_SUCCESS(ret, "Failed to init session\n");
 
 		ret = rte_event_crypto_adapter_caps_get(TEST_ADAPTER_ID,
 							evdev, &cap);
@@ -292,7 +293,8 @@ test_sessionless_with_op_forward_mode(void)
 	ret = rte_event_crypto_adapter_caps_get(TEST_ADAPTER_ID, evdev, &cap);
 	TEST_ASSERT_SUCCESS(ret, "Failed to get adapter capabilities\n");
 
-	if (!(cap & RTE_EVENT_CRYPTO_ADAPTER_CAP_INTERNAL_PORT_OP_FWD))
+	if (!(cap & RTE_EVENT_CRYPTO_ADAPTER_CAP_INTERNAL_PORT_OP_FWD) &&
+	    !(cap & RTE_EVENT_CRYPTO_ADAPTER_CAP_INTERNAL_PORT_OP_NEW))
 		map_adapter_service_core();
 
 	TEST_ASSERT_SUCCESS(rte_event_crypto_adapter_start(TEST_ADAPTER_ID),
@@ -312,7 +314,8 @@ test_session_with_op_forward_mode(void)
 	ret = rte_event_crypto_adapter_caps_get(TEST_ADAPTER_ID, evdev, &cap);
 	TEST_ASSERT_SUCCESS(ret, "Failed to get adapter capabilities\n");
 
-	if (!(cap & RTE_EVENT_CRYPTO_ADAPTER_CAP_INTERNAL_PORT_OP_FWD))
+	if (!(cap & RTE_EVENT_CRYPTO_ADAPTER_CAP_INTERNAL_PORT_OP_FWD) &&
+	    !(cap & RTE_EVENT_CRYPTO_ADAPTER_CAP_INTERNAL_PORT_OP_NEW))
 		map_adapter_service_core();
 
 	TEST_ASSERT_SUCCESS(rte_event_crypto_adapter_start(TEST_ADAPTER_ID
@@ -373,7 +376,7 @@ test_op_new_mode(uint8_t session_less)
 	cipher_xform.type = RTE_CRYPTO_SYM_XFORM_CIPHER;
 	cipher_xform.next = NULL;
 
-	cipher_xform.cipher.algo = RTE_CRYPTO_CIPHER_NULL;
+	cipher_xform.cipher.algo = RTE_CRYPTO_CIPHER_AES_CBC;
 	cipher_xform.cipher.op = RTE_CRYPTO_CIPHER_OP_ENCRYPT;
 
 	op = rte_crypto_op_alloc(params.op_mpool,
@@ -398,8 +401,10 @@ test_op_new_mode(uint8_t session_less)
 			rte_cryptodev_sym_session_set_user_data(sess,
 						&m_data, sizeof(m_data));
 		}
-		rte_cryptodev_sym_session_init(TEST_CDEV_ID, sess,
+		ret = rte_cryptodev_sym_session_init(TEST_CDEV_ID, sess,
 				&cipher_xform, params.session_priv_mpool);
+		TEST_ASSERT_SUCCESS(ret, "Failed to init session\n");
+
 		rte_crypto_op_attach_sym_session(op, sess);
 	} else {
 		struct rte_crypto_sym_xform *first_xform;
@@ -438,7 +443,7 @@ test_sessionless_with_op_new_mode(void)
 	ret = rte_event_crypto_adapter_caps_get(TEST_ADAPTER_ID, evdev, &cap);
 	TEST_ASSERT_SUCCESS(ret, "Failed to get adapter capabilities\n");
 
-	if (!(cap & RTE_EVENT_CRYPTO_ADAPTER_CAP_INTERNAL_PORT_OP_FWD) ||
+	if (!(cap & RTE_EVENT_CRYPTO_ADAPTER_CAP_INTERNAL_PORT_OP_FWD) &&
 	    !(cap & RTE_EVENT_CRYPTO_ADAPTER_CAP_INTERNAL_PORT_OP_NEW))
 		map_adapter_service_core();
 
@@ -460,7 +465,7 @@ test_session_with_op_new_mode(void)
 	ret = rte_event_crypto_adapter_caps_get(TEST_ADAPTER_ID, evdev, &cap);
 	TEST_ASSERT_SUCCESS(ret, "Failed to get adapter capabilities\n");
 
-	if (!(cap & RTE_EVENT_CRYPTO_ADAPTER_CAP_INTERNAL_PORT_OP_FWD) ||
+	if (!(cap & RTE_EVENT_CRYPTO_ADAPTER_CAP_INTERNAL_PORT_OP_FWD) &&
 	    !(cap & RTE_EVENT_CRYPTO_ADAPTER_CAP_INTERNAL_PORT_OP_NEW))
 		map_adapter_service_core();
 
@@ -536,7 +541,7 @@ configure_cryptodev(void)
 			"session mempool allocation failed\n");
 
 	params.session_priv_mpool = rte_mempool_create(
-				"CRYPTO_ADAPTER_SESSION_MP_PRIV",
+				"CRYPTO_AD_SESS_MP_PRIV",
 				MAX_NB_SESSIONS,
 				session_size,
 				0, 0, NULL, NULL, NULL,
@@ -814,7 +819,8 @@ test_crypto_adapter_conf_op_forward_mode(void)
 	enum rte_event_crypto_adapter_mode mode;
 
 	mode = RTE_EVENT_CRYPTO_ADAPTER_OP_FORWARD;
-	test_crypto_adapter_conf(mode);
+	TEST_ASSERT_SUCCESS(test_crypto_adapter_conf(mode),
+				"Failed to config crypto adapter");
 
 	return TEST_SUCCESS;
 }
@@ -825,7 +831,9 @@ test_crypto_adapter_conf_op_new_mode(void)
 	enum rte_event_crypto_adapter_mode mode;
 
 	mode = RTE_EVENT_CRYPTO_ADAPTER_OP_NEW;
-	test_crypto_adapter_conf(mode);
+	TEST_ASSERT_SUCCESS(test_crypto_adapter_conf(mode),
+				"Failed to config crypto adapter");
+
 	return TEST_SUCCESS;
 }
 

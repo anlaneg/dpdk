@@ -178,8 +178,22 @@ rte_pci_probe_one_driver(struct rte_pci_driver *dr,
 	 * driver flags for adjusting configuration.
 	 */
 	//为设备暂时赋上此驱动，进行probe(这段代码与kernel极其相似）
-	if (!already_probed)
+	if (!already_probed) {
+		enum rte_iova_mode dev_iova_mode;
+		enum rte_iova_mode iova_mode;
+
+		dev_iova_mode = pci_device_iova_mode(dr, dev);
+		iova_mode = rte_eal_iova_mode();
+		if (dev_iova_mode != RTE_IOVA_DC &&
+		    dev_iova_mode != iova_mode) {
+			RTE_LOG(ERR, EAL, "  Expecting '%s' IOVA mode but current mode is '%s', not initializing\n",
+				dev_iova_mode == RTE_IOVA_PA ? "PA" : "VA",
+				iova_mode == RTE_IOVA_PA ? "PA" : "VA");
+			return -EINVAL;
+		}
+
 		dev->driver = dr;
+	}
 
 	//如果driver要求mapping，则进行资源map(例如bnxt驱动就要求进行mapping)
 	//按理解，所有采用igb_uio方式绑定的均要走此函数
@@ -622,8 +636,16 @@ rte_pci_get_iommu_class(void)
 	const struct rte_pci_driver *drv;
 	bool devices_want_va = false;
 	bool devices_want_pa = false;
+	int iommu_no_va = -1;
 
 	FOREACH_DEVICE_ON_PCIBUS(dev) {
+		/*
+		 * We can check this only once, because the IOMMU hardware is
+		 * the same for all of them.
+		 */
+		if (iommu_no_va == -1)
+			iommu_no_va = pci_device_iommu_support_va(dev)
+					? 0 : 1;
 		if (pci_ignore_device(dev))
 			continue;
 		if (dev->kdrv == RTE_KDRV_UNKNOWN ||
@@ -649,12 +671,22 @@ rte_pci_get_iommu_class(void)
 				devices_want_va = true;
 		}
 	}
-	if (devices_want_pa) {
+	if (iommu_no_va == 1) {
 		iova_mode = RTE_IOVA_PA;
-		if (devices_want_va)
-			RTE_LOG(WARNING, EAL, "Some devices want 'VA' but forcing 'PA' because other devices want it\n");
-	} else if (devices_want_va) {
+		if (devices_want_va) {
+			RTE_LOG(WARNING, EAL, "Some devices want 'VA' but IOMMU does not support 'VA'.\n");
+			RTE_LOG(WARNING, EAL, "The devices that want 'VA' won't initialize.\n");
+		}
+	} else if (devices_want_va && !devices_want_pa) {
 		iova_mode = RTE_IOVA_VA;
+	} else if (devices_want_pa && !devices_want_va) {
+		iova_mode = RTE_IOVA_PA;
+	} else {
+		iova_mode = RTE_IOVA_DC;
+		if (devices_want_va) {
+			RTE_LOG(WARNING, EAL, "Some devices want 'VA' but forcing 'DC' because other devices want 'PA'.\n");
+			RTE_LOG(WARNING, EAL, "Depending on the final decision by the EAL, not all devices may be able to initialize.\n");
+		}
 	}
 	return iova_mode;
 }

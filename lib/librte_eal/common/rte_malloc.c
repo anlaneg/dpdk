@@ -26,6 +26,7 @@
 #include "malloc_heap.h"
 #include "eal_memalloc.h"
 #include "eal_memcfg.h"
+#include "eal_private.h"
 
 
 /* Free the memory space back to heap */
@@ -400,6 +401,7 @@ rte_malloc_heap_memory_add(const char *heap_name, void *va_addr, size_t len,
 
 	rte_spinlock_lock(&heap->lock);
 	ret = malloc_heap_add_external_memory(heap, msl);
+	msl->heap = 1; /* mark it as heap segment */
 	rte_spinlock_unlock(&heap->lock);
 
 unlock:

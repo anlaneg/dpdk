@@ -7,6 +7,8 @@
 
 #include <stdint.h>
 #include <sys/time.h>
+#include <unistd.h>
+#include <pthread.h>
 #include <rte_common.h>
 #include <rte_byteorder.h>
 #include <rte_memzone.h>
@@ -111,7 +113,7 @@ extern int hinic_logtype;
 #define GFP_KERNEL		RTE_MEMZONE_IOVA_CONTIG
 #define HINIC_PAGE_SHIFT	12
 #define HINIC_PAGE_SIZE		RTE_PGSIZE_4K
-#define HINIC_MEM_ALLOC_ALIGNE_MIN	8
+#define HINIC_MEM_ALLOC_ALIGN_MIN	8
 
 #define HINIC_PAGE_SIZE_DPDK	6
 
@@ -119,9 +121,7 @@ static inline int hinic_test_bit(int nr, volatile unsigned long *addr)
 {
 	int res;
 
-	rte_mb();
 	res = ((*addr) & (1UL << nr)) != 0;
-	rte_mb();
 	return res;
 }
 
@@ -168,7 +168,7 @@ void dma_pool_destroy(struct dma_pool *pool);
 void *dma_pool_alloc(struct pci_pool *pool, int flags, dma_addr_t *dma_addr);
 void dma_pool_free(struct pci_pool *pool, void *vaddr, dma_addr_t dma);
 
-#define kzalloc(size, flag) rte_zmalloc(NULL, size, HINIC_MEM_ALLOC_ALIGNE_MIN)
+#define kzalloc(size, flag) rte_zmalloc(NULL, size, HINIC_MEM_ALLOC_ALIGN_MIN)
 #define kzalloc_aligned(size, flag) rte_zmalloc(NULL, size, RTE_CACHE_LINE_SIZE)
 #define kfree(ptr)            rte_free(ptr)
 
@@ -221,36 +221,57 @@ static inline u16 ilog2(u32 n)
 	return res;
 }
 
-/**
- * hinic_cpu_to_be32 - convert data to big endian 32 bit format
- * @data: the data to convert
- * @len: length of data to convert, must be Multiple of 4B
- **/
-static inline void hinic_cpu_to_be32(void *data, u32 len)
+static inline int hinic_mutex_init(pthread_mutex_t *pthreadmutex,
+					const pthread_mutexattr_t *mattr)
 {
-	u32 i;
-	u32 *mem = (u32 *)data;
+	int err;
 
-	for (i = 0; i < (len >> 2); i++) {
-		*mem = cpu_to_be32(*mem);
-		mem++;
-	}
+	err = pthread_mutex_init(pthreadmutex, mattr);
+	if (unlikely(err))
+		PMD_DRV_LOG(ERR, "Fail to initialize mutex, error: %d", err);
+
+	return err;
 }
 
-/**
- * hinic_be32_to_cpu - convert data from big endian 32 bit format
- * @data: the data to convert
- * @len: length of data to convert, must be Multiple of 4B
- **/
-static inline void hinic_be32_to_cpu(void *data, u32 len)
+static inline int hinic_mutex_destroy(pthread_mutex_t *pthreadmutex)
 {
-	u32 i;
-	u32 *mem = (u32 *)data;
+	int err;
 
-	for (i = 0; i < (len >> 2); i++) {
-		*mem = be32_to_cpu(*mem);
-		mem++;
+	err = pthread_mutex_destroy(pthreadmutex);
+	if (unlikely(err))
+		PMD_DRV_LOG(ERR, "Fail to destroy mutex, error: %d", err);
+
+	return err;
+}
+
+static inline int hinic_mutex_lock(pthread_mutex_t *pthreadmutex)
+{
+	int err;
+
+	err = pthread_mutex_lock(pthreadmutex);
+	if (!err) {
+		return err;
+	} else if (err == EOWNERDEAD) {
+		PMD_DRV_LOG(ERR, "Mutex lock failed. (ErrorNo=%d)", errno);
+#if defined(__GLIBC__)
+#if __GLIBC_PREREQ(2, 12)
+		(void)pthread_mutex_consistent(pthreadmutex);
+#else
+		(void)pthread_mutex_consistent_np(pthreadmutex);
+#endif
+#else
+		(void)pthread_mutex_consistent(pthreadmutex);
+#endif
+	} else {
+		PMD_DRV_LOG(ERR, "Mutex lock failed. (ErrorNo=%d)", errno);
 	}
+
+	return err;
+}
+
+static inline int hinic_mutex_unlock(pthread_mutex_t *pthreadmutex)
+{
+	return pthread_mutex_unlock(pthreadmutex);
 }
 
 #endif /* _HINIC_COMPAT_H_ */

@@ -5,6 +5,7 @@
 #ifndef __OTX2_ETHDEV_H__
 #define __OTX2_ETHDEV_H__
 
+#include <math.h>
 #include <stdint.h>
 
 #include <rte_common.h>
@@ -65,7 +66,8 @@
 	(NIX_MAX_FRS - NIX_L2_OVERHEAD)
 
 #define NIX_MAX_SQB			512
-#define NIX_MIN_SQB			32
+#define NIX_DEF_SQB			16
+#define NIX_MIN_SQB			8
 #define NIX_SQB_LIST_SPACE		2
 #define NIX_RSS_RETA_SIZE_MAX		256
 /* Group 0 will be used for RSS, 1 -7 will be used for rte_flow RSS action*/
@@ -79,6 +81,7 @@
 #define NIX_CQ_ALIGN			512
 #define NIX_SQB_LOWER_THRESH		90
 #define LMT_SLOT_MASK			0x7f
+#define NIX_RX_DEFAULT_RING_SZ		4096
 
 /* If PTP is enabled additional SEND MEM DESC is required which
  * takes 2 words, hence max 7 iova address are possible
@@ -93,8 +96,9 @@
 	((RTE_ALIGN_MUL_CEIL(NIX_TX_NB_SEG_MAX, 3) / 3)	\
 	 + NIX_TX_NB_SEG_MAX)
 
-/* Apply BP when CQ is 75% full */
-#define NIX_CQ_BP_LEVEL (25 * 256 / 100)
+/* Apply BP/DROP when CQ is 95% full */
+#define NIX_CQ_THRESH_LEVEL	(5 * 256 / 100)
+#define NIX_CQ_FULL_ERRATA_SKID	(1024ull * 256)
 
 #define CQ_OP_STAT_OP_ERR	63
 #define CQ_OP_STAT_CQ_ERR	46
@@ -123,6 +127,10 @@
 	DEV_TX_OFFLOAD_TCP_CKSUM	| \
 	DEV_TX_OFFLOAD_UDP_CKSUM	| \
 	DEV_TX_OFFLOAD_SCTP_CKSUM	| \
+	DEV_TX_OFFLOAD_TCP_TSO		| \
+	DEV_TX_OFFLOAD_VXLAN_TNL_TSO    | \
+	DEV_TX_OFFLOAD_GENEVE_TNL_TSO   | \
+	DEV_TX_OFFLOAD_GRE_TNL_TSO	| \
 	DEV_TX_OFFLOAD_MULTI_SEGS	| \
 	DEV_TX_OFFLOAD_IPV4_CKSUM)
 
@@ -199,6 +207,14 @@ struct vlan_mkex_info {
 	uint64_t lb_lt_offset;
 };
 
+struct mcast_entry {
+	struct rte_ether_addr mcast_mac;
+	uint16_t mcam_index;
+	TAILQ_ENTRY(mcast_entry) next;
+};
+
+TAILQ_HEAD(otx2_nix_mc_filter_tbl, mcast_entry);
+
 struct vlan_entry {
 	uint32_t mcam_idx;
 	uint16_t vlan_id;
@@ -245,6 +261,7 @@ struct otx2_eth_dev {
 	uint8_t tx_chan_cnt;
 	uint8_t lso_tsov4_idx;
 	uint8_t lso_tsov6_idx;
+	uint8_t lso_base_idx;
 	uint8_t mac_addr[RTE_ETHER_ADDR_LEN];
 	uint8_t mkex_pfl_name[MKEX_NAME_LEN];
 	uint8_t max_mac_entries;
@@ -300,6 +317,10 @@ struct otx2_eth_dev {
 	struct rte_timecounter  systime_tc;
 	struct rte_timecounter  rx_tstamp_tc;
 	struct rte_timecounter  tx_tstamp_tc;
+	double clk_freq_mult;
+	uint64_t clk_delta;
+	bool mc_tbl_set;
+	struct otx2_nix_mc_filter_tbl mc_fltr_tbl;
 } __rte_cache_aligned;
 
 struct otx2_eth_txq {
@@ -341,6 +362,7 @@ struct otx2_eth_rxq {
 	enum nix_q_size_e qsize;
 	struct rte_eth_dev *eth_dev;
 	struct otx2_eth_qconf qconf;
+	uint16_t cq_drop;
 } __rte_cache_aligned;
 
 static inline struct otx2_eth_dev *
@@ -350,8 +372,8 @@ otx2_eth_pmd_priv(struct rte_eth_dev *eth_dev)
 }
 
 /* Ops */
-void otx2_nix_info_get(struct rte_eth_dev *eth_dev,
-		       struct rte_eth_dev_info *dev_info);
+int otx2_nix_info_get(struct rte_eth_dev *eth_dev,
+		      struct rte_eth_dev_info *dev_info);
 int otx2_nix_dev_filter_ctrl(struct rte_eth_dev *eth_dev,
 			     enum rte_filter_type filter_type,
 			     enum rte_filter_op filter_op, void *arg);
@@ -370,15 +392,25 @@ uint32_t otx2_nix_rx_queue_count(struct rte_eth_dev *eth_dev, uint16_t qidx);
 int otx2_nix_tx_done_cleanup(void *txq, uint32_t free_cnt);
 int otx2_nix_rx_descriptor_done(void *rxq, uint16_t offset);
 int otx2_nix_rx_descriptor_status(void *rx_queue, uint16_t offset);
+int otx2_nix_tx_descriptor_status(void *tx_queue, uint16_t offset);
 
 void otx2_nix_promisc_config(struct rte_eth_dev *eth_dev, int en);
-void otx2_nix_promisc_enable(struct rte_eth_dev *eth_dev);
-void otx2_nix_promisc_disable(struct rte_eth_dev *eth_dev);
-void otx2_nix_allmulticast_enable(struct rte_eth_dev *eth_dev);
-void otx2_nix_allmulticast_disable(struct rte_eth_dev *eth_dev);
+int otx2_nix_promisc_enable(struct rte_eth_dev *eth_dev);
+int otx2_nix_promisc_disable(struct rte_eth_dev *eth_dev);
+int otx2_nix_allmulticast_enable(struct rte_eth_dev *eth_dev);
+int otx2_nix_allmulticast_disable(struct rte_eth_dev *eth_dev);
 int otx2_nix_tx_queue_start(struct rte_eth_dev *eth_dev, uint16_t qidx);
 int otx2_nix_tx_queue_stop(struct rte_eth_dev *eth_dev, uint16_t qidx);
 uint64_t otx2_nix_rxq_mbuf_setup(struct otx2_eth_dev *dev, uint16_t port_id);
+
+/* Multicast filter APIs */
+void otx2_nix_mc_filter_init(struct otx2_eth_dev *dev);
+void otx2_nix_mc_filter_fini(struct otx2_eth_dev *dev);
+int otx2_nix_mc_addr_list_install(struct rte_eth_dev *eth_dev);
+int otx2_nix_mc_addr_list_uninstall(struct rte_eth_dev *eth_dev);
+int otx2_nix_set_mc_addr_list(struct rte_eth_dev *eth_dev,
+			      struct rte_ether_addr *mc_addr_set,
+			      uint32_t nb_mc_addr);
 
 /* MTU */
 int otx2_nix_mtu_set(struct rte_eth_dev *eth_dev, uint16_t mtu);
@@ -415,7 +447,7 @@ void otx2_nix_cqe_dump(const struct nix_cqe_hdr_s *cq);
 /* Stats */
 int otx2_nix_dev_stats_get(struct rte_eth_dev *eth_dev,
 			   struct rte_eth_stats *stats);
-void otx2_nix_dev_stats_reset(struct rte_eth_dev *eth_dev);
+int otx2_nix_dev_stats_reset(struct rte_eth_dev *eth_dev);
 
 int otx2_nix_queue_stats_mapping(struct rte_eth_dev *dev,
 				 uint16_t queue_id, uint8_t stat_idx,
@@ -425,7 +457,7 @@ int otx2_nix_xstats_get(struct rte_eth_dev *eth_dev,
 int otx2_nix_xstats_get_names(struct rte_eth_dev *eth_dev,
 			      struct rte_eth_xstat_name *xstats_names,
 			      unsigned int limit);
-void otx2_nix_xstats_reset(struct rte_eth_dev *eth_dev);
+int otx2_nix_xstats_reset(struct rte_eth_dev *eth_dev);
 
 int otx2_nix_xstats_get_by_id(struct rte_eth_dev *eth_dev,
 			      const uint64_t *ids,
@@ -527,5 +559,7 @@ int otx2_nix_timesync_write_time(struct rte_eth_dev *eth_dev,
 int otx2_nix_timesync_read_time(struct rte_eth_dev *eth_dev,
 				struct timespec *ts);
 int otx2_eth_dev_ptp_info_update(struct otx2_dev *dev, bool ptp_en);
+int otx2_nix_read_clock(struct rte_eth_dev *eth_dev, uint64_t *time);
+int otx2_nix_raw_clock_tsc_conv(struct otx2_eth_dev *dev);
 
 #endif /* __OTX2_ETHDEV_H__ */

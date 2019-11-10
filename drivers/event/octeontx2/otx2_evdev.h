@@ -25,6 +25,7 @@
 #define OTX2_SSO_SQB_LIMIT                  (0x180)
 #define OTX2_SSO_XAQ_SLACK                  (8)
 #define OTX2_SSO_XAQ_CACHE_CNT              (0x7)
+#define OTX2_SSO_WQE_SG_PTR                 (9)
 
 /* SSO LF register offsets (BAR2) */
 #define SSO_LF_GGRP_OP_ADD_WORK0            (0x0ull)
@@ -222,10 +223,14 @@ otx2_wqe_to_mbuf(uint64_t get_work1, const uint64_t mbuf, uint8_t port_id,
 		 const void * const lookup_mem)
 {
 	struct nix_wqe_hdr_s *wqe = (struct nix_wqe_hdr_s *)get_work1;
+	uint64_t val = mbuf_init.value | (uint64_t)port_id << 48;
+
+	if (flags & NIX_RX_OFFLOAD_TSTAMP_F)
+		val |= NIX_TIMESYNC_RX_OFFSET;
 
 	otx2_nix_cqe_to_mbuf((struct nix_cqe_hdr_s *)wqe, tag,
 			     (struct rte_mbuf *)mbuf, lookup_mem,
-			     mbuf_init.value | (uint64_t)port_id << 48, flags);
+			      val, flags);
 
 }
 
@@ -326,7 +331,7 @@ uint16_t otx2_ssogws_dual_deq_seg_timeout_burst_ ##name(void *port,	       \
 SSO_RX_ADPTR_ENQ_FASTPATH_FUNC
 #undef R
 
-#define T(name, f4, f3, f2, f1, f0, sz, flags)				     \
+#define T(name, f5, f4, f3, f2, f1, f0, sz, flags)			     \
 uint16_t otx2_ssogws_tx_adptr_enq_ ## name(void *port, struct rte_event ev[],\
 					   uint16_t nb_events);		     \
 uint16_t otx2_ssogws_tx_adptr_enq_seg_ ## name(void *port,		     \

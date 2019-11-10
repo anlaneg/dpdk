@@ -15,7 +15,6 @@ Supported OCTEON TX2 SoCs
 
 - CN96xx
 - CN93xx
-- CNF95xx
 
 OCTEON TX2 Resource Virtualization Unit architecture
 ----------------------------------------------------
@@ -131,6 +130,9 @@ This section lists dataplane H/W block(s) available in OCTEON TX2 SoC.
 
 #. **DMA Rawdev Driver**
    See :doc:`../rawdevs/octeontx2_dma` for DMA driver information.
+
+#. **Crypto Device Driver**
+   See :doc:`../cryptodevs/octeontx2` for CPT crypto device driver information.
 
 Procedure to Setup Platform
 ---------------------------

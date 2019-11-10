@@ -7,9 +7,9 @@ Running the Application
 EAL Command-line Options
 ------------------------
 
-Please refer to  :doc:`../linux_gsg/linux_eal_parameters` or
-:doc:`../freebsd_gsg/freebsd_eal_parameters` for a list of available EAL
-command-line options.
+Please refer to :doc:`EAL parameters (Linux) <../linux_gsg/linux_eal_parameters>`
+or :doc:`EAL parameters (FreeBSD) <../freebsd_gsg/freebsd_eal_parameters>` for
+a list of available EAL command-line options.
 
 
 Testpmd Command-line Options
@@ -129,9 +129,9 @@ The command line options are:
 *   ``--tx-ip=SRC,DST``
 
     Set the source and destination IP address used when doing transmit only test.
-    The defaults address values are source 192.18.0.1 and
-    destination 192.18.0.2. These are special purpose addresses
-    reserved for benchmarking (RFC 2544).
+    The defaults address values are source 198.18.0.1 and
+    destination 198.18.0.2. These are special purpose addresses
+    reserved for benchmarking (RFC 5735).
 
 *   ``--tx-udp=SRC[,DST]``
 
@@ -197,6 +197,10 @@ The command line options are:
 *   ``--enable-hw-vlan-extend``
 
     Enable hardware VLAN extend.
+
+*   ``--enable-hw-qinq-strip``
+
+    Enable hardware QINQ strip.
 
 *   ``--enable-drop-en``
 
@@ -344,6 +348,12 @@ The command line options are:
 
     Disable check on link status when starting/stopping ports.
 
+*   ``--disable-device-start``
+
+    Do not automatically start all ports. This allows testing
+    configuration of rx and tx queues before device is started
+    for the first time.
+
 *   ``--no-lsc-interrupt``
 
     Disable LSC interrupts for all ports, even those supporting it.
@@ -377,6 +387,11 @@ The command line options are:
 *   ``--tx-offloads=0xXXXXXXXX``
 
     Set the hexadecimal bitmask of TX queue offloads.
+    The default value is 0.
+
+*   ``--rx-offloads=0xXXXXXXXX``
+
+    Set the hexadecimal bitmask of RX queue offloads.
     The default value is 0.
 
 *   ``--hot-plug``

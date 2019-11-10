@@ -18,7 +18,7 @@
 #include <rte_hexdump.h>
 #include <rte_interrupts.h>
 
-#ifdef RTE_LIBRTE_PMD_FPGA_LTE_FEC
+#ifdef RTE_LIBRTE_PMD_BBDEV_FPGA_LTE_FEC
 #include <fpga_lte_fec.h>
 #endif
 
@@ -30,7 +30,7 @@
 #define MAX_QUEUES RTE_MAX_LCORE
 #define TEST_REPETITIONS 1000
 
-#ifdef RTE_LIBRTE_PMD_FPGA_LTE_FEC
+#ifdef RTE_LIBRTE_PMD_BBDEV_FPGA_LTE_FEC
 #define FPGA_PF_DRIVER_NAME ("intel_fpga_lte_fec_pf")
 #define FPGA_VF_DRIVER_NAME ("intel_fpga_lte_fec_vf")
 #define VF_UL_QUEUE_VALUE 4
@@ -519,8 +519,7 @@ add_bbdev_dev(uint8_t dev_id, struct rte_bbdev_info *info,
 /* Configure fpga lte fec with PF & VF values
  * if '-i' flag is set and using fpga device
  */
-#ifndef RTE_BUILD_SHARED_LIB
-#ifdef RTE_LIBRTE_PMD_FPGA_LTE_FEC
+#ifdef RTE_LIBRTE_PMD_BBDEV_FPGA_LTE_FEC
 	if ((get_init_device() == true) &&
 		(!strcmp(info->drv.driver_name, FPGA_PF_DRIVER_NAME))) {
 		struct fpga_lte_fec_conf conf;
@@ -563,7 +562,6 @@ add_bbdev_dev(uint8_t dev_id, struct rte_bbdev_info *info,
 				"Failed to configure 4G FPGA PF for bbdev %s",
 				info->dev_name);
 	}
-#endif
 #endif
 	nb_queues = RTE_MIN(rte_lcore_count(), info->drv.max_num_queues);
 	nb_queues = RTE_MIN(nb_queues, (unsigned int) MAX_QUEUES);
@@ -3163,7 +3161,8 @@ offload_latency_test_enc(struct rte_mempool *mempool, struct test_buffers *bufs,
 		if (unlikely(num_to_process - dequeued < burst_sz))
 			burst_sz = num_to_process - dequeued;
 
-		rte_bbdev_enc_op_alloc_bulk(mempool, ops_enq, burst_sz);
+		ret = rte_bbdev_enc_op_alloc_bulk(mempool, ops_enq, burst_sz);
+		TEST_ASSERT_SUCCESS(ret, "rte_bbdev_op_alloc_bulk() failed");
 		if (test_vector.op_type != RTE_BBDEV_OP_NONE)
 			copy_reference_enc_op(ops_enq, burst_sz, dequeued,
 					bufs->inputs,
@@ -3244,7 +3243,8 @@ offload_latency_test_ldpc_enc(struct rte_mempool *mempool,
 		if (unlikely(num_to_process - dequeued < burst_sz))
 			burst_sz = num_to_process - dequeued;
 
-		rte_bbdev_enc_op_alloc_bulk(mempool, ops_enq, burst_sz);
+		ret = rte_bbdev_enc_op_alloc_bulk(mempool, ops_enq, burst_sz);
+		TEST_ASSERT_SUCCESS(ret, "rte_bbdev_op_alloc_bulk() failed");
 		if (test_vector.op_type != RTE_BBDEV_OP_NONE)
 			copy_reference_ldpc_enc_op(ops_enq, burst_sz, dequeued,
 					bufs->inputs,

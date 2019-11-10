@@ -10,9 +10,10 @@ LIB = librte_pmd_ice.a
 
 CFLAGS += -O3
 CFLAGS += $(WERROR_FLAGS)
+CFLAGS += -DALLOW_EXPERIMENTAL_API
 
 LDLIBS += -lrte_eal -lrte_mbuf -lrte_ethdev -lrte_kvargs
-LDLIBS += -lrte_bus_pci -lrte_mempool
+LDLIBS += -lrte_bus_pci -lrte_mempool -lrte_hash
 
 EXPORT_MAP := rte_pmd_ice_version.map
 
@@ -61,6 +62,8 @@ SRCS-$(CONFIG_RTE_LIBRTE_ICE_PMD) += ice_rxtx_vec_sse.c
 endif
 
 SRCS-$(CONFIG_RTE_LIBRTE_ICE_PMD) += ice_switch_filter.c
+SRCS-$(CONFIG_RTE_LIBRTE_ICE_PMD) += ice_fdir_filter.c
+SRCS-$(CONFIG_RTE_LIBRTE_ICE_PMD) += ice_hash.c
 ifeq ($(findstring RTE_MACHINE_CPUFLAG_AVX2,$(CFLAGS)),RTE_MACHINE_CPUFLAG_AVX2)
 	CC_AVX2_SUPPORT=1
 else
@@ -80,5 +83,8 @@ ifeq ($(CC_AVX2_SUPPORT), 1)
 	SRCS-$(CONFIG_RTE_LIBRTE_ICE_PMD) += ice_rxtx_vec_avx2.c
 endif
 SRCS-$(CONFIG_RTE_LIBRTE_ICE_PMD) += ice_generic_flow.c
+
+# install this header file
+SYMLINK-$(CONFIG_RTE_LIBRTE_ICE_PMD)-include := rte_pmd_ice.h
 
 include $(RTE_SDK)/mk/rte.lib.mk

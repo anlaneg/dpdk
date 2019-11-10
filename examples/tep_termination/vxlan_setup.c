@@ -119,7 +119,11 @@ vxlan_port_init(uint16_t port, struct rte_mempool *mbuf_pool)
 
 	pconf->dst_port = udp_port;
 
-	rte_eth_dev_info_get(port, &dev_info);
+	retval = rte_eth_dev_info_get(port, &dev_info);
+	if (retval != 0)
+		rte_exit(EXIT_FAILURE,
+			"Error during getting device (port %u) info: %s\n",
+			port, strerror(-retval));
 
 	if (dev_info.max_rx_queues > MAX_QUEUES) {
 		rte_exit(EXIT_FAILURE,
@@ -178,7 +182,10 @@ vxlan_port_init(uint16_t port, struct rte_mempool *mbuf_pool)
 	retval = rte_eth_dev_udp_tunnel_port_add(port, &tunnel_udp);
 	if (retval < 0)
 		return retval;
-	rte_eth_macaddr_get(port, &ports_eth_addr[port]);
+	retval = rte_eth_macaddr_get(port, &ports_eth_addr[port]);
+	if (retval < 0)
+		return retval;
+
 	RTE_LOG(INFO, PORT, "Port %u MAC: %02"PRIx8" %02"PRIx8" %02"PRIx8
 			" %02"PRIx8" %02"PRIx8" %02"PRIx8"\n",
 			port,

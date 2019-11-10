@@ -7,7 +7,6 @@
 #include <unistd.h>
 #include <sys/types.h>
 #include <sys/socket.h>
-#include <sys/un.h>
 #include <sys/ioctl.h>
 #include <errno.h>
 
@@ -852,7 +851,7 @@ memif_listener_handler(void *arg)
 	return;
 
  error:
-	if (sockfd > 0) {
+	if (sockfd >= 0) {
 		close(sockfd);
 		sockfd = -1;
 	}
@@ -861,7 +860,8 @@ memif_listener_handler(void *arg)
 }
 
 static struct memif_socket *
-memif_socket_create(struct pmd_internals *pmd, char *key, uint8_t listener)
+memif_socket_create(struct pmd_internals *pmd,
+		    const char *key, uint8_t listener)
 {
 	struct memif_socket *sock;
 	struct sockaddr_un un;
@@ -876,7 +876,7 @@ memif_socket_create(struct pmd_internals *pmd, char *key, uint8_t listener)
 	}
 
 	sock->listener = listener;
-	rte_memcpy(sock->filename, key, 256);
+	strlcpy(sock->filename, key, MEMIF_SOCKET_UN_SIZE);
 	TAILQ_INIT(&sock->dev_queue);
 
 	if (listener != 0) {
@@ -885,16 +885,17 @@ memif_socket_create(struct pmd_internals *pmd, char *key, uint8_t listener)
 			goto error;
 
 		un.sun_family = AF_UNIX;
-		memcpy(un.sun_path, sock->filename,
-			sizeof(un.sun_path) - 1);
+		strlcpy(un.sun_path, sock->filename, MEMIF_SOCKET_UN_SIZE);
 
 		ret = setsockopt(sockfd, SOL_SOCKET, SO_PASSCRED, &on,
 				 sizeof(on));
 		if (ret < 0)
 			goto error;
+
 		ret = bind(sockfd, (struct sockaddr *)&un, sizeof(un));
 		if (ret < 0)
 			goto error;
+
 		ret = listen(sockfd, 1);
 		if (ret < 0)
 			goto error;
@@ -918,9 +919,12 @@ memif_socket_create(struct pmd_internals *pmd, char *key, uint8_t listener)
 
  error:
 	MIF_LOG(ERR, "%s: Failed to setup socket %s: %s",
-		rte_vdev_device_name(pmd->vdev), key, strerror(errno));
+		rte_vdev_device_name(pmd->vdev) ?
+		rte_vdev_device_name(pmd->vdev) : "NULL", key, strerror(errno));
 	if (sock != NULL)
 		rte_free(sock);
+	if (sockfd >= 0)
+		close(sockfd);
 	return NULL;
 }
 
@@ -928,9 +932,10 @@ static struct rte_hash *
 memif_create_socket_hash(void)
 {
 	struct rte_hash_parameters params = { 0 };
+
 	params.name = MEMIF_SOCKET_HASH_NAME;
 	params.entries = 256;
-	params.key_len = 256;
+	params.key_len = MEMIF_SOCKET_UN_SIZE;
 	params.hash_func = rte_jhash;
 	params.hash_func_init_val = 0;
 	return rte_hash_create(&params);
@@ -945,7 +950,7 @@ memif_socket_init(struct rte_eth_dev *dev, const char *socket_filename)
 	struct pmd_internals *tmp_pmd;
 	struct rte_hash *hash;
 	int ret;
-	char key[256];
+	char key[MEMIF_SOCKET_UN_SIZE];
 
 	hash = rte_hash_find_existing(MEMIF_SOCKET_HASH_NAME);
 	if (hash == NULL) {
@@ -956,8 +961,8 @@ memif_socket_init(struct rte_eth_dev *dev, const char *socket_filename)
 		}
 	}
 
-	memset(key, 0, 256);
-	rte_memcpy(key, socket_filename, strlen(socket_filename));
+	memset(key, 0, MEMIF_SOCKET_UN_SIZE);
+	strlcpy(key, socket_filename, MEMIF_SOCKET_UN_SIZE);
 	ret = rte_hash_lookup_data(hash, key, (void **)&socket);
 	if (ret < 0) {
 		socket = memif_socket_create(pmd, key,
@@ -1010,6 +1015,7 @@ memif_socket_remove_device(struct rte_eth_dev *dev)
 	struct memif_socket *socket = NULL;
 	struct memif_socket_dev_list_elt *elt, *next;
 	struct rte_hash *hash;
+	int ret;
 
 	hash = rte_hash_find_existing(MEMIF_SOCKET_HASH_NAME);
 	if (hash == NULL)
@@ -1037,7 +1043,10 @@ memif_socket_remove_device(struct rte_eth_dev *dev)
 			/* remove listener socket file,
 			 * so we can create new one later.
 			 */
-			remove(socket->filename);
+			ret = remove(socket->filename);
+			if (ret < 0)
+				MIF_LOG(ERR, "Failed to remove socket file: %s",
+					socket->filename);
 		}
 		rte_free(socket);
 	}
@@ -1113,7 +1122,7 @@ memif_connect_slave(struct rte_eth_dev *dev)
 	return 0;
 
  error:
-	if (sockfd > 0) {
+	if (sockfd >= 0) {
 		close(sockfd);
 		sockfd = -1;
 	}

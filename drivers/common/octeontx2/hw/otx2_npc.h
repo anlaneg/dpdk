@@ -132,6 +132,7 @@ enum npc_kpu_err_code {
 	NPC_EC_NOERR = 0, /* has to be zero */
 	NPC_EC_UNK,
 	NPC_EC_IH_LENGTH,
+	NPC_EC_EDSA_UNK,
 	NPC_EC_L2_K1,
 	NPC_EC_L2_K2,
 	NPC_EC_L2_K3,
@@ -186,10 +187,15 @@ enum npc_kpu_la_ltype {
 enum npc_kpu_lb_ltype {
 	NPC_LT_LB_ETAG = 1,
 	NPC_LT_LB_CTAG,
-	NPC_LT_LB_STAG,
+	NPC_LT_LB_STAG_QINQ,
 	NPC_LT_LB_BTAG,
-	NPC_LT_LB_QINQ,
 	NPC_LT_LB_ITAG,
+	NPC_LT_LB_DSA,
+	NPC_LT_LB_DSA_VLAN,
+	NPC_LT_LB_EDSA,
+	NPC_LT_LB_EDSA_VLAN,
+	NPC_LT_LB_EXDSA,
+	NPC_LT_LB_EXDSA_VLAN,
 };
 
 enum npc_kpu_lc_ltype {
@@ -245,9 +251,6 @@ enum npc_kpu_lf_ltype {
 	NPC_LT_LF_TU_3RD_NSH,
 };
 
-/* Don't modify Ltypes upto SCTP, otherwise it will
- * effect flow tag calculation and thus RSS.
- */
 enum npc_kpu_lg_ltype {
 	NPC_LT_LG_TU_IP = 1,
 	NPC_LT_LG_TU_IP6,
@@ -255,6 +258,9 @@ enum npc_kpu_lg_ltype {
 	NPC_LT_LG_TU_ETHER_IN_NSH,
 };
 
+/* Don't modify Ltypes upto SCTP, otherwise it will
+ * effect flow tag calculation and thus RSS.
+ */
 enum npc_kpu_lh_ltype {
 	NPC_LT_LH_TU_TCP = 1,
 	NPC_LT_LH_TU_UDP,

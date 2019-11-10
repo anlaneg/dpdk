@@ -229,7 +229,14 @@ port_init(uint16_t port)
 	uint16_t q;
 
 	/* The max pool number from dev_info will be used to validate the pool number specified in cmd line */
-	rte_eth_dev_info_get (port, &dev_info);//获取设备信息
+	retval = rte_eth_dev_info_get(port, &dev_info);//获取设备信息
+	if (retval != 0) {
+		RTE_LOG(ERR, VHOST_PORT,
+			"Error during getting device (port %u) info: %s\n",
+			port, strerror(-retval));
+
+		return retval;
+	}
 
 	//默认的收发配置
 	rxconf = &dev_info.default_rxconf;
@@ -336,10 +343,24 @@ port_init(uint16_t port)
 		return retval;
 	}
 
-	if (promiscuous)
-		rte_eth_promiscuous_enable(port);
+	if (promiscuous) {
+		retval = rte_eth_promiscuous_enable(port);
+		if (retval != 0) {
+			RTE_LOG(ERR, VHOST_PORT,
+				"Failed to enable promiscuous mode on port %u: %s\n",
+				port, rte_strerror(-retval));
+			return retval;
+		}
+	}
 
-	rte_eth_macaddr_get(port, &vmdq_ports_eth_addr[port]);
+	retval = rte_eth_macaddr_get(port, &vmdq_ports_eth_addr[port]);
+	if (retval < 0) {
+		RTE_LOG(ERR, VHOST_PORT,
+			"Failed to get MAC address on port %u: %s\n",
+			port, rte_strerror(-retval));
+		return retval;
+	}
+
 	RTE_LOG(INFO, VHOST_PORT, "Max virtio devices supported: %u\n", num_devices);
 	RTE_LOG(INFO, VHOST_PORT, "Port %u MAC: %02"PRIx8" %02"PRIx8" %02"PRIx8
 			" %02"PRIx8" %02"PRIx8" %02"PRIx8"\n",

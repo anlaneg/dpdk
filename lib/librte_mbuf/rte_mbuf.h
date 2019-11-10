@@ -42,11 +42,13 @@
 #include <rte_branch_prediction.h>
 #include <rte_byteorder.h>
 #include <rte_mbuf_ptype.h>
+#include <rte_mbuf_core.h>
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
+<<<<<<< HEAD
 /*
  * Packet Offload Features Flags. It also carry packet type information.
  * Critical resources. Both rx/tx shared these bits. Be cautious on any change
@@ -404,6 +406,8 @@ extern "C" {
 /** Alignment constraint of mbuf private area. */
 #define RTE_MBUF_PRIV_ALIGN 8
 
+=======
+>>>>>>> upstream/master
 /**
  * Get the name of a RX offload flag
  *
@@ -455,6 +459,7 @@ const char *rte_get_tx_ol_flag_name(uint64_t mask);
 int rte_get_tx_ol_flag_list(uint64_t mask, char *buf, size_t buflen);
 
 /**
+<<<<<<< HEAD
  * Some NICs need at least 2KB buffer to RX standard Ethernet frame without
  * splitting it into multiple segments.
  * So, for mbufs that planned to be involved into RX/TX, the recommended
@@ -773,6 +778,8 @@ struct rte_mbuf_ext_shared_info {
 #define RTE_MBUF_MAX_NB_SEGS	UINT16_MAX
 
 /**
+=======
+>>>>>>> upstream/master
  * Prefetch the first part of the mbuf
  *
  * The first 64 bytes of the mbuf corresponds to fields that are used early
@@ -967,31 +974,6 @@ rte_mbuf_to_priv(struct rte_mbuf *m)
 {
 	return RTE_PTR_ADD(m, sizeof(struct rte_mbuf));
 }
-
-/**
- * Returns TRUE if given mbuf is cloned by mbuf indirection, or FALSE
- * otherwise.
- *
- * If a mbuf has its data in another mbuf and references it by mbuf
- * indirection, this mbuf can be defined as a cloned mbuf.
- */
-#define RTE_MBUF_CLONED(mb)     ((mb)->ol_flags & IND_ATTACHED_MBUF)
-
-/**
- * Returns TRUE if given mbuf has an external buffer, or FALSE otherwise.
- *
- * External buffer is a user-provided anonymous buffer.
- */
-#define RTE_MBUF_HAS_EXTBUF(mb) ((mb)->ol_flags & EXT_ATTACHED_MBUF)
-
-/**
- * Returns TRUE if given mbuf is direct, or FALSE otherwise.
- *
- * If a mbuf embeds its own data after the rte_mbuf structure, this mbuf
- * can be defined as a direct mbuf.
- */
-#define RTE_MBUF_DIRECT(mb) \
-	(!((mb)->ol_flags & (IND_ATTACHED_MBUF | EXT_ATTACHED_MBUF)))
 
 /**
  * Private data in case of pktmbuf pool.
@@ -1701,6 +1683,34 @@ rte_pktmbuf_attach_extbuf(struct rte_mbuf *m, void *buf_addr,
 #define rte_pktmbuf_detach_extbuf(m) rte_pktmbuf_detach(m)
 
 /**
+ * Copy dynamic fields from msrc to mdst.
+ *
+ * @param mdst
+ *   The destination mbuf.
+ * @param msrc
+ *   The source mbuf.
+ */
+static inline void
+rte_mbuf_dynfield_copy(struct rte_mbuf *mdst, const struct rte_mbuf *msrc)
+{
+	memcpy(&mdst->dynfield1, msrc->dynfield1, sizeof(mdst->dynfield1));
+}
+
+/* internal */
+static inline void
+__rte_pktmbuf_copy_hdr(struct rte_mbuf *mdst, const struct rte_mbuf *msrc)
+{
+	mdst->port = msrc->port;
+	mdst->vlan_tci = msrc->vlan_tci;
+	mdst->vlan_tci_outer = msrc->vlan_tci_outer;
+	mdst->tx_offload = msrc->tx_offload;
+	mdst->hash = msrc->hash;
+	mdst->packet_type = msrc->packet_type;
+	mdst->timestamp = msrc->timestamp;
+	rte_mbuf_dynfield_copy(mdst, msrc);
+}
+
+/**
  * Attach packet mbuf to another packet mbuf.
  *
  * If the mbuf we are attaching to isn't a direct buffer and is attached to
@@ -1737,23 +1747,17 @@ static inline void rte_pktmbuf_attach(struct rte_mbuf *mi, struct rte_mbuf *m)
 		mi->ol_flags = m->ol_flags | IND_ATTACHED_MBUF;
 	}
 
+	__rte_pktmbuf_copy_hdr(mi, m);
+
+	mi->data_off = m->data_off;
+	mi->data_len = m->data_len;
 	mi->buf_iova = m->buf_iova;
 	mi->buf_addr = m->buf_addr;
 	mi->buf_len = m->buf_len;
 
-	mi->data_off = m->data_off;
-	mi->data_len = m->data_len;
-	mi->port = m->port;
-	mi->vlan_tci = m->vlan_tci;
-	mi->vlan_tci_outer = m->vlan_tci_outer;
-	mi->tx_offload = m->tx_offload;
-	mi->hash = m->hash;
-
 	mi->next = NULL;
 	mi->pkt_len = mi->data_len;
 	mi->nb_segs = 1;
-	mi->packet_type = m->packet_type;
-	mi->timestamp = m->timestamp;
 
 	__rte_mbuf_sanity_check(mi, 1);
 	__rte_mbuf_sanity_check(m, 0);
@@ -1924,7 +1928,22 @@ static inline void rte_pktmbuf_free(struct rte_mbuf *m)
 }
 
 /**
- * Creates a "clone" of the given packet mbuf.
+ * Free a bulk of packet mbufs back into their original mempools.
+ *
+ * Free a bulk of mbufs, and all their segments in case of chained buffers.
+ * Each segment is added back into its original mempool.
+ *
+ *  @param mbufs
+ *    Array of pointers to packet mbufs.
+ *    The array may contain NULL pointers.
+ *  @param count
+ *    Array size.
+ */
+__rte_experimental
+void rte_pktmbuf_free_bulk(struct rte_mbuf **mbufs, unsigned int count);
+
+/**
+ * Create a "clone" of the given packet mbuf.
  *
  * Walks through all segments of the given packet mbuf, and for each of them:
  *  - Creates a new packet mbuf from the given pool.
@@ -1940,42 +1959,34 @@ static inline void rte_pktmbuf_free(struct rte_mbuf *m)
  *   - The pointer to the new "clone" mbuf on success.
  *   - NULL if allocation fails.
  */
-static inline struct rte_mbuf *rte_pktmbuf_clone(struct rte_mbuf *md,
-		struct rte_mempool *mp)
-{
-	struct rte_mbuf *mc, *mi, **prev;
-	uint32_t pktlen;
-	uint16_t nseg;
+struct rte_mbuf *
+rte_pktmbuf_clone(struct rte_mbuf *md, struct rte_mempool *mp);
 
-	if (unlikely ((mc = rte_pktmbuf_alloc(mp)) == NULL))
-		return NULL;
-
-	mi = mc;
-	prev = &mi->next;
-	pktlen = md->pkt_len;
-	nseg = 0;
-
-	do {
-		nseg++;
-		rte_pktmbuf_attach(mi, md);
-		*prev = mi;
-		prev = &mi->next;
-	} while ((md = md->next) != NULL &&
-	    (mi = rte_pktmbuf_alloc(mp)) != NULL);
-
-	*prev = NULL;
-	mc->nb_segs = nseg;
-	mc->pkt_len = pktlen;
-
-	/* Allocation of new indirect segment failed */
-	if (unlikely (mi == NULL)) {
-		rte_pktmbuf_free(mc);
-		return NULL;
-	}
-
-	__rte_mbuf_sanity_check(mc, 1);
-	return mc;
-}
+/**
+ * Create a full copy of a given packet mbuf.
+ *
+ * Copies all the data from a given packet mbuf to a newly allocated
+ * set of mbufs. The private data are is not copied.
+ *
+ * @param m
+ *   The packet mbuf to be copiedd.
+ * @param mp
+ *   The mempool from which the "clone" mbufs are allocated.
+ * @param offset
+ *   The number of bytes to skip before copying.
+ *   If the mbuf does not have that many bytes, it is an error
+ *   and NULL is returned.
+ * @param length
+ *   The upper limit on bytes to copy.  Passing UINT32_MAX
+ *   means all data (after offset).
+ * @return
+ *   - The pointer to the new "clone" mbuf on success.
+ *   - NULL if allocation fails.
+ */
+__rte_experimental
+struct rte_mbuf *
+rte_pktmbuf_copy(const struct rte_mbuf *m, struct rte_mempool *mp,
+		 uint32_t offset, uint32_t length);
 
 /**
  * Adds given value to the refcnt of all packet mbuf segments.
@@ -2042,6 +2053,7 @@ static inline struct rte_mbuf *rte_pktmbuf_lastseg(struct rte_mbuf *m)
 	return m;
 }
 
+<<<<<<< HEAD
 /**
  * A macro that points to an offset into the data in the mbuf.
  *
@@ -2088,18 +2100,11 @@ static inline struct rte_mbuf *rte_pktmbuf_lastseg(struct rte_mbuf *m)
 #define rte_pktmbuf_iova_offset(m, o) \
 	(rte_iova_t)((m)->buf_iova + (m)->data_off + (o))
 
+=======
+>>>>>>> upstream/master
 /* deprecated */
 #define rte_pktmbuf_mtophys_offset(m, o) \
 	rte_pktmbuf_iova_offset(m, o)
-
-/**
- * A macro that returns the IO address that points to the start of the
- * data in the mbuf
- *
- * @param m
- *   The packet mbuf.
- */
-#define rte_pktmbuf_iova(m) rte_pktmbuf_iova_offset(m, 0)
 
 /* deprecated */
 #define rte_pktmbuf_mtophys(m) rte_pktmbuf_iova(m)
@@ -2421,6 +2426,11 @@ rte_validate_tx_offload(const struct rte_mbuf *m)
 }
 
 /**
+ * @internal used by rte_pktmbuf_linearize().
+ */
+int __rte_pktmbuf_linearize(struct rte_mbuf *mbuf);
+
+/**
  * Linearize data in mbuf.
  *
  * This function moves the mbuf data in the first segment if there is enough
@@ -2435,40 +2445,9 @@ rte_validate_tx_offload(const struct rte_mbuf *m)
 static inline int
 rte_pktmbuf_linearize(struct rte_mbuf *mbuf)
 {
-	size_t seg_len, copy_len;
-	struct rte_mbuf *m;
-	struct rte_mbuf *m_next;
-	char *buffer;
-
 	if (rte_pktmbuf_is_contiguous(mbuf))
 		return 0;
-
-	/* Extend first segment to the total packet length */
-	copy_len = rte_pktmbuf_pkt_len(mbuf) - rte_pktmbuf_data_len(mbuf);
-
-	if (unlikely(copy_len > rte_pktmbuf_tailroom(mbuf)))
-		return -1;
-
-	buffer = rte_pktmbuf_mtod_offset(mbuf, char *, mbuf->data_len);
-	mbuf->data_len = (uint16_t)(mbuf->pkt_len);
-
-	/* Append data from next segments to the first one */
-	m = mbuf->next;
-	while (m != NULL) {
-		m_next = m->next;
-
-		seg_len = rte_pktmbuf_data_len(m);
-		rte_memcpy(buffer, rte_pktmbuf_mtod(m, char *), seg_len);
-		buffer += seg_len;
-
-		rte_pktmbuf_free_seg(m);
-		m = m_next;
-	}
-
-	mbuf->next = NULL;
-	mbuf->nb_segs = 1;
-
-	return 0;
+	return __rte_pktmbuf_linearize(mbuf);
 }
 
 /**

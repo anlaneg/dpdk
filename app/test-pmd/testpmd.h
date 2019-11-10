@@ -11,6 +11,7 @@
 #include <rte_bus_pci.h>
 #include <rte_gro.h>
 #include <rte_gso.h>
+#include <cmdline.h>
 
 #define RTE_PORT_ALL            (~(portid_t)0x0)
 
@@ -264,6 +265,9 @@ extern struct fwd_engine ieee1588_fwd_engine;
 #endif
 
 extern struct fwd_engine * fwd_engines[]; /**< NULL terminated array. */
+extern cmdline_parse_inst_t cmd_set_raw;
+extern cmdline_parse_inst_t cmd_show_set_raw;
+extern cmdline_parse_inst_t cmd_show_set_raw_all;
 
 extern uint16_t mempool_flags;
 
@@ -322,6 +326,7 @@ extern uint8_t flow_isolate_all; /**< set by "--flow-isolate-all */
 extern uint8_t  mp_alloc_type;
 /**< set by "--mp-anon" or "--mp-alloc" parameter */
 extern uint8_t no_link_check; /**<set by "--disable-link-check" parameter */
+extern uint8_t no_device_start; /**<set by "--disable-device-start" parameter */
 extern volatile int test_done; /* stop packet forwarding when set to 1. */
 extern uint8_t lsc_interrupt; /**< disabled by "--no-lsc-interrupt" parameter */
 extern uint8_t rmv_interrupt; /**< disabled by "--no-rmv-interrupt" parameter */
@@ -505,7 +510,8 @@ struct vxlan_encap_conf {
 	uint8_t eth_src[RTE_ETHER_ADDR_LEN];
 	uint8_t eth_dst[RTE_ETHER_ADDR_LEN];
 };
-struct vxlan_encap_conf vxlan_encap_conf;
+
+extern struct vxlan_encap_conf vxlan_encap_conf;
 
 /* NVGRE encap/decap parameters. */
 struct nvgre_encap_conf {
@@ -520,7 +526,8 @@ struct nvgre_encap_conf {
 	uint8_t eth_src[RTE_ETHER_ADDR_LEN];
 	uint8_t eth_dst[RTE_ETHER_ADDR_LEN];
 };
-struct nvgre_encap_conf nvgre_encap_conf;
+
+extern struct nvgre_encap_conf nvgre_encap_conf;
 
 /* L2 encap parameters. */
 struct l2_encap_conf {
@@ -530,13 +537,13 @@ struct l2_encap_conf {
 	uint8_t eth_src[RTE_ETHER_ADDR_LEN];
 	uint8_t eth_dst[RTE_ETHER_ADDR_LEN];
 };
-struct l2_encap_conf l2_encap_conf;
+extern struct l2_encap_conf l2_encap_conf;
 
 /* L2 decap parameters. */
 struct l2_decap_conf {
 	uint32_t select_vlan:1;
 };
-struct l2_decap_conf l2_decap_conf;
+extern struct l2_decap_conf l2_decap_conf;
 
 /* MPLSoGRE encap parameters. */
 struct mplsogre_encap_conf {
@@ -551,14 +558,14 @@ struct mplsogre_encap_conf {
 	uint8_t eth_src[RTE_ETHER_ADDR_LEN];
 	uint8_t eth_dst[RTE_ETHER_ADDR_LEN];
 };
-struct mplsogre_encap_conf mplsogre_encap_conf;
+extern struct mplsogre_encap_conf mplsogre_encap_conf;
 
 /* MPLSoGRE decap parameters. */
 struct mplsogre_decap_conf {
 	uint32_t select_ipv4:1;
 	uint32_t select_vlan:1;
 };
-struct mplsogre_decap_conf mplsogre_decap_conf;
+extern struct mplsogre_decap_conf mplsogre_decap_conf;
 
 /* MPLSoUDP encap parameters. */
 struct mplsoudp_encap_conf {
@@ -575,14 +582,14 @@ struct mplsoudp_encap_conf {
 	uint8_t eth_src[RTE_ETHER_ADDR_LEN];
 	uint8_t eth_dst[RTE_ETHER_ADDR_LEN];
 };
-struct mplsoudp_encap_conf mplsoudp_encap_conf;
+extern struct mplsoudp_encap_conf mplsoudp_encap_conf;
 
 /* MPLSoUDP decap parameters. */
 struct mplsoudp_decap_conf {
 	uint32_t select_ipv4:1;
 	uint32_t select_vlan:1;
 };
-struct mplsoudp_decap_conf mplsoudp_decap_conf;
+extern struct mplsoudp_decap_conf mplsoudp_decap_conf;
 
 static inline unsigned int
 lcore_num(void)
@@ -691,6 +698,7 @@ void nic_stats_clear(portid_t port_id);
 void nic_xstats_display(portid_t port_id);
 void nic_xstats_clear(portid_t port_id);
 void nic_stats_mapping_display(portid_t port_id);
+void device_infos_display(const char *identifier);
 void port_infos_display(portid_t port_id);
 void port_summary_display(portid_t port_id);
 void port_summary_header_display(void);
@@ -750,6 +758,7 @@ void rx_vlan_strip_set_on_queue(portid_t port_id, uint16_t queue_id, int on);
 
 void rx_vlan_filter_set(portid_t port_id, int on);
 void rx_vlan_all_filter_set(portid_t port_id, int on);
+void rx_vlan_qinq_strip_set(portid_t port_id, int on);
 int rx_vft_set(portid_t port_id, uint16_t vlan_id, int on);
 void vlan_extend_set(portid_t port_id, int on);
 void vlan_tpid_set(portid_t port_id, enum rte_vlan_type vlan_type,
@@ -790,6 +799,7 @@ void stop_port(portid_t pid);
 void close_port(portid_t pid);
 void reset_port(portid_t pid);
 void attach_port(char *identifier);
+void detach_device(char *identifier);
 void detach_port_device(portid_t port_id);
 int all_ports_stopped(void);
 int port_is_stopped(portid_t port_id);
@@ -819,6 +829,14 @@ void setup_gro(const char *onoff, portid_t port_id);
 void setup_gro_flush_cycles(uint8_t cycles);
 void show_gro(portid_t port_id);
 void setup_gso(const char *mode, portid_t port_id);
+int eth_dev_info_get_print_err(uint16_t port_id,
+			struct rte_eth_dev_info *dev_info);
+void eth_set_promisc_mode(uint16_t port_id, int enable);
+void eth_set_allmulticast_mode(uint16_t port, int enable);
+int eth_link_get_nowait_print_err(uint16_t port_id, struct rte_eth_link *link);
+int eth_macaddr_get_print_err(uint16_t port_id,
+			struct rte_ether_addr *mac_addr);
+
 
 /* Functions to manage the set of filtered Multicast MAC addresses */
 void mcast_addr_add(portid_t port_id, struct rte_ether_addr *mc_addr);

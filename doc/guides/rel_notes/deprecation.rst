@@ -34,22 +34,20 @@ Deprecation Notices
 
     + ``rte_eal_devargs_type_count``
 
-* vfio: removal of ``rte_vfio_dma_map`` and ``rte_vfio_dma_unmap`` APIs which
-  have been replaced with ``rte_dev_dma_map`` and ``rte_dev_dma_unmap``
-  functions.  The due date for the removal targets DPDK 20.02.
-
-* pci: Several exposed functions are misnamed.
-  The following functions are deprecated starting from v17.11 and are replaced:
-
-  - ``eal_parse_pci_BDF`` replaced by ``rte_pci_addr_parse``
-  - ``eal_parse_pci_DomBDF`` replaced by ``rte_pci_addr_parse``
-  - ``rte_eal_compare_pci_addr`` replaced by ``rte_pci_addr_cmp``
+* eal: The ``rte_logs`` struct and global symbol will be made private to
+  remove it from the externally visible ABI and allow it to be updated in the
+  future.
 
 * dpaa2: removal of ``rte_dpaa2_memsegs`` structure which has been replaced
   by a pa-va search library. This structure was earlier being used for holding
   memory segments used by dpaa2 driver for faster pa->va translation. This
   structure would be made internal (or removed if all dependencies are cleared)
   in future releases.
+
+* ethdev: The function ``rte_eth_dev_count`` will be removed in DPDK 20.02.
+  It is replaced by the function ``rte_eth_dev_count_avail``.
+  If the intent is to iterate over ports, ``RTE_ETH_FOREACH_*`` macros
+  are better port iterators.
 
 * ethdev: the legacy filter API, including
   ``rte_eth_dev_filter_supported()``, ``rte_eth_dev_filter_ctrl()`` as well
@@ -58,6 +56,41 @@ Deprecation Notices
   PMDs that implement the latter.
   Target release for removal of the legacy API will be defined once most
   PMDs have switched to rte_flow.
+
+* ethdev: Update API functions returning ``void`` to return ``int`` with
+  negative errno values to indicate various error conditions (e.g.
+  invalid port ID, unsupported operation, failed operation):
+
+  - ``rte_eth_dev_stop``
+  - ``rte_eth_dev_close``
+
+* ethdev: New offload flags ``DEV_RX_OFFLOAD_RSS_HASH`` and
+  ``DEV_RX_OFFLOAD_FLOW_MARK`` will be added in 19.11.
+  This will allow application to enable or disable PMDs from updating
+  ``rte_mbuf::hash::rss`` and ``rte_mbuf::hash::fdir`` respectively.
+  This scheme will allow PMDs to avoid writes to ``rte_mbuf`` fields on Rx and
+  thereby improve Rx performance if application wishes do so.
+  In 19.11 PMDs will still update the fields even when the offloads are not
+  enabled.
+
+* ethdev: New function ``rte_eth_dev_set_supported_ptypes`` will be added in
+  19.11.
+  This will allow application to request PMD to set specific ptypes defined
+  through ``rte_eth_dev_set_supported_ptypes`` in ``rte_mbuf::packet_type``.
+  If application doesn't want any ptype information it can call
+  ``rte_eth_dev_set_supported_ptypes(ethdev_id, RTE_PTYPE_UNKNOWN)`` and PMD
+  will set ``rte_mbuf::packet_type`` to ``0``.
+  If application doesn't call ``rte_eth_dev_set_supported_ptypes`` PMD can
+  return ``rte_mbuf::packet_type`` with ``rte_eth_dev_get_supported_ptypes``.
+  If application is interested only in L2/L3 layer, it can inform the PMD
+  to update ``rte_mbuf::packet_type`` with L2/L3 ptype by calling
+  ``rte_eth_dev_set_supported_ptypes(ethdev_id, RTE_PTYPE_L2_MASK | RTE_PTYPE_L3_MASK)``.
+  This scheme will allow PMDs to avoid lookup to internal ptype table on Rx and
+  thereby improve Rx performance if application wishes do so.
+
+* ethdev: New 32-bit fields may be added for maximum LRO session size, in
+  struct ``rte_eth_dev_info`` for the port capability and in struct
+  ``rte_eth_rxmode`` for the port configuration.
 
 * cryptodev: support for using IV with all sizes is added, J0 still can
   be used but only when IV length in following structs ``rte_crypto_auth_xform``,

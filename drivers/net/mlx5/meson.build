@@ -11,7 +11,7 @@ build = true
 
 pmd_dlopen = (get_option('ibverbs_link') == 'dlopen')
 LIB_GLUE_BASE = 'librte_pmd_mlx5_glue.so'
-LIB_GLUE_VERSION = '19.05.0'
+LIB_GLUE_VERSION = '19.08.0'
 LIB_GLUE = LIB_GLUE_BASE + '.' + LIB_GLUE_VERSION
 if pmd_dlopen
 	dpdk_conf.set('RTE_IBVERBS_LINK_DLOPEN', 1)
@@ -59,14 +59,15 @@ if build
 		'mlx5_vlan.c',
 		'mlx5_devx_cmds.c',
 	)
-	if dpdk_conf.has('RTE_ARCH_X86_64') or dpdk_conf.has('RTE_ARCH_ARM64')
+	if (dpdk_conf.has('RTE_ARCH_X86_64')
+		or dpdk_conf.has('RTE_ARCH_ARM64')
+		or dpdk_conf.has('RTE_ARCH_PPC_64'))
 		sources += files('mlx5_rxtx_vec.c')
 	endif
 	if not pmd_dlopen
 		sources += files('mlx5_glue.c')
 	endif
 	cflags_options = [
-		'-Wextra',
 		'-std=c11',
 		'-Wno-strict-prototypes',
 		'-D_BSD_SOURCE',
@@ -118,14 +119,22 @@ if build
 		'IBV_WQ_FLAGS_PCI_WRITE_END_PADDING' ],
 		[ 'HAVE_IBV_WQ_FLAG_RX_END_PADDING', 'infiniband/verbs.h',
 		'IBV_WQ_FLAG_RX_END_PADDING' ],
+		[ 'HAVE_MLX5DV_DR_DEVX_PORT', 'infiniband/mlx5dv.h',
+		'mlx5dv_query_devx_port' ],
 		[ 'HAVE_IBV_DEVX_OBJ', 'infiniband/mlx5dv.h',
 		'mlx5dv_devx_obj_create' ],
 		[ 'HAVE_IBV_FLOW_DEVX_COUNTERS', 'infiniband/mlx5dv.h',
 		'MLX5DV_FLOW_ACTION_COUNTERS_DEVX' ],
+		[ 'HAVE_IBV_DEVX_ASYNC', 'infiniband/mlx5dv.h',
+		'mlx5dv_devx_obj_query_async' ],
+		[ 'HAVE_MLX5DV_DR_ACTION_DEST_DEVX_TIR', 'infiniband/mlx5dv.h',
+		'mlx5dv_dr_action_create_dest_devx_tir' ],
 		[ 'HAVE_MLX5DV_DR', 'infiniband/mlx5dv.h',
 		'MLX5DV_DR_DOMAIN_TYPE_NIC_RX' ],
 		[ 'HAVE_MLX5DV_DR_ESWITCH', 'infiniband/mlx5dv.h',
 		'MLX5DV_DR_DOMAIN_TYPE_FDB' ],
+		[ 'HAVE_MLX5DV_DR_VLAN', 'infiniband/mlx5dv.h',
+		'mlx5dv_dr_action_create_push_vlan' ],
 		[ 'HAVE_SUPPORTED_40000baseKR4_Full', 'linux/ethtool.h',
 		'SUPPORTED_40000baseKR4_Full' ],
 		[ 'HAVE_SUPPORTED_40000baseCR4_Full', 'linux/ethtool.h',
@@ -173,12 +182,13 @@ if build
 	]
 	config = configuration_data()
 	foreach arg:has_sym_args
-		config.set(arg[0], cc.has_header_symbol(arg[1], arg[2]))
+		config.set(arg[0], cc.has_header_symbol(arg[1], arg[2],
+			dependencies: libs))
 	endforeach
 	foreach arg:has_member_args
-		file_prefix = '#include<' + arg[1] + '>'
+		file_prefix = '#include <' + arg[1] + '>'
 		config.set(arg[0], cc.has_member(arg[2], arg[3],
-			prefix : file_prefix))
+			prefix : file_prefix, dependencies: libs))
 	endforeach
 	configure_file(output : 'mlx5_autoconf.h', configuration : config)
 endif

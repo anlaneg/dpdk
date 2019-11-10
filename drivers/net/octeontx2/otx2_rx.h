@@ -8,9 +8,10 @@
 /* Default mark value used when none is provided. */
 #define OTX2_FLOW_ACTION_FLAG_DEFAULT	0xffff
 
-#define PTYPE_WIDTH 12
-#define PTYPE_NON_TUNNEL_ARRAY_SZ	BIT(PTYPE_WIDTH)
-#define PTYPE_TUNNEL_ARRAY_SZ		BIT(PTYPE_WIDTH)
+#define PTYPE_NON_TUNNEL_WIDTH		16
+#define PTYPE_TUNNEL_WIDTH		12
+#define PTYPE_NON_TUNNEL_ARRAY_SZ	BIT(PTYPE_NON_TUNNEL_WIDTH)
+#define PTYPE_TUNNEL_ARRAY_SZ		BIT(PTYPE_TUNNEL_WIDTH)
 #define PTYPE_ARRAY_SZ			((PTYPE_NON_TUNNEL_ARRAY_SZ +\
 					 PTYPE_TUNNEL_ARRAY_SZ) *\
 					 sizeof(uint16_t))
@@ -50,22 +51,26 @@ union mbuf_initializer {
 
 static __rte_always_inline void
 otx2_nix_mbuf_to_tstamp(struct rte_mbuf *mbuf,
-			struct otx2_timesync_info *tstamp, const uint16_t flag)
+			struct otx2_timesync_info *tstamp, const uint16_t flag,
+			uint64_t *tstamp_ptr)
 {
 	if ((flag & NIX_RX_OFFLOAD_TSTAMP_F) &&
-	    mbuf->packet_type == RTE_PTYPE_L2_ETHER_TIMESYNC &&
 	    (mbuf->data_off == RTE_PKTMBUF_HEADROOM +
 	     NIX_TIMESYNC_RX_OFFSET)) {
-		uint64_t *tstamp_ptr;
 
-		/* Deal with rx timestamp */
-		tstamp_ptr = rte_pktmbuf_mtod_offset(mbuf, uint64_t *,
-						     -NIX_TIMESYNC_RX_OFFSET);
+		/* Reading the rx timestamp inserted by CGX, viz at
+		 * starting of the packet data.
+		 */
 		mbuf->timestamp = rte_be_to_cpu_64(*tstamp_ptr);
-		tstamp->rx_tstamp = mbuf->timestamp;
-		tstamp->rx_ready = 1;
-		mbuf->ol_flags |= PKT_RX_IEEE1588_PTP | PKT_RX_IEEE1588_TMST
-			| PKT_RX_TIMESTAMP;
+		/* PKT_RX_IEEE1588_TMST flag needs to be set only in case
+		 * PTP packets are received.
+		 */
+		if (mbuf->packet_type == RTE_PTYPE_L2_ETHER_TIMESYNC) {
+			tstamp->rx_tstamp = mbuf->timestamp;
+			tstamp->rx_ready = 1;
+			mbuf->ol_flags |= PKT_RX_IEEE1588_PTP |
+				PKT_RX_IEEE1588_TMST | PKT_RX_TIMESTAMP;
+		}
 	}
 }
 
@@ -93,11 +98,11 @@ static __rte_always_inline uint32_t
 nix_ptype_get(const void * const lookup_mem, const uint64_t in)
 {
 	const uint16_t * const ptype = lookup_mem;
-	const uint16_t lg_lf_le = (in & 0xFFF000000000000) >> 48;
-	const uint16_t tu_l2 = ptype[(in & 0x000FFF000000000) >> 36];
-	const uint16_t il4_tu = ptype[PTYPE_NON_TUNNEL_ARRAY_SZ + lg_lf_le];
+	const uint16_t lh_lg_lf = (in & 0xFFF0000000000000) >> 52;
+	const uint16_t tu_l2 = ptype[(in & 0x000FFFF000000000) >> 36];
+	const uint16_t il4_tu = ptype[PTYPE_NON_TUNNEL_ARRAY_SZ + lh_lg_lf];
 
-	return (il4_tu << PTYPE_WIDTH) | tu_l2;
+	return (il4_tu << PTYPE_NON_TUNNEL_WIDTH) | tu_l2;
 }
 
 static __rte_always_inline uint32_t

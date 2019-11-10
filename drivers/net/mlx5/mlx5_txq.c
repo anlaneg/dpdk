@@ -47,7 +47,7 @@ txq_alloc_elts(struct mlx5_txq_ctrl *txq_ctrl)
 	unsigned int i;
 
 	for (i = 0; (i != elts_n); ++i)
-		(*txq_ctrl->txq.elts)[i] = NULL;
+		txq_ctrl->txq.elts[i] = NULL;
 	DRV_LOG(DEBUG, "port %u Tx queue %u allocated and configured %u WRs",
 		PORT_ID(txq_ctrl->priv), txq_ctrl->txq.idx, elts_n);
 	txq_ctrl->txq.elts_head = 0;
@@ -68,7 +68,7 @@ txq_free_elts(struct mlx5_txq_ctrl *txq_ctrl)
 	const uint16_t elts_m = elts_n - 1;
 	uint16_t elts_head = txq_ctrl->txq.elts_head;
 	uint16_t elts_tail = txq_ctrl->txq.elts_tail;
-	struct rte_mbuf *(*elts)[elts_n] = txq_ctrl->txq.elts;
+	struct rte_mbuf *(*elts)[elts_n] = &txq_ctrl->txq.elts;
 
 	DRV_LOG(DEBUG, "port %u Tx queue %u freeing WRs",
 		PORT_ID(txq_ctrl->priv), txq_ctrl->txq.idx);
@@ -366,25 +366,6 @@ error:
 }
 
 /**
- * Check if the burst function is using eMPW.
- *
- * @param tx_pkt_burst
- *   Tx burst function pointer.
- *
- * @return
- *   1 if the burst function is using eMPW, 0 otherwise.
- */
-static int
-is_empw_burst_func(eth_tx_burst_t tx_pkt_burst)
-{
-	if (tx_pkt_burst == mlx5_tx_burst_raw_vec ||
-	    tx_pkt_burst == mlx5_tx_burst_vec ||
-	    tx_pkt_burst == mlx5_tx_burst_empw)
-		return 1;
-	return 0;
-}
-
-/**
  * Create the Tx queue Verbs object.
  *
  * @param dev
@@ -408,16 +389,19 @@ mlx5_txq_ibv_new(struct rte_eth_dev *dev, uint16_t idx)
 		struct ibv_qp_init_attr_ex init;
 		struct ibv_cq_init_attr_ex cq;
 		struct ibv_qp_attr mod;
-		struct ibv_cq_ex cq_attr;
 	} attr;
 	unsigned int cqe_n;
 	struct mlx5dv_qp qp = { .comp_mask = MLX5DV_QP_MASK_UAR_MMAP_OFFSET };
 	struct mlx5dv_cq cq_info;
 	struct mlx5dv_obj obj;
 	const int desc = 1 << txq_data->elts_n;
-	eth_tx_burst_t tx_pkt_burst = mlx5_select_tx_function(dev);
 	int ret = 0;
 
+#ifdef HAVE_IBV_FLOW_DV_SUPPORT
+	/* If using DevX, need additional mask to read tisn value. */
+	if (priv->config.devx && !priv->sh->tdn)
+		qp.comp_mask |= MLX5DV_QP_MASK_RAW_QP_HANDLES;
+#endif
 	assert(txq_data);
 	priv->verbs_alloc_ctx.type = MLX5_VERBS_ALLOC_TYPE_TX_QUEUE;
 	priv->verbs_alloc_ctx.obj = txq_ctrl;
@@ -432,9 +416,8 @@ mlx5_txq_ibv_new(struct rte_eth_dev *dev, uint16_t idx)
 	attr.cq = (struct ibv_cq_init_attr_ex){
 		.comp_mask = 0,
 	};
-	cqe_n = desc / MLX5_TX_COMP_THRESH + 1;
-	if (is_empw_burst_func(tx_pkt_burst))
-		cqe_n += MLX5_TX_COMP_THRESH_INLINE_DIV;
+	cqe_n = desc / MLX5_TX_COMP_THRESH +
+		1 + MLX5_TX_COMP_THRESH_INLINE_DIV;
 	tmpl.cq = mlx5_glue->create_cq(priv->sh->ctx, cqe_n, NULL, NULL, 0);
 	if (tmpl.cq == NULL) {
 		DRV_LOG(ERR, "port %u Tx queue %u CQ creation failure",
@@ -472,7 +455,7 @@ mlx5_txq_ibv_new(struct rte_eth_dev *dev, uint16_t idx)
 		.pd = priv->sh->pd,
 		.comp_mask = IBV_QP_INIT_ATTR_PD,
 	};
-	if (txq_data->max_inline)
+	if (txq_data->inlen_send)
 		attr.init.cap.max_inline_data = txq_ctrl->max_inline_data;
 	if (txq_data->tso_en) {
 		attr.init.max_tso_header = txq_ctrl->max_tso_header;
@@ -546,26 +529,50 @@ mlx5_txq_ibv_new(struct rte_eth_dev *dev, uint16_t idx)
 		goto error;
 	}
 	txq_data->cqe_n = log2above(cq_info.cqe_cnt);
+	txq_data->cqe_s = 1 << txq_data->cqe_n;
+	txq_data->cqe_m = txq_data->cqe_s - 1;
 	txq_data->qp_num_8s = tmpl.qp->qp_num << 8;
 	txq_data->wqes = qp.sq.buf;
 	txq_data->wqe_n = log2above(qp.sq.wqe_cnt);
+	txq_data->wqe_s = 1 << txq_data->wqe_n;
+	txq_data->wqe_m = txq_data->wqe_s - 1;
+	txq_data->wqes_end = txq_data->wqes + txq_data->wqe_s;
 	txq_data->qp_db = &qp.dbrec[MLX5_SND_DBR];
 	txq_data->cq_db = cq_info.dbrec;
-	txq_data->cqes =
-		(volatile struct mlx5_cqe (*)[])
-		(uintptr_t)cq_info.buf;
+	txq_data->cqes = (volatile struct mlx5_cqe *)cq_info.buf;
 	txq_data->cq_ci = 0;
 #ifndef NDEBUG
 	txq_data->cq_pi = 0;
 #endif
 	txq_data->wqe_ci = 0;
 	txq_data->wqe_pi = 0;
+	txq_data->wqe_comp = 0;
+	txq_data->wqe_thres = txq_data->wqe_s / MLX5_TX_COMP_THRESH_INLINE_DIV;
+#ifdef HAVE_IBV_FLOW_DV_SUPPORT
+	/*
+	 * If using DevX need to query and store TIS transport domain value.
+	 * This is done once per port.
+	 * Will use this value on Rx, when creating matching TIR.
+	 */
+	if (priv->config.devx && !priv->sh->tdn) {
+		ret = mlx5_devx_cmd_qp_query_tis_td(tmpl.qp, qp.tisn,
+						    &priv->sh->tdn);
+		if (ret) {
+			DRV_LOG(ERR, "Fail to query port %u Tx queue %u QP TIS "
+				"transport domain", dev->data->port_id, idx);
+			rte_errno = EINVAL;
+			goto error;
+		} else {
+			DRV_LOG(DEBUG, "port %u Tx queue %u TIS number %d "
+				"transport domain %d", dev->data->port_id,
+				idx, qp.tisn, priv->sh->tdn);
+		}
+	}
+#endif
 	txq_ibv->qp = tmpl.qp;
 	txq_ibv->cq = tmpl.cq;
 	rte_atomic32_inc(&txq_ibv->refcnt);
 	txq_ctrl->bf_reg = qp.bf.reg;
-	txq_ctrl->cqn = cq_info.cqn;
-	txq_uar_init(txq_ctrl);
 	if (qp.comp_mask & MLX5DV_QP_MASK_UAR_MMAP_OFFSET) {
 		txq_ctrl->uar_mmap_offset = qp.uar_mmap_offset;
 		DRV_LOG(DEBUG, "port %u: uar_mmap_offset 0x%"PRIx64,
@@ -578,6 +585,7 @@ mlx5_txq_ibv_new(struct rte_eth_dev *dev, uint16_t idx)
 		rte_errno = EINVAL;
 		goto error;
 	}
+	txq_uar_init(txq_ctrl);
 	LIST_INSERT_HEAD(&priv->txqsibv, txq_ibv, next);
 	txq_ibv->txq_ctrl = txq_ctrl;
 	priv->verbs_alloc_ctx.type = MLX5_VERBS_ALLOC_TYPE_NONE;
@@ -670,7 +678,7 @@ mlx5_txq_ibv_verify(struct rte_eth_dev *dev)
 }
 
 /**
- * Calcuate the total number of WQEBB for Tx queue.
+ * Calculate the total number of WQEBB for Tx queue.
  *
  * Simplified version of calc_sq_size() in rdma-core.
  *
@@ -686,8 +694,44 @@ txq_calc_wqebb_cnt(struct mlx5_txq_ctrl *txq_ctrl)
 	unsigned int wqe_size;
 	const unsigned int desc = 1 << txq_ctrl->txq.elts_n;
 
-	wqe_size = MLX5_WQE_SIZE + txq_ctrl->max_inline_data;
+	wqe_size = MLX5_WQE_CSEG_SIZE +
+		   MLX5_WQE_ESEG_SIZE +
+		   MLX5_WSEG_SIZE -
+		   MLX5_ESEG_MIN_INLINE_SIZE +
+		   txq_ctrl->max_inline_data;
 	return rte_align32pow2(wqe_size * desc) / MLX5_WQE_SIZE;
+}
+
+/**
+ * Calculate the maximal inline data size for Tx queue.
+ *
+ * @param txq_ctrl
+ *   Pointer to Tx queue control structure.
+ *
+ * @return
+ *   The maximal inline data size.
+ */
+static unsigned int
+txq_calc_inline_max(struct mlx5_txq_ctrl *txq_ctrl)
+{
+	const unsigned int desc = 1 << txq_ctrl->txq.elts_n;
+	struct mlx5_priv *priv = txq_ctrl->priv;
+	unsigned int wqe_size;
+
+	wqe_size = priv->sh->device_attr.orig_attr.max_qp_wr / desc;
+	if (!wqe_size)
+		return 0;
+	/*
+	 * This calculation is derived from tthe source of
+	 * mlx5_calc_send_wqe() in rdma_core library.
+	 */
+	wqe_size = wqe_size * MLX5_WQE_SIZE -
+		   MLX5_WQE_CSEG_SIZE -
+		   MLX5_WQE_ESEG_SIZE -
+		   MLX5_WSEG_SIZE -
+		   MLX5_WSEG_SIZE +
+		   MLX5_DSEG_MIN_INLINE_SIZE;
+	return wqe_size;
 }
 
 /**
@@ -701,84 +745,182 @@ txq_set_params(struct mlx5_txq_ctrl *txq_ctrl)
 {
 	struct mlx5_priv *priv = txq_ctrl->priv;
 	struct mlx5_dev_config *config = &priv->config;
-	const unsigned int max_tso_inline =
-		((MLX5_MAX_TSO_HEADER + (RTE_CACHE_LINE_SIZE - 1)) /
-		 RTE_CACHE_LINE_SIZE);
-	unsigned int txq_inline;
-	unsigned int txqs_inline;
-	unsigned int inline_max_packet_sz;
-	eth_tx_burst_t tx_pkt_burst =
-		mlx5_select_tx_function(ETH_DEV(priv));
-	int is_empw_func = is_empw_burst_func(tx_pkt_burst);
-	int tso = !!(txq_ctrl->txq.offloads & (DEV_TX_OFFLOAD_TCP_TSO |
-					       DEV_TX_OFFLOAD_VXLAN_TNL_TSO |
-					       DEV_TX_OFFLOAD_GRE_TNL_TSO |
-					       DEV_TX_OFFLOAD_IP_TNL_TSO |
-					       DEV_TX_OFFLOAD_UDP_TNL_TSO));
+	unsigned int inlen_send; /* Inline data for ordinary SEND.*/
+	unsigned int inlen_empw; /* Inline data for enhanced MPW. */
+	unsigned int inlen_mode; /* Minimal required Inline data. */
+	unsigned int txqs_inline; /* Min Tx queues to enable inline. */
+	uint64_t dev_txoff = priv->dev_data->dev_conf.txmode.offloads;
+	bool tso = txq_ctrl->txq.offloads & (DEV_TX_OFFLOAD_TCP_TSO |
+					    DEV_TX_OFFLOAD_VXLAN_TNL_TSO |
+					    DEV_TX_OFFLOAD_GRE_TNL_TSO |
+					    DEV_TX_OFFLOAD_IP_TNL_TSO |
+					    DEV_TX_OFFLOAD_UDP_TNL_TSO);
+	bool vlan_inline;
+	unsigned int temp;
 
-	txq_inline = (config->txq_inline == MLX5_ARG_UNSET) ?
-		0 : config->txq_inline;
-	txqs_inline = (config->txqs_inline == MLX5_ARG_UNSET) ?
-		0 : config->txqs_inline;
-	inline_max_packet_sz =
-		(config->inline_max_packet_sz == MLX5_ARG_UNSET) ?
-		0 : config->inline_max_packet_sz;
-	if (is_empw_func) {
-		if (config->txq_inline == MLX5_ARG_UNSET)
-			txq_inline = MLX5_WQE_SIZE_MAX - MLX5_WQE_SIZE;
-		if (config->txqs_inline == MLX5_ARG_UNSET)
-			txqs_inline = MLX5_EMPW_MIN_TXQS;
-		if (config->inline_max_packet_sz == MLX5_ARG_UNSET)
-			inline_max_packet_sz = MLX5_EMPW_MAX_INLINE_LEN;
-		txq_ctrl->txq.mpw_hdr_dseg = config->mpw_hdr_dseg;
-		txq_ctrl->txq.inline_max_packet_sz = inline_max_packet_sz;
-	}
-	if (txq_inline && priv->txqs_n >= txqs_inline) {
-		unsigned int ds_cnt;
-
-		txq_ctrl->txq.max_inline =
-			((txq_inline + (RTE_CACHE_LINE_SIZE - 1)) /
-			 RTE_CACHE_LINE_SIZE);
-		if (is_empw_func) {
-			/* To minimize the size of data set, avoid requesting
-			 * too large WQ.
+	if (config->txqs_inline == MLX5_ARG_UNSET)
+		txqs_inline =
+#if defined(RTE_ARCH_ARM64)
+		(priv->pci_dev->id.device_id ==
+			PCI_DEVICE_ID_MELLANOX_CONNECTX5BF) ?
+			MLX5_INLINE_MAX_TXQS_BLUEFIELD :
+#endif
+			MLX5_INLINE_MAX_TXQS;
+	else
+		txqs_inline = (unsigned int)config->txqs_inline;
+	inlen_send = (config->txq_inline_max == MLX5_ARG_UNSET) ?
+		     MLX5_SEND_DEF_INLINE_LEN :
+		     (unsigned int)config->txq_inline_max;
+	inlen_empw = (config->txq_inline_mpw == MLX5_ARG_UNSET) ?
+		     MLX5_EMPW_DEF_INLINE_LEN :
+		     (unsigned int)config->txq_inline_mpw;
+	inlen_mode = (config->txq_inline_min == MLX5_ARG_UNSET) ?
+		     0 : (unsigned int)config->txq_inline_min;
+	if (config->mps != MLX5_MPW_ENHANCED)
+		inlen_empw = 0;
+	/*
+	 * If there is requested minimal amount of data to inline
+	 * we MUST enable inlining. This is a case for ConnectX-4
+	 * which usually requires L2 inlined for correct operating
+	 * and ConnectX-4LX which requires L2-L4 inlined to
+	 * support E-Switch Flows.
+	 */
+	if (inlen_mode) {
+		if (inlen_mode <= MLX5_ESEG_MIN_INLINE_SIZE) {
+			/*
+			 * Optimize minimal inlining for single
+			 * segment packets to fill one WQEBB
+			 * without gaps.
 			 */
-			txq_ctrl->max_inline_data =
-				((RTE_MIN(txq_inline,
-					  inline_max_packet_sz) +
-				  (RTE_CACHE_LINE_SIZE - 1)) /
-				 RTE_CACHE_LINE_SIZE) * RTE_CACHE_LINE_SIZE;
+			temp = MLX5_ESEG_MIN_INLINE_SIZE;
 		} else {
-			txq_ctrl->max_inline_data =
-				txq_ctrl->txq.max_inline * RTE_CACHE_LINE_SIZE;
+			temp = inlen_mode - MLX5_ESEG_MIN_INLINE_SIZE;
+			temp = RTE_ALIGN(temp, MLX5_WSEG_SIZE) +
+			       MLX5_ESEG_MIN_INLINE_SIZE;
+			temp = RTE_MIN(temp, MLX5_SEND_MAX_INLINE_LEN);
+		}
+		if (temp != inlen_mode) {
+			DRV_LOG(INFO,
+				"port %u minimal required inline setting"
+				" aligned from %u to %u",
+				PORT_ID(priv), inlen_mode, temp);
+			inlen_mode = temp;
+		}
+	}
+	/*
+	 * If port is configured to support VLAN insertion and device
+	 * does not support this feature by HW (for NICs before ConnectX-5
+	 * or in case of wqe_vlan_insert flag is not set) we must enable
+	 * data inline on all queues because it is supported by single
+	 * tx_burst routine.
+	 */
+	txq_ctrl->txq.vlan_en = config->hw_vlan_insert;
+	vlan_inline = (dev_txoff & DEV_TX_OFFLOAD_VLAN_INSERT) &&
+		      !config->hw_vlan_insert;
+	/*
+	 * If there are few Tx queues it is prioritized
+	 * to save CPU cycles and disable data inlining at all.
+	 */
+	if (inlen_send && priv->txqs_n >= txqs_inline) {
+		/*
+		 * The data sent with ordinal MLX5_OPCODE_SEND
+		 * may be inlined in Ethernet Segment, align the
+		 * length accordingly to fit entire WQEBBs.
+		 */
+		temp = RTE_MAX(inlen_send,
+			       MLX5_ESEG_MIN_INLINE_SIZE + MLX5_WQE_DSEG_SIZE);
+		temp -= MLX5_ESEG_MIN_INLINE_SIZE + MLX5_WQE_DSEG_SIZE;
+		temp = RTE_ALIGN(temp, MLX5_WQE_SIZE);
+		temp += MLX5_ESEG_MIN_INLINE_SIZE + MLX5_WQE_DSEG_SIZE;
+		temp = RTE_MIN(temp, MLX5_WQE_SIZE_MAX +
+				     MLX5_ESEG_MIN_INLINE_SIZE -
+				     MLX5_WQE_CSEG_SIZE -
+				     MLX5_WQE_ESEG_SIZE -
+				     MLX5_WQE_DSEG_SIZE * 2);
+		temp = RTE_MIN(temp, MLX5_SEND_MAX_INLINE_LEN);
+		temp = RTE_MAX(temp, inlen_mode);
+		if (temp != inlen_send) {
+			DRV_LOG(INFO,
+				"port %u ordinary send inline setting"
+				" aligned from %u to %u",
+				PORT_ID(priv), inlen_send, temp);
+			inlen_send = temp;
 		}
 		/*
-		 * Check if the inline size is too large in a way which
-		 * can make the WQE DS to overflow.
-		 * Considering in calculation:
-		 *      WQE CTRL (1 DS)
-		 *      WQE ETH  (1 DS)
-		 *      Inline part (N DS)
+		 * Not aligned to cache lines, but to WQEs.
+		 * First bytes of data (initial alignment)
+		 * is going to be copied explicitly at the
+		 * beginning of inlining buffer in Ethernet
+		 * Segment.
 		 */
-		ds_cnt = 2 + (txq_ctrl->txq.max_inline / MLX5_WQE_DWORD_SIZE);
-		if (ds_cnt > MLX5_DSEG_MAX) {
-			unsigned int max_inline = (MLX5_DSEG_MAX - 2) *
-						  MLX5_WQE_DWORD_SIZE;
-
-			max_inline = max_inline - (max_inline %
-						   RTE_CACHE_LINE_SIZE);
-			DRV_LOG(WARNING,
-				"port %u txq inline is too large (%d) setting"
-				" it to the maximum possible: %d\n",
-				PORT_ID(priv), txq_inline, max_inline);
-			txq_ctrl->txq.max_inline = max_inline /
-						   RTE_CACHE_LINE_SIZE;
-		}
+		assert(inlen_send >= MLX5_ESEG_MIN_INLINE_SIZE);
+		assert(inlen_send <= MLX5_WQE_SIZE_MAX +
+				     MLX5_ESEG_MIN_INLINE_SIZE -
+				     MLX5_WQE_CSEG_SIZE -
+				     MLX5_WQE_ESEG_SIZE -
+				     MLX5_WQE_DSEG_SIZE * 2);
+	} else if (inlen_mode) {
+		/*
+		 * If minimal inlining is requested we must
+		 * enable inlining in general, despite the
+		 * number of configured queues. Ignore the
+		 * txq_inline_max devarg, this is not
+		 * full-featured inline.
+		 */
+		inlen_send = inlen_mode;
+		inlen_empw = 0;
+	} else if (vlan_inline) {
+		/*
+		 * Hardware does not report offload for
+		 * VLAN insertion, we must enable data inline
+		 * to implement feature by software.
+		 */
+		inlen_send = MLX5_ESEG_MIN_INLINE_SIZE;
+		inlen_empw = 0;
+	} else {
+		inlen_send = 0;
+		inlen_empw = 0;
 	}
+	txq_ctrl->txq.inlen_send = inlen_send;
+	txq_ctrl->txq.inlen_mode = inlen_mode;
+	txq_ctrl->txq.inlen_empw = 0;
+	if (inlen_send && inlen_empw && priv->txqs_n >= txqs_inline) {
+		/*
+		 * The data sent with MLX5_OPCODE_ENHANCED_MPSW
+		 * may be inlined in Data Segment, align the
+		 * length accordingly to fit entire WQEBBs.
+		 */
+		temp = RTE_MAX(inlen_empw,
+			       MLX5_WQE_SIZE + MLX5_DSEG_MIN_INLINE_SIZE);
+		temp -= MLX5_DSEG_MIN_INLINE_SIZE;
+		temp = RTE_ALIGN(temp, MLX5_WQE_SIZE);
+		temp += MLX5_DSEG_MIN_INLINE_SIZE;
+		temp = RTE_MIN(temp, MLX5_WQE_SIZE_MAX +
+				     MLX5_DSEG_MIN_INLINE_SIZE -
+				     MLX5_WQE_CSEG_SIZE -
+				     MLX5_WQE_ESEG_SIZE -
+				     MLX5_WQE_DSEG_SIZE);
+		temp = RTE_MIN(temp, MLX5_EMPW_MAX_INLINE_LEN);
+		if (temp != inlen_empw) {
+			DRV_LOG(INFO,
+				"port %u enhanced empw inline setting"
+				" aligned from %u to %u",
+				PORT_ID(priv), inlen_empw, temp);
+			inlen_empw = temp;
+		}
+		assert(inlen_empw >= MLX5_ESEG_MIN_INLINE_SIZE);
+		assert(inlen_empw <= MLX5_WQE_SIZE_MAX +
+				     MLX5_DSEG_MIN_INLINE_SIZE -
+				     MLX5_WQE_CSEG_SIZE -
+				     MLX5_WQE_ESEG_SIZE -
+				     MLX5_WQE_DSEG_SIZE);
+		txq_ctrl->txq.inlen_empw = inlen_empw;
+	}
+	txq_ctrl->max_inline_data = RTE_MAX(inlen_send, inlen_empw);
 	if (tso) {
-		txq_ctrl->max_tso_header = max_tso_inline * RTE_CACHE_LINE_SIZE;
-		txq_ctrl->txq.max_inline = RTE_MAX(txq_ctrl->txq.max_inline,
-						   max_tso_inline);
+		txq_ctrl->max_tso_header = MLX5_MAX_TSO_HEADER;
+		txq_ctrl->max_inline_data = RTE_MAX(txq_ctrl->max_inline_data,
+						    MLX5_MAX_TSO_HEADER);
 		txq_ctrl->txq.tso_en = 1;
 	}
 	txq_ctrl->txq.tunnel_en = config->tunnel_en | config->swp;
@@ -786,6 +928,114 @@ txq_set_params(struct mlx5_txq_ctrl *txq_ctrl)
 				 DEV_TX_OFFLOAD_UDP_TNL_TSO |
 				 DEV_TX_OFFLOAD_OUTER_IPV4_CKSUM) &
 				txq_ctrl->txq.offloads) && config->swp;
+}
+
+/**
+ * Adjust Tx queue data inline parameters for large queue sizes.
+ * The data inline feature requires multiple WQEs to fit the packets,
+ * and if the large amount of Tx descriptors is requested by application
+ * the total WQE amount may exceed the hardware capabilities. If the
+ * default inline setting are used we can try to adjust these ones and
+ * meet the hardware requirements and not exceed the queue size.
+ *
+ * @param txq_ctrl
+ *   Pointer to Tx queue control structure.
+ *
+ * @return
+ *   Zero on success, otherwise the parameters can not be adjusted.
+ */
+static int
+txq_adjust_params(struct mlx5_txq_ctrl *txq_ctrl)
+{
+	struct mlx5_priv *priv = txq_ctrl->priv;
+	struct mlx5_dev_config *config = &priv->config;
+	unsigned int max_inline;
+
+	max_inline = txq_calc_inline_max(txq_ctrl);
+	if (!txq_ctrl->txq.inlen_send) {
+		/*
+		 * Inline data feature is not engaged at all.
+		 * There is nothing to adjust.
+		 */
+		return 0;
+	}
+	if (txq_ctrl->max_inline_data <= max_inline) {
+		/*
+		 * The requested inline data length does not
+		 * exceed queue capabilities.
+		 */
+		return 0;
+	}
+	if (txq_ctrl->txq.inlen_mode > max_inline) {
+		DRV_LOG(ERR,
+			"minimal data inline requirements (%u) are not"
+			" satisfied (%u) on port %u, try the smaller"
+			" Tx queue size (%d)",
+			txq_ctrl->txq.inlen_mode, max_inline,
+			priv->dev_data->port_id,
+			priv->sh->device_attr.orig_attr.max_qp_wr);
+		goto error;
+	}
+	if (txq_ctrl->txq.inlen_send > max_inline &&
+	    config->txq_inline_max != MLX5_ARG_UNSET &&
+	    config->txq_inline_max > (int)max_inline) {
+		DRV_LOG(ERR,
+			"txq_inline_max requirements (%u) are not"
+			" satisfied (%u) on port %u, try the smaller"
+			" Tx queue size (%d)",
+			txq_ctrl->txq.inlen_send, max_inline,
+			priv->dev_data->port_id,
+			priv->sh->device_attr.orig_attr.max_qp_wr);
+		goto error;
+	}
+	if (txq_ctrl->txq.inlen_empw > max_inline &&
+	    config->txq_inline_mpw != MLX5_ARG_UNSET &&
+	    config->txq_inline_mpw > (int)max_inline) {
+		DRV_LOG(ERR,
+			"txq_inline_mpw requirements (%u) are not"
+			" satisfied (%u) on port %u, try the smaller"
+			" Tx queue size (%d)",
+			txq_ctrl->txq.inlen_empw, max_inline,
+			priv->dev_data->port_id,
+			priv->sh->device_attr.orig_attr.max_qp_wr);
+		goto error;
+	}
+	if (txq_ctrl->txq.tso_en && max_inline < MLX5_MAX_TSO_HEADER) {
+		DRV_LOG(ERR,
+			"tso header inline requirements (%u) are not"
+			" satisfied (%u) on port %u, try the smaller"
+			" Tx queue size (%d)",
+			MLX5_MAX_TSO_HEADER, max_inline,
+			priv->dev_data->port_id,
+			priv->sh->device_attr.orig_attr.max_qp_wr);
+		goto error;
+	}
+	if (txq_ctrl->txq.inlen_send > max_inline) {
+		DRV_LOG(WARNING,
+			"adjust txq_inline_max (%u->%u)"
+			" due to large Tx queue on port %u",
+			txq_ctrl->txq.inlen_send, max_inline,
+			priv->dev_data->port_id);
+		txq_ctrl->txq.inlen_send = max_inline;
+	}
+	if (txq_ctrl->txq.inlen_empw > max_inline) {
+		DRV_LOG(WARNING,
+			"adjust txq_inline_mpw (%u->%u)"
+			"due to large Tx queue on port %u",
+			txq_ctrl->txq.inlen_empw, max_inline,
+			priv->dev_data->port_id);
+		txq_ctrl->txq.inlen_empw = max_inline;
+	}
+	txq_ctrl->max_inline_data = RTE_MAX(txq_ctrl->txq.inlen_send,
+					    txq_ctrl->txq.inlen_empw);
+	assert(txq_ctrl->max_inline_data <= max_inline);
+	assert(txq_ctrl->txq.inlen_mode <= max_inline);
+	assert(txq_ctrl->txq.inlen_mode <= txq_ctrl->txq.inlen_send);
+	assert(txq_ctrl->txq.inlen_mode <= txq_ctrl->txq.inlen_empw);
+	return 0;
+error:
+	rte_errno = ENOMEM;
+	return -ENOMEM;
 }
 
 /**
@@ -834,9 +1084,13 @@ mlx5_txq_new(struct rte_eth_dev *dev, uint16_t idx, uint16_t desc,
 	tmpl->priv = priv;
 	tmpl->socket = socket;
 	tmpl->txq.elts_n = log2above(desc);
+	tmpl->txq.elts_s = desc;
+	tmpl->txq.elts_m = desc - 1;
 	tmpl->txq.port_id = dev->data->port_id;
 	tmpl->txq.idx = idx;
 	txq_set_params(tmpl);
+	if (txq_adjust_params(tmpl))
+		goto error;
 	if (txq_calc_wqebb_cnt(tmpl) >
 	    priv->sh->device_attr.orig_attr.max_qp_wr) {
 		DRV_LOG(ERR,
@@ -847,8 +1101,6 @@ mlx5_txq_new(struct rte_eth_dev *dev, uint16_t idx, uint16_t desc,
 		rte_errno = ENOMEM;
 		goto error;
 	}
-	tmpl->txq.elts =
-		(struct rte_mbuf *(*)[1 << tmpl->txq.elts_n])(tmpl + 1);
 	rte_atomic32_inc(&tmpl->refcnt);
 	LIST_INSERT_HEAD(&priv->txqsctrl, tmpl, next);
 	return tmpl;

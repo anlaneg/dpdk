@@ -300,10 +300,13 @@ nix_vlan_mcam_config(struct rte_eth_dev *eth_dev,
 
 	/* Adds vlan_id & LB CTAG flag to MCAM KW */
 	if (flags & VLAN_ID_MATCH) {
-		entry.kw[kwi] |= NPC_LT_LB_CTAG << mkex->lb_lt_offset;
-		entry.kw_mask[kwi] |= 0xFULL << mkex->lb_lt_offset;
+		entry.kw[kwi] |= (NPC_LT_LB_CTAG | NPC_LT_LB_STAG_QINQ)
+							<< mkex->lb_lt_offset;
+		entry.kw_mask[kwi] |=
+			(0xF & ~(NPC_LT_LB_CTAG ^ NPC_LT_LB_STAG_QINQ))
+							<< mkex->lb_lt_offset;
 
-		mcam_data = (vlan_id << 16);
+		mcam_data = ((uint32_t)vlan_id << 16);
 		mcam_mask = (BIT_ULL(16) - 1) << 16;
 		otx2_mbox_memcpy(key_data + mkex->lb_xtract.key_off,
 				     &mcam_data, mkex->lb_xtract.len + 1);
@@ -313,15 +316,16 @@ nix_vlan_mcam_config(struct rte_eth_dev *eth_dev,
 
 	/* Adds LB STAG flag to MCAM KW */
 	if (flags & QINQ_F_MATCH) {
-		entry.kw[kwi] |= NPC_LT_LB_STAG << mkex->lb_lt_offset;
+		entry.kw[kwi] |= NPC_LT_LB_STAG_QINQ << mkex->lb_lt_offset;
 		entry.kw_mask[kwi] |= 0xFULL << mkex->lb_lt_offset;
 	}
 
 	/* Adds LB CTAG & LB STAG flags to MCAM KW */
 	if (flags & VTAG_F_MATCH) {
-		entry.kw[kwi] |= (NPC_LT_LB_CTAG | NPC_LT_LB_STAG)
+		entry.kw[kwi] |= (NPC_LT_LB_CTAG | NPC_LT_LB_STAG_QINQ)
 							<< mkex->lb_lt_offset;
-		entry.kw_mask[kwi] |= (NPC_LT_LB_CTAG & NPC_LT_LB_STAG)
+		entry.kw_mask[kwi] |=
+			(0xF & ~(NPC_LT_LB_CTAG ^ NPC_LT_LB_STAG_QINQ))
 							<< mkex->lb_lt_offset;
 	}
 
@@ -468,9 +472,9 @@ nix_vlan_handle_default_tx_entry(struct rte_eth_dev *eth_dev,
 		pf_func = (dev->pf_func & 0xff) << 8;
 		pf_func |= (dev->pf_func >> 8) & 0xff;
 
-		/* PF Func extracted to KW1[63:48] */
-		entry.kw[1] = (uint64_t)pf_func << 48;
-		entry.kw_mask[1] = (BIT_ULL(16) - 1) << 48;
+		/* PF Func extracted to KW1[47:32] */
+		entry.kw[0] = (uint64_t)pf_func << 32;
+		entry.kw_mask[0] = (BIT_ULL(16) - 1) << 32;
 
 		nix_set_tx_vlan_action(&entry, type, vtag_index);
 		vlan->def_tx_mcam_ent = entry;
@@ -649,7 +653,9 @@ otx2_nix_vlan_filter_set(struct rte_eth_dev *eth_dev, uint16_t vlan_id,
 	} else {
 		TAILQ_FOREACH(entry, &vlan->fltr_tbl, next) {
 			if (entry->vlan_id == vlan_id) {
-				nix_vlan_mcam_free(dev, entry->mcam_idx);
+				rc = nix_vlan_mcam_free(dev, entry->mcam_idx);
+				if (rc)
+					return rc;
 				TAILQ_REMOVE(&vlan->fltr_tbl, entry, next);
 				rte_free(entry);
 				break;
@@ -707,7 +713,7 @@ otx2_nix_vlan_offload_set(struct rte_eth_dev *eth_dev, int mask)
 	struct otx2_eth_dev *dev = otx2_eth_pmd_priv(eth_dev);
 	uint64_t offloads = dev->rx_offloads;
 	struct rte_eth_rxmode *rxmode;
-	int rc;
+	int rc = 0;
 
 	rxmode = &eth_dev->data->dev_conf.rxmode;
 
@@ -837,8 +843,8 @@ otx2_nix_vlan_pvid_set(struct rte_eth_dev *dev,       uint16_t vlan_id, int on)
 		vtag_cfg->vtag_size = NIX_VTAGSIZE_T4;
 
 		if (vlan->outer_vlan_tpid)
-			vtag_cfg->tx.vtag0 =
-				(vlan->outer_vlan_tpid << 16) | vlan_id;
+			vtag_cfg->tx.vtag0 = ((uint32_t)vlan->outer_vlan_tpid
+					      << 16) | vlan_id;
 		else
 			vtag_cfg->tx.vtag0 =
 				((RTE_ETHER_TYPE_VLAN << 16) | vlan_id);

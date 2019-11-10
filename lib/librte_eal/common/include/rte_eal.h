@@ -52,6 +52,7 @@ enum rte_proc_type_t {
 };
 
 /**
+<<<<<<< HEAD
  * The global RTE configuration structure.
  */
 struct rte_config {
@@ -95,6 +96,8 @@ enum rte_lcore_role_t rte_eal_lcore_role(unsigned lcore_id);
 
 
 /**
+=======
+>>>>>>> upstream/master
  * Get the process type in a multi-process setup
  *
  * @return

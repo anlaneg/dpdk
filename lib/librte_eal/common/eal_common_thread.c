@@ -40,7 +40,8 @@ rte_lcore_has_role(unsigned int lcore_id, enum rte_lcore_role_t role)
 
 //检查cpusetp中cpu对应的numa,如果cpusetp中包含的cpu有多个
 //且分属于不同的numa,则返回的numa为ANY,否则返回cpu对应的numa
-int eal_cpuset_socket_id(rte_cpuset_t *cpusetp)
+static int
+eal_cpuset_socket_id(rte_cpuset_t *cpusetp)
 {
 	unsigned cpu = 0;
 	int socket_id = SOCKET_ID_ANY;

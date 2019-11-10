@@ -20,7 +20,6 @@
 #include <rte_log.h>
 #include <rte_pci.h>
 #include <rte_bus_pci.h>
-#include <rte_eal_memconfig.h>
 #include <rte_common.h>
 #include <rte_malloc.h>
 
@@ -400,6 +399,12 @@ pci_uio_ioport_map(struct rte_pci_device *dev, int bar,
 	char filename[PATH_MAX];
 	int uio_num;
 	unsigned long start;
+
+	if (rte_eal_iopl_init() != 0) {
+		RTE_LOG(ERR, EAL, "%s(): insufficient ioport permissions for PCI device %s\n",
+			__func__, dev->name);
+		return -1;
+	}
 
 	uio_num = pci_get_uio_dev(dev, dirname, sizeof(dirname), 0);
 	if (uio_num < 0)

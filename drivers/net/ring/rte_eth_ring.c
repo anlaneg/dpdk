@@ -41,7 +41,6 @@ struct ring_queue {
 	struct rte_ring *rng;
 	rte_atomic64_t rx_pkts;
 	rte_atomic64_t tx_pkts;
-	rte_atomic64_t err_pkts;
 };
 
 struct pmd_internals {
@@ -91,13 +90,10 @@ eth_ring_tx(void *q, struct rte_mbuf **bufs, uint16_t nb_bufs)
 	struct ring_queue *r = q;
 	const uint16_t nb_tx = (uint16_t)rte_ring_enqueue_burst(r->rng,
 			ptrs, nb_bufs, NULL);
-	if (r->rng->flags & RING_F_SP_ENQ) {
+	if (r->rng->flags & RING_F_SP_ENQ)
 		r->tx_pkts.cnt += nb_tx;
-		r->err_pkts.cnt += nb_bufs - nb_tx;
-	} else {
+	else
 		rte_atomic64_add(&(r->tx_pkts), nb_tx);
-		rte_atomic64_add(&(r->err_pkts), nb_bufs - nb_tx);
-	}
 	return nb_tx;
 }
 
@@ -157,7 +153,7 @@ eth_tx_queue_setup(struct rte_eth_dev *dev, uint16_t tx_queue_id,
 }
 
 
-static void
+static int
 eth_dev_info(struct rte_eth_dev *dev,
 	     struct rte_eth_dev_info *dev_info)
 {
@@ -168,13 +164,15 @@ eth_dev_info(struct rte_eth_dev *dev,
 	dev_info->max_rx_queues = (uint16_t)internals->max_rx_queues;
 	dev_info->max_tx_queues = (uint16_t)internals->max_tx_queues;
 	dev_info->min_rx_bufsize = 0;
+
+	return 0;
 }
 
 static int
 eth_stats_get(struct rte_eth_dev *dev, struct rte_eth_stats *stats)
 {
 	unsigned int i;
-	unsigned long rx_total = 0, tx_total = 0, tx_err_total = 0;
+	unsigned long rx_total = 0, tx_total = 0;
 	const struct pmd_internals *internal = dev->data->dev_private;
 
 	for (i = 0; i < RTE_ETHDEV_QUEUE_STAT_CNTRS &&
@@ -187,17 +185,15 @@ eth_stats_get(struct rte_eth_dev *dev, struct rte_eth_stats *stats)
 			i < dev->data->nb_tx_queues; i++) {
 		stats->q_opackets[i] = internal->tx_ring_queues[i].tx_pkts.cnt;
 		tx_total += stats->q_opackets[i];
-		tx_err_total += internal->tx_ring_queues[i].err_pkts.cnt;
 	}
 
 	stats->ipackets = rx_total;
 	stats->opackets = tx_total;
-	stats->oerrors = tx_err_total;
 
 	return 0;
 }
 
-static void
+static int
 eth_stats_reset(struct rte_eth_dev *dev)
 {
 	unsigned int i;
@@ -205,10 +201,10 @@ eth_stats_reset(struct rte_eth_dev *dev)
 
 	for (i = 0; i < dev->data->nb_rx_queues; i++)
 		internal->rx_ring_queues[i].rx_pkts.cnt = 0;
-	for (i = 0; i < dev->data->nb_tx_queues; i++) {
+	for (i = 0; i < dev->data->nb_tx_queues; i++)
 		internal->tx_ring_queues[i].tx_pkts.cnt = 0;
-		internal->tx_ring_queues[i].err_pkts.cnt = 0;
-	}
+
+	return 0;
 }
 
 static void
@@ -249,8 +245,6 @@ static const struct eth_dev_ops ops = {
 	.mac_addr_remove = eth_mac_addr_remove,
 	.mac_addr_add = eth_mac_addr_add,
 };
-
-static struct rte_vdev_driver pmd_ring_drv;
 
 static int
 do_eth_dev_ring_create(const char *name,
@@ -326,6 +320,8 @@ do_eth_dev_ring_create(const char *name,
 	data->nb_tx_queues = (uint16_t)nb_tx_queues;
 	data->dev_link = pmd_link;
 	data->mac_addrs = &internals->address;
+	data->promiscuous = 1;
+	data->all_multicast = 1;
 
 	eth_dev->dev_ops = &ops;
 	data->kdrv = RTE_KDRV_NONE;

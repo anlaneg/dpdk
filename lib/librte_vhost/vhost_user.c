@@ -37,6 +37,10 @@
 #ifdef RTE_LIBRTE_VHOST_POSTCOPY
 #include <linux/userfaultfd.h>
 #endif
+#ifdef F_ADD_SEALS /* if file sealing is supported, so is memfd */
+#include <linux/memfd.h>
+#define MEMFD_SUPPORTED
+#endif
 
 #include <rte_common.h>
 #include <rte_malloc.h>
@@ -48,6 +52,9 @@
 
 #define VIRTIO_MIN_MTU 68
 #define VIRTIO_MAX_MTU 65535
+
+#define INFLIGHT_ALIGNMENT	64
+#define INFLIGHT_VERSION	0x1
 
 //消息类型与字符串映射表
 static const char *vhost_message_str[VHOST_USER_MAX] = {
@@ -79,6 +86,8 @@ static const char *vhost_message_str[VHOST_USER_MAX] = {
 	[VHOST_USER_POSTCOPY_ADVISE]  = "VHOST_USER_POSTCOPY_ADVISE",
 	[VHOST_USER_POSTCOPY_LISTEN]  = "VHOST_USER_POSTCOPY_LISTEN",
 	[VHOST_USER_POSTCOPY_END]  = "VHOST_USER_POSTCOPY_END",
+	[VHOST_USER_GET_INFLIGHT_FD] = "VHOST_USER_GET_INFLIGHT_FD",
+	[VHOST_USER_SET_INFLIGHT_FD] = "VHOST_USER_SET_INFLIGHT_FD",
 };
 
 static int send_vhost_reply(int sockfd, struct VhostUserMsg *msg);
@@ -161,6 +170,22 @@ vhost_backend_cleanup(struct virtio_net *dev)
 	if (dev->log_addr) {
 		munmap((void *)(uintptr_t)dev->log_addr, dev->log_size);
 		dev->log_addr = 0;
+	}
+
+	if (dev->inflight_info) {
+		if (dev->inflight_info->addr) {
+			munmap(dev->inflight_info->addr,
+			       dev->inflight_info->size);
+			dev->inflight_info->addr = NULL;
+		}
+
+		if (dev->inflight_info->fd > 0) {
+			close(dev->inflight_info->fd);
+			dev->inflight_info->fd = -1;
+		}
+
+		free(dev->inflight_info);
+		dev->inflight_info = NULL;
 	}
 
 	if (dev->slave_req_fd >= 0) {
@@ -321,6 +346,7 @@ vhost_user_set_features(struct virtio_net **pdev, struct VhostUserMsg *msg,
 
 			dev->virtqueue[dev->nr_vring] = NULL;
 			cleanup_vq(vq, 1);
+			cleanup_vq_inflight(dev, vq);
 			free_vq(dev, vq);
 		}
 	}
@@ -426,6 +452,9 @@ numa_realloc(struct virtio_net *dev, int index)
 	struct vring_used_elem_packed *new_shadow_used_packed;
 	struct batch_copy_elem *new_batch_copy_elems;
 	int ret;
+
+	if (dev->flags & VIRTIO_DEV_RUNNING)
+		return dev;
 
 	old_dev = dev;
 	vq = old_vq = dev->virtqueue[index];
@@ -585,18 +614,53 @@ ring_addr_to_vva(struct virtio_net *dev, struct vhost_virtqueue *vq,
 {
 	if (dev->features & (1ULL << VIRTIO_F_IOMMU_PLATFORM)) {
 		uint64_t vva;
+		uint64_t req_size = *size;
 
 		//在cache中查找
 		vva = vhost_user_iotlb_cache_find(vq, ra,
 					size, VHOST_ACCESS_RW);
-		if (!vva)
+		if (req_size != *size)
 			//cache中未命中，发送消息向对端请求
-			vhost_user_iotlb_miss(dev, ra, VHOST_ACCESS_RW);
+			vhost_user_iotlb_miss(dev, (ra + *size),
+					      VHOST_ACCESS_RW);
 
 		return vva;
 	}
 
 	return qva_to_vva(dev, ra, size);
+}
+
+/*
+ * Converts vring log address to GPA
+ * If IOMMU is enabled, the log address is IOVA
+ * If IOMMU not enabled, the log address is already GPA
+ */
+static uint64_t
+translate_log_addr(struct virtio_net *dev, struct vhost_virtqueue *vq,
+		uint64_t log_addr)
+{
+	if (dev->features & (1ULL << VIRTIO_F_IOMMU_PLATFORM)) {
+		const uint64_t exp_size = sizeof(struct vring_used) +
+			sizeof(struct vring_used_elem) * vq->size;
+		uint64_t hva, gpa;
+		uint64_t size = exp_size;
+
+		hva = vhost_iova_to_vva(dev, vq, log_addr,
+					&size, VHOST_ACCESS_RW);
+		if (size != exp_size)
+			return 0;
+
+		gpa = hva_to_gpa(dev, hva, exp_size);
+		if (!gpa) {
+			RTE_LOG(ERR, VHOST_CONFIG,
+				"VQ: Failed to find GPA for log_addr: 0x%" PRIx64 " hva: 0x%" PRIx64 "\n",
+				log_addr, hva);
+			return 0;
+		}
+		return gpa;
+
+	} else
+		return log_addr;
 }
 
 //实现设备dev的第vq_index的地址转换
@@ -651,6 +715,7 @@ translate_ring_addresses(struct virtio_net *dev, int vq_index)
 			return dev;
 		}
 
+		vq->access_ok = 1;
 		return dev;
 	}
 
@@ -712,7 +777,15 @@ translate_ring_addresses(struct virtio_net *dev, int vq_index)
 		vq->last_avail_idx = vq->used->idx;
 	}
 
-	vq->log_guest_addr = addr->log_guest_addr;
+	vq->log_guest_addr =
+		translate_log_addr(dev, vq, addr->log_guest_addr);
+	if (vq->log_guest_addr == 0) {
+		RTE_LOG(DEBUG, VHOST_CONFIG,
+			"(%d) failed to map log_guest_addr .\n",
+			dev->vid);
+		return dev;
+	}
+	vq->access_ok = 1;
 
 	VHOST_LOG_DEBUG(VHOST_CONFIG, "(%d) mapped address desc: %p\n",
 			dev->vid, vq->desc);
@@ -738,12 +811,15 @@ vhost_user_set_vring_addr(struct virtio_net **pdev, struct VhostUserMsg *msg,
 	struct virtio_net *dev = *pdev;
 	struct vhost_virtqueue *vq;
 	struct vhost_vring_addr *addr = &msg->payload.addr;
+	bool access_ok;
 
 	if (dev->mem == NULL)
 		return RTE_VHOST_MSG_RESULT_ERR;
 
 	/* addr->index refers to the queue index. The txq 1, rxq is 0. */
 	vq = dev->virtqueue[msg->payload.addr.index];
+
+	access_ok = vq->access_ok;
 
 	/*
 	 * Rings addresses should not be interpreted as long as the ring is not
@@ -754,8 +830,9 @@ vhost_user_set_vring_addr(struct virtio_net **pdev, struct VhostUserMsg *msg,
 
 	vring_invalidate(dev, vq);
 
-	if (vq->enabled && (dev->features &
-				(1ULL << VHOST_USER_F_PROTOCOL_FEATURES))) {
+	if ((vq->enabled && (dev->features &
+				(1ULL << VHOST_USER_F_PROTOCOL_FEATURES))) ||
+			access_ok) {
 		dev = translate_ring_addresses(dev, msg->payload.addr.index);
 		if (!dev)
 			return RTE_VHOST_MSG_RESULT_ERR;
@@ -1142,10 +1219,11 @@ vhost_user_set_mem_table(struct virtio_net **pdev, struct VhostUserMsg *msg,
 				goto err_mmap;
 			}
 			RTE_LOG(INFO, VHOST_CONFIG,
-				"\t userfaultfd registered for range : %llx - %llx\n",
-				reg_struct.range.start,
-				reg_struct.range.start +
-				reg_struct.range.len - 1);
+				"\t userfaultfd registered for range : "
+				"%" PRIx64 " - %" PRIx64 "\n",
+				(uint64_t)reg_struct.range.start,
+				(uint64_t)reg_struct.range.start +
+				(uint64_t)reg_struct.range.len - 1);
 #else
 			goto err_mmap;
 #endif
@@ -1228,6 +1306,234 @@ virtio_is_ready(struct virtio_net *dev)
 	return 1;
 }
 
+static void *
+inflight_mem_alloc(const char *name, size_t size, int *fd)
+{
+	void *ptr;
+	int mfd = -1;
+	char fname[20] = "/tmp/memfd-XXXXXX";
+
+	*fd = -1;
+#ifdef MEMFD_SUPPORTED
+	mfd = memfd_create(name, MFD_CLOEXEC);
+#else
+	RTE_SET_USED(name);
+#endif
+	if (mfd == -1) {
+		mfd = mkstemp(fname);
+		if (mfd == -1) {
+			RTE_LOG(ERR, VHOST_CONFIG,
+				"failed to get inflight buffer fd\n");
+			return NULL;
+		}
+
+		unlink(fname);
+	}
+
+	if (ftruncate(mfd, size) == -1) {
+		RTE_LOG(ERR, VHOST_CONFIG,
+			"failed to alloc inflight buffer\n");
+		close(mfd);
+		return NULL;
+	}
+
+	ptr = mmap(0, size, PROT_READ | PROT_WRITE, MAP_SHARED, mfd, 0);
+	if (ptr == MAP_FAILED) {
+		RTE_LOG(ERR, VHOST_CONFIG,
+			"failed to mmap inflight buffer\n");
+		close(mfd);
+		return NULL;
+	}
+
+	*fd = mfd;
+	return ptr;
+}
+
+static uint32_t
+get_pervq_shm_size_split(uint16_t queue_size)
+{
+	return RTE_ALIGN_MUL_CEIL(sizeof(struct rte_vhost_inflight_desc_split) *
+				  queue_size + sizeof(uint64_t) +
+				  sizeof(uint16_t) * 4, INFLIGHT_ALIGNMENT);
+}
+
+static uint32_t
+get_pervq_shm_size_packed(uint16_t queue_size)
+{
+	return RTE_ALIGN_MUL_CEIL(sizeof(struct rte_vhost_inflight_desc_packed)
+				  * queue_size + sizeof(uint64_t) +
+				  sizeof(uint16_t) * 6 + sizeof(uint8_t) * 9,
+				  INFLIGHT_ALIGNMENT);
+}
+
+static int
+vhost_user_get_inflight_fd(struct virtio_net **pdev,
+			   VhostUserMsg *msg,
+			   int main_fd __rte_unused)
+{
+	struct rte_vhost_inflight_info_packed *inflight_packed;
+	uint64_t pervq_inflight_size, mmap_size;
+	uint16_t num_queues, queue_size;
+	struct virtio_net *dev = *pdev;
+	int fd, i, j;
+	void *addr;
+
+	if (msg->size != sizeof(msg->payload.inflight)) {
+		RTE_LOG(ERR, VHOST_CONFIG,
+			"invalid get_inflight_fd message size is %d\n",
+			msg->size);
+		return RTE_VHOST_MSG_RESULT_ERR;
+	}
+
+	if (dev->inflight_info == NULL) {
+		dev->inflight_info = calloc(1,
+					    sizeof(struct inflight_mem_info));
+		if (!dev->inflight_info) {
+			RTE_LOG(ERR, VHOST_CONFIG,
+				"failed to alloc dev inflight area\n");
+			return RTE_VHOST_MSG_RESULT_ERR;
+		}
+	}
+
+	num_queues = msg->payload.inflight.num_queues;
+	queue_size = msg->payload.inflight.queue_size;
+
+	RTE_LOG(INFO, VHOST_CONFIG, "get_inflight_fd num_queues: %u\n",
+		msg->payload.inflight.num_queues);
+	RTE_LOG(INFO, VHOST_CONFIG, "get_inflight_fd queue_size: %u\n",
+		msg->payload.inflight.queue_size);
+
+	if (vq_is_packed(dev))
+		pervq_inflight_size = get_pervq_shm_size_packed(queue_size);
+	else
+		pervq_inflight_size = get_pervq_shm_size_split(queue_size);
+
+	mmap_size = num_queues * pervq_inflight_size;
+	addr = inflight_mem_alloc("vhost-inflight", mmap_size, &fd);
+	if (!addr) {
+		RTE_LOG(ERR, VHOST_CONFIG,
+			"failed to alloc vhost inflight area\n");
+			msg->payload.inflight.mmap_size = 0;
+		return RTE_VHOST_MSG_RESULT_ERR;
+	}
+	memset(addr, 0, mmap_size);
+
+	dev->inflight_info->addr = addr;
+	dev->inflight_info->size = msg->payload.inflight.mmap_size = mmap_size;
+	dev->inflight_info->fd = msg->fds[0] = fd;
+	msg->payload.inflight.mmap_offset = 0;
+	msg->fd_num = 1;
+
+	if (vq_is_packed(dev)) {
+		for (i = 0; i < num_queues; i++) {
+			inflight_packed =
+				(struct rte_vhost_inflight_info_packed *)addr;
+			inflight_packed->used_wrap_counter = 1;
+			inflight_packed->old_used_wrap_counter = 1;
+			for (j = 0; j < queue_size; j++)
+				inflight_packed->desc[j].next = j + 1;
+			addr = (void *)((char *)addr + pervq_inflight_size);
+		}
+	}
+
+	RTE_LOG(INFO, VHOST_CONFIG,
+		"send inflight mmap_size: %"PRIu64"\n",
+		msg->payload.inflight.mmap_size);
+	RTE_LOG(INFO, VHOST_CONFIG,
+		"send inflight mmap_offset: %"PRIu64"\n",
+		msg->payload.inflight.mmap_offset);
+	RTE_LOG(INFO, VHOST_CONFIG,
+		"send inflight fd: %d\n", msg->fds[0]);
+
+	return RTE_VHOST_MSG_RESULT_REPLY;
+}
+
+static int
+vhost_user_set_inflight_fd(struct virtio_net **pdev, VhostUserMsg *msg,
+			   int main_fd __rte_unused)
+{
+	uint64_t mmap_size, mmap_offset;
+	uint16_t num_queues, queue_size;
+	struct virtio_net *dev = *pdev;
+	uint32_t pervq_inflight_size;
+	struct vhost_virtqueue *vq;
+	void *addr;
+	int fd, i;
+
+	fd = msg->fds[0];
+	if (msg->size != sizeof(msg->payload.inflight) || fd < 0) {
+		RTE_LOG(ERR, VHOST_CONFIG,
+			"invalid set_inflight_fd message size is %d,fd is %d\n",
+			msg->size, fd);
+		return RTE_VHOST_MSG_RESULT_ERR;
+	}
+
+	mmap_size = msg->payload.inflight.mmap_size;
+	mmap_offset = msg->payload.inflight.mmap_offset;
+	num_queues = msg->payload.inflight.num_queues;
+	queue_size = msg->payload.inflight.queue_size;
+
+	if (vq_is_packed(dev))
+		pervq_inflight_size = get_pervq_shm_size_packed(queue_size);
+	else
+		pervq_inflight_size = get_pervq_shm_size_split(queue_size);
+
+	RTE_LOG(INFO, VHOST_CONFIG,
+		"set_inflight_fd mmap_size: %"PRIu64"\n", mmap_size);
+	RTE_LOG(INFO, VHOST_CONFIG,
+		"set_inflight_fd mmap_offset: %"PRIu64"\n", mmap_offset);
+	RTE_LOG(INFO, VHOST_CONFIG,
+		"set_inflight_fd num_queues: %u\n", num_queues);
+	RTE_LOG(INFO, VHOST_CONFIG,
+		"set_inflight_fd queue_size: %u\n", queue_size);
+	RTE_LOG(INFO, VHOST_CONFIG,
+		"set_inflight_fd fd: %d\n", fd);
+	RTE_LOG(INFO, VHOST_CONFIG,
+		"set_inflight_fd pervq_inflight_size: %d\n",
+		pervq_inflight_size);
+
+	if (!dev->inflight_info) {
+		dev->inflight_info = calloc(1,
+					    sizeof(struct inflight_mem_info));
+		if (dev->inflight_info == NULL) {
+			RTE_LOG(ERR, VHOST_CONFIG,
+				"failed to alloc dev inflight area\n");
+			return RTE_VHOST_MSG_RESULT_ERR;
+		}
+	}
+
+	if (dev->inflight_info->addr)
+		munmap(dev->inflight_info->addr, dev->inflight_info->size);
+
+	addr = mmap(0, mmap_size, PROT_READ | PROT_WRITE, MAP_SHARED,
+		    fd, mmap_offset);
+	if (addr == MAP_FAILED) {
+		RTE_LOG(ERR, VHOST_CONFIG, "failed to mmap share memory.\n");
+		return RTE_VHOST_MSG_RESULT_ERR;
+	}
+
+	if (dev->inflight_info->fd)
+		close(dev->inflight_info->fd);
+
+	dev->inflight_info->fd = fd;
+	dev->inflight_info->addr = addr;
+	dev->inflight_info->size = mmap_size;
+
+	for (i = 0; i < num_queues; i++) {
+		vq = dev->virtqueue[i];
+		if (vq_is_packed(dev)) {
+			vq->inflight_packed = addr;
+			vq->inflight_packed->desc_num = queue_size;
+		} else {
+			vq->inflight_split = addr;
+			vq->inflight_split->desc_num = queue_size;
+		}
+		addr = (void *)((char *)addr + pervq_inflight_size);
+	}
+
+	return RTE_VHOST_MSG_RESULT_OK;
+}
+
 //设置callfd
 static int
 vhost_user_set_vring_call(struct virtio_net **pdev, struct VhostUserMsg *msg,
@@ -1261,6 +1567,191 @@ static int vhost_user_set_vring_err(struct virtio_net **pdev __rte_unused,
 	if (!(msg->payload.u64 & VHOST_USER_VRING_NOFD_MASK))
 		close(msg->fds[0]);
 	RTE_LOG(INFO, VHOST_CONFIG, "not implemented\n");
+
+	return RTE_VHOST_MSG_RESULT_OK;
+}
+
+static int
+resubmit_desc_compare(const void *a, const void *b)
+{
+	const struct rte_vhost_resubmit_desc *desc0 = a;
+	const struct rte_vhost_resubmit_desc *desc1 = b;
+
+	if (desc1->counter > desc0->counter)
+		return 1;
+
+	return -1;
+}
+
+static int
+vhost_check_queue_inflights_split(struct virtio_net *dev,
+				  struct vhost_virtqueue *vq)
+{
+	uint16_t i;
+	uint16_t resubmit_num = 0, last_io, num;
+	struct vring_used *used = vq->used;
+	struct rte_vhost_resubmit_info *resubmit;
+	struct rte_vhost_inflight_info_split *inflight_split;
+
+	if (!(dev->protocol_features &
+	    (1ULL << VHOST_USER_PROTOCOL_F_INFLIGHT_SHMFD)))
+		return RTE_VHOST_MSG_RESULT_OK;
+
+	if ((!vq->inflight_split))
+		return RTE_VHOST_MSG_RESULT_ERR;
+
+	if (!vq->inflight_split->version) {
+		vq->inflight_split->version = INFLIGHT_VERSION;
+		return RTE_VHOST_MSG_RESULT_OK;
+	}
+
+	if (vq->resubmit_inflight)
+		return RTE_VHOST_MSG_RESULT_OK;
+
+	inflight_split = vq->inflight_split;
+	vq->global_counter = 0;
+	last_io = inflight_split->last_inflight_io;
+
+	if (inflight_split->used_idx != used->idx) {
+		inflight_split->desc[last_io].inflight = 0;
+		rte_smp_mb();
+		inflight_split->used_idx = used->idx;
+	}
+
+	for (i = 0; i < inflight_split->desc_num; i++) {
+		if (inflight_split->desc[i].inflight == 1)
+			resubmit_num++;
+	}
+
+	vq->last_avail_idx += resubmit_num;
+
+	if (resubmit_num) {
+		resubmit  = calloc(1, sizeof(struct rte_vhost_resubmit_info));
+		if (!resubmit) {
+			RTE_LOG(ERR, VHOST_CONFIG,
+				"failed to allocate memory for resubmit info.\n");
+			return RTE_VHOST_MSG_RESULT_ERR;
+		}
+
+		resubmit->resubmit_list = calloc(resubmit_num,
+			sizeof(struct rte_vhost_resubmit_desc));
+		if (!resubmit->resubmit_list) {
+			RTE_LOG(ERR, VHOST_CONFIG,
+				"failed to allocate memory for inflight desc.\n");
+			free(resubmit);
+			return RTE_VHOST_MSG_RESULT_ERR;
+		}
+
+		num = 0;
+		for (i = 0; i < vq->inflight_split->desc_num; i++) {
+			if (vq->inflight_split->desc[i].inflight == 1) {
+				resubmit->resubmit_list[num].index = i;
+				resubmit->resubmit_list[num].counter =
+					inflight_split->desc[i].counter;
+				num++;
+			}
+		}
+		resubmit->resubmit_num = num;
+
+		if (resubmit->resubmit_num > 1)
+			qsort(resubmit->resubmit_list, resubmit->resubmit_num,
+			      sizeof(struct rte_vhost_resubmit_desc),
+			      resubmit_desc_compare);
+
+		vq->global_counter = resubmit->resubmit_list[0].counter + 1;
+		vq->resubmit_inflight = resubmit;
+	}
+
+	return RTE_VHOST_MSG_RESULT_OK;
+}
+
+static int
+vhost_check_queue_inflights_packed(struct virtio_net *dev,
+				   struct vhost_virtqueue *vq)
+{
+	uint16_t i;
+	uint16_t resubmit_num = 0, old_used_idx, num;
+	struct rte_vhost_resubmit_info *resubmit;
+	struct rte_vhost_inflight_info_packed *inflight_packed;
+
+	if (!(dev->protocol_features &
+	    (1ULL << VHOST_USER_PROTOCOL_F_INFLIGHT_SHMFD)))
+		return RTE_VHOST_MSG_RESULT_OK;
+
+	if ((!vq->inflight_packed))
+		return RTE_VHOST_MSG_RESULT_ERR;
+
+	if (!vq->inflight_packed->version) {
+		vq->inflight_packed->version = INFLIGHT_VERSION;
+		return RTE_VHOST_MSG_RESULT_OK;
+	}
+
+	if (vq->resubmit_inflight)
+		return RTE_VHOST_MSG_RESULT_OK;
+
+	inflight_packed = vq->inflight_packed;
+	vq->global_counter = 0;
+	old_used_idx = inflight_packed->old_used_idx;
+
+	if (inflight_packed->used_idx != old_used_idx) {
+		if (inflight_packed->desc[old_used_idx].inflight == 0) {
+			inflight_packed->old_used_idx =
+				inflight_packed->used_idx;
+			inflight_packed->old_used_wrap_counter =
+				inflight_packed->used_wrap_counter;
+			inflight_packed->old_free_head =
+				inflight_packed->free_head;
+		} else {
+			inflight_packed->used_idx =
+				inflight_packed->old_used_idx;
+			inflight_packed->used_wrap_counter =
+				inflight_packed->old_used_wrap_counter;
+			inflight_packed->free_head =
+				inflight_packed->old_free_head;
+		}
+	}
+
+	for (i = 0; i < inflight_packed->desc_num; i++) {
+		if (inflight_packed->desc[i].inflight == 1)
+			resubmit_num++;
+	}
+
+	if (resubmit_num) {
+		resubmit = calloc(1, sizeof(struct rte_vhost_resubmit_info));
+		if (resubmit == NULL) {
+			RTE_LOG(ERR, VHOST_CONFIG,
+				"failed to allocate memory for resubmit info.\n");
+			return RTE_VHOST_MSG_RESULT_ERR;
+		}
+
+		resubmit->resubmit_list = calloc(resubmit_num,
+			sizeof(struct rte_vhost_resubmit_desc));
+		if (resubmit->resubmit_list == NULL) {
+			RTE_LOG(ERR, VHOST_CONFIG,
+				"failed to allocate memory for resubmit desc.\n");
+			free(resubmit);
+			return RTE_VHOST_MSG_RESULT_ERR;
+		}
+
+		num = 0;
+		for (i = 0; i < inflight_packed->desc_num; i++) {
+			if (vq->inflight_packed->desc[i].inflight == 1) {
+				resubmit->resubmit_list[num].index = i;
+				resubmit->resubmit_list[num].counter =
+					inflight_packed->desc[i].counter;
+				num++;
+			}
+		}
+		resubmit->resubmit_num = num;
+
+		if (resubmit->resubmit_num > 1)
+			qsort(resubmit->resubmit_list, resubmit->resubmit_num,
+			      sizeof(struct rte_vhost_resubmit_desc),
+			      resubmit_desc_compare);
+
+		vq->global_counter = resubmit->resubmit_list[0].counter + 1;
+		vq->resubmit_inflight = resubmit;
+	}
 
 	return RTE_VHOST_MSG_RESULT_OK;
 }
@@ -1306,6 +1797,20 @@ vhost_user_set_vring_kick(struct virtio_net **pdev, struct VhostUserMsg *msg,
 	if (vq->kickfd >= 0)
 		close(vq->kickfd);
 	vq->kickfd = file.fd;
+
+	if (vq_is_packed(dev)) {
+		if (vhost_check_queue_inflights_packed(dev, vq)) {
+			RTE_LOG(ERR, VHOST_CONFIG,
+				"failed to inflights for vq: %d\n", file.index);
+			return RTE_VHOST_MSG_RESULT_ERR;
+		}
+	} else {
+		if (vhost_check_queue_inflights_split(dev, vq)) {
+			RTE_LOG(ERR, VHOST_CONFIG,
+				"failed to inflights for vq: %d\n", file.index);
+			return RTE_VHOST_MSG_RESULT_ERR;
+		}
+	}
 
 	return RTE_VHOST_MSG_RESULT_OK;
 }
@@ -1385,6 +1890,8 @@ vhost_user_get_vring_base(struct virtio_net **pdev,
 
 	msg->size = sizeof(msg->payload.state);
 	msg->fd_num = 0;
+
+	vring_invalidate(dev, vq);
 
 	return RTE_VHOST_MSG_RESULT_REPLY;
 }
@@ -1637,60 +2144,74 @@ vhost_user_set_req_fd(struct virtio_net **pdev, struct VhostUserMsg *msg,
 		return RTE_VHOST_MSG_RESULT_ERR;
 	}
 
+	if (dev->slave_req_fd >= 0)
+		close(dev->slave_req_fd);
+
 	dev->slave_req_fd = fd;
 
 	return RTE_VHOST_MSG_RESULT_OK;
 }
 
 static int
-is_vring_iotlb_update(struct vhost_virtqueue *vq, struct vhost_iotlb_msg *imsg)
+is_vring_iotlb_split(struct vhost_virtqueue *vq, struct vhost_iotlb_msg *imsg)
 {
 	struct vhost_vring_addr *ra;
-	uint64_t start, end;
+	uint64_t start, end, len;
 
 	start = imsg->iova;
 	end = start + imsg->size;
 
 	ra = &vq->ring_addrs;
-	if (ra->desc_user_addr >= start && ra->desc_user_addr < end)
+	len = sizeof(struct vring_desc) * vq->size;
+	if (ra->desc_user_addr < end && (ra->desc_user_addr + len) > start)
 		return 1;
-	if (ra->avail_user_addr >= start && ra->avail_user_addr < end)
+
+	len = sizeof(struct vring_avail) + sizeof(uint16_t) * vq->size;
+	if (ra->avail_user_addr < end && (ra->avail_user_addr + len) > start)
 		return 1;
-	if (ra->used_user_addr >= start && ra->used_user_addr < end)
+
+	len = sizeof(struct vring_used) +
+	       sizeof(struct vring_used_elem) * vq->size;
+	if (ra->used_user_addr < end && (ra->used_user_addr + len) > start)
 		return 1;
 
 	return 0;
 }
 
 static int
-is_vring_iotlb_invalidate(struct vhost_virtqueue *vq,
-				struct vhost_iotlb_msg *imsg)
+is_vring_iotlb_packed(struct vhost_virtqueue *vq, struct vhost_iotlb_msg *imsg)
 {
-	uint64_t istart, iend, vstart, vend;
+	struct vhost_vring_addr *ra;
+	uint64_t start, end, len;
 
 	//需要置无效的一段内存[istart,iend]
-	istart = imsg->iova;
-	iend = istart + imsg->size - 1;
+	start = imsg->iova;
+	end = start + imsg->size;
 
-	//分别检查此段内存是否在desc,avail,used范围内
-	vstart = (uintptr_t)vq->desc;
-	vend = vstart + sizeof(struct vring_desc) * vq->size - 1;
-	if (vstart <= iend && istart <= vend)
+	ra = &vq->ring_addrs;
+	len = sizeof(struct vring_packed_desc) * vq->size;
+	if (ra->desc_user_addr < end && (ra->desc_user_addr + len) > start)
 		return 1;
 
-	vstart = (uintptr_t)vq->avail;
-	vend = vstart + sizeof(struct vring_avail);
-	vend += sizeof(uint16_t) * vq->size - 1;
-	if (vstart <= iend && istart <= vend)
+	len = sizeof(struct vring_packed_desc_event);
+	if (ra->avail_user_addr < end && (ra->avail_user_addr + len) > start)
 		return 1;
 
-	vstart = (uintptr_t)vq->used;
-	vend = vstart + sizeof(struct vring_used);
-	vend += sizeof(struct vring_used_elem) * vq->size - 1;
-	if (vstart <= iend && istart <= vend)
+	len = sizeof(struct vring_packed_desc_event);
+	if (ra->used_user_addr < end && (ra->used_user_addr + len) > start)
 		return 1;
 
 	return 0;
+}
+
+static int is_vring_iotlb(struct virtio_net *dev,
+			  struct vhost_virtqueue *vq,
+			  struct vhost_iotlb_msg *imsg)
+{
+	if (vq_is_packed(dev))
+		return is_vring_iotlb_packed(vq, imsg);
+	else
+		return is_vring_iotlb_split(vq, imsg);
 }
 
 static int
@@ -1717,7 +2238,7 @@ vhost_user_iotlb_msg(struct virtio_net **pdev, struct VhostUserMsg *msg,
 			vhost_user_iotlb_cache_insert(vq, imsg->iova, vva,
 					len, imsg->perm);
 
-			if (is_vring_iotlb_update(vq, imsg))
+			if (is_vring_iotlb(dev, vq, imsg))
 				*pdev = dev = translate_ring_addresses(dev, i);
 		}
 		break;
@@ -1730,7 +2251,7 @@ vhost_user_iotlb_msg(struct virtio_net **pdev, struct VhostUserMsg *msg,
 					imsg->size);
 
 			//检查此消息是否会导致vq无效，如果是，置其无效
-			if (is_vring_iotlb_invalidate(vq, imsg))
+			if (is_vring_iotlb(dev, vq, imsg))
 				vring_invalidate(dev, vq);
 		}
 		break;
@@ -1846,8 +2367,9 @@ static vhost_message_handler_t vhost_message_handlers[VHOST_USER_MAX] = {
 	[VHOST_USER_POSTCOPY_ADVISE] = vhost_user_set_postcopy_advise,
 	[VHOST_USER_POSTCOPY_LISTEN] = vhost_user_set_postcopy_listen,
 	[VHOST_USER_POSTCOPY_END] = vhost_user_postcopy_end,
+	[VHOST_USER_GET_INFLIGHT_FD] = vhost_user_get_inflight_fd,
+	[VHOST_USER_SET_INFLIGHT_FD] = vhost_user_set_inflight_fd,
 };
-
 
 /* return bytes# of read on success or negative val on failure. */
 //读取消息

@@ -7,9 +7,9 @@
 # - DPDK_CHECKPATCH_CODESPELL
 # - DPDK_CHECKPATCH_LINE_LENGTH
 # - DPDK_CHECKPATCH_OPTIONS
-. $(dirname $(readlink -e $0))/load-devel-config
+. $(dirname $(readlink -f $0))/load-devel-config
 
-VALIDATE_NEW_API=$(dirname $(readlink -e $0))/check-symbol-change.sh
+VALIDATE_NEW_API=$(dirname $(readlink -f $0))/check-symbol-change.sh
 
 # Enable codespell by default. This can be overwritten from a config file.
 # Codespell can also be enabled by setting DPDK_CHECKPATCH_CODESPELL to a valid path
@@ -36,14 +36,6 @@ LINE_SPACING,PARENTHESIS_ALIGNMENT,NETWORKING_BLOCK_COMMENT_STYLE,\
 NEW_TYPEDEFS,COMPARISON_TO_NULL"
 options="$options $DPDK_CHECKPATCH_OPTIONS"
 
-clean_tmp_files() {
-	if echo $tmpinput | grep -q '^checkpatches\.' ; then
-		rm -f "$tmpinput"
-	fi
-}
-
-trap "clean_tmp_files" INT
-
 print_usage () {
 	cat <<- END_OF_HELP
 	usage: $(basename $0) [-q] [-v] [-nX|-r range|patch1 [patch2] ...]]
@@ -66,7 +58,7 @@ check_forbidden_additions() { # <patch>
 		-v EXPRESSIONS="rte_panic\\\( rte_exit\\\(" \
 		-v RET_ON_FAIL=1 \
 		-v MESSAGE='Using rte_panic/rte_exit' \
-		-f $(dirname $(readlink -e $0))/check-forbidden-tokens.awk \
+		-f $(dirname $(readlink -f $0))/check-forbidden-tokens.awk \
 		"$1" || res=1
 
 	# svg figures must be included with wildcard extension
@@ -75,7 +67,7 @@ check_forbidden_additions() { # <patch>
 		-v EXPRESSIONS='::[[:space:]]*[^[:space:]]*\\.svg' \
 		-v RET_ON_FAIL=1 \
 		-v MESSAGE='Using explicit .svg extension instead of .*' \
-		-f $(dirname $(readlink -e $0))/check-forbidden-tokens.awk \
+		-f $(dirname $(readlink -f $0))/check-forbidden-tokens.awk \
 		"$1" || res=1
 
 	return $res
@@ -150,13 +142,16 @@ check () { # <patch> <commit> <title>
 	! $verbose || print_headline "$3"
 	if [ -n "$1" ] ; then
 		tmpinput=$1
-	elif [ -n "$2" ] ; then
-		tmpinput=$(mktemp -t dpdk.checkpatches.XXXXXX)
-		git format-patch --find-renames \
-		--no-stat --stdout -1 $commit > "$tmpinput"
 	else
 		tmpinput=$(mktemp -t dpdk.checkpatches.XXXXXX)
-		cat > "$tmpinput"
+		trap "rm -f '$tmpinput'" INT
+
+		if [ -n "$2" ] ; then
+			git format-patch --find-renames \
+			--no-stat --stdout -1 $commit > "$tmpinput"
+		else
+			cat > "$tmpinput"
+		fi
 	fi
 
 	! $verbose || printf 'Running checkpatch.pl:\n'
@@ -191,7 +186,10 @@ check () { # <patch> <commit> <title>
 		ret=1
 	fi
 
-	clean_tmp_files
+	if [ "$tmpinput" != "$1" ]; then
+		rm -f "$tmpinput"
+		trap - INT
+	fi
 	[ $ret -eq 0 ] && return 0
 
 	status=$(($status + 1))

@@ -5,6 +5,7 @@
 
 #ifndef _RTE_COMPAT_H_
 #define _RTE_COMPAT_H_
+<<<<<<< HEAD
 #include <rte_common.h>
 
 #ifdef RTE_BUILD_SHARED_LIB
@@ -76,6 +77,8 @@
  * RTE_BUILD_SHARED_LIB=n
  */
 #endif
+=======
+>>>>>>> upstream/master
 
 #ifndef ALLOW_EXPERIMENTAL_API
 

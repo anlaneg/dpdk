@@ -164,7 +164,7 @@ memif_mp_request_regions(struct rte_eth_dev *dev)
 	return memif_connect(dev);
 }
 
-static void
+static int
 memif_dev_info(struct rte_eth_dev *dev __rte_unused, struct rte_eth_dev_info *dev_info)
 {
 	dev_info->max_mac_addrs = 1;
@@ -172,6 +172,8 @@ memif_dev_info(struct rte_eth_dev *dev __rte_unused, struct rte_eth_dev_info *de
 	dev_info->max_rx_queues = ETH_MEMIF_MAX_NUM_Q_PAIRS;
 	dev_info->max_tx_queues = ETH_MEMIF_MAX_NUM_Q_PAIRS;
 	dev_info->min_rx_bufsize = 0;
+
+	return 0;
 }
 
 static memif_ring_t *
@@ -264,7 +266,10 @@ eth_memif_rx(void *queue, struct rte_mbuf **bufs, uint16_t nb_pkts)
 		return 0;
 	if (unlikely(ring == NULL)) {
 		/* Secondary process will attempt to request regions. */
-		rte_eth_link_get(mq->in_port, &link);
+		ret = rte_eth_link_get(mq->in_port, &link);
+		if (ret < 0)
+			MIF_LOG(ERR, "Failed to get port %u link info: %s",
+				mq->in_port, rte_strerror(-ret));
 		return 0;
 	}
 
@@ -275,8 +280,14 @@ eth_memif_rx(void *queue, struct rte_mbuf **bufs, uint16_t nb_pkts)
 	ring_size = 1 << mq->log2_ring_size;
 	mask = ring_size - 1;
 
-	cur_slot = (type == MEMIF_RING_S2M) ? mq->last_head : mq->last_tail;
-	last_slot = (type == MEMIF_RING_S2M) ? ring->head : ring->tail;
+	if (type == MEMIF_RING_S2M) {
+		cur_slot = mq->last_head;
+		last_slot = __atomic_load_n(&ring->head, __ATOMIC_ACQUIRE);
+	} else {
+		cur_slot = mq->last_tail;
+		last_slot = __atomic_load_n(&ring->tail, __ATOMIC_ACQUIRE);
+	}
+
 	if (cur_slot == last_slot)
 		goto refill;
 	n_slots = last_slot - cur_slot;
@@ -344,8 +355,7 @@ next_slot:
 
 no_free_bufs:
 	if (type == MEMIF_RING_S2M) {
-		rte_mb();
-		ring->tail = cur_slot;
+		__atomic_store_n(&ring->tail, cur_slot, __ATOMIC_RELEASE);
 		mq->last_head = cur_slot;
 	} else {
 		mq->last_tail = cur_slot;
@@ -353,7 +363,7 @@ no_free_bufs:
 
 refill:
 	if (type == MEMIF_RING_M2S) {
-		head = ring->head;
+		head = __atomic_load_n(&ring->head, __ATOMIC_ACQUIRE);
 		n_slots = ring_size - head + mq->last_tail;
 
 		while (n_slots--) {
@@ -361,8 +371,7 @@ refill:
 			d0 = &ring->desc[s0];
 			d0->length = pmd->run.pkt_buffer_size;
 		}
-		rte_mb();
-		ring->head = head;
+		__atomic_store_n(&ring->head, head, __ATOMIC_RELEASE);
 	}
 
 	mq->n_pkts += n_rx_pkts;
@@ -390,22 +399,29 @@ eth_memif_tx(void *queue, struct rte_mbuf **bufs, uint16_t nb_pkts)
 	if (unlikely((pmd->flags & ETH_MEMIF_FLAG_CONNECTED) == 0))
 		return 0;
 	if (unlikely(ring == NULL)) {
+		int ret;
+
 		/* Secondary process will attempt to request regions. */
-		rte_eth_link_get(mq->in_port, &link);
+		ret = rte_eth_link_get(mq->in_port, &link);
+		if (ret < 0)
+			MIF_LOG(ERR, "Failed to get port %u link info: %s",
+				mq->in_port, rte_strerror(-ret));
 		return 0;
 	}
 
 	ring_size = 1 << mq->log2_ring_size;
 	mask = ring_size - 1;
 
-	n_free = ring->tail - mq->last_tail;
+	n_free = __atomic_load_n(&ring->tail, __ATOMIC_ACQUIRE) - mq->last_tail;
 	mq->last_tail += n_free;
-	slot = (type == MEMIF_RING_S2M) ? ring->head : ring->tail;
 
-	if (type == MEMIF_RING_S2M)
-		n_free = ring_size - ring->head + mq->last_tail;
-	else
-		n_free = ring->head - ring->tail;
+	if (type == MEMIF_RING_S2M) {
+		slot = __atomic_load_n(&ring->head, __ATOMIC_ACQUIRE);
+		n_free = ring_size - slot + mq->last_tail;
+	} else {
+		slot = __atomic_load_n(&ring->tail, __ATOMIC_ACQUIRE);
+		n_free = __atomic_load_n(&ring->head, __ATOMIC_ACQUIRE) - slot;
+	}
 
 	while (n_tx_pkts < nb_pkts && n_free) {
 		mbuf_head = *bufs++;
@@ -464,11 +480,10 @@ next_in_chain:
 	}
 
 no_free_slots:
-	rte_mb();
 	if (type == MEMIF_RING_S2M)
-		ring->head = slot;
+		__atomic_store_n(&ring->head, slot, __ATOMIC_RELEASE);
 	else
-		ring->tail = slot;
+		__atomic_store_n(&ring->tail, slot, __ATOMIC_RELEASE);
 
 	if ((ring->flags & MEMIF_RING_FLAG_MASK_INT) == 0) {
 		a = 1;
@@ -479,7 +494,6 @@ no_free_slots:
 		}
 	}
 
-	mq->n_err += nb_pkts - n_tx_pkts;
 	mq->n_pkts += n_tx_pkts;
 	return n_tx_pkts;
 }
@@ -612,8 +626,8 @@ memif_init_rings(struct rte_eth_dev *dev)
 
 	for (i = 0; i < pmd->run.num_s2m_rings; i++) {
 		ring = memif_get_ring(pmd, proc_private, MEMIF_RING_S2M, i);
-		ring->head = 0;
-		ring->tail = 0;
+		__atomic_store_n(&ring->head, 0, __ATOMIC_RELAXED);
+		__atomic_store_n(&ring->tail, 0, __ATOMIC_RELAXED);
 		ring->cookie = MEMIF_COOKIE;
 		ring->flags = 0;
 		for (j = 0; j < (1 << pmd->run.log2_ring_size); j++) {
@@ -628,8 +642,8 @@ memif_init_rings(struct rte_eth_dev *dev)
 
 	for (i = 0; i < pmd->run.num_m2s_rings; i++) {
 		ring = memif_get_ring(pmd, proc_private, MEMIF_RING_M2S, i);
-		ring->head = 0;
-		ring->tail = 0;
+		__atomic_store_n(&ring->head, 0, __ATOMIC_RELAXED);
+		__atomic_store_n(&ring->tail, 0, __ATOMIC_RELAXED);
 		ring->cookie = MEMIF_COOKIE;
 		ring->flags = 0;
 		for (j = 0; j < (1 << pmd->run.log2_ring_size); j++) {
@@ -735,8 +749,8 @@ memif_connect(struct rte_eth_dev *dev)
 				MIF_LOG(ERR, "Wrong ring");
 				return -1;
 			}
-			ring->head = 0;
-			ring->tail = 0;
+			__atomic_store_n(&ring->head, 0, __ATOMIC_RELAXED);
+			__atomic_store_n(&ring->tail, 0, __ATOMIC_RELAXED);
 			mq->last_head = 0;
 			mq->last_tail = 0;
 			/* enable polling mode */
@@ -751,8 +765,8 @@ memif_connect(struct rte_eth_dev *dev)
 				MIF_LOG(ERR, "Wrong ring");
 				return -1;
 			}
-			ring->head = 0;
-			ring->tail = 0;
+			__atomic_store_n(&ring->head, 0, __ATOMIC_RELAXED);
+			__atomic_store_n(&ring->tail, 0, __ATOMIC_RELAXED);
 			mq->last_head = 0;
 			mq->last_tail = 0;
 			/* enable polling mode */
@@ -857,9 +871,9 @@ memif_tx_queue_setup(struct rte_eth_dev *dev,
 	    (pmd->role == MEMIF_ROLE_SLAVE) ? MEMIF_RING_S2M : MEMIF_RING_M2S;
 	mq->n_pkts = 0;
 	mq->n_bytes = 0;
-	mq->n_err = 0;
 	mq->intr_handle.fd = -1;
 	mq->intr_handle.type = RTE_INTR_HANDLE_EXT;
+	mq->in_port = dev->data->port_id;
 	dev->data->tx_queues[qid] = mq;
 
 	return 0;
@@ -886,7 +900,6 @@ memif_rx_queue_setup(struct rte_eth_dev *dev,
 	mq->type = (pmd->role == MEMIF_ROLE_SLAVE) ? MEMIF_RING_M2S : MEMIF_RING_S2M;
 	mq->n_pkts = 0;
 	mq->n_bytes = 0;
-	mq->n_err = 0;
 	mq->intr_handle.fd = -1;
 	mq->intr_handle.type = RTE_INTR_HANDLE_EXT;
 	mq->mempool = mb_pool;
@@ -938,7 +951,6 @@ memif_stats_get(struct rte_eth_dev *dev, struct rte_eth_stats *stats)
 	stats->ibytes = 0;
 	stats->opackets = 0;
 	stats->obytes = 0;
-	stats->oerrors = 0;
 
 	tmp = (pmd->role == MEMIF_ROLE_SLAVE) ? pmd->run.num_s2m_rings :
 	    pmd->run.num_m2s_rings;
@@ -966,12 +978,11 @@ memif_stats_get(struct rte_eth_dev *dev, struct rte_eth_stats *stats)
 		stats->q_obytes[i] = mq->n_bytes;
 		stats->opackets += mq->n_pkts;
 		stats->obytes += mq->n_bytes;
-		stats->oerrors += mq->n_err;
 	}
 	return 0;
 }
 
-static void
+static int
 memif_stats_reset(struct rte_eth_dev *dev)
 {
 	struct pmd_internals *pmd = dev->data->dev_private;
@@ -983,15 +994,15 @@ memif_stats_reset(struct rte_eth_dev *dev)
 		    dev->data->rx_queues[i];
 		mq->n_pkts = 0;
 		mq->n_bytes = 0;
-		mq->n_err = 0;
 	}
 	for (i = 0; i < pmd->run.num_m2s_rings; i++) {
 		mq = (pmd->role == MEMIF_ROLE_SLAVE) ? dev->data->rx_queues[i] :
 		    dev->data->tx_queues[i];
 		mq->n_pkts = 0;
 		mq->n_bytes = 0;
-		mq->n_err = 0;
 	}
+
+	return 0;
 }
 
 static int
@@ -1187,6 +1198,11 @@ memif_check_socket_filename(const char *filename)
 	uint32_t idx;
 	int ret = 0;
 
+	if (strlen(filename) >= MEMIF_SOCKET_UN_SIZE) {
+		MIF_LOG(ERR, "Unix socket address too long (max 108).");
+		return -1;
+	}
+
 	tmp = strrchr(filename, '/');
 	if (tmp != NULL) {
 		idx = tmp - filename;
@@ -1272,7 +1288,7 @@ rte_pmd_memif_probe(struct rte_vdev_device *vdev)
 		eth_dev->dev_ops = &ops;
 		eth_dev->device = &vdev->device;
 		eth_dev->rx_pkt_burst = eth_memif_rx;
-		eth_dev->tx_pkt_burst = eth_memif_rx;
+		eth_dev->tx_pkt_burst = eth_memif_tx;
 
 		if (!rte_eal_primary_proc_alive(NULL)) {
 			MIF_LOG(ERR, "Primary process is missing");

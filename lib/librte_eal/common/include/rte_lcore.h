@@ -22,6 +22,7 @@ extern "C" {
 
 #define LCORE_ID_ANY     UINT32_MAX       /**< Any lcore. */
 
+<<<<<<< HEAD
 #if defined(__linux__)
 typedef	cpu_set_t rte_cpuset_t;
 #define RTE_CPU_AND(dst, src1, src2) CPU_AND(dst, src1, src2)
@@ -55,14 +56,20 @@ struct lcore_config {
 	rte_cpuset_t cpuset;       /**< cpu set which the lcore affinity to */ //仅包含此core的cpuset
 	uint8_t core_role;         /**< role of core eg: OFF, RTE, SERVICE */ //指定core的角色，例如ROLE_SERVICE
 };
-
-/**
- * Internal configuration (per-lcore)
- */
-extern struct lcore_config lcore_config[RTE_MAX_LCORE];
-
+=======
 RTE_DECLARE_PER_LCORE(unsigned, _lcore_id);  /**< Per thread "lcore id". */
 RTE_DECLARE_PER_LCORE(rte_cpuset_t, _cpuset); /**< Per thread "cpuset". */
+>>>>>>> upstream/master
+
+/**
+ * Get a lcore's role.
+ *
+ * @param lcore_id
+ *   The identifier of the lcore, which MUST be between 0 and RTE_MAX_LCORE-1.
+ * @return
+ *   The role of the lcore.
+ */
+enum rte_lcore_role_t rte_eal_lcore_role(unsigned int lcore_id);
 
 /**
  * Return the Application thread ID of the execution unit.
@@ -89,12 +96,16 @@ rte_lcore_id(void)
  * @return
  *   the id of the master lcore
  */
+<<<<<<< HEAD
 //获取master对应的core id
 static inline unsigned
 rte_get_master_lcore(void)
 {
 	return rte_eal_get_configuration()->master_lcore;
 }
+=======
+unsigned int rte_get_master_lcore(void);
+>>>>>>> upstream/master
 
 /**
  * Return the number of execution units (lcores) on the system.
@@ -102,12 +113,7 @@ rte_get_master_lcore(void)
  * @return
  *   the number of execution units (lcores) on the system.
  */
-static inline unsigned
-rte_lcore_count(void)
-{
-	const struct rte_config *cfg = rte_eal_get_configuration();
-	return cfg->lcore_count;
-}
+unsigned int rte_lcore_count(void);
 
 /**
  * Return the index of the lcore starting from zero.
@@ -213,6 +219,7 @@ rte_lcore_cpuset(unsigned int lcore_id);
  * @return
  *   True if the given lcore is enabled; false otherwise.
  */
+<<<<<<< HEAD
 //检查给定的core是否被启用了
 static inline int
 rte_lcore_is_enabled(unsigned int lcore_id)
@@ -222,6 +229,9 @@ rte_lcore_is_enabled(unsigned int lcore_id)
 		return 0;
 	return cfg->lcore_role[lcore_id] == ROLE_RTE;
 }
+=======
+int rte_lcore_is_enabled(unsigned int lcore_id);
+>>>>>>> upstream/master
 
 /**
  * Get the next enabled lcore ID.
@@ -236,13 +246,9 @@ rte_lcore_is_enabled(unsigned int lcore_id)
  * @return
  *   The next lcore_id or RTE_MAX_LCORE if not found.
  */
-static inline unsigned int
-rte_get_next_lcore(unsigned int i, int skip_master, int wrap)
-{
-	i++;
-	if (wrap)
-		i %= RTE_MAX_LCORE;
+unsigned int rte_get_next_lcore(unsigned int i, int skip_master, int wrap);
 
+<<<<<<< HEAD
 	while (i < RTE_MAX_LCORE) {
 		//如果此core未占用，则检查是否需要跳过master
 		if (!rte_lcore_is_enabled(i) ||
@@ -256,6 +262,8 @@ rte_get_next_lcore(unsigned int i, int skip_master, int wrap)
 	}
 	return i;
 }
+=======
+>>>>>>> upstream/master
 /**
  * Macro to browse all running lcores.
  */

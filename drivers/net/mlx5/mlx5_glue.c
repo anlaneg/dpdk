@@ -415,6 +415,31 @@ mlx5_glue_dr_create_flow_action_drop(void)
 }
 
 static void *
+mlx5_glue_dr_create_flow_action_push_vlan(struct mlx5dv_dr_domain *domain,
+					  rte_be32_t vlan_tag)
+{
+#ifdef HAVE_MLX5DV_DR_VLAN
+	return mlx5dv_dr_action_create_push_vlan(domain, vlan_tag);
+#else
+	(void)domain;
+	(void)vlan_tag;
+	errno = ENOTSUP;
+	return NULL;
+#endif
+}
+
+static void *
+mlx5_glue_dr_create_flow_action_pop_vlan(void)
+{
+#ifdef HAVE_MLX5DV_DR_VLAN
+	return mlx5dv_dr_action_create_pop_vlan();
+#else
+	errno = ENOTSUP;
+	return NULL;
+#endif
+}
+
+static void *
 mlx5_glue_dr_create_flow_tbl(void *domain, uint32_t level)
 {
 #ifdef HAVE_MLX5DV_DR
@@ -622,6 +647,18 @@ mlx5_glue_dv_create_flow_action_dest_ibv_qp(void *qp)
 #endif
 #else
 	(void)qp;
+	errno = ENOTSUP;
+	return NULL;
+#endif
+}
+
+static void *
+mlx5_glue_dv_create_flow_action_dest_devx_tir(void *tir)
+{
+#ifdef HAVE_MLX5DV_DR_ACTION_DEST_DEVX_TIR
+	return mlx5dv_dr_action_create_dest_devx_tir(tir);
+#else
+	(void)tir;
 	errno = ENOTSUP;
 	return NULL;
 #endif
@@ -849,6 +886,125 @@ mlx5_glue_devx_general_cmd(struct ibv_context *ctx,
 #endif
 }
 
+static struct mlx5dv_devx_cmd_comp *
+mlx5_glue_devx_create_cmd_comp(struct ibv_context *ctx)
+{
+#ifdef HAVE_IBV_DEVX_ASYNC
+	return mlx5dv_devx_create_cmd_comp(ctx);
+#else
+	(void)ctx;
+	errno = -ENOTSUP;
+	return NULL;
+#endif
+}
+
+static void
+mlx5_glue_devx_destroy_cmd_comp(struct mlx5dv_devx_cmd_comp *cmd_comp)
+{
+#ifdef HAVE_IBV_DEVX_ASYNC
+	mlx5dv_devx_destroy_cmd_comp(cmd_comp);
+#else
+	(void)cmd_comp;
+	errno = -ENOTSUP;
+#endif
+}
+
+static int
+mlx5_glue_devx_obj_query_async(struct mlx5dv_devx_obj *obj, const void *in,
+			       size_t inlen, size_t outlen, uint64_t wr_id,
+			       struct mlx5dv_devx_cmd_comp *cmd_comp)
+{
+#ifdef HAVE_IBV_DEVX_ASYNC
+	return mlx5dv_devx_obj_query_async(obj, in, inlen, outlen, wr_id,
+					   cmd_comp);
+#else
+	(void)obj;
+	(void)in;
+	(void)inlen;
+	(void)outlen;
+	(void)wr_id;
+	(void)cmd_comp;
+	return -ENOTSUP;
+#endif
+}
+
+static int
+mlx5_glue_devx_get_async_cmd_comp(struct mlx5dv_devx_cmd_comp *cmd_comp,
+				  struct mlx5dv_devx_async_cmd_hdr *cmd_resp,
+				  size_t cmd_resp_len)
+{
+#ifdef HAVE_IBV_DEVX_ASYNC
+	return mlx5dv_devx_get_async_cmd_comp(cmd_comp, cmd_resp,
+					      cmd_resp_len);
+#else
+	(void)cmd_comp;
+	(void)cmd_resp;
+	(void)cmd_resp_len;
+	return -ENOTSUP;
+#endif
+}
+
+static struct mlx5dv_devx_umem *
+mlx5_glue_devx_umem_reg(struct ibv_context *context, void *addr, size_t size,
+			uint32_t access)
+{
+#ifdef HAVE_IBV_DEVX_OBJ
+	return mlx5dv_devx_umem_reg(context, addr, size, access);
+#else
+	(void)context;
+	(void)addr;
+	(void)size;
+	(void)access;
+	errno = -ENOTSUP;
+	return NULL;
+#endif
+}
+
+static int
+mlx5_glue_devx_umem_dereg(struct mlx5dv_devx_umem *dv_devx_umem)
+{
+#ifdef HAVE_IBV_DEVX_OBJ
+	return mlx5dv_devx_umem_dereg(dv_devx_umem);
+#else
+	(void)dv_devx_umem;
+	return -ENOTSUP;
+#endif
+}
+
+static int
+mlx5_glue_devx_qp_query(struct ibv_qp *qp,
+			const void *in, size_t inlen,
+			void *out, size_t outlen)
+{
+#ifdef HAVE_IBV_DEVX_ASYNC
+	return mlx5dv_devx_qp_query(qp, in, inlen, out, outlen);
+#else
+	(void)qp;
+	(void)in;
+	(void)inlen;
+	(void)out;
+	(void)outlen;
+	errno = ENOTSUP;
+	return errno;
+#endif
+}
+
+static int
+mlx5_glue_devx_port_query(struct ibv_context *ctx,
+			  uint32_t port_num,
+			  struct mlx5dv_devx_port *mlx5_devx_port)
+{
+#ifdef HAVE_MLX5DV_DR_DEVX_PORT
+	return mlx5dv_query_devx_port(ctx, port_num, mlx5_devx_port);
+#else
+	(void)ctx;
+	(void)port_num;
+	(void)mlx5_devx_port;
+	errno = ENOTSUP;
+	return errno;
+#endif
+}
+
 alignas(RTE_CACHE_LINE_SIZE)
 const struct mlx5_glue *mlx5_glue = &(const struct mlx5_glue){
 	.version = MLX5_GLUE_VERSION,
@@ -901,6 +1057,10 @@ const struct mlx5_glue *mlx5_glue = &(const struct mlx5_glue){
 		mlx5_glue_dr_create_flow_action_dest_vport,
 	.dr_create_flow_action_drop =
 		mlx5_glue_dr_create_flow_action_drop,
+	.dr_create_flow_action_push_vlan =
+		mlx5_glue_dr_create_flow_action_push_vlan,
+	.dr_create_flow_action_pop_vlan =
+		mlx5_glue_dr_create_flow_action_pop_vlan,
 	.dr_create_flow_tbl = mlx5_glue_dr_create_flow_tbl,
 	.dr_destroy_flow_tbl = mlx5_glue_dr_destroy_flow_tbl,
 	.dr_create_domain = mlx5_glue_dr_create_domain,
@@ -917,6 +1077,8 @@ const struct mlx5_glue *mlx5_glue = &(const struct mlx5_glue){
 		mlx5_glue_dv_create_flow_action_counter,
 	.dv_create_flow_action_dest_ibv_qp =
 		mlx5_glue_dv_create_flow_action_dest_ibv_qp,
+	.dv_create_flow_action_dest_devx_tir =
+		mlx5_glue_dv_create_flow_action_dest_devx_tir,
 	.dv_create_flow_action_modify_header =
 		mlx5_glue_dv_create_flow_action_modify_header,
 	.dv_create_flow_action_packet_reformat =
@@ -930,4 +1092,12 @@ const struct mlx5_glue *mlx5_glue = &(const struct mlx5_glue){
 	.devx_obj_query = mlx5_glue_devx_obj_query,
 	.devx_obj_modify = mlx5_glue_devx_obj_modify,
 	.devx_general_cmd = mlx5_glue_devx_general_cmd,
+	.devx_create_cmd_comp = mlx5_glue_devx_create_cmd_comp,
+	.devx_destroy_cmd_comp = mlx5_glue_devx_destroy_cmd_comp,
+	.devx_obj_query_async = mlx5_glue_devx_obj_query_async,
+	.devx_get_async_cmd_comp = mlx5_glue_devx_get_async_cmd_comp,
+	.devx_umem_reg = mlx5_glue_devx_umem_reg,
+	.devx_umem_dereg = mlx5_glue_devx_umem_dereg,
+	.devx_qp_query = mlx5_glue_devx_qp_query,
+	.devx_port_query = mlx5_glue_devx_port_query,
 };

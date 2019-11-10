@@ -52,6 +52,8 @@ enum {
 #define OTX2_FLOW_ACT_DUP     (1 << 5)
 #define OTX2_FLOW_ACT_SEC     (1 << 6)
 #define OTX2_FLOW_ACT_COUNT   (1 << 7)
+#define OTX2_FLOW_ACT_PF      (1 << 8)
+#define OTX2_FLOW_ACT_VF      (1 << 9)
 
 /* terminating actions */
 #define OTX2_FLOW_ACT_TERM    (OTX2_FLOW_ACT_DROP  | \
@@ -87,6 +89,7 @@ struct npc_xtract_info {
 	uint8_t hdr_off; /* Byte offset of proto hdr: extract_src */
 	uint8_t key_off; /* Byte offset in MCAM key where data is placed */
 	uint8_t enable; /* Extraction enabled or disabled */
+	uint8_t flags_enable; /* Flags extraction enabled */
 };
 
 /* Information for a given {LAYER, LTYPE} */

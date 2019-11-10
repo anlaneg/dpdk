@@ -37,8 +37,8 @@
 #include <rte_string_fns.h>
 #include <rte_kvargs.h>
 #include <rte_class.h>
+#include <rte_ether.h>
 
-#include "rte_ether.h"
 #include "rte_ethdev.h"
 #include "rte_ethdev_driver.h"
 #include "ethdev_profile.h"
@@ -166,6 +166,25 @@ static const struct {
 };
 
 #undef RTE_TX_OFFLOAD_BIT2STR
+
+static const struct {
+	uint64_t option;
+	const char *name;
+} rte_burst_option_names[] = {
+	{ RTE_ETH_BURST_SCALAR, "Scalar" },
+	{ RTE_ETH_BURST_VECTOR, "Vector" },
+
+	{ RTE_ETH_BURST_ALTIVEC, "AltiVec" },
+	{ RTE_ETH_BURST_NEON, "Neon" },
+	{ RTE_ETH_BURST_SSE, "SSE" },
+	{ RTE_ETH_BURST_AVX2, "AVX2" },
+	{ RTE_ETH_BURST_AVX512, "AVX512" },
+
+	{ RTE_ETH_BURST_SCATTERED, "Scattered" },
+	{ RTE_ETH_BURST_BULK_ALLOC, "Bulk Alloc" },
+	{ RTE_ETH_BURST_SIMPLE, "Simple" },
+	{ RTE_ETH_BURST_PER_QUEUE, "Per Queue" },
+};
 
 /**
  * The user application callback description.
@@ -703,10 +722,11 @@ rte_eth_dev_owner_unset(const uint16_t port_id, const uint64_t owner_id)
 	return ret;
 }
 
-void
+int
 rte_eth_dev_owner_delete(const uint64_t owner_id)
 {
 	uint16_t port_id;
+	int ret = 0;
 
 	rte_eth_dev_shared_data_prepare();
 
@@ -724,9 +744,12 @@ rte_eth_dev_owner_delete(const uint64_t owner_id)
 		RTE_ETHDEV_LOG(ERR,
 			       "Invalid owner id=%016"PRIx64"\n",
 			       owner_id);
+		ret = -EINVAL;
 	}
 
 	rte_spinlock_unlock(&rte_eth_dev_shared_data->ownership_lock);
+
+	return ret;
 }
 
 int
@@ -1162,7 +1185,6 @@ rte_eth_dev_configure(uint16_t port_id, uint16_t nb_rx_q, uint16_t nb_tx_q,
 
 	dev = &rte_eth_devices[port_id];
 
-	RTE_FUNC_PTR_OR_ERR_RET(*dev->dev_ops->dev_infos_get, -ENOTSUP);
 	RTE_FUNC_PTR_OR_ERR_RET(*dev->dev_ops->dev_configure, -ENOTSUP);
 
 	if (dev->data->dev_started) {
@@ -1181,7 +1203,9 @@ rte_eth_dev_configure(uint16_t port_id, uint16_t nb_rx_q, uint16_t nb_tx_q,
 	 */
 	memcpy(&dev->data->dev_conf, dev_conf, sizeof(dev->data->dev_conf));
 
-	rte_eth_dev_info_get(port_id, &dev_info);
+	ret = rte_eth_dev_info_get(port_id, &dev_info);
+	if (ret != 0)
+		goto rollback;
 
 	/* If number of queues specified by application for both Rx and Tx is
 	 * zero, use driver preferred values. This cannot be done individually
@@ -1303,6 +1327,9 @@ rte_eth_dev_configure(uint16_t port_id, uint16_t nb_rx_q, uint16_t nb_tx_q,
 		goto rollback;
 	}
 
+	dev->data->dev_conf.rx_adv_conf.rss_conf.rss_hf =
+		rte_eth_rss_hf_refine(dev_conf->rx_adv_conf.rss_conf.rss_hf);
+
 	/* Check that device supports requested rss hash functions. */
 	if ((dev_info.flow_type_rss_offloads |
 	     dev_conf->rx_adv_conf.rss_conf.rss_hf) !=
@@ -1422,24 +1449,70 @@ rte_eth_dev_mac_restore(struct rte_eth_dev *dev,
 	}
 }
 
-static void
+static int
 rte_eth_dev_config_restore(struct rte_eth_dev *dev,
 			   struct rte_eth_dev_info *dev_info, uint16_t port_id)
 {
+	int ret;
+
 	if (!(*dev_info->dev_flags & RTE_ETH_DEV_NOLIVE_MAC_ADDR))
 		rte_eth_dev_mac_restore(dev, dev_info);
 
 	/* replay promiscuous configuration */
-	if (rte_eth_promiscuous_get(port_id) == 1)
-		rte_eth_promiscuous_enable(port_id);
-	else if (rte_eth_promiscuous_get(port_id) == 0)
-		rte_eth_promiscuous_disable(port_id);
+	/*
+	 * use callbacks directly since we don't need port_id check and
+	 * would like to bypass the same value set
+	 */
+	if (rte_eth_promiscuous_get(port_id) == 1 &&
+	    *dev->dev_ops->promiscuous_enable != NULL) {
+		ret = eth_err(port_id,
+			      (*dev->dev_ops->promiscuous_enable)(dev));
+		if (ret != 0 && ret != -ENOTSUP) {
+			RTE_ETHDEV_LOG(ERR,
+				"Failed to enable promiscuous mode for device (port %u): %s\n",
+				port_id, rte_strerror(-ret));
+			return ret;
+		}
+	} else if (rte_eth_promiscuous_get(port_id) == 0 &&
+		   *dev->dev_ops->promiscuous_disable != NULL) {
+		ret = eth_err(port_id,
+			      (*dev->dev_ops->promiscuous_disable)(dev));
+		if (ret != 0 && ret != -ENOTSUP) {
+			RTE_ETHDEV_LOG(ERR,
+				"Failed to disable promiscuous mode for device (port %u): %s\n",
+				port_id, rte_strerror(-ret));
+			return ret;
+		}
+	}
 
 	/* replay all multicast configuration */
-	if (rte_eth_allmulticast_get(port_id) == 1)
-		rte_eth_allmulticast_enable(port_id);
-	else if (rte_eth_allmulticast_get(port_id) == 0)
-		rte_eth_allmulticast_disable(port_id);
+	/*
+	 * use callbacks directly since we don't need port_id check and
+	 * would like to bypass the same value set
+	 */
+	if (rte_eth_allmulticast_get(port_id) == 1 &&
+	    *dev->dev_ops->allmulticast_enable != NULL) {
+		ret = eth_err(port_id,
+			      (*dev->dev_ops->allmulticast_enable)(dev));
+		if (ret != 0 && ret != -ENOTSUP) {
+			RTE_ETHDEV_LOG(ERR,
+				"Failed to enable allmulticast mode for device (port %u): %s\n",
+				port_id, rte_strerror(-ret));
+			return ret;
+		}
+	} else if (rte_eth_allmulticast_get(port_id) == 0 &&
+		   *dev->dev_ops->allmulticast_disable != NULL) {
+		ret = eth_err(port_id,
+			      (*dev->dev_ops->allmulticast_disable)(dev));
+		if (ret != 0 && ret != -ENOTSUP) {
+			RTE_ETHDEV_LOG(ERR,
+				"Failed to disable allmulticast mode for device (port %u): %s\n",
+				port_id, rte_strerror(-ret));
+			return ret;
+		}
+	}
+
+	return 0;
 }
 
 //启动网卡（1。先配置网卡，2再配置tx队列，rx队列;3启动网卡）
@@ -1449,6 +1522,7 @@ rte_eth_dev_start(uint16_t port_id)
 	struct rte_eth_dev *dev;
 	struct rte_eth_dev_info dev_info;
 	int diag;
+	int ret;
 
 	RTE_ETH_VALID_PORTID_OR_ERR_RET(port_id, -EINVAL);
 
@@ -1463,7 +1537,9 @@ rte_eth_dev_start(uint16_t port_id)
 		return 0;
 	}
 
-	rte_eth_dev_info_get(port_id, &dev_info);
+	ret = rte_eth_dev_info_get(port_id, &dev_info);
+	if (ret != 0)
+		return ret;
 
 	/* Lets restore MAC now if device does not support live change */
 	if (*dev_info.dev_flags & RTE_ETH_DEV_NOLIVE_MAC_ADDR)
@@ -1475,7 +1551,14 @@ rte_eth_dev_start(uint16_t port_id)
 	else
 		return eth_err(port_id, diag);
 
-	rte_eth_dev_config_restore(dev, &dev_info, port_id);
+	ret = rte_eth_dev_config_restore(dev, &dev_info, port_id);
+	if (ret != 0) {
+		RTE_ETHDEV_LOG(ERR,
+			"Error during restoring configuration for device (port %u): %s\n",
+			port_id, rte_strerror(-ret));
+		rte_eth_dev_stop(port_id);
+		return ret;
+	}
 
 	if (dev->data->dev_conf.intr_conf.lsc == 0) {
 		RTE_FUNC_PTR_OR_ERR_RET(*dev->dev_ops->link_update, -ENOTSUP);
@@ -1630,7 +1713,6 @@ rte_eth_rx_queue_setup(uint16_t port_id, uint16_t rx_queue_id,
 		return -EINVAL;
 	}
 
-	RTE_FUNC_PTR_OR_ERR_RET(*dev->dev_ops->dev_infos_get, -ENOTSUP);
 	RTE_FUNC_PTR_OR_ERR_RET(*dev->dev_ops->rx_queue_setup, -ENOTSUP);
 
 	/*
@@ -1638,7 +1720,10 @@ rte_eth_rx_queue_setup(uint16_t port_id, uint16_t rx_queue_id,
 	 * This value must be provided in the private data of the memory pool.
 	 * First check that the memory pool has a valid private data.
 	 */
-	rte_eth_dev_info_get(port_id, &dev_info);
+	ret = rte_eth_dev_info_get(port_id, &dev_info);
+	if (ret != 0)
+		return ret;
+
 	if (mp->private_data_size < sizeof(struct rte_pktmbuf_pool_private)) {
 		RTE_ETHDEV_LOG(ERR, "%s private_data_size %d < %d\n",
 			mp->name, (int)mp->private_data_size,
@@ -1750,6 +1835,7 @@ rte_eth_tx_queue_setup(uint16_t port_id, uint16_t tx_queue_id,
 	struct rte_eth_dev_info dev_info;
 	struct rte_eth_txconf local_conf;
 	void **txq;
+	int ret;
 
 	RTE_ETH_VALID_PORTID_OR_ERR_RET(port_id, -EINVAL);
 
@@ -1760,11 +1846,11 @@ rte_eth_tx_queue_setup(uint16_t port_id, uint16_t tx_queue_id,
 		return -EINVAL;
 	}
 
-	//设备回调检查
-	RTE_FUNC_PTR_OR_ERR_RET(*dev->dev_ops->dev_infos_get, -ENOTSUP);
 	RTE_FUNC_PTR_OR_ERR_RET(*dev->dev_ops->tx_queue_setup, -ENOTSUP);
 
-	rte_eth_dev_info_get(port_id, &dev_info);
+	ret = rte_eth_dev_info_get(port_id, &dev_info);
+	if (ret != 0)
+		return ret;
 
 	/* Use default specified by driver, if nb_tx_desc is zero */
 	if (nb_tx_desc == 0) {
@@ -1910,30 +1996,46 @@ rte_eth_tx_done_cleanup(uint16_t port_id, uint16_t queue_id, uint32_t free_cnt)
 }
 
 //将网卡设置为混杂模式
-void
+int
 rte_eth_promiscuous_enable(uint16_t port_id)
 {
 	struct rte_eth_dev *dev;
+	int diag = 0;
 
-	RTE_ETH_VALID_PORTID_OR_RET(port_id);
+	RTE_ETH_VALID_PORTID_OR_ERR_RET(port_id, -ENODEV);
 	dev = &rte_eth_devices[port_id];
 
-	RTE_FUNC_PTR_OR_RET(*dev->dev_ops->promiscuous_enable);
-	(*dev->dev_ops->promiscuous_enable)(dev);
-	dev->data->promiscuous = 1;
+	if (dev->data->promiscuous == 1)
+		return 0;
+
+	RTE_FUNC_PTR_OR_ERR_RET(*dev->dev_ops->promiscuous_enable, -ENOTSUP);
+
+	diag = (*dev->dev_ops->promiscuous_enable)(dev);
+	dev->data->promiscuous = (diag == 0) ? 1 : 0;
+
+	return eth_err(port_id, diag);
 }
 
-void
+int
 rte_eth_promiscuous_disable(uint16_t port_id)
 {
 	struct rte_eth_dev *dev;
+	int diag = 0;
 
-	RTE_ETH_VALID_PORTID_OR_RET(port_id);
+	RTE_ETH_VALID_PORTID_OR_ERR_RET(port_id, -ENODEV);
 	dev = &rte_eth_devices[port_id];
 
-	RTE_FUNC_PTR_OR_RET(*dev->dev_ops->promiscuous_disable);
+	if (dev->data->promiscuous == 0)
+		return 0;
+
+	RTE_FUNC_PTR_OR_ERR_RET(*dev->dev_ops->promiscuous_disable, -ENOTSUP);
+
 	dev->data->promiscuous = 0;
-	(*dev->dev_ops->promiscuous_disable)(dev);
+	diag = (*dev->dev_ops->promiscuous_disable)(dev);
+	if (diag != 0)
+		dev->data->promiscuous = 1;
+
+	return eth_err(port_id, diag);
 }
 
 int
@@ -1948,30 +2050,44 @@ rte_eth_promiscuous_get(uint16_t port_id)
 }
 
 //开启组播
-void
+int
 rte_eth_allmulticast_enable(uint16_t port_id)
 {
 	struct rte_eth_dev *dev;
+	int diag;
 
-	RTE_ETH_VALID_PORTID_OR_RET(port_id);
+	RTE_ETH_VALID_PORTID_OR_ERR_RET(port_id, -ENODEV);
 	dev = &rte_eth_devices[port_id];
 
-	RTE_FUNC_PTR_OR_RET(*dev->dev_ops->allmulticast_enable);
-	(*dev->dev_ops->allmulticast_enable)(dev);
-	dev->data->all_multicast = 1;
+	if (dev->data->all_multicast == 1)
+		return 0;
+
+	RTE_FUNC_PTR_OR_ERR_RET(*dev->dev_ops->allmulticast_enable, -ENOTSUP);
+	diag = (*dev->dev_ops->allmulticast_enable)(dev);
+	dev->data->all_multicast = (diag == 0) ? 1 : 0;
+
+	return eth_err(port_id, diag);
 }
 
-void
+int
 rte_eth_allmulticast_disable(uint16_t port_id)
 {
 	struct rte_eth_dev *dev;
+	int diag;
 
-	RTE_ETH_VALID_PORTID_OR_RET(port_id);
+	RTE_ETH_VALID_PORTID_OR_ERR_RET(port_id, -ENODEV);
 	dev = &rte_eth_devices[port_id];
 
-	RTE_FUNC_PTR_OR_RET(*dev->dev_ops->allmulticast_disable);
+	if (dev->data->all_multicast == 0)
+		return 0;
+
+	RTE_FUNC_PTR_OR_ERR_RET(*dev->dev_ops->allmulticast_disable, -ENOTSUP);
 	dev->data->all_multicast = 0;
-	(*dev->dev_ops->allmulticast_disable)(dev);
+	diag = (*dev->dev_ops->allmulticast_disable)(dev);
+	if (diag != 0)
+		dev->data->all_multicast = 1;
+
+	return eth_err(port_id, diag);
 }
 
 int
@@ -1985,45 +2101,48 @@ rte_eth_allmulticast_get(uint16_t port_id)
 	return dev->data->all_multicast;
 }
 
-
 //取链路状态
-void
+int
 rte_eth_link_get(uint16_t port_id, struct rte_eth_link *eth_link)
 {
 	struct rte_eth_dev *dev;
 
-	RTE_ETH_VALID_PORTID_OR_RET(port_id);
+	RTE_ETH_VALID_PORTID_OR_ERR_RET(port_id, -ENODEV);
 	dev = &rte_eth_devices[port_id];//取出对应的设备
 
 	if (dev->data->dev_conf.intr_conf.lsc &&
 	    dev->data->dev_started)
 		rte_eth_linkstatus_get(dev, eth_link);
 	else {
-		RTE_FUNC_PTR_OR_RET(*dev->dev_ops->link_update);
+		RTE_FUNC_PTR_OR_ERR_RET(*dev->dev_ops->link_update, -ENOTSUP);
 		(*dev->dev_ops->link_update)(dev, 1);
 		*eth_link = dev->data->dev_link;
 	}
+
+	return 0;
 }
 
 //返回接口的link状态
-void
+int
 rte_eth_link_get_nowait(uint16_t port_id, struct rte_eth_link *eth_link)
 {
 	struct rte_eth_dev *dev;
 
 	//检查给定的port_id是否有效的接口，返回对应的dev
-	RTE_ETH_VALID_PORTID_OR_RET(port_id);
+	RTE_ETH_VALID_PORTID_OR_ERR_RET(port_id, -ENODEV);
 	dev = &rte_eth_devices[port_id];
 
 	if (dev->data->dev_conf.intr_conf.lsc &&
 	    dev->data->dev_started)
 		rte_eth_linkstatus_get(dev, eth_link);
 	else {
-		RTE_FUNC_PTR_OR_RET(*dev->dev_ops->link_update);
+		RTE_FUNC_PTR_OR_ERR_RET(*dev->dev_ops->link_update, -ENOTSUP);
 		//调用link_update后，获取link结果
 		(*dev->dev_ops->link_update)(dev, 0);
 		*eth_link = dev->data->dev_link;
 	}
+
+	return 0;
 }
 
 int
@@ -2045,12 +2164,16 @@ int
 rte_eth_stats_reset(uint16_t port_id)
 {
 	struct rte_eth_dev *dev;
+	int ret;
 
 	RTE_ETH_VALID_PORTID_OR_ERR_RET(port_id, -ENODEV);
 	dev = &rte_eth_devices[port_id];
 
 	RTE_FUNC_PTR_OR_ERR_RET(*dev->dev_ops->stats_reset, -ENOTSUP);
-	(*dev->dev_ops->stats_reset)(dev);
+	ret = (*dev->dev_ops->stats_reset)(dev);
+	if (ret != 0)
+		return eth_err(port_id, ret);
+
 	dev->data->rx_mbuf_alloc_failed = 0;
 
 	return 0;
@@ -2526,22 +2649,20 @@ rte_eth_xstats_get(uint16_t port_id, struct rte_eth_xstat *xstats,
 }
 
 /* reset ethdev extended statistics */
-void
+int
 rte_eth_xstats_reset(uint16_t port_id)
 {
 	struct rte_eth_dev *dev;
 
-	RTE_ETH_VALID_PORTID_OR_RET(port_id);
+	RTE_ETH_VALID_PORTID_OR_ERR_RET(port_id, -ENODEV);
 	dev = &rte_eth_devices[port_id];
 
 	/* implemented by the driver */
-	if (dev->dev_ops->xstats_reset != NULL) {
-		(*dev->dev_ops->xstats_reset)(dev);
-		return;
-	}
+	if (dev->dev_ops->xstats_reset != NULL)
+		return eth_err(port_id, (*dev->dev_ops->xstats_reset)(dev));
 
 	/* fallback to default */
-	rte_eth_stats_reset(port_id);
+	return rte_eth_stats_reset(port_id);
 }
 
 static int
@@ -2601,7 +2722,7 @@ rte_eth_dev_fw_version_get(uint16_t port_id, char *fw_version, size_t fw_size)
 }
 
 //通过port编号获取取设备信息（获得：收描述符最大值，发措述符最大值）
-void
+int
 rte_eth_dev_info_get(uint16_t port_id, struct rte_eth_dev_info *dev_info)
 {
 	struct rte_eth_dev *dev;
@@ -2612,24 +2733,38 @@ rte_eth_dev_info_get(uint16_t port_id, struct rte_eth_dev_info *dev_info)
 		.nb_seg_max = UINT16_MAX,
 		.nb_mtu_seg_max = UINT16_MAX,
 	};
+	int diag;
 
-	RTE_ETH_VALID_PORTID_OR_RET(port_id);
+	/*
+	 * Init dev_info before port_id check since caller does not have
+	 * return status and does not know if get is successful or not.
+	 */
+	memset(dev_info, 0, sizeof(struct rte_eth_dev_info));
+
+	RTE_ETH_VALID_PORTID_OR_ERR_RET(port_id, -ENODEV);
 	dev = &rte_eth_devices[port_id];
 
-	memset(dev_info, 0, sizeof(struct rte_eth_dev_info));
 	dev_info->rx_desc_lim = lim;
 	dev_info->tx_desc_lim = lim;
 	dev_info->device = dev->device;
 	dev_info->min_mtu = RTE_ETHER_MIN_MTU;
 	dev_info->max_mtu = UINT16_MAX;
 
-	RTE_FUNC_PTR_OR_RET(*dev->dev_ops->dev_infos_get);
-	(*dev->dev_ops->dev_infos_get)(dev, dev_info);
+	RTE_FUNC_PTR_OR_ERR_RET(*dev->dev_ops->dev_infos_get, -ENOTSUP);
+	diag = (*dev->dev_ops->dev_infos_get)(dev, dev_info);
+	if (diag != 0) {
+		/* Cleanup already filled in device information */
+		memset(dev_info, 0, sizeof(struct rte_eth_dev_info));
+		return eth_err(port_id, diag);
+	}
+
 	dev_info->driver_name = dev->device->driver->name;
 	dev_info->nb_rx_queues = dev->data->nb_rx_queues;
 	dev_info->nb_tx_queues = dev->data->nb_tx_queues;
 
 	dev_info->dev_flags = &dev->data->dev_flags;
+
+	return 0;
 }
 
 int
@@ -2659,14 +2794,16 @@ rte_eth_dev_get_supported_ptypes(uint16_t port_id, uint32_t ptype_mask,
 }
 
 //给定port id，取此port对应的mac地址
-void
+int
 rte_eth_macaddr_get(uint16_t port_id, struct rte_ether_addr *mac_addr)
 {
 	struct rte_eth_dev *dev;
 
-	RTE_ETH_VALID_PORTID_OR_RET(port_id);
+	RTE_ETH_VALID_PORTID_OR_ERR_RET(port_id, -ENODEV);
 	dev = &rte_eth_devices[port_id];
 	rte_ether_addr_copy(&dev->data->mac_addrs[0], mac_addr);
+
+	return 0;
 }
 
 
@@ -2700,7 +2837,10 @@ rte_eth_dev_set_mtu(uint16_t port_id, uint16_t mtu)
 	 * which relies on dev->dev_ops->dev_infos_get.
 	 */
 	if (*dev->dev_ops->dev_infos_get != NULL) {
-		rte_eth_dev_info_get(port_id, &dev_info);
+		ret = rte_eth_dev_info_get(port_id, &dev_info);
+		if (ret != 0)
+			return ret;
+
 		if (mtu < dev_info.min_mtu || mtu > dev_info.max_mtu)
 			return -EINVAL;
 	}
@@ -2880,7 +3020,7 @@ rte_eth_dev_get_vlan_offload(uint16_t port_id)
 		ret |= ETH_VLAN_EXTEND_OFFLOAD;
 
 	if (*dev_offloads & DEV_RX_OFFLOAD_QINQ_STRIP)
-		ret |= DEV_RX_OFFLOAD_QINQ_STRIP;
+		ret |= ETH_QINQ_STRIP_OFFLOAD;
 
 	return ret;
 }
@@ -3048,10 +3188,17 @@ rte_eth_dev_rss_hash_update(uint16_t port_id,
 {
 	struct rte_eth_dev *dev;
 	struct rte_eth_dev_info dev_info = { .flow_type_rss_offloads = 0, };
+	int ret;
 
 	RTE_ETH_VALID_PORTID_OR_ERR_RET(port_id, -ENODEV);
+
+	ret = rte_eth_dev_info_get(port_id, &dev_info);
+	if (ret != 0)
+		return ret;
+
+	rss_conf->rss_hf = rte_eth_rss_hf_refine(rss_conf->rss_hf);
+
 	dev = &rte_eth_devices[port_id];
-	rte_eth_dev_info_get(port_id, &dev_info);
 	if ((dev_info.flow_type_rss_offloads | rss_conf->rss_hf) !=
 	    dev_info.flow_type_rss_offloads) {
 		RTE_ETHDEV_LOG(ERR,
@@ -3157,9 +3304,11 @@ get_mac_addr_index(uint16_t port_id, const struct rte_ether_addr *addr)
 	struct rte_eth_dev_info dev_info;
 	struct rte_eth_dev *dev = &rte_eth_devices[port_id];
 	unsigned i;
+	int ret;
 
-	RTE_ETH_VALID_PORTID_OR_ERR_RET(port_id, -ENODEV);
-	rte_eth_dev_info_get(port_id, &dev_info);
+	ret = rte_eth_dev_info_get(port_id, &dev_info);
+	if (ret != 0)
+		return -1;
 
 	for (i = 0; i < dev_info.max_mac_addrs; i++)
 		if (memcmp(addr, &dev->data->mac_addrs[i],
@@ -3290,8 +3439,12 @@ get_hash_mac_addr_index(uint16_t port_id, const struct rte_ether_addr *addr)
 	struct rte_eth_dev_info dev_info;
 	struct rte_eth_dev *dev = &rte_eth_devices[port_id];
 	unsigned i;
+	int ret;
 
-	rte_eth_dev_info_get(port_id, &dev_info);
+	ret = rte_eth_dev_info_get(port_id, &dev_info);
+	if (ret != 0)
+		return -1;
+
 	if (!dev->data->hash_mac_addrs)
 		return -1;
 
@@ -3376,11 +3529,15 @@ int rte_eth_set_queue_rate_limit(uint16_t port_id, uint16_t queue_idx,
 	struct rte_eth_dev *dev;
 	struct rte_eth_dev_info dev_info;
 	struct rte_eth_link link;
+	int ret;
 
 	RTE_ETH_VALID_PORTID_OR_ERR_RET(port_id, -ENODEV);
 
+	ret = rte_eth_dev_info_get(port_id, &dev_info);
+	if (ret != 0)
+		return ret;
+
 	dev = &rte_eth_devices[port_id];
-	rte_eth_dev_info_get(port_id, &dev_info);
 	link = dev->data->dev_link;
 
 	if (queue_idx > dev_info.max_tx_queues) {
@@ -4149,6 +4306,70 @@ rte_eth_tx_queue_info_get(uint16_t port_id, uint16_t queue_id,
 }
 
 int
+rte_eth_rx_burst_mode_get(uint16_t port_id, uint16_t queue_id,
+			  struct rte_eth_burst_mode *mode)
+{
+	struct rte_eth_dev *dev;
+
+	RTE_ETH_VALID_PORTID_OR_ERR_RET(port_id, -ENODEV);
+
+	if (mode == NULL)
+		return -EINVAL;
+
+	dev = &rte_eth_devices[port_id];
+
+	if (queue_id >= dev->data->nb_rx_queues) {
+		RTE_ETHDEV_LOG(ERR, "Invalid RX queue_id=%u\n", queue_id);
+		return -EINVAL;
+	}
+
+	RTE_FUNC_PTR_OR_ERR_RET(*dev->dev_ops->rx_burst_mode_get, -ENOTSUP);
+	memset(mode, 0, sizeof(*mode));
+	return eth_err(port_id,
+		       dev->dev_ops->rx_burst_mode_get(dev, queue_id, mode));
+}
+
+int
+rte_eth_tx_burst_mode_get(uint16_t port_id, uint16_t queue_id,
+			  struct rte_eth_burst_mode *mode)
+{
+	struct rte_eth_dev *dev;
+
+	RTE_ETH_VALID_PORTID_OR_ERR_RET(port_id, -ENODEV);
+
+	if (mode == NULL)
+		return -EINVAL;
+
+	dev = &rte_eth_devices[port_id];
+
+	if (queue_id >= dev->data->nb_tx_queues) {
+		RTE_ETHDEV_LOG(ERR, "Invalid TX queue_id=%u\n", queue_id);
+		return -EINVAL;
+	}
+
+	RTE_FUNC_PTR_OR_ERR_RET(*dev->dev_ops->tx_burst_mode_get, -ENOTSUP);
+	memset(mode, 0, sizeof(*mode));
+	return eth_err(port_id,
+		       dev->dev_ops->tx_burst_mode_get(dev, queue_id, mode));
+}
+
+const char *
+rte_eth_burst_mode_option_name(uint64_t option)
+{
+	const char *name = "";
+	unsigned int i;
+
+	for (i = 0; i < RTE_DIM(rte_burst_option_names); ++i) {
+		if (option == rte_burst_option_names[i].option) {
+			name = rte_burst_option_names[i].name;
+			break;
+		}
+	}
+
+	return name;
+}
+
+int
 rte_eth_dev_set_mc_addr_list(uint16_t port_id,
 			     struct rte_ether_addr *mc_addr_set,
 			     uint32_t nb_mc_addr)
@@ -4429,15 +4650,14 @@ rte_eth_dev_adjust_nb_rx_tx_desc(uint16_t port_id,
 				 uint16_t *nb_rx_desc,
 				 uint16_t *nb_tx_desc)
 {
-	struct rte_eth_dev *dev;
 	struct rte_eth_dev_info dev_info;
+	int ret;
 
 	RTE_ETH_VALID_PORTID_OR_ERR_RET(port_id, -ENODEV);
 
-	dev = &rte_eth_devices[port_id];
-	RTE_FUNC_PTR_OR_ERR_RET(*dev->dev_ops->dev_infos_get, -ENOTSUP);
-
-	rte_eth_dev_info_get(port_id, &dev_info);
+	ret = rte_eth_dev_info_get(port_id, &dev_info);
+	if (ret != 0)
+		return ret;
 
 	if (nb_rx_desc != NULL)
 		rte_eth_dev_adjust_nb_desc(nb_rx_desc, &dev_info.rx_desc_lim);

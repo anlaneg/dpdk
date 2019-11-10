@@ -41,11 +41,11 @@ static int eth_virtio_dev_uninit(struct rte_eth_dev *eth_dev);
 static int  virtio_dev_configure(struct rte_eth_dev *dev);
 static int  virtio_dev_start(struct rte_eth_dev *dev);
 static void virtio_dev_stop(struct rte_eth_dev *dev);
-static void virtio_dev_promiscuous_enable(struct rte_eth_dev *dev);
-static void virtio_dev_promiscuous_disable(struct rte_eth_dev *dev);
-static void virtio_dev_allmulticast_enable(struct rte_eth_dev *dev);
-static void virtio_dev_allmulticast_disable(struct rte_eth_dev *dev);
-static void virtio_dev_info_get(struct rte_eth_dev *dev,
+static int virtio_dev_promiscuous_enable(struct rte_eth_dev *dev);
+static int virtio_dev_promiscuous_disable(struct rte_eth_dev *dev);
+static int virtio_dev_allmulticast_enable(struct rte_eth_dev *dev);
+static int virtio_dev_allmulticast_disable(struct rte_eth_dev *dev);
+static int virtio_dev_info_get(struct rte_eth_dev *dev,
 				struct rte_eth_dev_info *dev_info);
 static int virtio_dev_link_update(struct rte_eth_dev *dev,
 	int wait_to_complete);
@@ -61,7 +61,7 @@ static int virtio_dev_xstats_get(struct rte_eth_dev *dev,
 static int virtio_dev_xstats_get_names(struct rte_eth_dev *dev,
 				       struct rte_eth_xstat_name *xstats_names,
 				       unsigned limit);
-static void virtio_dev_stats_reset(struct rte_eth_dev *dev);
+static int virtio_dev_stats_reset(struct rte_eth_dev *dev);
 static void virtio_dev_free_mbufs(struct rte_eth_dev *dev);
 static int virtio_vlan_filter_set(struct rte_eth_dev *dev,
 				uint16_t vlan_id, int on);
@@ -121,7 +121,6 @@ static const struct rte_virtio_xstats_name_off rte_virtio_rxq_stat_strings[] = {
 static const struct rte_virtio_xstats_name_off rte_virtio_txq_stat_strings[] = {
 	{"good_packets",           offsetof(struct virtnet_tx, stats.packets)},
 	{"good_bytes",             offsetof(struct virtnet_tx, stats.bytes)},
-	{"errors",                 offsetof(struct virtnet_tx, stats.errors)},
 	{"multicast_packets",      offsetof(struct virtnet_tx, stats.multicast)},
 	{"broadcast_packets",      offsetof(struct virtnet_tx, stats.broadcast)},
 	{"undersize_packets",      offsetof(struct virtnet_tx, stats.size_bins[0])},
@@ -748,7 +747,7 @@ virtio_dev_close(struct rte_eth_dev *dev)
 	}
 }
 
-static void
+static int
 virtio_dev_promiscuous_enable(struct rte_eth_dev *dev)
 {
 	struct virtio_hw *hw = dev->data->dev_private;
@@ -758,7 +757,7 @@ virtio_dev_promiscuous_enable(struct rte_eth_dev *dev)
 
 	if (!vtpci_with_feature(hw, VIRTIO_NET_F_CTRL_RX)) {
 		PMD_INIT_LOG(INFO, "host does not support rx control");
-		return;
+		return -ENOTSUP;
 	}
 
 	ctrl.hdr.class = VIRTIO_NET_CTRL_RX;
@@ -767,11 +766,15 @@ virtio_dev_promiscuous_enable(struct rte_eth_dev *dev)
 	dlen[0] = 1;
 
 	ret = virtio_send_command(hw->cvq, &ctrl, dlen, 1);
-	if (ret)
+	if (ret) {
 		PMD_INIT_LOG(ERR, "Failed to enable promisc");
+		return -EAGAIN;
+	}
+
+	return 0;
 }
 
-static void
+static int
 virtio_dev_promiscuous_disable(struct rte_eth_dev *dev)
 {
 	struct virtio_hw *hw = dev->data->dev_private;
@@ -781,7 +784,7 @@ virtio_dev_promiscuous_disable(struct rte_eth_dev *dev)
 
 	if (!vtpci_with_feature(hw, VIRTIO_NET_F_CTRL_RX)) {
 		PMD_INIT_LOG(INFO, "host does not support rx control");
-		return;
+		return -ENOTSUP;
 	}
 
 	ctrl.hdr.class = VIRTIO_NET_CTRL_RX;
@@ -790,11 +793,15 @@ virtio_dev_promiscuous_disable(struct rte_eth_dev *dev)
 	dlen[0] = 1;
 
 	ret = virtio_send_command(hw->cvq, &ctrl, dlen, 1);
-	if (ret)
+	if (ret) {
 		PMD_INIT_LOG(ERR, "Failed to disable promisc");
+		return -EAGAIN;
+	}
+
+	return 0;
 }
 
-static void
+static int
 virtio_dev_allmulticast_enable(struct rte_eth_dev *dev)
 {
 	struct virtio_hw *hw = dev->data->dev_private;
@@ -804,7 +811,7 @@ virtio_dev_allmulticast_enable(struct rte_eth_dev *dev)
 
 	if (!vtpci_with_feature(hw, VIRTIO_NET_F_CTRL_RX)) {
 		PMD_INIT_LOG(INFO, "host does not support rx control");
-		return;
+		return -ENOTSUP;
 	}
 
 	ctrl.hdr.class = VIRTIO_NET_CTRL_RX;
@@ -813,11 +820,15 @@ virtio_dev_allmulticast_enable(struct rte_eth_dev *dev)
 	dlen[0] = 1;
 
 	ret = virtio_send_command(hw->cvq, &ctrl, dlen, 1);
-	if (ret)
+	if (ret) {
 		PMD_INIT_LOG(ERR, "Failed to enable allmulticast");
+		return -EAGAIN;
+	}
+
+	return 0;
 }
 
-static void
+static int
 virtio_dev_allmulticast_disable(struct rte_eth_dev *dev)
 {
 	struct virtio_hw *hw = dev->data->dev_private;
@@ -827,7 +838,7 @@ virtio_dev_allmulticast_disable(struct rte_eth_dev *dev)
 
 	if (!vtpci_with_feature(hw, VIRTIO_NET_F_CTRL_RX)) {
 		PMD_INIT_LOG(INFO, "host does not support rx control");
-		return;
+		return -ENOTSUP;
 	}
 
 	ctrl.hdr.class = VIRTIO_NET_CTRL_RX;
@@ -836,8 +847,12 @@ virtio_dev_allmulticast_disable(struct rte_eth_dev *dev)
 	dlen[0] = 1;
 
 	ret = virtio_send_command(hw->cvq, &ctrl, dlen, 1);
-	if (ret)
+	if (ret) {
 		PMD_INIT_LOG(ERR, "Failed to disable allmulticast");
+		return -EAGAIN;
+	}
+
+	return 0;
 }
 
 #define VLAN_TAG_LEN           4    /* 802.3ac tag (not DMA'd) */
@@ -946,7 +961,6 @@ virtio_update_stats(struct rte_eth_dev *dev, struct rte_eth_stats *stats)
 
 		stats->opackets += txvq->stats.packets;
 		stats->obytes += txvq->stats.bytes;
-		stats->oerrors += txvq->stats.errors;
 
 		if (i < RTE_ETHDEV_QUEUE_STAT_CNTRS) {
 			stats->q_opackets[i] = txvq->stats.packets;
@@ -1072,7 +1086,7 @@ virtio_dev_stats_get(struct rte_eth_dev *dev, struct rte_eth_stats *stats)
 	return 0;
 }
 
-static void
+static int
 virtio_dev_stats_reset(struct rte_eth_dev *dev)
 {
 	unsigned int i;
@@ -1084,7 +1098,6 @@ virtio_dev_stats_reset(struct rte_eth_dev *dev)
 
 		txvq->stats.packets = 0;
 		txvq->stats.bytes = 0;
-		txvq->stats.errors = 0;
 		txvq->stats.multicast = 0;
 		txvq->stats.broadcast = 0;
 		memset(txvq->stats.size_bins, 0,
@@ -1104,6 +1117,8 @@ virtio_dev_stats_reset(struct rte_eth_dev *dev)
 		memset(rxvq->stats.size_bins, 0,
 		       sizeof(rxvq->stats.size_bins[0]) * 8);
 	}
+
+	return 0;
 }
 
 static void
@@ -1264,6 +1279,20 @@ virtio_vlan_filter_set(struct rte_eth_dev *dev, uint16_t vlan_id, int on)
 	len = sizeof(vlan_id);
 
 	return virtio_send_command(hw->cvq, &ctrl, &len, 1);
+}
+
+static int
+virtio_intr_unmask(struct rte_eth_dev *dev)
+{
+	struct virtio_hw *hw = dev->data->dev_private;
+
+	if (rte_intr_ack(dev->intr_handle) < 0)
+		return -1;
+
+	if (!hw->virtio_user_dev)
+		hw->use_msix = vtpci_msix_detect(RTE_ETH_DEV_TO_PCI(dev));
+
+	return 0;
 }
 
 static int
@@ -1459,7 +1488,7 @@ virtio_interrupt_handler(void *param)
 	isr = vtpci_isr(hw);
 	PMD_DRV_LOG(INFO, "interrupt status = %#x", isr);
 
-	if (virtio_intr_enable(dev) < 0)
+	if (virtio_intr_unmask(dev) < 0)
 		PMD_DRV_LOG(ERR, "interrupt enable failed");
 
 	if (isr & VIRTIO_PCI_ISR_CONFIG) {
@@ -1844,7 +1873,14 @@ eth_virtio_dev_init(struct rte_eth_dev *eth_dev)
 	struct virtio_hw *hw = eth_dev->data->dev_private;
 	int ret;
 
-	RTE_BUILD_BUG_ON(RTE_PKTMBUF_HEADROOM < sizeof(struct virtio_net_hdr_mrg_rxbuf));
+	if (sizeof(struct virtio_net_hdr_mrg_rxbuf) > RTE_PKTMBUF_HEADROOM) {
+		PMD_INIT_LOG(ERR,
+			"Not sufficient headroom required = %d, avail = %d",
+			(int)sizeof(struct virtio_net_hdr_mrg_rxbuf),
+			RTE_PKTMBUF_HEADROOM);
+
+		return -1;
+	}
 
 	eth_dev->dev_ops = &virtio_eth_dev_ops;
 
@@ -1970,11 +2006,6 @@ exit:
 static int eth_virtio_pci_probe(struct rte_pci_driver *pci_drv __rte_unused,
 	struct rte_pci_device *pci_dev)
 {
-	if (rte_eal_iopl_init() != 0) {
-		PMD_INIT_LOG(ERR, "IOPL call failed - cannot use virtio PMD");
-		return 1;
-	}
-
 	/* virtio pmd skips probe if device needs to work in vdpa mode */
 	if (vdpa_mode_selected(pci_dev->device.devargs))
 		return 1;
@@ -2046,6 +2077,20 @@ virtio_dev_configure(struct rte_eth_dev *dev)
 
 	PMD_INIT_LOG(DEBUG, "configure");
 	req_features = VIRTIO_PMD_DEFAULT_GUEST_FEATURES;
+
+	if (rxmode->mq_mode != ETH_MQ_RX_NONE) {
+		PMD_DRV_LOG(ERR,
+			"Unsupported Rx multi queue mode %d",
+			rxmode->mq_mode);
+		return -EINVAL;
+	}
+
+	if (txmode->mq_mode != ETH_MQ_TX_NONE) {
+		PMD_DRV_LOG(ERR,
+			"Unsupported Tx multi queue mode %d",
+			txmode->mq_mode);
+		return -EINVAL;
+	}
 
 	if (dev->data->dev_conf.intr_conf.rxq) {
 		ret = virtio_init_device(dev, hw->req_guest_features);
@@ -2388,7 +2433,7 @@ virtio_dev_vlan_offload_set(struct rte_eth_dev *dev, int mask)
 	return 0;
 }
 
-static void
+static int
 virtio_dev_info_get(struct rte_eth_dev *dev, struct rte_eth_dev_info *dev_info)
 {
 	uint64_t tso_mask, host_features;
@@ -2430,6 +2475,8 @@ virtio_dev_info_get(struct rte_eth_dev *dev, struct rte_eth_dev_info *dev_info)
 		(1ULL << VIRTIO_NET_F_HOST_TSO6);
 	if ((host_features & tso_mask) == tso_mask)
 		dev_info->tx_offload_capa |= DEV_TX_OFFLOAD_TCP_TSO;
+
+	return 0;
 }
 
 /*

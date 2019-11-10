@@ -7,6 +7,7 @@
 #define RTE_PMD_MLX5_DEFS_H_
 
 #include <rte_ethdev_driver.h>
+#include <rte_vxlan.h>
 
 #include "mlx5_autoconf.h"
 
@@ -28,7 +29,7 @@
  * Request TX completion every time descriptors reach this threshold since
  * the previous request. Must be a power of two for performance reasons.
  */
-#define MLX5_TX_COMP_THRESH 32
+#define MLX5_TX_COMP_THRESH 32u
 
 /*
  * Request TX completion every time the total number of WQEBBs used for inlining
@@ -36,6 +37,13 @@
  * two for performance.
  */
 #define MLX5_TX_COMP_THRESH_INLINE_DIV (1 << 3)
+
+/*
+ * Maximal amount of normal completion CQEs
+ * processed in one call of tx_burst() routine.
+ */
+#define MLX5_TX_COMP_MAX_CQE 2u
+
 
 /* Size of per-queue MR cache array for linear search. */
 #define MLX5_MR_CACHE_N 8
@@ -51,6 +59,10 @@
 #define MLX5_PMD_SOFT_COUNTERS 1
 #endif
 
+/* Switch port ID parameters for bonding configurations. */
+#define MLX5_PORT_ID_BONDING_PF_MASK 0xf
+#define MLX5_PORT_ID_BONDING_PF_SHIFT 0xf
+
 /* Alarm timeout. */
 #define MLX5_ALARM_TIMEOUT_US 100000
 
@@ -58,16 +70,25 @@
 #define MLX5_MAX_XSTATS 32
 
 /* Maximum Packet headers size (L2+L3+L4) for TSO. */
-#define MLX5_MAX_TSO_HEADER 192
+#define MLX5_MAX_TSO_HEADER (128u + 34u)
 
-/* Default maximum number of Tx queues for vectorized Tx. */
-#if defined(RTE_ARCH_ARM64)
-#define MLX5_VPMD_MAX_TXQS 8
-#define MLX5_VPMD_MAX_TXQS_BLUEFIELD 16
-#else
-#define MLX5_VPMD_MAX_TXQS 4
-#define MLX5_VPMD_MAX_TXQS_BLUEFIELD MLX5_VPMD_MAX_TXQS
-#endif
+/* Inline data size required by NICs. */
+#define MLX5_INLINE_HSIZE_NONE 0
+#define MLX5_INLINE_HSIZE_L2 (sizeof(struct rte_ether_hdr) + \
+			      sizeof(struct rte_vlan_hdr))
+#define MLX5_INLINE_HSIZE_L3 (MLX5_INLINE_HSIZE_L2 + \
+			      sizeof(struct rte_ipv6_hdr))
+#define MLX5_INLINE_HSIZE_L4 (MLX5_INLINE_HSIZE_L3 + \
+			      sizeof(struct rte_tcp_hdr))
+#define MLX5_INLINE_HSIZE_INNER_L2 (MLX5_INLINE_HSIZE_L3 + \
+				    sizeof(struct rte_udp_hdr) + \
+				    sizeof(struct rte_vxlan_hdr) + \
+				    sizeof(struct rte_ether_hdr) + \
+				    sizeof(struct rte_vlan_hdr))
+#define MLX5_INLINE_HSIZE_INNER_L3 (MLX5_INLINE_HSIZE_INNER_L2 + \
+				    sizeof(struct rte_ipv6_hdr))
+#define MLX5_INLINE_HSIZE_INNER_L4 (MLX5_INLINE_HSIZE_INNER_L3 + \
+				    sizeof(struct rte_tcp_hdr))
 
 /* Threshold of buffer replenishment for vectorized Rx. */
 #define MLX5_VPMD_RXQ_RPLNSH_THRESH(n) \
@@ -75,13 +96,6 @@
 
 /* Maximum size of burst for vectorized Rx. */
 #define MLX5_VPMD_RX_MAX_BURST 64U
-
-/*
- * Maximum size of burst for vectorized Tx. This is related to the maximum size
- * of Enhanced MPW (eMPW) WQE as vectorized Tx is supported with eMPW.
- * Careful when changing, large value can cause WQE DS to overlap.
- */
-#define MLX5_VPMD_TX_MAX_BURST        32U
 
 /* Number of packets vectorized Rx can simultaneously process in a loop. */
 #define MLX5_VPMD_DESCS_PER_LOOP      4
@@ -91,6 +105,9 @@
 
 /* Timeout in seconds to get a valid link status. */
 #define MLX5_LINK_STATUS_TIMEOUT 10
+
+/* Number of times to retry retrieving the physical link information. */
+#define MLX5_GET_LINK_STATUS_RETRY_COUNT 3
 
 /* Maximum number of UAR pages used by a port,
  * These are the size and mask for an array of mutexes used to synchronize

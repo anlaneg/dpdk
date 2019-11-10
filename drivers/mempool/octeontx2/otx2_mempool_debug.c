@@ -7,7 +7,7 @@
 #define npa_dump(fmt, ...) fprintf(stderr, fmt "\n", ##__VA_ARGS__)
 
 static inline void
-npa_lf_pool_dump(struct npa_pool_s *pool)
+npa_lf_pool_dump(__otx2_io struct npa_pool_s *pool)
 {
 	npa_dump("W0: Stack base\t\t0x%"PRIx64"", pool->stack_base);
 	npa_dump("W1: ena \t\t%d\nW1: nat_align \t\t%d\nW1: stack_caching \t%d",
@@ -45,7 +45,7 @@ npa_lf_pool_dump(struct npa_pool_s *pool)
 }
 
 static inline void
-npa_lf_aura_dump(struct npa_aura_s *aura)
+npa_lf_aura_dump(__otx2_io struct npa_aura_s *aura)
 {
 	npa_dump("W0: Pool addr\t\t0x%"PRIx64"\n", aura->pool_addr);
 
@@ -91,7 +91,7 @@ otx2_mempool_ctx_dump(struct otx2_npa_lf *lf)
 	struct npa_aq_enq_req *aq;
 	struct npa_aq_enq_rsp *rsp;
 	uint32_t q;
-	int rc;
+	int rc = 0;
 
 	for (q = 0; q < lf->nr_pools; q++) {
 		/* Skip disabled POOL */

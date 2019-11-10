@@ -92,7 +92,6 @@ check_tx_thresh(uint16_t nb_desc, uint16_t tx_rs_thresh,
 	return 0;
 }
 
-#ifdef RTE_LIBRTE_IAVF_INC_VECTOR
 static inline bool
 check_rx_vec_allow(struct iavf_rx_queue *rxq)
 {
@@ -118,7 +117,6 @@ check_tx_vec_allow(struct iavf_tx_queue *txq)
 	PMD_INIT_LOG(DEBUG, "Vector Tx cannot be enabled on this txq.");
 	return FALSE;
 }
-#endif
 
 static inline bool
 check_rx_bulk_allow(struct iavf_rx_queue *rxq)
@@ -144,7 +142,8 @@ check_rx_bulk_allow(struct iavf_rx_queue *rxq)
 static inline void
 reset_rx_queue(struct iavf_rx_queue *rxq)
 {
-	uint16_t len, i;
+	uint16_t len;
+	uint32_t i;
 
 	if (!rxq)
 		return;
@@ -174,7 +173,8 @@ static inline void
 reset_tx_queue(struct iavf_tx_queue *txq)
 {
 	struct iavf_tx_entry *txe;
-	uint16_t i, prev, size;
+	uint32_t i, size;
+	uint16_t prev;
 
 	if (!txq) {
 		PMD_DRV_LOG(DEBUG, "Pointer to txq is NULL");
@@ -411,10 +411,9 @@ iavf_dev_rx_queue_setup(struct rte_eth_dev *dev, uint16_t queue_idx,
 		ad->rx_bulk_alloc_allowed = false;
 	}
 
-#ifdef RTE_LIBRTE_IAVF_INC_VECTOR
 	if (check_rx_vec_allow(rxq) == FALSE)
 		ad->rx_vec_allowed = false;
-#endif
+
 	return 0;
 }
 
@@ -509,13 +508,11 @@ iavf_dev_tx_queue_setup(struct rte_eth_dev *dev,
 	txq->qtx_tail = hw->hw_addr + IAVF_QTX_TAIL1(queue_idx);
 	txq->ops = &def_txq_ops;
 
-#ifdef RTE_LIBRTE_IAVF_INC_VECTOR
 	if (check_tx_vec_allow(txq) == FALSE) {
 		struct iavf_adapter *ad =
 			IAVF_DEV_PRIVATE_TO_ADAPTER(dev->data->dev_private);
 		ad->tx_vec_allowed = false;
 	}
-#endif
 
 	return 0;
 }
@@ -1580,6 +1577,9 @@ iavf_xmit_pkts(void *tx_queue, struct rte_mbuf **tx_pkts, uint16_t nb_pkts)
 			/* Setup TX context descriptor if required */
 			uint64_t cd_type_cmd_tso_mss =
 				IAVF_TX_DESC_DTYPE_CONTEXT;
+			volatile struct iavf_tx_context_desc *ctx_txd =
+				(volatile struct iavf_tx_context_desc *)
+							&txr[tx_id];
 
 			txn = &sw_ring[txe->next_id];
 			RTE_MBUF_PREFETCH_TO_FREE(txn->mbuf);
@@ -1592,6 +1592,9 @@ iavf_xmit_pkts(void *tx_queue, struct rte_mbuf **tx_pkts, uint16_t nb_pkts)
 			if (ol_flags & PKT_TX_TCP_SEG)
 				cd_type_cmd_tso_mss |=
 					iavf_set_tso_ctx(tx_pkt, tx_offload);
+
+			ctx_txd->type_cmd_tso_mss =
+				rte_cpu_to_le_64(cd_type_cmd_tso_mss);
 
 			IAVF_DUMP_TX_DESC(txq, &txr[tx_id], tx_id);
 			txe->last_id = tx_last;
@@ -1658,27 +1661,6 @@ end_of_tx:
 	return nb_tx;
 }
 
-static uint16_t
-iavf_xmit_pkts_vec(void *tx_queue, struct rte_mbuf **tx_pkts,
-		  uint16_t nb_pkts)
-{
-	uint16_t nb_tx = 0;
-	struct iavf_tx_queue *txq = (struct iavf_tx_queue *)tx_queue;
-
-	while (nb_pkts) {
-		uint16_t ret, num;
-
-		num = (uint16_t)RTE_MIN(nb_pkts, txq->rs_thresh);
-		ret = iavf_xmit_fixed_burst_vec(tx_queue, &tx_pkts[nb_tx], num);
-		nb_tx += ret;
-		nb_pkts -= ret;
-		if (ret < num)
-			break;
-	}
-
-	return nb_tx;
-}
-
 /* TX prep functions */
 uint16_t
 iavf_prep_pkts(__rte_unused void *tx_queue, struct rte_mbuf **tx_pkts,
@@ -1733,26 +1715,43 @@ iavf_set_rx_function(struct rte_eth_dev *dev)
 {
 	struct iavf_adapter *adapter =
 		IAVF_DEV_PRIVATE_TO_ADAPTER(dev->data->dev_private);
+#ifdef RTE_ARCH_X86
 	struct iavf_rx_queue *rxq;
 	int i;
+	bool use_avx2 = false;
 
-	if (adapter->rx_vec_allowed) {
-		if (dev->data->scattered_rx) {
-			PMD_DRV_LOG(DEBUG, "Using Vector Scattered Rx callback"
-				    " (port=%d).", dev->data->port_id);
-			dev->rx_pkt_burst = iavf_recv_scattered_pkts_vec;
-		} else {
-			PMD_DRV_LOG(DEBUG, "Using Vector Rx callback"
-				    " (port=%d).", dev->data->port_id);
-			dev->rx_pkt_burst = iavf_recv_pkts_vec;
-		}
+	if (!iavf_rx_vec_dev_check(dev)) {
 		for (i = 0; i < dev->data->nb_rx_queues; i++) {
 			rxq = dev->data->rx_queues[i];
-			if (!rxq)
-				continue;
-			iavf_rxq_vec_setup(rxq);
+			(void)iavf_rxq_vec_setup(rxq);
 		}
-	} else if (dev->data->scattered_rx) {
+
+		if (rte_cpu_get_flag_enabled(RTE_CPUFLAG_AVX2) == 1 ||
+		    rte_cpu_get_flag_enabled(RTE_CPUFLAG_AVX512F) == 1)
+			use_avx2 = true;
+
+		if (dev->data->scattered_rx) {
+			PMD_DRV_LOG(DEBUG,
+				    "Using %sVector Scattered Rx (port %d).",
+				    use_avx2 ? "avx2 " : "",
+				    dev->data->port_id);
+			dev->rx_pkt_burst = use_avx2 ?
+					    iavf_recv_scattered_pkts_vec_avx2 :
+					    iavf_recv_scattered_pkts_vec;
+		} else {
+			PMD_DRV_LOG(DEBUG, "Using %sVector Rx (port %d).",
+				    use_avx2 ? "avx2 " : "",
+				    dev->data->port_id);
+			dev->rx_pkt_burst = use_avx2 ?
+					    iavf_recv_pkts_vec_avx2 :
+					    iavf_recv_pkts_vec;
+		}
+
+		return;
+	}
+#endif
+
+	if (dev->data->scattered_rx) {
 		PMD_DRV_LOG(DEBUG, "Using a Scattered Rx callback (port=%d).",
 			    dev->data->port_id);
 		dev->rx_pkt_burst = iavf_recv_scattered_pkts;
@@ -1771,28 +1770,39 @@ iavf_set_rx_function(struct rte_eth_dev *dev)
 void
 iavf_set_tx_function(struct rte_eth_dev *dev)
 {
-	struct iavf_adapter *adapter =
-		IAVF_DEV_PRIVATE_TO_ADAPTER(dev->data->dev_private);
+#ifdef RTE_ARCH_X86
 	struct iavf_tx_queue *txq;
 	int i;
+	bool use_avx2 = false;
 
-	if (adapter->tx_vec_allowed) {
-		PMD_DRV_LOG(DEBUG, "Using Vector Tx callback (port=%d).",
-			    dev->data->port_id);
-		dev->tx_pkt_burst = iavf_xmit_pkts_vec;
-		dev->tx_pkt_prepare = NULL;
+	if (!iavf_tx_vec_dev_check(dev)) {
 		for (i = 0; i < dev->data->nb_tx_queues; i++) {
 			txq = dev->data->tx_queues[i];
 			if (!txq)
 				continue;
 			iavf_txq_vec_setup(txq);
 		}
-	} else {
-		PMD_DRV_LOG(DEBUG, "Using Basic Tx callback (port=%d).",
+
+		if (rte_cpu_get_flag_enabled(RTE_CPUFLAG_AVX2) == 1 ||
+		    rte_cpu_get_flag_enabled(RTE_CPUFLAG_AVX512F) == 1)
+			use_avx2 = true;
+
+		PMD_DRV_LOG(DEBUG, "Using %sVector Tx (port %d).",
+			    use_avx2 ? "avx2 " : "",
 			    dev->data->port_id);
-		dev->tx_pkt_burst = iavf_xmit_pkts;
-		dev->tx_pkt_prepare = iavf_prep_pkts;
+		dev->tx_pkt_burst = use_avx2 ?
+				    iavf_xmit_pkts_vec_avx2 :
+				    iavf_xmit_pkts_vec;
+		dev->tx_pkt_prepare = NULL;
+
+		return;
 	}
+#endif
+
+	PMD_DRV_LOG(DEBUG, "Using Basic Tx callback (port=%d).",
+		    dev->data->port_id);
+	dev->tx_pkt_burst = iavf_xmit_pkts;
+	dev->tx_pkt_prepare = iavf_prep_pkts;
 }
 
 void
@@ -1915,38 +1925,3 @@ iavf_dev_tx_desc_status(void *tx_queue, uint16_t offset)
 	return RTE_ETH_TX_DESC_FULL;
 }
 
-__rte_weak uint16_t
-iavf_recv_pkts_vec(__rte_unused void *rx_queue,
-		  __rte_unused struct rte_mbuf **rx_pkts,
-		  __rte_unused uint16_t nb_pkts)
-{
-	return 0;
-}
-
-__rte_weak uint16_t
-iavf_recv_scattered_pkts_vec(__rte_unused void *rx_queue,
-			    __rte_unused struct rte_mbuf **rx_pkts,
-			    __rte_unused uint16_t nb_pkts)
-{
-	return 0;
-}
-
-__rte_weak uint16_t
-iavf_xmit_fixed_burst_vec(__rte_unused void *tx_queue,
-			 __rte_unused struct rte_mbuf **tx_pkts,
-			 __rte_unused uint16_t nb_pkts)
-{
-	return 0;
-}
-
-__rte_weak int
-iavf_rxq_vec_setup(__rte_unused struct iavf_rx_queue *rxq)
-{
-	return -1;
-}
-
-__rte_weak int
-iavf_txq_vec_setup(__rte_unused struct iavf_tx_queue *txq)
-{
-	return -1;
-}

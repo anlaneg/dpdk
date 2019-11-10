@@ -24,6 +24,7 @@ Features of the OCTEON TX2 Ethdev PMD are:
 - Multiple queues for TX and RX
 - Receiver Side Scaling (RSS)
 - MAC/VLAN filtering
+- Multicast MAC filtering
 - Generic flow API
 - Inner and Outer Checksum offload
 - VLAN/QinQ stripping and insertion
@@ -187,12 +188,17 @@ The OCTEON TX2 SoC family NIC has inbuilt HW assisted external mempool manager.
 as it is performance wise most effective way for packet allocation and Tx buffer
 recycling on OCTEON TX2 SoC platform.
 
-CRC striping
-~~~~~~~~~~~~
+CRC stripping
+~~~~~~~~~~~~~
 
 The OCTEON TX2 SoC family NICs strip the CRC for every packet being received by
 the host interface irrespective of the offload configuration.
 
+Multicast MAC filtering
+~~~~~~~~~~~~~~~~~~~~~~~
+
+``net_octeontx2`` pmd supports multicast mac filtering feature only on physical
+function devices.
 
 Debugging Options
 -----------------
@@ -262,10 +268,19 @@ Patterns:
    +----+--------------------------------+
    | 19 | RTE_FLOW_ITEM_TYPE_VXLAN_GPE   |
    +----+--------------------------------+
-   | 20 | RTE_FLOW_ITEM_TYPE_VOID        |
+   | 20 | RTE_FLOW_ITEM_TYPE_IPV6_EXT    |
    +----+--------------------------------+
-   | 21 | RTE_FLOW_ITEM_TYPE_ANY         |
+   | 21 | RTE_FLOW_ITEM_TYPE_VOID        |
    +----+--------------------------------+
+   | 22 | RTE_FLOW_ITEM_TYPE_ANY         |
+   +----+--------------------------------+
+   | 23 | RTE_FLOW_ITEM_TYPE_GRE_KEY     |
+   +----+--------------------------------+
+
+.. note::
+
+   ``RTE_FLOW_ITEM_TYPE_GRE_KEY`` works only when checksum and routing
+   bits in the GRE header are equal to 0.
 
 Actions:
 
@@ -291,6 +306,10 @@ Actions:
    | 7  | RTE_FLOW_ACTION_TYPE_RSS       |
    +----+--------------------------------+
    | 8  | RTE_FLOW_ACTION_TYPE_SECURITY  |
+   +----+--------------------------------+
+   | 9  | RTE_FLOW_ACTION_TYPE_PF        |
+   +----+--------------------------------+
+   | 10 | RTE_FLOW_ACTION_TYPE_VF        |
    +----+--------------------------------+
 
 .. _table_octeontx2_supported_egress_action_types:

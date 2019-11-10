@@ -99,7 +99,14 @@ mlx5_rxq_start(struct rte_eth_dev *dev)
 	struct mlx5_priv *priv = dev->data->dev_private;
 	unsigned int i;
 	int ret = 0;
+	enum mlx5_rxq_obj_type obj_type = MLX5_RXQ_OBJ_TYPE_IBV;
 
+	for (i = 0; i < priv->rxqs_n; ++i) {
+		if ((*priv->rxqs)[i]->lro) {
+			obj_type =  MLX5_RXQ_OBJ_TYPE_DEVX_RQ;
+			break;
+		}
+	}
 	/* Allocate/reuse/resize mempool for Multi-Packet RQ. */
 	if (mlx5_mprq_alloc_mp(dev)) {
 		/* Should not release Rx queues but return immediately. */
@@ -123,10 +130,13 @@ mlx5_rxq_start(struct rte_eth_dev *dev)
 		ret = rxq_alloc_elts(rxq_ctrl);
 		if (ret)
 			goto error;
-		rxq_ctrl->ibv = mlx5_rxq_ibv_new(dev, i);
-		if (!rxq_ctrl->ibv)
+		rxq_ctrl->obj = mlx5_rxq_obj_new(dev, i, obj_type);
+		if (!rxq_ctrl->obj)
 			goto error;
-		rxq_ctrl->wqn = rxq_ctrl->ibv->wq->wq_num;
+		if (obj_type == MLX5_RXQ_OBJ_TYPE_IBV)
+			rxq_ctrl->wqn = rxq_ctrl->obj->wq->wq_num;
+		else if (obj_type == MLX5_RXQ_OBJ_TYPE_DEVX_RQ)
+			rxq_ctrl->wqn = rxq_ctrl->obj->rq->id;
 	}
 	return 0;
 error:
@@ -277,6 +287,9 @@ mlx5_traffic_enable(struct rte_eth_dev *dev)
 	unsigned int j;
 	int ret;
 
+	if (priv->config.dv_esw_en && !priv->config.vf)
+		if (!mlx5_flow_create_esw_table_zero_flow(dev))
+			goto error;
 	if (priv->isolated)
 		return 0;
 	if (dev->data->promiscuous) {

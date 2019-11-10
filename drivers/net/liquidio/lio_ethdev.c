@@ -243,17 +243,18 @@ lio_dev_xstats_get_names(struct rte_eth_dev *eth_dev,
 }
 
 /* Reset hw stats for the port */
-static void
+static int
 lio_dev_xstats_reset(struct rte_eth_dev *eth_dev)
 {
 	struct lio_device *lio_dev = LIO_DEV(eth_dev);
 	struct lio_dev_ctrl_cmd ctrl_cmd;
 	struct lio_ctrl_pkt ctrl_pkt;
+	int ret;
 
 	if (!lio_dev->intf_open) {
 		lio_dev_err(lio_dev, "Port %d down\n",
 			    lio_dev->port_id);
-		return;
+		return -EINVAL;
 	}
 
 	/* flush added to prevent cmd failure
@@ -270,19 +271,21 @@ lio_dev_xstats_reset(struct rte_eth_dev *eth_dev)
 	ctrl_pkt.ncmd.s.cmd = LIO_CMD_CLEAR_STATS;
 	ctrl_pkt.ctrl_cmd = &ctrl_cmd;
 
-	if (lio_send_ctrl_pkt(lio_dev, &ctrl_pkt)) {
+	ret = lio_send_ctrl_pkt(lio_dev, &ctrl_pkt);
+	if (ret != 0) {
 		lio_dev_err(lio_dev, "Failed to send clear stats command\n");
-		return;
+		return ret;
 	}
 
-	if (lio_wait_for_ctrl_cmd(lio_dev, &ctrl_cmd)) {
+	ret = lio_wait_for_ctrl_cmd(lio_dev, &ctrl_cmd);
+	if (ret != 0) {
 		lio_dev_err(lio_dev, "Clear stats command timed out\n");
-		return;
+		return ret;
 	}
 
 	/* clear stored per queue stats */
-	RTE_FUNC_PTR_OR_RET(*eth_dev->dev_ops->stats_reset);
-	(*eth_dev->dev_ops->stats_reset)(eth_dev);
+	RTE_FUNC_PTR_OR_ERR_RET(*eth_dev->dev_ops->stats_reset, 0);
+	return (*eth_dev->dev_ops->stats_reset)(eth_dev);
 }
 
 /* Retrieve the device statistics (# packets in/out, # bytes in/out, etc */
@@ -338,7 +341,7 @@ lio_dev_stats_get(struct rte_eth_dev *eth_dev,
 	return 0;
 }
 
-static void
+static int
 lio_dev_stats_reset(struct rte_eth_dev *eth_dev)
 {
 	struct lio_device *lio_dev = LIO_DEV(eth_dev);
@@ -365,9 +368,11 @@ lio_dev_stats_reset(struct rte_eth_dev *eth_dev)
 			memset(oq_stats, 0, sizeof(struct lio_droq_stats));
 		}
 	}
+
+	return 0;
 }
 
-static void
+static int
 lio_dev_info_get(struct rte_eth_dev *eth_dev,
 		 struct rte_eth_dev_info *devinfo)
 {
@@ -393,6 +398,7 @@ lio_dev_info_get(struct rte_eth_dev *eth_dev,
 		devinfo->speed_capa = ETH_LINK_SPEED_10G;
 		lio_dev_err(lio_dev,
 			    "Unknown CN23XX subsystem device id. Setting 10G as default link speed.\n");
+		return -EINVAL;
 	}
 
 	devinfo->max_rx_queues = lio_dev->max_rx_queues;
@@ -423,6 +429,7 @@ lio_dev_info_get(struct rte_eth_dev *eth_dev,
 					   ETH_RSS_NONFRAG_IPV6_TCP	|
 					   ETH_RSS_IPV6_EX		|
 					   ETH_RSS_IPV6_TCP_EX);
+	return 0;
 }
 
 static int
@@ -959,8 +966,12 @@ lio_dev_link_update(struct rte_eth_dev *eth_dev,
 /**
  * \brief Net device enable, disable allmulticast
  * @param eth_dev Pointer to the structure rte_eth_dev
+ *
+ * @return
+ *  On success return 0
+ *  On failure return negative errno
  */
-static void
+static int
 lio_change_dev_flag(struct rte_eth_dev *eth_dev)
 {
 	struct lio_device *lio_dev = LIO_DEV(eth_dev);
@@ -985,14 +996,18 @@ lio_change_dev_flag(struct rte_eth_dev *eth_dev)
 
 	if (lio_send_ctrl_pkt(lio_dev, &ctrl_pkt)) {
 		lio_dev_err(lio_dev, "Failed to send change flag message\n");
-		return;
+		return -EAGAIN;
 	}
 
-	if (lio_wait_for_ctrl_cmd(lio_dev, &ctrl_cmd))
+	if (lio_wait_for_ctrl_cmd(lio_dev, &ctrl_cmd)) {
 		lio_dev_err(lio_dev, "Change dev flag command timed out\n");
+		return -ETIMEDOUT;
+	}
+
+	return 0;
 }
 
-static void
+static int
 lio_dev_promiscuous_enable(struct rte_eth_dev *eth_dev)
 {
 	struct lio_device *lio_dev = LIO_DEV(eth_dev);
@@ -1000,20 +1015,20 @@ lio_dev_promiscuous_enable(struct rte_eth_dev *eth_dev)
 	if (strcmp(lio_dev->firmware_version, LIO_VF_TRUST_MIN_VERSION) < 0) {
 		lio_dev_err(lio_dev, "Require firmware version >= %s\n",
 			    LIO_VF_TRUST_MIN_VERSION);
-		return;
+		return -EAGAIN;
 	}
 
 	if (!lio_dev->intf_open) {
 		lio_dev_err(lio_dev, "Port %d down, can't enable promiscuous\n",
 			    lio_dev->port_id);
-		return;
+		return -EAGAIN;
 	}
 
 	lio_dev->ifflags |= LIO_IFFLAG_PROMISC;
-	lio_change_dev_flag(eth_dev);
+	return lio_change_dev_flag(eth_dev);
 }
 
-static void
+static int
 lio_dev_promiscuous_disable(struct rte_eth_dev *eth_dev)
 {
 	struct lio_device *lio_dev = LIO_DEV(eth_dev);
@@ -1021,20 +1036,20 @@ lio_dev_promiscuous_disable(struct rte_eth_dev *eth_dev)
 	if (strcmp(lio_dev->firmware_version, LIO_VF_TRUST_MIN_VERSION) < 0) {
 		lio_dev_err(lio_dev, "Require firmware version >= %s\n",
 			    LIO_VF_TRUST_MIN_VERSION);
-		return;
+		return -EAGAIN;
 	}
 
 	if (!lio_dev->intf_open) {
 		lio_dev_err(lio_dev, "Port %d down, can't disable promiscuous\n",
 			    lio_dev->port_id);
-		return;
+		return -EAGAIN;
 	}
 
 	lio_dev->ifflags &= ~LIO_IFFLAG_PROMISC;
-	lio_change_dev_flag(eth_dev);
+	return lio_change_dev_flag(eth_dev);
 }
 
-static void
+static int
 lio_dev_allmulticast_enable(struct rte_eth_dev *eth_dev)
 {
 	struct lio_device *lio_dev = LIO_DEV(eth_dev);
@@ -1042,14 +1057,14 @@ lio_dev_allmulticast_enable(struct rte_eth_dev *eth_dev)
 	if (!lio_dev->intf_open) {
 		lio_dev_err(lio_dev, "Port %d down, can't enable multicast\n",
 			    lio_dev->port_id);
-		return;
+		return -EAGAIN;
 	}
 
 	lio_dev->ifflags |= LIO_IFFLAG_ALLMULTI;
-	lio_change_dev_flag(eth_dev);
+	return lio_change_dev_flag(eth_dev);
 }
 
-static void
+static int
 lio_dev_allmulticast_disable(struct rte_eth_dev *eth_dev)
 {
 	struct lio_device *lio_dev = LIO_DEV(eth_dev);
@@ -1057,11 +1072,11 @@ lio_dev_allmulticast_disable(struct rte_eth_dev *eth_dev)
 	if (!lio_dev->intf_open) {
 		lio_dev_err(lio_dev, "Port %d down, can't disable multicast\n",
 			    lio_dev->port_id);
-		return;
+		return -EAGAIN;
 	}
 
 	lio_dev->ifflags &= ~LIO_IFFLAG_ALLMULTI;
-	lio_change_dev_flag(eth_dev);
+	return lio_change_dev_flag(eth_dev);
 }
 
 static void

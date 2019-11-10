@@ -133,7 +133,7 @@ bnx2x_interrupt_handler(void *param)
 	PMD_DEBUG_PERIODIC_LOG(INFO, sc, "Interrupt handled");
 
 	bnx2x_interrupt_action(dev, 1);
-	rte_intr_enable(&sc->pci_dev->intr_handle);
+	rte_intr_ack(&sc->pci_dev->intr_handle);
 }
 
 static void bnx2x_periodic_start(void *param)
@@ -218,9 +218,12 @@ bnx2x_dev_start(struct rte_eth_dev *dev)
 	PMD_INIT_FUNC_TRACE(sc);
 
 	/* start the periodic callout */
-	if (atomic_load_acq_long(&sc->periodic_flags) == PERIODIC_STOP) {
-		bnx2x_periodic_start(dev);
-		PMD_DRV_LOG(DEBUG, sc, "Periodic poll re-started");
+	if (IS_PF(sc)) {
+		if (atomic_load_acq_long(&sc->periodic_flags) ==
+		    PERIODIC_STOP) {
+			bnx2x_periodic_start(dev);
+			PMD_DRV_LOG(DEBUG, sc, "Periodic poll re-started");
+		}
 	}
 
 	ret = bnx2x_init(sc);
@@ -258,10 +261,10 @@ bnx2x_dev_stop(struct rte_eth_dev *dev)
 		rte_intr_disable(&sc->pci_dev->intr_handle);
 		rte_intr_callback_unregister(&sc->pci_dev->intr_handle,
 				bnx2x_interrupt_handler, (void *)dev);
-	}
 
-	/* stop the periodic callout */
-	bnx2x_periodic_stop(dev);
+		/* stop the periodic callout */
+		bnx2x_periodic_stop(dev);
+	}
 
 	ret = bnx2x_nic_unload(sc, UNLOAD_NORMAL, FALSE);
 	if (ret) {
@@ -289,7 +292,7 @@ bnx2x_dev_close(struct rte_eth_dev *dev)
 	bnx2x_free_ilt_mem(sc);
 }
 
-static void
+static int
 bnx2x_promisc_enable(struct rte_eth_dev *dev)
 {
 	struct bnx2x_softc *sc = dev->data->dev_private;
@@ -299,9 +302,11 @@ bnx2x_promisc_enable(struct rte_eth_dev *dev)
 	if (rte_eth_allmulticast_get(dev->data->port_id) == 1)
 		sc->rx_mode = BNX2X_RX_MODE_ALLMULTI_PROMISC;
 	bnx2x_set_rx_mode(sc);
+
+	return 0;
 }
 
-static void
+static int
 bnx2x_promisc_disable(struct rte_eth_dev *dev)
 {
 	struct bnx2x_softc *sc = dev->data->dev_private;
@@ -311,9 +316,11 @@ bnx2x_promisc_disable(struct rte_eth_dev *dev)
 	if (rte_eth_allmulticast_get(dev->data->port_id) == 1)
 		sc->rx_mode = BNX2X_RX_MODE_ALLMULTI;
 	bnx2x_set_rx_mode(sc);
+
+	return 0;
 }
 
-static void
+static int
 bnx2x_dev_allmulticast_enable(struct rte_eth_dev *dev)
 {
 	struct bnx2x_softc *sc = dev->data->dev_private;
@@ -323,9 +330,11 @@ bnx2x_dev_allmulticast_enable(struct rte_eth_dev *dev)
 	if (rte_eth_promiscuous_get(dev->data->port_id) == 1)
 		sc->rx_mode = BNX2X_RX_MODE_ALLMULTI_PROMISC;
 	bnx2x_set_rx_mode(sc);
+
+	return 0;
 }
 
-static void
+static int
 bnx2x_dev_allmulticast_disable(struct rte_eth_dev *dev)
 {
 	struct bnx2x_softc *sc = dev->data->dev_private;
@@ -335,6 +344,8 @@ bnx2x_dev_allmulticast_disable(struct rte_eth_dev *dev)
 	if (rte_eth_promiscuous_get(dev->data->port_id) == 1)
 		sc->rx_mode = BNX2X_RX_MODE_PROMISC;
 	bnx2x_set_rx_mode(sc);
+
+	return 0;
 }
 
 static int
@@ -475,7 +486,7 @@ bnx2x_dev_xstats_get(struct rte_eth_dev *dev, struct rte_eth_xstat *xstats,
 	return num;
 }
 
-static void
+static int
 bnx2x_dev_infos_get(struct rte_eth_dev *dev, struct rte_eth_dev_info *dev_info)
 {
 	struct bnx2x_softc *sc = dev->data->dev_private;
@@ -491,6 +502,8 @@ bnx2x_dev_infos_get(struct rte_eth_dev *dev, struct rte_eth_dev_info *dev_info)
 	dev_info->rx_desc_lim.nb_max = MAX_RX_AVAIL;
 	dev_info->rx_desc_lim.nb_min = MIN_RX_SIZE_NONTPA;
 	dev_info->tx_desc_lim.nb_max = MAX_TX_AVAIL;
+
+	return 0;
 }
 
 static int
@@ -680,7 +693,9 @@ bnx2x_common_dev_init(struct rte_eth_dev *eth_dev, int is_vf)
 	return 0;
 
 out:
-	bnx2x_periodic_stop(eth_dev);
+	if (IS_PF(sc))
+		bnx2x_periodic_stop(eth_dev);
+
 	return ret;
 }
 

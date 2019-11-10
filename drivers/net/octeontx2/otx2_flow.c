@@ -684,6 +684,7 @@ flow_update_kex_info(struct npc_xtract_info *xtract_info,
 	xtract_info->hdr_off = (val >> HDR_OFF_SHIFT) & 0xff;
 	xtract_info->key_off = val & 0x3f;
 	xtract_info->enable = ((val >> 7) & 0x1);
+	xtract_info->flags_enable = ((val >> 6) & 0x1);
 }
 
 static void
@@ -843,7 +844,7 @@ otx2_flow_init(struct otx2_eth_dev *hw)
 	}
 
 	npc->free_entries = rte_zmalloc(NULL, npc->flow_max_priority
-					* sizeof(struct rte_bitmap),
+					* sizeof(struct rte_bitmap *),
 					0);
 	if (npc->free_entries == NULL) {
 		otx2_err("free_entries alloc failed");
@@ -852,7 +853,7 @@ otx2_flow_init(struct otx2_eth_dev *hw)
 	}
 
 	npc->free_entries_rev = rte_zmalloc(NULL, npc->flow_max_priority
-					* sizeof(struct rte_bitmap),
+					* sizeof(struct rte_bitmap *),
 					0);
 	if (npc->free_entries_rev == NULL) {
 		otx2_err("free_entries_rev alloc failed");
@@ -861,7 +862,7 @@ otx2_flow_init(struct otx2_eth_dev *hw)
 	}
 
 	npc->live_entries = rte_zmalloc(NULL, npc->flow_max_priority
-					* sizeof(struct rte_bitmap),
+					* sizeof(struct rte_bitmap *),
 					0);
 	if (npc->live_entries == NULL) {
 		otx2_err("live_entries alloc failed");
@@ -870,7 +871,7 @@ otx2_flow_init(struct otx2_eth_dev *hw)
 	}
 
 	npc->live_entries_rev = rte_zmalloc(NULL, npc->flow_max_priority
-					* sizeof(struct rte_bitmap),
+					* sizeof(struct rte_bitmap *),
 					0);
 	if (npc->live_entries_rev == NULL) {
 		otx2_err("live_entries_rev alloc failed");
@@ -947,8 +948,6 @@ err:
 		rte_free(npc->flow_entry_info);
 	if (npc_mem)
 		rte_free(npc_mem);
-	if (nix_mem)
-		rte_free(nix_mem);
 	return rc;
 }
 

@@ -52,17 +52,105 @@ typedef int (*eth_dev_reset_t)(struct rte_eth_dev *dev);
 typedef int (*eth_is_removed_t)(struct rte_eth_dev *dev);
 /**< @internal Function used to detect an Ethernet device removal. */
 
-typedef void (*eth_promiscuous_enable_t)(struct rte_eth_dev *dev);
-/**< @internal Function used to enable the RX promiscuous mode of an Ethernet device. */
+/**
+ * @internal
+ * Function used to enable the Rx promiscuous mode of an Ethernet device.
+ *
+ * @param dev
+ *   ethdev handle of port.
+ *
+ * @return
+ *   Negative errno value on error, 0 on success.
+ *
+ * @retval 0
+ *   Success, promiscuous mode is enabled.
+ * @retval -ENOTSUP
+ *   Promiscuous mode is not supported.
+ * @retval -ENODEV
+ *   Device is gone.
+ * @retval -E_RTE_SECONDARY
+ *   Function was called from a secondary process instance and not supported.
+ * @retval -ETIMEDOUT
+ *   Attempt to enable promiscuos mode failed because of timeout.
+ * @retval -EAGAIN
+ *   Failed to enable promiscuous mode.
+ */
+typedef int (*eth_promiscuous_enable_t)(struct rte_eth_dev *dev);
 
-typedef void (*eth_promiscuous_disable_t)(struct rte_eth_dev *dev);
-/**< @internal Function used to disable the RX promiscuous mode of an Ethernet device. */
+/**
+ * @internal
+ * Function used to disable the Rx promiscuous mode of an Ethernet device.
+ *
+ * @param dev
+ *   ethdev handle of port.
+ *
+ * @return
+ *   Negative errno value on error, 0 on success.
+ *
+ * @retval 0
+ *   Success, promiscuous mode is disabled.
+ * @retval -ENOTSUP
+ *   Promiscuous mode disabling is not supported.
+ * @retval -ENODEV
+ *   Device is gone.
+ * @retval -E_RTE_SECONDARY
+ *   Function was called from a secondary process instance and not supported.
+ * @retval -ETIMEDOUT
+ *   Attempt to disable promiscuos mode failed because of timeout.
+ * @retval -EAGAIN
+ *   Failed to disable promiscuous mode.
+ */
+typedef int (*eth_promiscuous_disable_t)(struct rte_eth_dev *dev);
 
-typedef void (*eth_allmulticast_enable_t)(struct rte_eth_dev *dev);
-/**< @internal Enable the receipt of all multicast packets by an Ethernet device. */
+/**
+ * @internal
+ * Enable the receipt of all multicast packets by an Ethernet device.
+ *
+ * @param dev
+ *   ethdev handle of port.
+ *
+ * @return
+ *   Negative errno value on error, 0 on success.
+ *
+ * @retval 0
+ *   Success, all-multicast mode is enabled.
+ * @retval -ENOTSUP
+ *   All-multicast mode is not supported.
+ * @retval -ENODEV
+ *   Device is gone.
+ * @retval -E_RTE_SECONDARY
+ *   Function was called from a secondary process instance and not supported.
+ * @retval -ETIMEDOUT
+ *   Attempt to enable all-multicast mode failed because of timeout.
+ * @retval -EAGAIN
+ *   Failed to enable all-multicast mode.
+ */
+typedef int (*eth_allmulticast_enable_t)(struct rte_eth_dev *dev);
 
-typedef void (*eth_allmulticast_disable_t)(struct rte_eth_dev *dev);
-/**< @internal Disable the receipt of all multicast packets by an Ethernet device. */
+/**
+ * @internal
+ * Disable the receipt of all multicast packets by an Ethernet device.
+ *
+ * @param dev
+ *   ethdev handle of port.
+ *
+ * @return
+ *   Negative errno value on error, 0 on success.
+ *
+ * @retval 0
+ *   Success, all-multicast mode is disabled.
+ * @retval -ENOTSUP
+ *   All-multicast mode disabling is not supported.
+ * @retval -ENODEV
+ *   Device is gone.
+ * @retval -E_RTE_SECONDARY
+ *   Function was called from a secondary process instance and not supported.
+ * @retval -ETIMEDOUT
+ *   Attempt to disable all-multicast mode failed because of timeout.
+ * @retval -EAGAIN
+ *   Failed to disable all-multicast mode.
+ */
+typedef int (*eth_allmulticast_disable_t)(struct rte_eth_dev *dev);
 
 typedef int (*eth_link_update_t)(struct rte_eth_dev *dev,
 				int wait_to_complete);
@@ -72,8 +160,26 @@ typedef int (*eth_stats_get_t)(struct rte_eth_dev *dev,
 				struct rte_eth_stats *igb_stats);
 /**< @internal Get global I/O statistics of an Ethernet device. */
 
-typedef void (*eth_stats_reset_t)(struct rte_eth_dev *dev);
-/**< @internal Reset global I/O statistics of an Ethernet device to 0. */
+/**
+ * @internal
+ * Reset global I/O statistics of an Ethernet device to 0.
+ *
+ * @param dev
+ *   ethdev handle of port.
+ *
+ * @return
+ *   Negative errno value on error, 0 on success.
+ *
+ * @retval 0
+ *   Success, statistics has been reset.
+ * @retval -ENOTSUP
+ *   Resetting statistics is not supported.
+ * @retval -EINVAL
+ *   Resetting statistics is not valid.
+ * @retval -ENOMEM
+ *   Not enough memory to get the stats.
+ */
+typedef int (*eth_stats_reset_t)(struct rte_eth_dev *dev);
 
 typedef int (*eth_xstats_get_t)(struct rte_eth_dev *dev,
 	struct rte_eth_xstat *stats, unsigned n);
@@ -85,8 +191,26 @@ typedef int (*eth_xstats_get_by_id_t)(struct rte_eth_dev *dev,
 				      unsigned int n);
 /**< @internal Get extended stats of an Ethernet device. */
 
-typedef void (*eth_xstats_reset_t)(struct rte_eth_dev *dev);
-/**< @internal Reset extended stats of an Ethernet device. */
+/**
+ * @internal
+ * Reset extended stats of an Ethernet device.
+ *
+ * @param dev
+ *   ethdev handle of port.
+ *
+ * @return
+ *   Negative errno value on error, 0 on success.
+ *
+ * @retval 0
+ *   Success, statistics has been reset.
+ * @retval -ENOTSUP
+ *   Resetting statistics is not supported.
+ * @retval -EINVAL
+ *   Resetting statistics is not valid.
+ * @retval -ENOMEM
+ *   Not enough memory to get the stats.
+ */
+typedef int (*eth_xstats_reset_t)(struct rte_eth_dev *dev);
 
 typedef int (*eth_xstats_get_names_t)(struct rte_eth_dev *dev,
 	struct rte_eth_xstat_name *xstats_names, unsigned size);
@@ -103,8 +227,8 @@ typedef int (*eth_queue_stats_mapping_set_t)(struct rte_eth_dev *dev,
 					     uint8_t is_rx);
 /**< @internal Set a queue statistics mapping for a tx/rx queue of an Ethernet device. */
 
-typedef void (*eth_dev_infos_get_t)(struct rte_eth_dev *dev,
-				    struct rte_eth_dev_info *dev_info);
+typedef int (*eth_dev_infos_get_t)(struct rte_eth_dev *dev,
+				   struct rte_eth_dev_info *dev_info);
 /**< @internal Get specific information of an Ethernet device. */
 
 typedef const uint32_t *(*eth_dev_supported_ptypes_get_t)(struct rte_eth_dev *dev);
@@ -169,6 +293,9 @@ typedef void (*eth_rxq_info_get_t)(struct rte_eth_dev *dev,
 
 typedef void (*eth_txq_info_get_t)(struct rte_eth_dev *dev,
 	uint16_t tx_queue_id, struct rte_eth_txq_info *qinfo);
+
+typedef int (*eth_burst_mode_get_t)(struct rte_eth_dev *dev,
+	uint16_t queue_id, struct rte_eth_burst_mode *mode);
 
 typedef int (*mtu_set_t)(struct rte_eth_dev *dev, uint16_t mtu);
 /**< @internal Set MTU. */
@@ -418,6 +545,8 @@ struct eth_dev_ops {
 	eth_dev_infos_get_t        dev_infos_get; /**< Get device info. */
 	eth_rxq_info_get_t         rxq_info_get; /**< retrieve RX queue information. */
 	eth_txq_info_get_t         txq_info_get; /**< retrieve TX queue information. */
+	eth_burst_mode_get_t       rx_burst_mode_get; /**< Get RX burst mode */
+	eth_burst_mode_get_t       tx_burst_mode_get; /**< Get TX burst mode */
 	eth_fw_version_get_t       fw_version_get; /**< Get firmware version. */
 	eth_dev_supported_ptypes_get_t dev_supported_ptypes_get;
 	/**< Get packet types supported and identified by device. */

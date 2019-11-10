@@ -35,16 +35,16 @@ static int eth_em_configure(struct rte_eth_dev *dev);
 static int eth_em_start(struct rte_eth_dev *dev);
 static void eth_em_stop(struct rte_eth_dev *dev);
 static void eth_em_close(struct rte_eth_dev *dev);
-static void eth_em_promiscuous_enable(struct rte_eth_dev *dev);
-static void eth_em_promiscuous_disable(struct rte_eth_dev *dev);
-static void eth_em_allmulticast_enable(struct rte_eth_dev *dev);
-static void eth_em_allmulticast_disable(struct rte_eth_dev *dev);
+static int eth_em_promiscuous_enable(struct rte_eth_dev *dev);
+static int eth_em_promiscuous_disable(struct rte_eth_dev *dev);
+static int eth_em_allmulticast_enable(struct rte_eth_dev *dev);
+static int eth_em_allmulticast_disable(struct rte_eth_dev *dev);
 static int eth_em_link_update(struct rte_eth_dev *dev,
 				int wait_to_complete);
 static int eth_em_stats_get(struct rte_eth_dev *dev,
 				struct rte_eth_stats *rte_stats);
-static void eth_em_stats_reset(struct rte_eth_dev *dev);
-static void eth_em_infos_get(struct rte_eth_dev *dev,
+static int eth_em_stats_reset(struct rte_eth_dev *dev);
+static int eth_em_infos_get(struct rte_eth_dev *dev,
 				struct rte_eth_dev_info *dev_info);
 static int eth_em_flow_ctrl_get(struct rte_eth_dev *dev,
 				struct rte_eth_fc_conf *fc_conf);
@@ -297,6 +297,11 @@ eth_em_dev_init(struct rte_eth_dev *eth_dev)
 	rte_ether_addr_copy((struct rte_ether_addr *)hw->mac.addr,
 		eth_dev->data->mac_addrs);
 
+	/* Pass the information to the rte_eth_dev_close() that it should also
+	 * release the private port resources.
+	 */
+	eth_dev->data->dev_flags |= RTE_ETH_DEV_CLOSE_REMOVE;
+
 	/* initialize the vfta */
 	memset(shadow_vfta, 0, sizeof(*shadow_vfta));
 
@@ -313,27 +318,12 @@ eth_em_dev_init(struct rte_eth_dev *eth_dev)
 static int
 eth_em_dev_uninit(struct rte_eth_dev *eth_dev)
 {
-	struct rte_pci_device *pci_dev = RTE_ETH_DEV_TO_PCI(eth_dev);
-	struct e1000_adapter *adapter =
-		E1000_DEV_PRIVATE(eth_dev->data->dev_private);
-	struct rte_intr_handle *intr_handle = &pci_dev->intr_handle;
-
 	PMD_INIT_FUNC_TRACE();
 
 	if (rte_eal_process_type() != RTE_PROC_PRIMARY)
 		return -EPERM;
 
-	if (adapter->stopped == 0)
-		eth_em_close(eth_dev);
-
-	eth_dev->dev_ops = NULL;
-	eth_dev->rx_pkt_burst = NULL;
-	eth_dev->tx_pkt_burst = NULL;
-
-	/* disable uio intr before callback unregister */
-	rte_intr_disable(intr_handle);
-	rte_intr_callback_unregister(intr_handle,
-				     eth_em_interrupt_handler, eth_dev);
+	eth_em_close(eth_dev);
 
 	return 0;
 }
@@ -352,8 +342,7 @@ static int eth_em_pci_remove(struct rte_pci_device *pci_dev)
 
 static struct rte_pci_driver rte_em_pmd = {
 	.id_table = pci_id_em_map,
-	.drv_flags = RTE_PCI_DRV_NEED_MAPPING | RTE_PCI_DRV_INTR_LSC |
-		     RTE_PCI_DRV_IOVA_AS_VA,
+	.drv_flags = RTE_PCI_DRV_NEED_MAPPING | RTE_PCI_DRV_INTR_LSC,
 	.probe = eth_em_pci_probe,
 	.remove = eth_em_pci_remove,
 };
@@ -739,6 +728,11 @@ eth_em_stop(struct rte_eth_dev *dev)
 	em_lsc_intr_disable(hw);
 
 	e1000_reset_hw(hw);
+
+	/* Flush desc rings for i219 */
+	if (hw->mac.type == e1000_pch_spt || hw->mac.type == e1000_pch_cnp)
+		em_flush_desc_rings(dev);
+
 	if (hw->mac.type >= e1000_82544)
 		E1000_WRITE_REG(hw, E1000_WUC, 0);
 
@@ -771,6 +765,8 @@ eth_em_close(struct rte_eth_dev *dev)
 	struct e1000_hw *hw = E1000_DEV_PRIVATE_TO_HW(dev->data->dev_private);
 	struct e1000_adapter *adapter =
 		E1000_DEV_PRIVATE(dev->data->dev_private);
+	struct rte_pci_device *pci_dev = RTE_ETH_DEV_TO_PCI(dev);
+	struct rte_intr_handle *intr_handle = &pci_dev->intr_handle;
 
 	eth_em_stop(dev);
 	adapter->stopped = 1;
@@ -778,6 +774,15 @@ eth_em_close(struct rte_eth_dev *dev)
 	e1000_phy_hw_reset(hw);
 	em_release_manageability(hw);
 	em_hw_control_release(hw);
+
+	dev->dev_ops = NULL;
+	dev->rx_pkt_burst = NULL;
+	dev->tx_pkt_burst = NULL;
+
+	/* disable uio intr before callback unregister */
+	rte_intr_disable(intr_handle);
+	rte_intr_callback_unregister(intr_handle,
+				     eth_em_interrupt_handler, dev);
 }
 
 static int
@@ -981,7 +986,7 @@ eth_em_stats_get(struct rte_eth_dev *dev, struct rte_eth_stats *rte_stats)
 	return 0;
 }
 
-static void
+static int
 eth_em_stats_reset(struct rte_eth_dev *dev)
 {
 	struct e1000_hw_stats *hw_stats =
@@ -992,6 +997,8 @@ eth_em_stats_reset(struct rte_eth_dev *dev)
 
 	/* Reset software totals */
 	memset(hw_stats, 0, sizeof(*hw_stats));
+
+	return 0;
 }
 
 static int
@@ -1002,7 +1009,7 @@ eth_em_rx_queue_intr_enable(struct rte_eth_dev *dev, __rte_unused uint16_t queue
 	struct rte_intr_handle *intr_handle = &pci_dev->intr_handle;
 
 	em_rxq_intr_enable(hw);
-	rte_intr_enable(intr_handle);
+	rte_intr_ack(intr_handle);
 
 	return 0;
 }
@@ -1045,7 +1052,7 @@ em_get_max_pktlen(struct rte_eth_dev *dev)
 	}
 }
 
-static void
+static int
 eth_em_infos_get(struct rte_eth_dev *dev, struct rte_eth_dev_info *dev_info)
 {
 	struct e1000_hw *hw = E1000_DEV_PRIVATE_TO_HW(dev->data->dev_private);
@@ -1104,6 +1111,8 @@ eth_em_infos_get(struct rte_eth_dev *dev, struct rte_eth_dev_info *dev_info)
 	dev_info->default_txportconf.nb_queues = 1;
 	dev_info->default_txportconf.ring_size = 256;
 	dev_info->default_rxportconf.ring_size = 256;
+
+	return 0;
 }
 
 /* return 0 means link status changed, -1 means not changed */
@@ -1258,7 +1267,7 @@ em_release_manageability(struct e1000_hw *hw)
 	}
 }
 
-static void
+static int
 eth_em_promiscuous_enable(struct rte_eth_dev *dev)
 {
 	struct e1000_hw *hw =
@@ -1268,9 +1277,11 @@ eth_em_promiscuous_enable(struct rte_eth_dev *dev)
 	rctl = E1000_READ_REG(hw, E1000_RCTL);
 	rctl |= (E1000_RCTL_UPE | E1000_RCTL_MPE);
 	E1000_WRITE_REG(hw, E1000_RCTL, rctl);
+
+	return 0;
 }
 
-static void
+static int
 eth_em_promiscuous_disable(struct rte_eth_dev *dev)
 {
 	struct e1000_hw *hw =
@@ -1284,9 +1295,11 @@ eth_em_promiscuous_disable(struct rte_eth_dev *dev)
 	else
 		rctl &= (~E1000_RCTL_MPE);
 	E1000_WRITE_REG(hw, E1000_RCTL, rctl);
+
+	return 0;
 }
 
-static void
+static int
 eth_em_allmulticast_enable(struct rte_eth_dev *dev)
 {
 	struct e1000_hw *hw =
@@ -1296,9 +1309,11 @@ eth_em_allmulticast_enable(struct rte_eth_dev *dev)
 	rctl = E1000_READ_REG(hw, E1000_RCTL);
 	rctl |= E1000_RCTL_MPE;
 	E1000_WRITE_REG(hw, E1000_RCTL, rctl);
+
+	return 0;
 }
 
-static void
+static int
 eth_em_allmulticast_disable(struct rte_eth_dev *dev)
 {
 	struct e1000_hw *hw =
@@ -1306,10 +1321,12 @@ eth_em_allmulticast_disable(struct rte_eth_dev *dev)
 	uint32_t rctl;
 
 	if (dev->data->promiscuous == 1)
-		return; /* must remain in all_multicast mode */
+		return 0; /* must remain in all_multicast mode */
 	rctl = E1000_READ_REG(hw, E1000_RCTL);
 	rctl &= (~E1000_RCTL_MPE);
 	E1000_WRITE_REG(hw, E1000_RCTL, rctl);
+
+	return 0;
 }
 
 static int
@@ -1571,7 +1588,7 @@ eth_em_interrupt_action(struct rte_eth_dev *dev,
 
 	//清除标记
 	intr->flags &= ~E1000_FLAG_NEED_LINK_UPDATE;
-	rte_intr_enable(intr_handle);
+	rte_intr_ack(intr_handle);
 
 	/* set get_link_status to check register later */
 	hw->mac.get_link_status = 1;
@@ -1776,8 +1793,12 @@ eth_em_mtu_set(struct rte_eth_dev *dev, uint16_t mtu)
 	struct e1000_hw *hw;
 	uint32_t frame_size;
 	uint32_t rctl;
+	int ret;
 
-	eth_em_infos_get(dev, &dev_info);
+	ret = eth_em_infos_get(dev, &dev_info);
+	if (ret != 0)
+		return ret;
+
 	frame_size = mtu + RTE_ETHER_HDR_LEN + RTE_ETHER_CRC_LEN +
 		VLAN_TAG_SIZE;
 
