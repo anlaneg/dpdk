@@ -16,22 +16,21 @@
  * Structure storing internal configuration (per-lcore)
  */
 struct lcore_config {
-	pthread_t thread_id;       /**< pthread identifier */
-	int pipe_master2slave[2];  /**< communication pipe with master */
-	int pipe_slave2master[2];  /**< communication pipe with master */
+	pthread_t thread_id;       /**< pthread identifier */ //绑定的线程
+	int pipe_master2slave[2];  /**< communication pipe with master */ //master通信用
+	int pipe_slave2master[2];  /**< communication pipe with master */ //向master通信用
 
-	lcore_function_t * volatile f; /**< function to call */
-	void * volatile arg;       /**< argument of function */
-	volatile int ret;          /**< return value of function */
+	lcore_function_t * volatile f; /**< function to call */ //此核要执行的函数
+	void * volatile arg;       /**< argument of function */ //函数的参数
+	volatile int ret;          /**< return value of function */ //执行后的返回值（与状态配合使用）
+	volatile enum rte_lcore_state_t state; /**< lcore state */ //工作状态，执行函数用
+	unsigned int socket_id;    /**< physical socket id for this lcore */ //属于那个numa
+	unsigned int core_id;      /**< core number on socket for this lcore */ //物理core id(开超线程后，会出现两个线程一个core_id的情况）
+	int core_index;            /**< relative index, starting from 0 */ //core编号，如果不存在将为-1(最终按用户mask后的顺序）
+	uint8_t core_role;         /**< role of core eg: OFF, RTE, SERVICE */ //指定core的角色，例如ROLE_SERVICE
+	uint8_t detected;          /**< true if lcore was detected */ //是否被检测到
 
-	volatile enum rte_lcore_state_t state; /**< lcore state */
-	unsigned int socket_id;    /**< physical socket id for this lcore */
-	unsigned int core_id;      /**< core number on socket for this lcore */
-	int core_index;            /**< relative index, starting from 0 */
-	uint8_t core_role;         /**< role of core eg: OFF, RTE, SERVICE */
-	uint8_t detected;          /**< true if lcore was detected */
-
-	rte_cpuset_t cpuset;       /**< cpu set which the lcore affinity to */
+	rte_cpuset_t cpuset;       /**< cpu set which the lcore affinity to */ //仅包含此core的cpuset
 };
 
 extern struct lcore_config lcore_config[RTE_MAX_LCORE];
@@ -40,12 +39,12 @@ extern struct lcore_config lcore_config[RTE_MAX_LCORE];
  * The global RTE configuration structure.
  */
 struct rte_config {
-	uint32_t master_lcore;       /**< Id of the master lcore */
-	uint32_t lcore_count;        /**< Number of available logical cores. */
-	uint32_t numa_node_count;    /**< Number of detected NUMA nodes. */
-	uint32_t numa_nodes[RTE_MAX_NUMA_NODES]; /**< List of detected NUMA nodes. */
+	uint32_t master_lcore;       /**< Id of the master lcore */ //master线程用那个逻辑core
+	uint32_t lcore_count;        /**< Number of available logical cores. */ //有多少个逻辑core（-c指定后，更新为有多少有效core)
+	uint32_t numa_node_count;    /**< Number of detected NUMA nodes. */ //系统有多少个numa节点（numa_nodes数组的大小）
+	uint32_t numa_nodes[RTE_MAX_NUMA_NODES]; /**< List of detected NUMA nodes. */ //记录系统中的numa id
 	uint32_t service_lcore_count;/**< Number of available service cores. */
-	enum rte_lcore_role_t lcore_role[RTE_MAX_LCORE]; /**< State of cores. */
+	enum rte_lcore_role_t lcore_role[RTE_MAX_LCORE]; /**< State of cores. */ //记录用户启用了那些core,未用哪些core(未用的core为role_off)
 
 	/** Primary or secondary configuration */
 	enum rte_proc_type_t process_type;

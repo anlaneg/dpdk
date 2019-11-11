@@ -79,6 +79,7 @@ unsigned int rte_get_next_lcore(unsigned int i, int skip_master, int wrap)
 		i %= RTE_MAX_LCORE;
 
 	while (i < RTE_MAX_LCORE) {
+	    //如果此core未占用，则检查是否需要跳过master
 		if (!rte_lcore_is_enabled(i) ||
 		    (skip_master && (i == rte_get_master_lcore()))) {
 			i++;

@@ -287,7 +287,7 @@ extern "C" {
  *  - if it's IPv4, set the PKT_TX_IP_CKSUM flag
  *  - fill the mbuf offload information: l2_len, l3_len, l4_len, tso_segsz
  */
-#define PKT_TX_TCP_SEG       (1ULL << 50)
+#define PKT_TX_TCP_SEG       (1ULL << 50) //tso功能标记
 
 /** TX IEEE1588 packet to timestamp. */
 #define PKT_TX_IEEE1588_TMST (1ULL << 51)
@@ -312,6 +312,7 @@ extern "C" {
 #define PKT_TX_UDP_CKSUM     (3ULL << 52)
 
 /** Mask for L4 cksum offload request. */
+//硬件计算4层checksum　mask
 #define PKT_TX_L4_MASK       (3ULL << 52)
 
 /**
@@ -320,7 +321,7 @@ extern "C" {
  * PKT_TX_IP_CKSUM.
  *  - fill the mbuf offload information: l2_len, l3_len
  */
-#define PKT_TX_IP_CKSUM      (1ULL << 54)
+#define PKT_TX_IP_CKSUM      (1ULL << 54) //ip层checksum
 
 /**
  * Packet is IPv4. This flag must be set when using any offload feature
@@ -328,7 +329,7 @@ extern "C" {
  * packet. If the packet is a tunneled packet, this flag is related to
  * the inner headers.
  */
-#define PKT_TX_IPV4          (1ULL << 55)
+#define PKT_TX_IPV4          (1ULL << 55) //指明报文为ipv4,为了使用tso需要告知网卡报文为ipv4
 
 /**
  * Packet is IPv6. This flag must be set when using an offload feature
@@ -484,8 +485,9 @@ enum {
  * The generic rte_mbuf, containing a packet mbuf.
  */
 struct rte_mbuf {
-	MARKER cacheline0;
+	MARKER cacheline0;// 这种写法很帅气
 
+	//mbuf的数据缓冲起始地址
 	void *buf_addr;           /**< Virtual address of segment buffer. */
 	/**
 	 * Physical address of segment buffer.
@@ -495,13 +497,13 @@ struct rte_mbuf {
 	 */
 	RTE_STD_C11
 	union {
-		rte_iova_t buf_iova;
+		rte_iova_t buf_iova;//buf_addr的物理地址
 		rte_iova_t buf_physaddr; /**< deprecated */
 	} __rte_aligned(sizeof(rte_iova_t));
 
 	/* next 8 bytes are initialised on RX descriptor rearm */
 	MARKER64 rearm_data;
-	uint16_t data_off;
+	uint16_t data_off;//真实存放数据的位置（自buf_addr偏移data_off)
 
 	/**
 	 * Reference counter. Its size should at least equal to the size
@@ -525,6 +527,7 @@ struct rte_mbuf {
 	 */
 	uint16_t port;
 
+	//mbuf的offload功能标记（dpdk定义了一组功能，然后由驱动对这组功能进行映射，并对应到各自硬件特性上）
 	uint64_t ol_flags;        /**< Offload features. */
 
 	/* remaining bytes are set on RX when pulling packet from descriptor */
@@ -564,9 +567,12 @@ struct rte_mbuf {
 		};
 	};
 
+	//总的报文长度(可能有多个seg,用next串起来)
 	uint32_t pkt_len;         /**< Total pkt len: sum of all segments. */
+	//mbuf中的数据长度
 	uint16_t data_len;        /**< Amount of data in segment buffer. */
 	/** VLAN TCI (CPU order), valid if PKT_RX_VLAN is set. */
+	//为了让网卡来插入vlan,这里将vlan放在此种（cpu序），等报文发送时，网卡将报文插入
 	uint16_t vlan_tci;
 
 	RTE_STD_C11
@@ -644,14 +650,21 @@ struct rte_mbuf {
 		uint64_t tx_offload;       /**< combined for easy fetch */
 		__extension__
 		struct {
+		    //2层头长度
 			uint64_t l2_len:RTE_MBUF_L2_LEN_BITS;
 			/**< L2 (MAC) Header Length for non-tunneling pkt.
 			 * Outer_L4_len + ... + Inner_L2_len for tunneling pkt.
 			 */
-			uint64_t l3_len:RTE_MBUF_L3_LEN_BITS;
+			uint64_t l3_len:RTE_MBUF_L3_LEN_BITS;//3层头部的长度
 			/**< L3 (IP) Header Length. */
-			uint64_t l4_len:RTE_MBUF_L4_LEN_BITS;
+			uint64_t l4_len:RTE_MBUF_L4_LEN_BITS;//3层头部的长度
 			/**< L4 (TCP/UDP) Header Length. */
+            //在不支持TSO的网卡上，TCP层向IP层发送数据会考虑mss，使得TCP向下发送的数据可以包含在一个IP分组中而不会造成分片，
+            //mss是在TCP初始建立连接时由网卡MTU确定并和对端协商的，所以在一个MTU＝1500的网卡上，TCP向下发送的数据不会大于
+            //min(mss_local, mss_remote)-ip头-tcp头。
+            //网卡支持TSO时，TCP层会逐渐增大mss（总是整数倍数增加），当TCP层向下发送大块数据时，仅仅计算TCP头，网卡接到到了
+            //IP层传下的大数 据包后自己重新分成若干个IP数据包，添加IP头，复制TCP头并且重新计算校验和等相关数据，这样就把一部
+            //分CPU相关的处理工作转移到由网卡来处理。
 			uint64_t tso_segsz:RTE_MBUF_TSO_SEGSZ_BITS;
 			/**< TCP TSO segment size */
 
@@ -679,6 +692,8 @@ struct rte_mbuf {
 	/** Size of the application private data. In case of an indirect
 	 * mbuf, it stores the direct mbuf private data size.
 	 */
+    //mbuf缓冲的头部存放mbuf的控制信息（rte_mbuf_t结构内容），接着在后面有一个
+    //priv_size用于存放用户定制的信息，例如crypto中存放rte_crypto_op
 	uint16_t priv_size;
 
 	/** Timesync flags for use with IEEE1588. */
@@ -753,6 +768,7 @@ struct rte_mbuf_ext_shared_info {
  * @param t
  *   The type to cast the result into.
  */
+//buf_addr + data_off可以找到真正数据的起始位置，在这个位置处再进行o的偏移，以便扩大或缩小headroom的空间
 #define rte_pktmbuf_mtod_offset(m, t, o)	\
 	((t)((char *)(m)->buf_addr + (m)->data_off + (o)))
 
@@ -768,6 +784,8 @@ struct rte_mbuf_ext_shared_info {
  * @param t
  *   The type to cast the result into.
  */
+//mtod ＝ move to data
+//返回指向数据区起始位置的指针
 #define rte_pktmbuf_mtod(m, t) rte_pktmbuf_mtod_offset(m, t, 0)
 
 /**

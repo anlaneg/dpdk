@@ -162,11 +162,13 @@ def module_is_loaded(module):
     sysfs_path = '/sys/module/'
 
     # Get the list of directories in sysfs_path
+    # 收集sysfs_path下所有目录
     sysfs_mods = [m for m in os.listdir(sysfs_path)
                   if os.path.isdir(os.path.join(sysfs_path, m))]
 
     # special case for vfio_pci (module is named vfio-pci,
     # but its .ko is named vfio_pci)
+    # 将vfio_pci更改为vfio-pci
     sysfs_mods = [a if a != 'vfio_pci' else 'vfio-pci' for a in sysfs_mods]
 
     loaded_modules = sysfs_mods
@@ -182,52 +184,15 @@ def check_modules():
     mods = [{"Name": driver, "Found": False} for driver in dpdk_drivers]
 
     # first check if module is loaded
-<<<<<<< HEAD
-    try:
-        # Get list of sysfs modules (both built-in and dynamically loaded)
-        sysfs_path = '/sys/module/'
-
-        # Get the list of directories in sysfs_path
-        # 收集sysfs_path下所有目录
-        sysfs_mods = [os.path.join(sysfs_path, o) for o
-                      in os.listdir(sysfs_path)
-                      if os.path.isdir(os.path.join(sysfs_path, o))]
-
-        # Extract the last element of '/sys/module/abc' in the array
-        #取出所有模块名称
-        sysfs_mods = [a.split('/')[-1] for a in sysfs_mods]
-
-        # special case for vfio_pci (module is named vfio-pci,
-        # but its .ko is named vfio_pci)
-        # 将vfio_pci更改为vfio-pci
-        sysfs_mods = [a if a != 'vfio_pci' else 'vfio-pci' for a in sysfs_mods]
-
-        for mod in mods:
-            #如果sysfs_mods中包含mod["Name"]，则将其置为发现
-            if mod["Name"] in sysfs_mods:
-                mod["Found"] = True
-    except:
-        pass
-
-    # check if we have at least one loaded module
-    if True not in [mod["Found"] for mod in mods] and b_flag is not None:
-        if b_flag in dpdk_drivers:
-            #b_flag要求了dpdk_drivers中指定的driver,但dpdk_drivers中的driver均
-            #在系统中没有被发现
-            print("Error - no supported modules(DPDK driver) are loaded")
-            sys.exit(1)
-        else:
-            #指定的driver，不被dpdk支持
-            print("Warning - no supported modules(DPDK driver) are loaded")
-=======
     for mod in mods:
+        #如果sysfs_mods中包含mod["Name"]，则将其置为发现
         if module_is_loaded(mod["Name"]):
             mod["Found"] = True
 
     # check if we have at least one loaded module
     if True not in [mod["Found"] for mod in mods] and b_flag is not None:
+        #指定的driver，不被dpdk支持
         print("Warning: no supported DPDK kernel modules are loaded", file=sys.stderr)
->>>>>>> upstream/master
 
     # change DPDK driver list to only contain drivers that are loaded
     #将driver变量缩小为被发现的模块。
@@ -755,13 +720,8 @@ def parse_args():
             force_flag = True
         if opt == "-b" or opt == "-u" or opt == "--bind" or opt == "--unbind":
             if b_flag is not None:
-<<<<<<< HEAD
                 #多次指出或者矛盾指出
-                print("Error - Only one bind or unbind may be specified\n")
-                sys.exit(1)
-=======
                 sys.exit("Error: binding and unbinding are mutually exclusive")
->>>>>>> upstream/master
             if opt == "-u" or opt == "--unbind":
                 b_flag = "none"
             else:
