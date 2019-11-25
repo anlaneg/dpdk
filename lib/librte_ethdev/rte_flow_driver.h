@@ -70,6 +70,7 @@ struct rte_flow_ops {
 		 const struct rte_flow_action [],
 		 struct rte_flow_error *);
 	/** See rte_flow_create(). */
+	//驱动完成flow规则创建
 	struct rte_flow *(*create)
 		(struct rte_eth_dev *,
 		 const struct rte_flow_attr *,
@@ -77,11 +78,13 @@ struct rte_flow_ops {
 		 const struct rte_flow_action [],
 		 struct rte_flow_error *);
 	/** See rte_flow_destroy(). */
+	//驱动完成flow规则的销毁
 	int (*destroy)
 		(struct rte_eth_dev *,
 		 struct rte_flow *,
 		 struct rte_flow_error *);
 	/** See rte_flow_flush(). */
+	//驱动完成所有flow移除
 	int (*flush)
 		(struct rte_eth_dev *,
 		 struct rte_flow_error *);

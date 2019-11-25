@@ -238,10 +238,12 @@ rte_flow_create(uint16_t port_id,//作用于哪个接口
 {
 	struct rte_eth_dev *dev = &rte_eth_devices[port_id];
 	struct rte_flow *flow;
+	//取设备对应的flow_ops
 	const struct rte_flow_ops *ops = rte_flow_ops_get(port_id, error);
 
 	if (unlikely(!ops))
 		return NULL;
+
 	//执行规则创建
 	if (likely(!!ops->create)) {
 		flow = ops->create(dev, attr, pattern, actions, error);
@@ -249,7 +251,8 @@ rte_flow_create(uint16_t port_id,//作用于哪个接口
 			flow_err(port_id, -rte_errno, error);
 		return flow;
 	}
-	//如果失败，返回失败详情
+
+	//如果创建失败或者无create接口，则返回失败详情
 	rte_flow_error_set(error, ENOSYS, RTE_FLOW_ERROR_TYPE_UNSPECIFIED,
 			   NULL, rte_strerror(ENOSYS));
 	return NULL;
@@ -266,6 +269,8 @@ rte_flow_destroy(uint16_t port_id,
 
 	if (unlikely(!ops))
 		return -rte_errno;
+
+	//规则移除
 	if (likely(!!ops->destroy))
 		return flow_err(port_id, ops->destroy(dev, flow, error),
 				error);
@@ -284,6 +289,7 @@ rte_flow_flush(uint16_t port_id,
 
 	if (unlikely(!ops))
 		return -rte_errno;
+	//移除掉所有flow
 	if (likely(!!ops->flush))
 		return flow_err(port_id, ops->flush(dev, error), error);
 	return rte_flow_error_set(error, ENOSYS,
