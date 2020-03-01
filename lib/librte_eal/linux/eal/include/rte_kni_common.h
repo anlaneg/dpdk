@@ -15,10 +15,10 @@
 #include <rte_config.h>
 #endif
 
-/**
- * KNI name is part of memzone name.
+/*
+ * KNI name is part of memzone name. Must not exceed IFNAMSIZ.
  */
-#define RTE_KNI_NAMESIZE 32
+#define RTE_KNI_NAMESIZE 16
 
 #define RTE_CACHE_LINE_MIN_SIZE 64
 
@@ -125,6 +125,7 @@ struct rte_kni_device_info {
 	unsigned int min_mtu;
 	unsigned int max_mtu;
 	uint8_t mac_addr[6];
+	uint8_t iova_mode;
 };
 
 #define KNI_DEVICE "kni"

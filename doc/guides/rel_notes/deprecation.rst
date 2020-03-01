@@ -4,9 +4,9 @@
 ABI and API Deprecation
 =======================
 
-See the :doc:`guidelines document for details of the ABI policy </contributing/versioning>`.
-API and ABI deprecation notices are to be posted here.
-
+See the guidelines document for details of the :doc:`ABI policy
+<../contributing/abi_policy>`. API and ABI deprecation notices are to be posted
+here.
 
 Deprecation Notices
 -------------------
@@ -38,16 +38,37 @@ Deprecation Notices
   remove it from the externally visible ABI and allow it to be updated in the
   future.
 
+* igb_uio: In the view of reducing the kernel dependency from the main tree,
+  as a first step, the Technical Board decided to move ``igb_uio``
+  kernel module to the dpdk-kmods repository in the /linux/igb_uio/ directory
+  in 20.11.
+  Minutes of Technical Board Meeting of `2019-11-06
+  <http://mails.dpdk.org/archives/dev/2019-November/151763.html>`_.
+
+* lib: will fix extending some enum/define breaking the ABI. There are multiple
+  samples in DPDK that enum/define terminated with a ``.*MAX.*`` value which is
+  used by iterators, and arrays holding these values are sized with this
+  ``.*MAX.*`` value. So extending this enum/define increases the ``.*MAX.*``
+  value which increases the size of the array and depending on how/where the
+  array is used this may break the ABI.
+  ``RTE_ETH_FLOW_MAX`` is one sample of the mentioned case, adding a new flow
+  type will break the ABI because of ``flex_mask[RTE_ETH_FLOW_MAX]`` array
+  usage in following public struct hierarchy:
+  ``rte_eth_fdir_flex_conf -> rte_fdir_conf -> rte_eth_conf (in the middle)``.
+  Need to identify this kind of usages and fix in 20.11, otherwise this blocks
+  us extending existing enum/define.
+  One solution can be using a fixed size array instead of ``.*MAX.*`` value.
+
 * dpaa2: removal of ``rte_dpaa2_memsegs`` structure which has been replaced
   by a pa-va search library. This structure was earlier being used for holding
   memory segments used by dpaa2 driver for faster pa->va translation. This
   structure would be made internal (or removed if all dependencies are cleared)
   in future releases.
 
-* ethdev: The function ``rte_eth_dev_count`` will be removed in DPDK 20.02.
-  It is replaced by the function ``rte_eth_dev_count_avail``.
-  If the intent is to iterate over ports, ``RTE_ETH_FOREACH_*`` macros
-  are better port iterators.
+* mempool: starting from v20.05, the API of rte_mempool_populate_iova()
+  and rte_mempool_populate_virt() will change to return 0 instead
+  of -EINVAL when there is not enough room to store one object. The ABI
+  will be preserved until 20.11.
 
 * ethdev: the legacy filter API, including
   ``rte_eth_dev_filter_supported()``, ``rte_eth_dev_filter_ctrl()`` as well
@@ -64,33 +85,13 @@ Deprecation Notices
   - ``rte_eth_dev_stop``
   - ``rte_eth_dev_close``
 
-* ethdev: New offload flags ``DEV_RX_OFFLOAD_RSS_HASH`` and
-  ``DEV_RX_OFFLOAD_FLOW_MARK`` will be added in 19.11.
+* ethdev: New offload flags ``DEV_RX_OFFLOAD_FLOW_MARK`` will be added in 19.11.
   This will allow application to enable or disable PMDs from updating
-  ``rte_mbuf::hash::rss`` and ``rte_mbuf::hash::fdir`` respectively.
+  ``rte_mbuf::hash::fdir``.
   This scheme will allow PMDs to avoid writes to ``rte_mbuf`` fields on Rx and
   thereby improve Rx performance if application wishes do so.
-  In 19.11 PMDs will still update the fields even when the offloads are not
+  In 19.11 PMDs will still update the field even when the offload is not
   enabled.
-
-* ethdev: New function ``rte_eth_dev_set_supported_ptypes`` will be added in
-  19.11.
-  This will allow application to request PMD to set specific ptypes defined
-  through ``rte_eth_dev_set_supported_ptypes`` in ``rte_mbuf::packet_type``.
-  If application doesn't want any ptype information it can call
-  ``rte_eth_dev_set_supported_ptypes(ethdev_id, RTE_PTYPE_UNKNOWN)`` and PMD
-  will set ``rte_mbuf::packet_type`` to ``0``.
-  If application doesn't call ``rte_eth_dev_set_supported_ptypes`` PMD can
-  return ``rte_mbuf::packet_type`` with ``rte_eth_dev_get_supported_ptypes``.
-  If application is interested only in L2/L3 layer, it can inform the PMD
-  to update ``rte_mbuf::packet_type`` with L2/L3 ptype by calling
-  ``rte_eth_dev_set_supported_ptypes(ethdev_id, RTE_PTYPE_L2_MASK | RTE_PTYPE_L3_MASK)``.
-  This scheme will allow PMDs to avoid lookup to internal ptype table on Rx and
-  thereby improve Rx performance if application wishes do so.
-
-* ethdev: New 32-bit fields may be added for maximum LRO session size, in
-  struct ``rte_eth_dev_info`` for the port capability and in struct
-  ``rte_eth_rxmode`` for the port configuration.
 
 * cryptodev: support for using IV with all sizes is added, J0 still can
   be used but only when IV length in following structs ``rte_crypto_auth_xform``,
@@ -111,3 +112,9 @@ Deprecation Notices
   to set new power environment if power environment was already initialized.
   In this case the function will return -1 unless the environment is unset first
   (using ``rte_power_unset_env``). Other function usage scenarios will not change.
+
+* python: Since the beginning of 2020, Python 2 has officially reached
+  end-of-support: https://www.python.org/doc/sunset-python-2/.
+  Python 2 support will be completely removed in 20.11.
+  In 20.08, explicit deprecation warnings will be displayed when running
+  scripts with Python 2.

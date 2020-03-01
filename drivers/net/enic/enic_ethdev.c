@@ -405,6 +405,10 @@ static int enicpmd_dev_configure(struct rte_eth_dev *eth_dev)
 		return ret;
 	}
 
+	if (eth_dev->data->dev_conf.rxmode.mq_mode & ETH_MQ_RX_RSS_FLAG)
+		eth_dev->data->dev_conf.rxmode.offloads |=
+			DEV_RX_OFFLOAD_RSS_HASH;
+
 	enic->mc_count = 0;
 	enic->hw_ip_checksum = !!(eth_dev->data->dev_conf.rxmode.offloads &
 				  DEV_RX_OFFLOAD_CHECKSUM);
@@ -507,6 +511,12 @@ static uint32_t speed_capa_from_pci_id(struct rte_eth_dev *eth_dev)
 	/* 1300 and later models are at least 40G */
 	if (id >= 0x0100)
 		return ETH_LINK_SPEED_40G;
+	/* VFs have subsystem id 0, check device id */
+	if (id == 0) {
+		/* Newer VF implies at least 40G model */
+		if (pdev->id.device_id == PCI_DEVICE_ID_CISCO_VIC_ENET_SN)
+			return ETH_LINK_SPEED_40G;
+	}
 	return ETH_LINK_SPEED_10G;
 }
 

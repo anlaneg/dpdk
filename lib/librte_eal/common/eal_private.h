@@ -23,12 +23,12 @@ struct lcore_config {
 	lcore_function_t * volatile f; /**< function to call */ //此核要执行的函数
 	void * volatile arg;       /**< argument of function */ //函数的参数
 	volatile int ret;          /**< return value of function */ //执行后的返回值（与状态配合使用）
+
 	volatile enum rte_lcore_state_t state; /**< lcore state */ //工作状态，执行函数用
 	unsigned int socket_id;    /**< physical socket id for this lcore */ //属于那个numa
 	unsigned int core_id;      /**< core number on socket for this lcore */ //物理core id(开超线程后，会出现两个线程一个core_id的情况）
 	int core_index;            /**< relative index, starting from 0 */ //core编号，如果不存在将为-1(最终按用户mask后的顺序）
 	uint8_t core_role;         /**< role of core eg: OFF, RTE, SERVICE */ //指定core的角色，例如ROLE_SERVICE
-	uint8_t detected;          /**< true if lcore was detected */ //是否被检测到
 
 	rte_cpuset_t cpuset;       /**< cpu set which the lcore affinity to */ //仅包含此core的cpuset
 };

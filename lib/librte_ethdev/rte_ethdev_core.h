@@ -234,6 +234,21 @@ typedef int (*eth_dev_infos_get_t)(struct rte_eth_dev *dev,
 typedef const uint32_t *(*eth_dev_supported_ptypes_get_t)(struct rte_eth_dev *dev);
 /**< @internal Get supported ptypes of an Ethernet device. */
 
+/**
+ * @internal
+ * Inform Ethernet device about reduced range of packet types to handle.
+ *
+ * @param dev
+ *   The Ethernet device identifier.
+ * @param ptype_mask
+ *   The ptype family that application is interested in should be bitwise OR of
+ *   RTE_PTYPE_*_MASK or 0.
+ * @return
+ *   - (0) if Success.
+ */
+typedef int (*eth_dev_ptypes_set_t)(struct rte_eth_dev *dev,
+				     uint32_t ptype_mask);
+
 typedef int (*eth_queue_start_t)(struct rte_eth_dev *dev,
 				    uint16_t queue_id);
 /**< @internal Start rx and tx of a queue of an Ethernet device. */
@@ -509,6 +524,86 @@ typedef int (*eth_pool_ops_supported_t)(struct rte_eth_dev *dev,
 /**< @internal Test if a port supports specific mempool ops */
 
 /**
+ * @internal
+ * Get the hairpin capabilities.
+ *
+ * @param dev
+ *   ethdev handle of port.
+ * @param cap
+ *   returns the hairpin capabilities from the device.
+ *
+ * @return
+ *   Negative errno value on error, 0 on success.
+ *
+ * @retval 0
+ *   Success, hairpin is supported.
+ * @retval -ENOTSUP
+ *   Hairpin is not supported.
+ */
+typedef int (*eth_hairpin_cap_get_t)(struct rte_eth_dev *dev,
+				     struct rte_eth_hairpin_cap *cap);
+
+/**
+ * @internal
+ * Setup RX hairpin queue.
+ *
+ * @param dev
+ *   ethdev handle of port.
+ * @param rx_queue_id
+ *   the selected RX queue index.
+ * @param nb_rx_desc
+ *   the requested number of descriptors for this queue. 0 - use PMD default.
+ * @param conf
+ *   the RX hairpin configuration structure.
+ *
+ * @return
+ *   Negative errno value on error, 0 on success.
+ *
+ * @retval 0
+ *   Success, hairpin is supported.
+ * @retval -ENOTSUP
+ *   Hairpin is not supported.
+ * @retval -EINVAL
+ *   One of the parameters is invalid.
+ * @retval -ENOMEM
+ *   Unable to allocate resources.
+ */
+typedef int (*eth_rx_hairpin_queue_setup_t)
+	(struct rte_eth_dev *dev, uint16_t rx_queue_id,
+	 uint16_t nb_rx_desc,
+	 const struct rte_eth_hairpin_conf *conf);
+
+/**
+ * @internal
+ * Setup TX hairpin queue.
+ *
+ * @param dev
+ *   ethdev handle of port.
+ * @param tx_queue_id
+ *   the selected TX queue index.
+ * @param nb_tx_desc
+ *   the requested number of descriptors for this queue. 0 - use PMD default.
+ * @param conf
+ *   the TX hairpin configuration structure.
+ *
+ * @return
+ *   Negative errno value on error, 0 on success.
+ *
+ * @retval 0
+ *   Success, hairpin is supported.
+ * @retval -ENOTSUP
+ *   Hairpin is not supported.
+ * @retval -EINVAL
+ *   One of the parameters is invalid.
+ * @retval -ENOMEM
+ *   Unable to allocate resources.
+ */
+typedef int (*eth_tx_hairpin_queue_setup_t)
+	(struct rte_eth_dev *dev, uint16_t tx_queue_id,
+	 uint16_t nb_tx_desc,
+	 const struct rte_eth_hairpin_conf *hairpin_conf);
+
+/**
  * @internal A structure containing the functions exported by an Ethernet driver.
  */
 struct eth_dev_ops {
@@ -550,6 +645,8 @@ struct eth_dev_ops {
 	eth_fw_version_get_t       fw_version_get; /**< Get firmware version. */
 	eth_dev_supported_ptypes_get_t dev_supported_ptypes_get;
 	/**< Get packet types supported and identified by device. */
+	eth_dev_ptypes_set_t dev_ptypes_set;
+	/**< Inform Ethernet device about reduced range of packet types to handle. */
 
 	vlan_filter_set_t          vlan_filter_set; /**< Filter VLAN Setup. */
 	vlan_tpid_set_t            vlan_tpid_set; /**< Outer/Inner VLAN TPID Setup. */
@@ -570,6 +667,10 @@ struct eth_dev_ops {
 	/**< Check the status of a Rx descriptor. */
 	eth_tx_descriptor_status_t tx_descriptor_status;
 	/**< Check the status of a Tx descriptor. */
+	/*
+	 * Static inline functions use functions ABOVE this comment.
+	 * New dev_ops functions should be added BELOW to avoid breaking ABI.
+	 */
 	eth_rx_enable_intr_t       rx_queue_intr_enable;  /**< Enable Rx queue interrupt. */
 	eth_rx_disable_intr_t      rx_queue_intr_disable; /**< Disable Rx queue interrupt. */
 	eth_tx_queue_setup_t       tx_queue_setup;/**< Set up device TX queue. */
@@ -644,6 +745,13 @@ struct eth_dev_ops {
 
 	eth_pool_ops_supported_t pool_ops_supported;
 	/**< Test if a port supports specific mempool ops */
+
+	eth_hairpin_cap_get_t hairpin_cap_get;
+	/**< Returns the hairpin capabilities. */
+	eth_rx_hairpin_queue_setup_t rx_hairpin_queue_setup;
+	/**< Set up device RX hairpin queue. */
+	eth_tx_hairpin_queue_setup_t tx_hairpin_queue_setup;
+	/**< Set up device TX hairpin queue. */
 };
 
 /**
@@ -701,6 +809,9 @@ struct rte_eth_dev {
 	struct rte_eth_rxtx_callback *pre_tx_burst_cbs[RTE_MAX_QUEUES_PER_PORT];
 	enum rte_eth_dev_state state; /**< Flag indicating the port state */
 	void *security_ctx; /**< Context for security ops */
+
+	uint64_t reserved_64s[4]; /**< Reserved for future fields */
+	void *reserved_ptrs[4];   /**< Reserved for future fields */
 } __rte_cache_aligned;
 
 struct rte_eth_dev_sriov;
@@ -754,9 +865,9 @@ struct rte_eth_dev_data {
 		dev_started : 1,   /**< Device state: STARTED(1) / STOPPED(0). */
 		lro         : 1;   /**< RX LRO is ON(1) / OFF(0) */
 	uint8_t rx_queue_state[RTE_MAX_QUEUES_PER_PORT];
-			/**< Queues state: STARTED(1) / STOPPED(0). */
+		/**< Queues state: HAIRPIN(2) / STARTED(1) / STOPPED(0). */
 	uint8_t tx_queue_state[RTE_MAX_QUEUES_PER_PORT];
-			/**< Queues state: STARTED(1) / STOPPED(0). */
+		/**< Queues state: HAIRPIN(2) / STARTED(1) / STOPPED(0). */
 	uint32_t dev_flags;             /**< Capabilities. */
 	enum rte_kernel_driver kdrv;    /**< Kernel driver passthrough. */
 	int numa_node;                  /**< NUMA node connection. */
@@ -767,6 +878,9 @@ struct rte_eth_dev_data {
 			/**< Switch-specific identifier.
 			 *   Valid if RTE_ETH_DEV_REPRESENTOR in dev_flags.
 			 */
+
+	uint64_t reserved_64s[4]; /**< Reserved for future fields */
+	void *reserved_ptrs[4];   /**< Reserved for future fields */
 } __rte_cache_aligned;
 
 /**

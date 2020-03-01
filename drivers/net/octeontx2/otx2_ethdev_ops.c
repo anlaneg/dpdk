@@ -2,6 +2,7 @@
  * Copyright(C) 2019 Marvell International Ltd.
  */
 
+#include <rte_ethdev.h>
 #include <rte_mbuf_pool_ops.h>
 
 #include "otx2_ethdev.h"
@@ -15,6 +16,8 @@ otx2_nix_mtu_set(struct rte_eth_dev *eth_dev, uint16_t mtu)
 	struct otx2_mbox *mbox = dev->mbox;
 	struct nix_frs_cfg *req;
 	int rc;
+
+	frame_size += NIX_TIMESYNC_RX_OFFSET * otx2_ethdev_is_ptp_en(dev);
 
 	/* Check if MTU is within the allowed range */
 	if (frame_size < NIX_MIN_FRS || frame_size > NIX_MAX_FRS)
@@ -36,6 +39,8 @@ otx2_nix_mtu_set(struct rte_eth_dev *eth_dev, uint16_t mtu)
 
 	req = otx2_mbox_alloc_msg_nix_set_hw_frs(mbox);
 	req->update_smq = true;
+	if (otx2_dev_is_sdp(dev))
+		req->sdp_link = true;
 	/* FRS HW config should exclude FCS but include NPC VTAG insert size */
 	req->maxlen = frame_size - RTE_ETHER_CRC_LEN + NIX_MAX_VTAG_ACT_SIZE;
 
@@ -46,6 +51,8 @@ otx2_nix_mtu_set(struct rte_eth_dev *eth_dev, uint16_t mtu)
 	/* Now just update Rx MAXLEN */
 	req = otx2_mbox_alloc_msg_nix_set_hw_frs(mbox);
 	req->maxlen = frame_size - RTE_ETHER_CRC_LEN;
+	if (otx2_dev_is_sdp(dev))
+		req->sdp_link = true;
 
 	rc = otx2_mbox_process(mbox);
 	if (rc)
@@ -98,7 +105,7 @@ nix_cgx_promisc_config(struct rte_eth_dev *eth_dev, int en)
 	struct otx2_eth_dev *dev = otx2_eth_pmd_priv(eth_dev);
 	struct otx2_mbox *mbox = dev->mbox;
 
-	if (otx2_dev_is_vf(dev))
+	if (otx2_dev_is_vf_or_sdp(dev))
 		return;
 
 	if (en)
@@ -219,6 +226,104 @@ otx2_nix_txq_info_get(struct rte_eth_dev *eth_dev, uint16_t queue_id,
 	qinfo->conf.tx_rs_thresh = 0;
 	qinfo->conf.offloads = txq->offloads;
 	qinfo->conf.tx_deferred_start = 0;
+}
+
+int
+otx2_rx_burst_mode_get(struct rte_eth_dev *eth_dev,
+		       __rte_unused uint16_t queue_id,
+		       struct rte_eth_burst_mode *mode)
+{
+	ssize_t bytes = 0, str_size = RTE_ETH_BURST_MODE_INFO_SIZE, rc;
+	struct otx2_eth_dev *dev = otx2_eth_pmd_priv(eth_dev);
+	const struct burst_info {
+		uint16_t flags;
+		const char *output;
+	} rx_offload_map[] = {
+			{NIX_RX_OFFLOAD_RSS_F, "RSS,"},
+			{NIX_RX_OFFLOAD_PTYPE_F, " Ptype,"},
+			{NIX_RX_OFFLOAD_CHECKSUM_F, " Checksum,"},
+			{NIX_RX_OFFLOAD_VLAN_STRIP_F, " VLAN Strip,"},
+			{NIX_RX_OFFLOAD_MARK_UPDATE_F, " Mark Update,"},
+			{NIX_RX_OFFLOAD_TSTAMP_F, " Timestamp,"},
+			{NIX_RX_MULTI_SEG_F, " Scattered,"}
+	};
+	static const char *const burst_mode[] = {"Vector Neon, Rx Offloads:",
+						 "Scalar, Rx Offloads:"
+	};
+	uint32_t i;
+
+	/* Update burst mode info */
+	rc = rte_strscpy(mode->info + bytes, burst_mode[dev->scalar_ena],
+			 str_size - bytes);
+	if (rc < 0)
+		goto done;
+
+	bytes += rc;
+
+	/* Update Rx offload info */
+	for (i = 0; i < RTE_DIM(rx_offload_map); i++) {
+		if (dev->rx_offload_flags & rx_offload_map[i].flags) {
+			rc = rte_strscpy(mode->info + bytes,
+					 rx_offload_map[i].output,
+					 str_size - bytes);
+			if (rc < 0)
+				goto done;
+
+			bytes += rc;
+		}
+	}
+
+done:
+	return 0;
+}
+
+int
+otx2_tx_burst_mode_get(struct rte_eth_dev *eth_dev,
+		       __rte_unused uint16_t queue_id,
+		       struct rte_eth_burst_mode *mode)
+{
+	ssize_t bytes = 0, str_size = RTE_ETH_BURST_MODE_INFO_SIZE, rc;
+	struct otx2_eth_dev *dev = otx2_eth_pmd_priv(eth_dev);
+	const struct burst_info {
+		uint16_t flags;
+		const char *output;
+	} tx_offload_map[] = {
+			{NIX_TX_OFFLOAD_L3_L4_CSUM_F, " Inner L3/L4 csum,"},
+			{NIX_TX_OFFLOAD_OL3_OL4_CSUM_F, " Outer L3/L4 csum,"},
+			{NIX_TX_OFFLOAD_VLAN_QINQ_F, " VLAN Insertion,"},
+			{NIX_TX_OFFLOAD_MBUF_NOFF_F, " MBUF free disable,"},
+			{NIX_TX_OFFLOAD_TSTAMP_F, " Timestamp,"},
+			{NIX_TX_OFFLOAD_TSO_F, " TSO,"},
+			{NIX_TX_MULTI_SEG_F, " Scattered,"}
+	};
+	static const char *const burst_mode[] = {"Vector Neon, Tx Offloads:",
+						 "Scalar, Tx Offloads:"
+	};
+	uint32_t i;
+
+	/* Update burst mode info */
+	rc = rte_strscpy(mode->info + bytes, burst_mode[dev->scalar_ena],
+			 str_size - bytes);
+	if (rc < 0)
+		goto done;
+
+	bytes += rc;
+
+	/* Update Tx offload info */
+	for (i = 0; i < RTE_DIM(tx_offload_map); i++) {
+		if (dev->tx_offload_flags & tx_offload_map[i].flags) {
+			rc = rte_strscpy(mode->info + bytes,
+					 tx_offload_map[i].output,
+					 str_size - bytes);
+			if (rc < 0)
+				goto done;
+
+			bytes += rc;
+		}
+	}
+
+done:
+	return 0;
 }
 
 static void

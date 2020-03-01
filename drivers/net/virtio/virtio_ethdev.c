@@ -466,8 +466,8 @@ virtio_init_queue(struct rte_eth_dev *dev, uint16_t vtpci_queue_idx)
 		return -EINVAL;
 	}
 
-	if (!rte_is_power_of_2(vq_size)) {
-		PMD_INIT_LOG(ERR, "virtqueue size is not powerof 2");
+	if (!vtpci_packed_queue(hw) && !rte_is_power_of_2(vq_size)) {
+		PMD_INIT_LOG(ERR, "split virtqueue size is not powerof 2");
 		return -EINVAL;
 	}
 
@@ -1923,6 +1923,8 @@ eth_virtio_dev_init(struct rte_eth_dev *eth_dev)
 			goto err_vtpci_init;
 	}
 
+	rte_spinlock_init(&hw->state_lock);
+
 	/* reset device and negotiate default features */
 	ret = virtio_init_device(eth_dev, VIRTIO_PMD_DEFAULT_GUEST_FEATURES);
 	if (ret < 0)
@@ -2166,8 +2168,6 @@ virtio_dev_configure(struct rte_eth_dev *dev)
 			PMD_DRV_LOG(ERR, "failed to set config vector");
 			return -EBUSY;
 		}
-
-	rte_spinlock_init(&hw->state_lock);
 
 	hw->use_simple_rx = 1;
 

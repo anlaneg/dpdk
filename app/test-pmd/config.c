@@ -49,7 +49,6 @@
 #include <rte_pmd_bnxt.h>
 #endif
 #include <rte_gro.h>
-#include <rte_config.h>
 
 #include "testpmd.h"
 
@@ -238,6 +237,10 @@ nic_xstats_display(portid_t port_id)
 	int cnt_xstats, idx_xstat;
 	struct rte_eth_xstat_name *xstats_names;
 
+	if (port_id_is_invalid(port_id, ENABLED_WARN)) {
+		print_valid_ports();
+		return;
+	}
 	printf("###### NIC extended statistics for port %-2d\n", port_id);
 	if (!rte_eth_dev_is_valid_port(port_id)) {
 		printf("Error: Invalid port number %i\n", port_id);
@@ -295,6 +298,10 @@ nic_xstats_clear(portid_t port_id)
 {
 	int ret;
 
+	if (port_id_is_invalid(port_id, ENABLED_WARN)) {
+		print_valid_ports();
+		return;
+	}
 	ret = rte_eth_xstats_reset(port_id);
 	if (ret != 0) {
 		printf("%s: Error: failed to reset xstats (port %u): %s",
@@ -350,21 +357,6 @@ nic_stats_mapping_display(portid_t port_id)
 	       nic_stats_mapping_border, nic_stats_mapping_border);
 }
 
-static void
-burst_mode_options_display(uint64_t options)
-{
-	int offset;
-
-	while (options != 0) {
-		offset = rte_bsf64(options);
-
-		printf(" %s",
-		       rte_eth_burst_mode_option_name(1ULL << offset));
-
-		options &= ~(1ULL << offset);
-	}
-}
-
 void
 rx_queue_infos_display(portid_t port_id, uint16_t queue_id)
 {
@@ -397,10 +389,11 @@ rx_queue_infos_display(portid_t port_id, uint16_t queue_id)
 		(qinfo.scattered_rx != 0) ? "on" : "off");
 	printf("\nNumber of RXDs: %hu", qinfo.nb_desc);
 
-	if (rte_eth_rx_burst_mode_get(port_id, queue_id, &mode) == 0) {
-		printf("\nBurst mode:");
-		burst_mode_options_display(mode.options);
-	}
+	if (rte_eth_rx_burst_mode_get(port_id, queue_id, &mode) == 0)
+		printf("\nBurst mode: %s%s",
+		       mode.info,
+		       mode.flags & RTE_ETH_BURST_FLAG_PER_QUEUE ?
+				" (per queue)" : "");
 
 	printf("\n");
 }
@@ -433,10 +426,11 @@ tx_queue_infos_display(portid_t port_id, uint16_t queue_id)
 		(qinfo.conf.tx_deferred_start != 0) ? "on" : "off");
 	printf("\nNumber of TXDs: %hu", qinfo.nb_desc);
 
-	if (rte_eth_tx_burst_mode_get(port_id, queue_id, &mode) == 0) {
-		printf("\nBurst mode:");
-		burst_mode_options_display(mode.options);
-	}
+	if (rte_eth_tx_burst_mode_get(port_id, queue_id, &mode) == 0)
+		printf("\nBurst mode: %s%s",
+		       mode.info,
+		       mode.flags & RTE_ETH_BURST_FLAG_PER_QUEUE ?
+				" (per queue)" : "");
 
 	printf("\n");
 }
@@ -629,6 +623,8 @@ port_infos_display(portid_t port_id)
 	printf("Minimum size of RX buffer: %u\n", dev_info.min_rx_bufsize);
 	printf("Maximum configurable length of RX packet: %u\n",
 		dev_info.max_rx_pktlen);
+	printf("Maximum configurable size of LRO aggregated packet: %u\n",
+		dev_info.max_lro_pkt_size);
 	if (dev_info.max_vfs)
 		printf("Maximum number of VFs: %u\n", dev_info.max_vfs);
 	if (dev_info.max_vmdq_pools)
@@ -1219,7 +1215,9 @@ void
 port_mtu_set(portid_t port_id, uint16_t mtu)
 {
 	int diag;
+	struct rte_port *rte_port = &ports[port_id];
 	struct rte_eth_dev_info dev_info;
+	uint16_t eth_overhead;
 	int ret;
 
 	if (port_id_is_invalid(port_id, ENABLED_WARN))
@@ -1235,8 +1233,25 @@ port_mtu_set(portid_t port_id, uint16_t mtu)
 		return;
 	}
 	diag = rte_eth_dev_set_mtu(port_id, mtu);
-	if (diag == 0)
+	if (diag == 0 &&
+	    dev_info.rx_offload_capa & DEV_RX_OFFLOAD_JUMBO_FRAME) {
+		/*
+		 * Ether overhead in driver is equal to the difference of
+		 * max_rx_pktlen and max_mtu in rte_eth_dev_info when the
+		 * device supports jumbo frame.
+		 */
+		eth_overhead = dev_info.max_rx_pktlen - dev_info.max_mtu;
+		if (mtu > RTE_ETHER_MAX_LEN - eth_overhead) {
+			rte_port->dev_conf.rxmode.offloads |=
+						DEV_RX_OFFLOAD_JUMBO_FRAME;
+			rte_port->dev_conf.rxmode.max_rx_pkt_len =
+						mtu + eth_overhead;
+		} else
+			rte_port->dev_conf.rxmode.offloads &=
+						~DEV_RX_OFFLOAD_JUMBO_FRAME;
+
 		return;
+	}
 	printf("Set MTU failed. diag=%d\n", diag);
 }
 
@@ -1306,7 +1321,7 @@ port_flow_complain(struct rte_flow_error *error)
 		errstr = "unknown type";
 	else
 		errstr = errstrlist[error->type];
-	printf("Caught error type %d (%s): %s%s: %s\n",
+	printf("%s(): Caught PMD error type %d (%s): %s%s: %s\n", __func__,
 	       error->type, errstr,
 	       error->cause ? (snprintf(buf, sizeof(buf), "cause: %p, ",
 					error->cause), buf) : "",
@@ -1441,6 +1456,33 @@ port_flow_flush(portid_t port_id)
 		free(port->flow_list);
 		port->flow_list = pf;
 	}
+	return ret;
+}
+
+/** Dump all flow rules. */
+int
+port_flow_dump(portid_t port_id, const char *file_name)
+{
+	int ret = 0;
+	FILE *file = stdout;
+	struct rte_flow_error error;
+
+	if (file_name && strlen(file_name)) {
+		file = fopen(file_name, "w");
+		if (!file) {
+			printf("Failed to create file %s: %s\n", file_name,
+			       strerror(errno));
+			return -errno;
+		}
+	}
+	ret = rte_flow_dev_dump(port_id, file, &error);
+	if (ret) {
+		port_flow_complain(&error);
+		printf("Failed to dump flow: %s\n", strerror(-ret));
+	} else
+		printf("Flow dump finished\n");
+	if (file_name && strlen(file_name))
+		fclose(file);
 	return ret;
 }
 
@@ -2401,6 +2443,8 @@ mp_alloc_to_str(uint8_t mode)
 		return "xmem";
 	case MP_ALLOC_XMEM_HUGE:
 		return "xmemhuge";
+	case MP_ALLOC_XBUF:
+		return "xbuf";
 	default:
 		return "invalid";
 	}
@@ -2562,6 +2606,112 @@ set_fwd_ports_list(unsigned int *portlist, unsigned int nb_pt)
 		       (unsigned int) nb_fwd_ports, nb_pt);
 		nb_fwd_ports = (portid_t) nb_pt;
 	}
+}
+
+/**
+ * Parse the user input and obtain the list of forwarding ports
+ *
+ * @param[in] list
+ *   String containing the user input. User can specify
+ *   in these formats 1,3,5 or 1-3 or 1-2,5 or 3,5-6.
+ *   For example, if the user wants to use all the available
+ *   4 ports in his system, then the input can be 0-3 or 0,1,2,3.
+ *   If the user wants to use only the ports 1,2 then the input
+ *   is 1,2.
+ *   valid characters are '-' and ','
+ * @param[out] values
+ *   This array will be filled with a list of port IDs
+ *   based on the user input
+ *   Note that duplicate entries are discarded and only the first
+ *   count entries in this array are port IDs and all the rest
+ *   will contain default values
+ * @param[in] maxsize
+ *   This parameter denotes 2 things
+ *   1) Number of elements in the values array
+ *   2) Maximum value of each element in the values array
+ * @return
+ *   On success, returns total count of parsed port IDs
+ *   On failure, returns 0
+ */
+static unsigned int
+parse_port_list(const char *list, unsigned int *values, unsigned int maxsize)
+{
+	unsigned int count = 0;
+	char *end = NULL;
+	int min, max;
+	int value, i;
+	unsigned int marked[maxsize];
+
+	if (list == NULL || values == NULL)
+		return 0;
+
+	for (i = 0; i < (int)maxsize; i++)
+		marked[i] = 0;
+
+	min = INT_MAX;
+
+	do {
+		/*Remove the blank spaces if any*/
+		while (isblank(*list))
+			list++;
+		if (*list == '\0')
+			break;
+		errno = 0;
+		value = strtol(list, &end, 10);
+		if (errno || end == NULL)
+			return 0;
+		if (value < 0 || value >= (int)maxsize)
+			return 0;
+		while (isblank(*end))
+			end++;
+		if (*end == '-' && min == INT_MAX) {
+			min = value;
+		} else if ((*end == ',') || (*end == '\0')) {
+			max = value;
+			if (min == INT_MAX)
+				min = value;
+			for (i = min; i <= max; i++) {
+				if (count < maxsize) {
+					if (marked[i])
+						continue;
+					values[count] = i;
+					marked[i] = 1;
+					count++;
+				}
+			}
+			min = INT_MAX;
+		} else
+			return 0;
+		list = end + 1;
+	} while (*end != '\0');
+
+	return count;
+}
+
+void
+parse_fwd_portlist(const char *portlist)
+{
+	unsigned int portcount;
+	unsigned int portindex[RTE_MAX_ETHPORTS];
+	unsigned int i, valid_port_count = 0;
+
+	portcount = parse_port_list(portlist, portindex, RTE_MAX_ETHPORTS);
+	if (!portcount)
+		rte_exit(EXIT_FAILURE, "Invalid fwd port list\n");
+
+	/*
+	 * Here we verify the validity of the ports
+	 * and thereby calculate the total number of
+	 * valid ports
+	 */
+	for (i = 0; i < portcount && i < RTE_DIM(portindex); i++) {
+		if (rte_eth_dev_is_valid_port(portindex[i])) {
+			portindex[valid_port_count] = portindex[i];
+			valid_port_count++;
+		}
+	}
+
+	set_fwd_ports_list(portindex, valid_port_count);
 }
 
 void
@@ -3717,6 +3867,14 @@ mcast_addr_pool_extend(struct rte_port *port)
 }
 
 static void
+mcast_addr_pool_append(struct rte_port *port, struct rte_ether_addr *mc_addr)
+{
+	if (mcast_addr_pool_extend(port) != 0)
+		return;
+	rte_ether_addr_copy(mc_addr, &port->mc_addr_pool[port->mc_addr_nb - 1]);
+}
+
+static void
 mcast_addr_pool_remove(struct rte_port *port, uint32_t addr_idx)
 {
 	port->mc_addr_nb--;
@@ -3734,7 +3892,7 @@ mcast_addr_pool_remove(struct rte_port *port, uint32_t addr_idx)
 		sizeof(struct rte_ether_addr) * (port->mc_addr_nb - addr_idx));
 }
 
-static void
+static int
 eth_port_multicast_addr_list_set(portid_t port_id)
 {
 	struct rte_port *port;
@@ -3743,10 +3901,11 @@ eth_port_multicast_addr_list_set(portid_t port_id)
 	port = &ports[port_id];
 	diag = rte_eth_dev_set_mc_addr_list(port_id, port->mc_addr_pool,
 					    port->mc_addr_nb);
-	if (diag == 0)
-		return;
-	printf("rte_eth_dev_set_mc_addr_list(port=%d, nb=%u) failed. diag=%d\n",
-	       port->mc_addr_nb, port_id, -diag);
+	if (diag < 0)
+		printf("rte_eth_dev_set_mc_addr_list(port=%d, nb=%u) failed. diag=%d\n",
+			port_id, port->mc_addr_nb, diag);
+
+	return diag;
 }
 
 void
@@ -3771,10 +3930,10 @@ mcast_addr_add(portid_t port_id, struct rte_ether_addr *mc_addr)
 		}
 	}
 
-	if (mcast_addr_pool_extend(port) != 0)
-		return;
-	rte_ether_addr_copy(mc_addr, &port->mc_addr_pool[i]);
-	eth_port_multicast_addr_list_set(port_id);
+	mcast_addr_pool_append(port, mc_addr);
+	if (eth_port_multicast_addr_list_set(port_id) < 0)
+		/* Rollback on failure, remove the address from the pool */
+		mcast_addr_pool_remove(port, i);
 }
 
 void
@@ -3801,7 +3960,9 @@ mcast_addr_remove(portid_t port_id, struct rte_ether_addr *mc_addr)
 	}
 
 	mcast_addr_pool_remove(port, i);
-	eth_port_multicast_addr_list_set(port_id);
+	if (eth_port_multicast_addr_list_set(port_id) < 0)
+		/* Rollback on failure, add the address back into the pool */
+		mcast_addr_pool_append(port, mc_addr);
 }
 
 void
@@ -3973,4 +4134,61 @@ port_queue_region_info_display(portid_t port_id, void *buf)
 #endif
 
 	printf("\n\n");
+}
+
+void
+show_macs(portid_t port_id)
+{
+	char buf[RTE_ETHER_ADDR_FMT_SIZE];
+	struct rte_eth_dev_info dev_info;
+	struct rte_ether_addr *addr;
+	uint32_t i, num_macs = 0;
+	struct rte_eth_dev *dev;
+
+	dev = &rte_eth_devices[port_id];
+
+	rte_eth_dev_info_get(port_id, &dev_info);
+
+	for (i = 0; i < dev_info.max_mac_addrs; i++) {
+		addr = &dev->data->mac_addrs[i];
+
+		/* skip zero address */
+		if (rte_is_zero_ether_addr(addr))
+			continue;
+
+		num_macs++;
+	}
+
+	printf("Number of MAC address added: %d\n", num_macs);
+
+	for (i = 0; i < dev_info.max_mac_addrs; i++) {
+		addr = &dev->data->mac_addrs[i];
+
+		/* skip zero address */
+		if (rte_is_zero_ether_addr(addr))
+			continue;
+
+		rte_ether_format_addr(buf, RTE_ETHER_ADDR_FMT_SIZE, addr);
+		printf("  %s\n", buf);
+	}
+}
+
+void
+show_mcast_macs(portid_t port_id)
+{
+	char buf[RTE_ETHER_ADDR_FMT_SIZE];
+	struct rte_ether_addr *addr;
+	struct rte_port *port;
+	uint32_t i;
+
+	port = &ports[port_id];
+
+	printf("Number of Multicast MAC address added: %d\n", port->mc_addr_nb);
+
+	for (i = 0; i < port->mc_addr_nb; i++) {
+		addr = &port->mc_addr_pool[i];
+
+		rte_ether_format_addr(buf, RTE_ETHER_ADDR_FMT_SIZE, addr);
+		printf("  %s\n", buf);
+	}
 }

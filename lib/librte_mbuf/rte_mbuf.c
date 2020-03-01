@@ -51,7 +51,7 @@ rte_pktmbuf_pool_init(struct rte_mempool *mp, void *opaque_arg)
 	//如果未提供opaque_arg,则默认计算mbuf空闲空间大小
 	user_mbp_priv = opaque_arg;
 	if (user_mbp_priv == NULL) {
-		default_mbp_priv.mbuf_priv_size = 0;
+		memset(&default_mbp_priv, 0, sizeof(default_mbp_priv));
 		if (mp->elt_size > sizeof(struct rte_mbuf))
 			roomsz = mp->elt_size - sizeof(struct rte_mbuf);
 		else
@@ -62,8 +62,12 @@ rte_pktmbuf_pool_init(struct rte_mempool *mp, void *opaque_arg)
 
 	//预留的空间大小校验
 	RTE_ASSERT(mp->elt_size >= sizeof(struct rte_mbuf) +
-		user_mbp_priv->mbuf_data_room_size +
+		((user_mbp_priv->flags & RTE_PKTMBUF_POOL_F_PINNED_EXT_BUF) ?
+			sizeof(struct rte_mbuf_ext_shared_info) :
+			user_mbp_priv->mbuf_data_room_size) +
 		user_mbp_priv->mbuf_priv_size);
+	RTE_ASSERT((user_mbp_priv->flags &
+		    ~RTE_PKTMBUF_POOL_F_PINNED_EXT_BUF) == 0);
 
 	//采用用户传入参数填充mempool的私有数据
 	mbp_priv = rte_mempool_get_priv(mp);
@@ -112,6 +116,117 @@ rte_pktmbuf_init(struct rte_mempool *mp,
 	m->next = NULL;
 }
 
+/*
+ * @internal The callback routine called when reference counter in shinfo
+ * for mbufs with pinned external buffer reaches zero. It means there is
+ * no more reference to buffer backing mbuf and this one should be freed.
+ * This routine is called for the regular (not with pinned external or
+ * indirect buffer) mbufs on detaching from the mbuf with pinned external
+ * buffer.
+ */
+static void
+rte_pktmbuf_free_pinned_extmem(void *addr, void *opaque)
+{
+	struct rte_mbuf *m = opaque;
+
+	RTE_SET_USED(addr);
+	RTE_ASSERT(RTE_MBUF_HAS_EXTBUF(m));
+	RTE_ASSERT(RTE_MBUF_HAS_PINNED_EXTBUF(m));
+	RTE_ASSERT(m->shinfo->fcb_opaque == m);
+
+	rte_mbuf_ext_refcnt_set(m->shinfo, 1);
+	m->ol_flags = EXT_ATTACHED_MBUF;
+	if (m->next != NULL) {
+		m->next = NULL;
+		m->nb_segs = 1;
+	}
+	rte_mbuf_raw_free(m);
+}
+
+/** The context to initialize the mbufs with pinned external buffers. */
+struct rte_pktmbuf_extmem_init_ctx {
+	const struct rte_pktmbuf_extmem *ext_mem; /* descriptor array. */
+	unsigned int ext_num; /* number of descriptors in array. */
+	unsigned int ext; /* loop descriptor index. */
+	size_t off; /* loop buffer offset. */
+};
+
+/**
+ * @internal Packet mbuf constructor for pools with pinned external memory.
+ *
+ * This function initializes some fields in the mbuf structure that are
+ * not modified by the user once created (origin pool, buffer start
+ * address, and so on). This function is given as a callback function to
+ * rte_mempool_obj_iter() called from rte_mempool_create_extmem().
+ *
+ * @param mp
+ *   The mempool from which mbufs originate.
+ * @param opaque_arg
+ *   A pointer to the rte_pktmbuf_extmem_init_ctx - initialization
+ *   context structure
+ * @param m
+ *   The mbuf to initialize.
+ * @param i
+ *   The index of the mbuf in the pool table.
+ */
+static void
+__rte_pktmbuf_init_extmem(struct rte_mempool *mp,
+			  void *opaque_arg,
+			  void *_m,
+			  __attribute__((unused)) unsigned int i)
+{
+	struct rte_mbuf *m = _m;
+	struct rte_pktmbuf_extmem_init_ctx *ctx = opaque_arg;
+	const struct rte_pktmbuf_extmem *ext_mem;
+	uint32_t mbuf_size, buf_len, priv_size;
+	struct rte_mbuf_ext_shared_info *shinfo;
+
+	priv_size = rte_pktmbuf_priv_size(mp);
+	mbuf_size = sizeof(struct rte_mbuf) + priv_size;
+	buf_len = rte_pktmbuf_data_room_size(mp);
+
+	RTE_ASSERT(RTE_ALIGN(priv_size, RTE_MBUF_PRIV_ALIGN) == priv_size);
+	RTE_ASSERT(mp->elt_size >= mbuf_size);
+	RTE_ASSERT(buf_len <= UINT16_MAX);
+
+	memset(m, 0, mbuf_size);
+	m->priv_size = priv_size;
+	m->buf_len = (uint16_t)buf_len;
+
+	/* set the data buffer pointers to external memory */
+	ext_mem = ctx->ext_mem + ctx->ext;
+
+	RTE_ASSERT(ctx->ext < ctx->ext_num);
+	RTE_ASSERT(ctx->off < ext_mem->buf_len);
+
+	m->buf_addr = RTE_PTR_ADD(ext_mem->buf_ptr, ctx->off);
+	m->buf_iova = ext_mem->buf_iova == RTE_BAD_IOVA ?
+		      RTE_BAD_IOVA : (ext_mem->buf_iova + ctx->off);
+
+	ctx->off += ext_mem->elt_size;
+	if (ctx->off >= ext_mem->buf_len) {
+		ctx->off = 0;
+		++ctx->ext;
+	}
+	/* keep some headroom between start of buffer and data */
+	m->data_off = RTE_MIN(RTE_PKTMBUF_HEADROOM, (uint16_t)m->buf_len);
+
+	/* init some constant fields */
+	m->pool = mp;
+	m->nb_segs = 1;
+	m->port = MBUF_INVALID_PORT;
+	m->ol_flags = EXT_ATTACHED_MBUF;
+	rte_mbuf_refcnt_set(m, 1);
+	m->next = NULL;
+
+	/* init external buffer shared info items */
+	shinfo = RTE_PTR_ADD(m, mbuf_size);
+	m->shinfo = shinfo;
+	shinfo->free_cb = rte_pktmbuf_free_pinned_extmem;
+	shinfo->fcb_opaque = m;
+	rte_mbuf_ext_refcnt_set(shinfo, 1);
+}
+
 /* Helper to create a mbuf pool with given mempool ops name*/
 struct rte_mempool *
 rte_pktmbuf_pool_create_by_ops(const char *name, unsigned int n,
@@ -134,6 +249,7 @@ rte_pktmbuf_pool_create_by_ops(const char *name, unsigned int n,
 	//每个mbuf的大小为，rte_mbuf结构体大小＋用户私有数据大小＋缓冲区大小
 	elt_size = sizeof(struct rte_mbuf) + (unsigned)priv_size +
 		(unsigned)data_room_size;
+	memset(&mbp_priv, 0, sizeof(mbp_priv));
 	mbp_priv.mbuf_data_room_size = data_room_size;
 	mbp_priv.mbuf_priv_size = priv_size;
 
@@ -180,6 +296,93 @@ rte_pktmbuf_pool_create(const char *name, unsigned int n,
 {
 	return rte_pktmbuf_pool_create_by_ops(name, n, cache_size, priv_size,
 			data_room_size, socket_id, NULL);
+}
+
+/* Helper to create a mbuf pool with pinned external data buffers. */
+struct rte_mempool *
+rte_pktmbuf_pool_create_extbuf(const char *name, unsigned int n,
+	unsigned int cache_size, uint16_t priv_size,
+	uint16_t data_room_size, int socket_id,
+	const struct rte_pktmbuf_extmem *ext_mem,
+	unsigned int ext_num)
+{
+	struct rte_mempool *mp;
+	struct rte_pktmbuf_pool_private mbp_priv;
+	struct rte_pktmbuf_extmem_init_ctx init_ctx;
+	const char *mp_ops_name;
+	unsigned int elt_size;
+	unsigned int i, n_elts = 0;
+	int ret;
+
+	if (RTE_ALIGN(priv_size, RTE_MBUF_PRIV_ALIGN) != priv_size) {
+		RTE_LOG(ERR, MBUF, "mbuf priv_size=%u is not aligned\n",
+			priv_size);
+		rte_errno = EINVAL;
+		return NULL;
+	}
+	/* Check the external memory descriptors. */
+	for (i = 0; i < ext_num; i++) {
+		const struct rte_pktmbuf_extmem *extm = ext_mem + i;
+
+		if (!extm->elt_size || !extm->buf_len || !extm->buf_ptr) {
+			RTE_LOG(ERR, MBUF, "invalid extmem descriptor\n");
+			rte_errno = EINVAL;
+			return NULL;
+		}
+		if (data_room_size > extm->elt_size) {
+			RTE_LOG(ERR, MBUF, "ext elt_size=%u is too small\n",
+				priv_size);
+			rte_errno = EINVAL;
+			return NULL;
+		}
+		n_elts += extm->buf_len / extm->elt_size;
+	}
+	/* Check whether enough external memory provided. */
+	if (n_elts < n) {
+		RTE_LOG(ERR, MBUF, "not enough extmem\n");
+		rte_errno = ENOMEM;
+		return NULL;
+	}
+	elt_size = sizeof(struct rte_mbuf) +
+		   (unsigned int)priv_size +
+		   sizeof(struct rte_mbuf_ext_shared_info);
+
+	memset(&mbp_priv, 0, sizeof(mbp_priv));
+	mbp_priv.mbuf_data_room_size = data_room_size;
+	mbp_priv.mbuf_priv_size = priv_size;
+	mbp_priv.flags = RTE_PKTMBUF_POOL_F_PINNED_EXT_BUF;
+
+	mp = rte_mempool_create_empty(name, n, elt_size, cache_size,
+		 sizeof(struct rte_pktmbuf_pool_private), socket_id, 0);
+	if (mp == NULL)
+		return NULL;
+
+	mp_ops_name = rte_mbuf_best_mempool_ops();
+	ret = rte_mempool_set_ops_byname(mp, mp_ops_name, NULL);
+	if (ret != 0) {
+		RTE_LOG(ERR, MBUF, "error setting mempool handler\n");
+		rte_mempool_free(mp);
+		rte_errno = -ret;
+		return NULL;
+	}
+	rte_pktmbuf_pool_init(mp, &mbp_priv);
+
+	ret = rte_mempool_populate_default(mp);
+	if (ret < 0) {
+		rte_mempool_free(mp);
+		rte_errno = -ret;
+		return NULL;
+	}
+
+	init_ctx = (struct rte_pktmbuf_extmem_init_ctx){
+		.ext_mem = ext_mem,
+		.ext_num = ext_num,
+		.ext = 0,
+		.off = 0,
+	};
+	rte_mempool_obj_iter(mp, __rte_pktmbuf_init_extmem, &init_ctx);
+
+	return mp;
 }
 
 /* do some sanity checks on a mbuf: panic if it fails */
@@ -488,18 +691,25 @@ rte_pktmbuf_dump(FILE *f, const struct rte_mbuf *m, unsigned dump_len)
 
 	__rte_mbuf_sanity_check(m, 1);
 
-	fprintf(f, "dump mbuf at %p, iova=%"PRIx64", buf_len=%u\n",
-	       m, (uint64_t)m->buf_iova, (unsigned)m->buf_len);
-	fprintf(f, "  pkt_len=%"PRIu32", ol_flags=%"PRIx64", nb_segs=%u, "
-	       "in_port=%u\n", m->pkt_len, m->ol_flags,
-	       (unsigned)m->nb_segs, (unsigned)m->port);
+	fprintf(f, "dump mbuf at %p, iova=%#"PRIx64", buf_len=%u\n",
+		m, m->buf_iova, m->buf_len);
+	fprintf(f, "  pkt_len=%u, ol_flags=%#"PRIx64", nb_segs=%u, port=%u",
+		m->pkt_len, m->ol_flags, m->nb_segs, m->port);
+
+	if (m->ol_flags & (PKT_RX_VLAN | PKT_TX_VLAN))
+		fprintf(f, ", vlan_tci=%u", m->vlan_tci);
+
+	fprintf(f, ", ptype=%#"PRIx32"\n", m->packet_type);
+
 	nb_segs = m->nb_segs;
 
 	while (m && nb_segs != 0) {
 		__rte_mbuf_sanity_check(m, 0);
 
-		fprintf(f, "  segment at %p, data=%p, data_len=%u\n",
-			m, rte_pktmbuf_mtod(m, void *), (unsigned)m->data_len);
+		fprintf(f, "  segment at %p, data=%p, len=%u, off=%u, refcnt=%u\n",
+			m, rte_pktmbuf_mtod(m, void *),
+			m->data_len, m->data_off, rte_mbuf_refcnt_read(m));
+
 		len = dump_len;
 		if (len > m->data_len)
 			len = m->data_len;
@@ -685,7 +895,6 @@ const char *rte_get_tx_ol_flag_name(uint64_t mask)
 	case PKT_TX_SEC_OFFLOAD: return "PKT_TX_SEC_OFFLOAD";
 	case PKT_TX_UDP_SEG: return "PKT_TX_UDP_SEG";
 	case PKT_TX_OUTER_UDP_CKSUM: return "PKT_TX_OUTER_UDP_CKSUM";
-	case PKT_TX_METADATA: return "PKT_TX_METADATA";
 	default: return NULL;
 	}
 }
@@ -722,7 +931,6 @@ rte_get_tx_ol_flag_list(uint64_t mask, char *buf, size_t buflen)
 		{ PKT_TX_SEC_OFFLOAD, PKT_TX_SEC_OFFLOAD, NULL },
 		{ PKT_TX_UDP_SEG, PKT_TX_UDP_SEG, NULL },
 		{ PKT_TX_OUTER_UDP_CKSUM, PKT_TX_OUTER_UDP_CKSUM, NULL },
-		{ PKT_TX_METADATA, PKT_TX_METADATA, NULL },
 	};
 	const char *name;
 	unsigned int i;

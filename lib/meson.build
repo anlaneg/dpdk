@@ -47,7 +47,6 @@ foreach l:libraries
 	build = true
 	reason = '<unknown reason>' # set if build == false to explain why
 	name = l
-	version = 1
 	allow_experimental_apis = false
 	use_function_versioning = false
 	sources = []
@@ -106,12 +105,18 @@ foreach l:libraries
 				cflags += '-DRTE_USE_FUNCTION_VERSIONING'
 			endif
 
-			if get_option('per_library_versions')
-				lib_version = '@0@.1'.format(version)
-				so_version = '@0@'.format(version)
+			version_map = '@0@/@1@/rte_@2@_version.map'.format(
+					meson.current_source_dir(), dir_name, name)
+
+			is_experimental = run_command(is_experimental_cmd,
+					files(version_map)).returncode()
+
+			if is_experimental != 0
+				lib_version = experimental_abi_version
+				so_version = experimental_so_version
 			else
-				lib_version = major_version
-				so_version = major_version
+				lib_version = abi_version
+				so_version = stable_so_version
 			endif
 
 			# first build static lib
@@ -143,11 +148,21 @@ foreach l:libraries
 				command: [map_to_def_cmd, '@INPUT@', '@OUTPUT@'],
 				input: version_map,
 				output: 'rte_@0@_exports.def'.format(name))
+			lk_deps = [version_map, def_file]
 			if is_windows
 				lk_args = ['-Wl,/def:' + def_file.full_path(),
 					'-Wl,/implib:lib\\' + implib]
 			else
 				lk_args = ['-Wl,--version-script=' + version_map]
+				# on unix systems check the output of the
+				# experimental syms script, using it as a
+				# dependency of the .so build
+				lk_deps += custom_target(name + '.exp_chk',
+					command: [check_experimental_syms,
+						version_map, '@INPUT@'],
+					capture: true,
+					input: static_lib,
+					output: name + '.exp_chk')
 			endif
 
 			shared_lib = shared_library(libname,
@@ -157,7 +172,7 @@ foreach l:libraries
 					dependencies: shared_deps,
 					include_directories: includes,
 					link_args: lk_args,
-					link_depends: [version_map, def_file],
+					link_depends: lk_deps,
 					version: lib_version,
 					soversion: so_version,
 					install: true)

@@ -101,7 +101,7 @@ struct rte_ipv4_hdr {
 
 /* IPv4 default fields values */
 #define RTE_IPV4_MIN_IHL    (0x5)
-#define RTE_IPV4_VHL_DEF    (IPVERSION | RTE_IPV4_MIN_IHL)
+#define RTE_IPV4_VHL_DEF    ((IPVERSION << 4) | RTE_IPV4_MIN_IHL)
 
 /**
  * @internal Calculate a sum of all words in the buffer.
@@ -465,7 +465,7 @@ rte_ipv6_udptcp_cksum(const struct rte_ipv6_hdr *ipv6_hdr, const void *l4_hdr)
  */
 __rte_experimental
 static inline int
-rte_ipv6_get_next_ext(uint8_t *p, int proto, size_t *ext_len)
+rte_ipv6_get_next_ext(const uint8_t *p, int proto, size_t *ext_len)
 {
 	int next_proto;
 

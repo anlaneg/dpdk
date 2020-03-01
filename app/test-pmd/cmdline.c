@@ -11,9 +11,7 @@
 #include <termios.h>
 #include <unistd.h>
 #include <inttypes.h>
-#ifdef RTE_EXEC_ENV_FREEBSD
 #include <sys/socket.h>
-#endif
 #include <netinet/in.h>
 
 #include <sys/queue.h>
@@ -42,6 +40,7 @@
 #include <rte_devargs.h>
 #include <rte_flow.h>
 #include <rte_gro.h>
+#include <rte_mbuf_dyn.h>
 
 #include <cmdline_rdline.h>
 #include <cmdline_parse.h>
@@ -240,6 +239,12 @@ static void cmd_help_long_parsed(void *parsed_result,
 
 			"show device info (<identifier>|all)"
 			"       Show general information about devices probed.\n\n"
+
+			"show port (port_id) rxq|txq (queue_id) desc (desc_id) status"
+			"       Show status of rx|tx descriptor.\n\n"
+
+			"show port (port_id) macs|mcast_macs"
+			"       Display list of mac addresses added to port.\n\n"
 		);
 	}
 
@@ -668,6 +673,9 @@ static void cmd_help_long_parsed(void *parsed_result,
 			"ptype mapping update (port_id) (hw_ptype) (sw_ptype)\n"
 			"    Update a ptype mapping item on a port\n\n"
 
+			"set port (port_id) ptype_mask (ptype_mask)\n"
+			"    set packet types classification for a specific port\n\n"
+
 			"set port (port_id) queue-region region_id (value) "
 			"queue_start_index (value) queue_num (value)\n"
 			"    Set a queue region on a port\n\n"
@@ -774,6 +782,9 @@ static void cmd_help_long_parsed(void *parsed_result,
 			"port config all max-pkt-len (value)\n"
 			"    Set the max packet length.\n\n"
 
+			"port config all max-lro-pkt-size (value)\n"
+			"    Set the max LRO aggregated packet size.\n\n"
+
 			"port config all drop-en (on|off)\n"
 			"    Enable or disable packet drop on all RX queues of all ports when no "
 			"receive buffers available.\n\n"
@@ -867,7 +878,7 @@ static void cmd_help_long_parsed(void *parsed_result,
 			"udp_tso|outer_ipv4_cksum|qinq_insert|vxlan_tnl_tso|"
 			"gre_tnl_tso|ipip_tnl_tso|geneve_tnl_tso|"
 			"macsec_insert|mt_lockfree|multi_segs|mbuf_fast_free|"
-			"security|match_metadata on|off\n"
+			"security on|off\n"
 			"    Enable or disable a per port Tx offloading"
 			" on all Tx queues of a port\n\n"
 
@@ -891,6 +902,11 @@ static void cmd_help_long_parsed(void *parsed_result,
 			"port config (port_id) tx_metadata (value)\n"
 			"    Set Tx metadata value per port. Testpmd will add this value"
 			" to any Tx packet sent from this port\n\n"
+
+			"port config (port_id) dynf (name) set|clear\n"
+			"    Register a dynf and Set/clear this flag on Tx. "
+			"Testpmd will set this value to any Tx packet "
+			"sent from this port\n\n"
 		);
 	}
 
@@ -1430,7 +1446,7 @@ cmdline_parse_inst_t cmd_set_port_setup_on = {
 struct cmd_operate_attach_port_result {
 	cmdline_fixed_string_t port;
 	cmdline_fixed_string_t keyword;
-	cmdline_fixed_string_t identifier;
+	cmdline_multi_string_t identifier;
 };
 
 static void cmd_operate_attach_port_parsed(void *parsed_result,
@@ -1453,7 +1469,7 @@ cmdline_parse_token_string_t cmd_operate_attach_port_keyword =
 			keyword, "attach");
 cmdline_parse_token_string_t cmd_operate_attach_port_identifier =
 	TOKEN_STRING_INITIALIZER(struct cmd_operate_attach_port_result,
-			identifier, NULL);
+			identifier, TOKEN_STRING_MULTI);
 
 cmdline_parse_inst_t cmd_operate_attach_port = {
 	.f = cmd_operate_attach_port_parsed,
@@ -1481,10 +1497,12 @@ static void cmd_operate_detach_port_parsed(void *parsed_result,
 {
 	struct cmd_operate_detach_port_result *res = parsed_result;
 
-	if (!strcmp(res->keyword, "detach"))
+	if (!strcmp(res->keyword, "detach")) {
+		RTE_ETH_VALID_PORTID_OR_RET(res->port_id);
 		detach_port_device(res->port_id);
-	else
+	} else {
 		printf("Unknown parameter\n");
+	}
 }
 
 cmdline_parse_token_string_t cmd_operate_detach_port_port =
@@ -1523,7 +1541,7 @@ static void cmd_operate_detach_device_parsed(void *parsed_result,
 	struct cmd_operate_detach_device_result *res = parsed_result;
 
 	if (!strcmp(res->keyword, "detach"))
-		detach_device(res->identifier);
+		detach_devargs(res->identifier);
 	else
 		printf("Unknown parameter\n");
 }
@@ -2033,6 +2051,78 @@ cmdline_parse_inst_t cmd_config_max_pkt_len = {
 		(void *)&cmd_config_max_pkt_len_all,
 		(void *)&cmd_config_max_pkt_len_name,
 		(void *)&cmd_config_max_pkt_len_value,
+		NULL,
+	},
+};
+
+/* *** config max LRO aggregated packet size *** */
+struct cmd_config_max_lro_pkt_size_result {
+	cmdline_fixed_string_t port;
+	cmdline_fixed_string_t keyword;
+	cmdline_fixed_string_t all;
+	cmdline_fixed_string_t name;
+	uint32_t value;
+};
+
+static void
+cmd_config_max_lro_pkt_size_parsed(void *parsed_result,
+				__attribute__((unused)) struct cmdline *cl,
+				__attribute__((unused)) void *data)
+{
+	struct cmd_config_max_lro_pkt_size_result *res = parsed_result;
+	portid_t pid;
+
+	if (!all_ports_stopped()) {
+		printf("Please stop all ports first\n");
+		return;
+	}
+
+	RTE_ETH_FOREACH_DEV(pid) {
+		struct rte_port *port = &ports[pid];
+
+		if (!strcmp(res->name, "max-lro-pkt-size")) {
+			if (res->value ==
+					port->dev_conf.rxmode.max_lro_pkt_size)
+				return;
+
+			port->dev_conf.rxmode.max_lro_pkt_size = res->value;
+		} else {
+			printf("Unknown parameter\n");
+			return;
+		}
+	}
+
+	init_port_config();
+
+	cmd_reconfig_device_queue(RTE_PORT_ALL, 1, 1);
+}
+
+cmdline_parse_token_string_t cmd_config_max_lro_pkt_size_port =
+	TOKEN_STRING_INITIALIZER(struct cmd_config_max_lro_pkt_size_result,
+				 port, "port");
+cmdline_parse_token_string_t cmd_config_max_lro_pkt_size_keyword =
+	TOKEN_STRING_INITIALIZER(struct cmd_config_max_lro_pkt_size_result,
+				 keyword, "config");
+cmdline_parse_token_string_t cmd_config_max_lro_pkt_size_all =
+	TOKEN_STRING_INITIALIZER(struct cmd_config_max_lro_pkt_size_result,
+				 all, "all");
+cmdline_parse_token_string_t cmd_config_max_lro_pkt_size_name =
+	TOKEN_STRING_INITIALIZER(struct cmd_config_max_lro_pkt_size_result,
+				 name, "max-lro-pkt-size");
+cmdline_parse_token_num_t cmd_config_max_lro_pkt_size_value =
+	TOKEN_NUM_INITIALIZER(struct cmd_config_max_lro_pkt_size_result,
+			      value, UINT32);
+
+cmdline_parse_inst_t cmd_config_max_lro_pkt_size = {
+	.f = cmd_config_max_lro_pkt_size_parsed,
+	.data = NULL,
+	.help_str = "port config all max-lro-pkt-size <value>",
+	.tokens = {
+		(void *)&cmd_config_max_lro_pkt_size_port,
+		(void *)&cmd_config_max_lro_pkt_size_keyword,
+		(void *)&cmd_config_max_lro_pkt_size_all,
+		(void *)&cmd_config_max_lro_pkt_size_name,
+		(void *)&cmd_config_max_lro_pkt_size_value,
 		NULL,
 	},
 };
@@ -5477,7 +5567,7 @@ cmd_show_bypass_config_parsed(void *parsed_result,
 	uint32_t event_mode;
 	uint32_t bypass_mode;
 	uint32_t timeout = bypass_timeout;
-	int i;
+	unsigned int i;
 
 	static const char * const timeouts[RTE_PMD_IXGBE_BYPASS_TMT_NUM] =
 		{"off", "1.5", "2", "3", "4", "8", "16", "32"};
@@ -5490,7 +5580,6 @@ cmd_show_bypass_config_parsed(void *parsed_result,
 		"OS/board off",
 		"power supply off",
 		"timeout"};
-	int num_events = (sizeof events) / (sizeof events[0]);
 
 	/* Display the bypass mode.*/
 	if (rte_pmd_ixgbe_bypass_state_show(port_id, &bypass_mode) != 0) {
@@ -5511,7 +5600,7 @@ cmd_show_bypass_config_parsed(void *parsed_result,
 	printf("\tbypass timeout = %s\n", timeouts[timeout]);
 
 	/* Display the bypass events and associated modes. */
-	for (i = RTE_PMD_IXGBE_BYPASS_EVENT_START; i < num_events; i++) {
+	for (i = RTE_PMD_IXGBE_BYPASS_EVENT_START; i < RTE_DIM(events); i++) {
 
 		if (rte_pmd_ixgbe_bypass_event_show(port_id, i, &event_mode)) {
 			printf("\tFailed to get bypass mode for event = %s\n",
@@ -6999,9 +7088,10 @@ cmd_priority_flow_ctrl_set_parsed(void *parsed_result,
 	 * the RTE_FC_RX_PAUSE, Respond to the pause frame at the Tx side.
 	 */
 	static enum rte_eth_fc_mode rx_tx_onoff_2_pfc_mode[2][2] = {
-			{RTE_FC_NONE, RTE_FC_RX_PAUSE}, {RTE_FC_TX_PAUSE, RTE_FC_FULL}
+		{RTE_FC_NONE, RTE_FC_TX_PAUSE}, {RTE_FC_RX_PAUSE, RTE_FC_FULL}
 	};
 
+	memset(&pfc_conf, 0, sizeof(struct rte_eth_pfc_conf));
 	rx_fc_enable = (!strncmp(res->rx_pfc_mode, "on",2)) ? 1 : 0;
 	tx_fc_enable = (!strncmp(res->tx_pfc_mode, "on",2)) ? 1 : 0;
 	pfc_conf.fc.mode       = rx_tx_onoff_2_pfc_mode[rx_fc_enable][tx_fc_enable];
@@ -18081,7 +18171,7 @@ cmdline_parse_token_string_t cmd_config_per_port_rx_offload_result_offload =
 		 offload, "vlan_strip#ipv4_cksum#udp_cksum#tcp_cksum#tcp_lro#"
 			   "qinq_strip#outer_ipv4_cksum#macsec_strip#"
 			   "header_split#vlan_filter#vlan_extend#jumbo_frame#"
-			   "scatter#timestamp#security#keep_crc");
+			   "scatter#timestamp#security#keep_crc#rss_hash");
 cmdline_parse_token_string_t cmd_config_per_port_rx_offload_result_on_off =
 	TOKEN_STRING_INITIALIZER
 		(struct cmd_config_per_port_rx_offload_result,
@@ -18161,7 +18251,7 @@ cmdline_parse_inst_t cmd_config_per_port_rx_offload = {
 	.help_str = "port config <port_id> rx_offload vlan_strip|ipv4_cksum|"
 		    "udp_cksum|tcp_cksum|tcp_lro|qinq_strip|outer_ipv4_cksum|"
 		    "macsec_strip|header_split|vlan_filter|vlan_extend|"
-		    "jumbo_frame|scatter|timestamp|security|keep_crc "
+		    "jumbo_frame|scatter|timestamp|security|keep_crc|rss_hash "
 		    "on|off",
 	.tokens = {
 		(void *)&cmd_config_per_port_rx_offload_result_port,
@@ -18492,8 +18582,7 @@ cmdline_parse_token_string_t cmd_config_per_port_tx_offload_result_offload =
 			  "sctp_cksum#tcp_tso#udp_tso#outer_ipv4_cksum#"
 			  "qinq_insert#vxlan_tnl_tso#gre_tnl_tso#"
 			  "ipip_tnl_tso#geneve_tnl_tso#macsec_insert#"
-			  "mt_lockfree#multi_segs#mbuf_fast_free#security#"
-			  "match_metadata");
+			  "mt_lockfree#multi_segs#mbuf_fast_free#security");
 cmdline_parse_token_string_t cmd_config_per_port_tx_offload_result_on_off =
 	TOKEN_STRING_INITIALIZER
 		(struct cmd_config_per_port_tx_offload_result,
@@ -18578,8 +18667,7 @@ cmdline_parse_inst_t cmd_config_per_port_tx_offload = {
 		    "sctp_cksum|tcp_tso|udp_tso|outer_ipv4_cksum|"
 		    "qinq_insert|vxlan_tnl_tso|gre_tnl_tso|"
 		    "ipip_tnl_tso|geneve_tnl_tso|macsec_insert|"
-		    "mt_lockfree|multi_segs|mbuf_fast_free|security|"
-		    "match_metadata on|off",
+		    "mt_lockfree|multi_segs|mbuf_fast_free|security on|off",
 	.tokens = {
 		(void *)&cmd_config_per_port_tx_offload_result_port,
 		(void *)&cmd_config_per_port_tx_offload_result_config,
@@ -18718,12 +18806,13 @@ cmd_config_tx_metadata_specific_parsed(void *parsed_result,
 
 	if (port_id_is_invalid(res->port_id, ENABLED_WARN))
 		return;
-	ports[res->port_id].tx_metadata = rte_cpu_to_be_32(res->value);
+	ports[res->port_id].tx_metadata = res->value;
 	/* Add/remove callback to insert valid metadata in every Tx packet. */
 	if (ports[res->port_id].tx_metadata)
 		add_tx_md_callback(res->port_id);
 	else
 		remove_tx_md_callback(res->port_id);
+	rte_flow_dynf_metadata_register();
 }
 
 cmdline_parse_token_string_t cmd_config_tx_metadata_specific_port =
@@ -18756,6 +18845,89 @@ cmdline_parse_inst_t cmd_config_tx_metadata_specific = {
 	},
 };
 
+/* *** set dynf *** */
+struct cmd_config_tx_dynf_specific_result {
+	cmdline_fixed_string_t port;
+	cmdline_fixed_string_t keyword;
+	uint16_t port_id;
+	cmdline_fixed_string_t item;
+	cmdline_fixed_string_t name;
+	cmdline_fixed_string_t value;
+};
+
+static void
+cmd_config_dynf_specific_parsed(void *parsed_result,
+				__attribute__((unused)) struct cmdline *cl,
+				__attribute__((unused)) void *data)
+{
+	struct cmd_config_tx_dynf_specific_result *res = parsed_result;
+	struct rte_mbuf_dynflag desc_flag;
+	int flag;
+	uint64_t old_port_flags;
+
+	if (port_id_is_invalid(res->port_id, ENABLED_WARN))
+		return;
+	flag = rte_mbuf_dynflag_lookup(res->name, NULL);
+	if (flag <= 0) {
+		if (strlcpy(desc_flag.name, res->name,
+			    RTE_MBUF_DYN_NAMESIZE) >= RTE_MBUF_DYN_NAMESIZE) {
+			printf("Flag name too long\n");
+			return;
+		}
+		desc_flag.flags = 0;
+		flag = rte_mbuf_dynflag_register(&desc_flag);
+		if (flag < 0) {
+			printf("Can't register flag\n");
+			return;
+		}
+		strcpy(dynf_names[flag], desc_flag.name);
+	}
+	old_port_flags = ports[res->port_id].mbuf_dynf;
+	if (!strcmp(res->value, "set")) {
+		ports[res->port_id].mbuf_dynf |= 1UL << flag;
+		if (old_port_flags == 0)
+			add_tx_dynf_callback(res->port_id);
+	} else {
+		ports[res->port_id].mbuf_dynf &= ~(1UL << flag);
+		if (ports[res->port_id].mbuf_dynf == 0)
+			remove_tx_dynf_callback(res->port_id);
+	}
+}
+
+cmdline_parse_token_string_t cmd_config_tx_dynf_specific_port =
+	TOKEN_STRING_INITIALIZER(struct cmd_config_tx_dynf_specific_result,
+			keyword, "port");
+cmdline_parse_token_string_t cmd_config_tx_dynf_specific_keyword =
+	TOKEN_STRING_INITIALIZER(struct cmd_config_tx_dynf_specific_result,
+			keyword, "config");
+cmdline_parse_token_num_t cmd_config_tx_dynf_specific_port_id =
+	TOKEN_NUM_INITIALIZER(struct cmd_config_tx_dynf_specific_result,
+			port_id, UINT16);
+cmdline_parse_token_string_t cmd_config_tx_dynf_specific_item =
+	TOKEN_STRING_INITIALIZER(struct cmd_config_tx_dynf_specific_result,
+			item, "dynf");
+cmdline_parse_token_string_t cmd_config_tx_dynf_specific_name =
+	TOKEN_STRING_INITIALIZER(struct cmd_config_tx_dynf_specific_result,
+			name, NULL);
+cmdline_parse_token_string_t cmd_config_tx_dynf_specific_value =
+	TOKEN_STRING_INITIALIZER(struct cmd_config_tx_dynf_specific_result,
+			value, "set#clear");
+
+cmdline_parse_inst_t cmd_config_tx_dynf_specific = {
+	.f = cmd_config_dynf_specific_parsed,
+	.data = NULL,
+	.help_str = "port config <port id> dynf <name> set|clear",
+	.tokens = {
+		(void *)&cmd_config_tx_dynf_specific_port,
+		(void *)&cmd_config_tx_dynf_specific_keyword,
+		(void *)&cmd_config_tx_dynf_specific_port_id,
+		(void *)&cmd_config_tx_dynf_specific_item,
+		(void *)&cmd_config_tx_dynf_specific_name,
+		(void *)&cmd_config_tx_dynf_specific_value,
+		NULL,
+	},
+};
+
 /* *** display tx_metadata per port configuration *** */
 struct cmd_show_tx_metadata_result {
 	cmdline_fixed_string_t cmd_show;
@@ -18777,7 +18949,7 @@ cmd_show_tx_metadata_parsed(void *parsed_result,
 	}
 	if (!strcmp(res->cmd_keyword, "tx_metadata")) {
 		printf("Port %u tx_metadata: %u\n", res->cmd_pid,
-			rte_be_to_cpu_32(ports[res->cmd_pid].tx_metadata));
+		       ports[res->cmd_pid].tx_metadata);
 	}
 }
 
@@ -18915,6 +19087,234 @@ cmdline_parse_inst_t cmd_show_port_supported_ptypes = {
 	},
 };
 
+/* *** display rx/tx descriptor status *** */
+struct cmd_show_rx_tx_desc_status_result {
+	cmdline_fixed_string_t cmd_show;
+	cmdline_fixed_string_t cmd_port;
+	cmdline_fixed_string_t cmd_keyword;
+	cmdline_fixed_string_t cmd_desc;
+	cmdline_fixed_string_t cmd_status;
+	portid_t cmd_pid;
+	portid_t cmd_qid;
+	portid_t cmd_did;
+};
+
+static void
+cmd_show_rx_tx_desc_status_parsed(void *parsed_result,
+		__attribute__((unused)) struct cmdline *cl,
+		__attribute__((unused)) void *data)
+{
+	struct cmd_show_rx_tx_desc_status_result *res = parsed_result;
+	int rc;
+
+	if (!rte_eth_dev_is_valid_port(res->cmd_pid)) {
+		printf("invalid port id %u\n", res->cmd_pid);
+		return;
+	}
+
+	if (!strcmp(res->cmd_keyword, "rxq")) {
+		rc = rte_eth_rx_descriptor_status(res->cmd_pid, res->cmd_qid,
+					     res->cmd_did);
+		if (rc < 0) {
+			printf("Invalid queueid = %d\n", res->cmd_qid);
+			return;
+		}
+		if (rc == RTE_ETH_RX_DESC_AVAIL)
+			printf("Desc status = AVAILABLE\n");
+		else if (rc == RTE_ETH_RX_DESC_DONE)
+			printf("Desc status = DONE\n");
+		else
+			printf("Desc status = UNAVAILABLE\n");
+	} else if (!strcmp(res->cmd_keyword, "txq")) {
+		rc = rte_eth_tx_descriptor_status(res->cmd_pid, res->cmd_qid,
+					     res->cmd_did);
+		if (rc < 0) {
+			printf("Invalid queueid = %d\n", res->cmd_qid);
+			return;
+		}
+		if (rc == RTE_ETH_TX_DESC_FULL)
+			printf("Desc status = FULL\n");
+		else if (rc == RTE_ETH_TX_DESC_DONE)
+			printf("Desc status = DONE\n");
+		else
+			printf("Desc status = UNAVAILABLE\n");
+	}
+}
+
+cmdline_parse_token_string_t cmd_show_rx_tx_desc_status_show =
+	TOKEN_STRING_INITIALIZER(struct cmd_show_rx_tx_desc_status_result,
+			cmd_show, "show");
+cmdline_parse_token_string_t cmd_show_rx_tx_desc_status_port =
+	TOKEN_STRING_INITIALIZER(struct cmd_show_rx_tx_desc_status_result,
+			cmd_port, "port");
+cmdline_parse_token_num_t cmd_show_rx_tx_desc_status_pid =
+	TOKEN_NUM_INITIALIZER(struct cmd_show_rx_tx_desc_status_result,
+			cmd_pid, UINT16);
+cmdline_parse_token_string_t cmd_show_rx_tx_desc_status_keyword =
+	TOKEN_STRING_INITIALIZER(struct cmd_show_rx_tx_desc_status_result,
+			cmd_keyword, "rxq#txq");
+cmdline_parse_token_num_t cmd_show_rx_tx_desc_status_qid =
+	TOKEN_NUM_INITIALIZER(struct cmd_show_rx_tx_desc_status_result,
+			cmd_qid, UINT16);
+cmdline_parse_token_string_t cmd_show_rx_tx_desc_status_desc =
+	TOKEN_STRING_INITIALIZER(struct cmd_show_rx_tx_desc_status_result,
+			cmd_desc, "desc");
+cmdline_parse_token_num_t cmd_show_rx_tx_desc_status_did =
+	TOKEN_NUM_INITIALIZER(struct cmd_show_rx_tx_desc_status_result,
+			cmd_did, UINT16);
+cmdline_parse_token_string_t cmd_show_rx_tx_desc_status_status =
+	TOKEN_STRING_INITIALIZER(struct cmd_show_rx_tx_desc_status_result,
+			cmd_status, "status");
+cmdline_parse_inst_t cmd_show_rx_tx_desc_status = {
+	.f = cmd_show_rx_tx_desc_status_parsed,
+	.data = NULL,
+	.help_str = "show port <port_id> rxq|txq <queue_id> desc <desc_id> "
+		"status",
+	.tokens = {
+		(void *)&cmd_show_rx_tx_desc_status_show,
+		(void *)&cmd_show_rx_tx_desc_status_port,
+		(void *)&cmd_show_rx_tx_desc_status_pid,
+		(void *)&cmd_show_rx_tx_desc_status_keyword,
+		(void *)&cmd_show_rx_tx_desc_status_qid,
+		(void *)&cmd_show_rx_tx_desc_status_desc,
+		(void *)&cmd_show_rx_tx_desc_status_did,
+		(void *)&cmd_show_rx_tx_desc_status_status,
+		NULL,
+	},
+};
+
+/* Common result structure for set port ptypes */
+struct cmd_set_port_ptypes_result {
+	cmdline_fixed_string_t set;
+	cmdline_fixed_string_t port;
+	portid_t port_id;
+	cmdline_fixed_string_t ptype_mask;
+	uint32_t mask;
+};
+
+/* Common CLI fields for set port ptypes */
+cmdline_parse_token_string_t cmd_set_port_ptypes_set =
+	TOKEN_STRING_INITIALIZER
+		(struct cmd_set_port_ptypes_result,
+		 set, "set");
+cmdline_parse_token_string_t cmd_set_port_ptypes_port =
+	TOKEN_STRING_INITIALIZER
+		(struct cmd_set_port_ptypes_result,
+		 port, "port");
+cmdline_parse_token_num_t cmd_set_port_ptypes_port_id =
+	TOKEN_NUM_INITIALIZER
+		(struct cmd_set_port_ptypes_result,
+		 port_id, UINT16);
+cmdline_parse_token_string_t cmd_set_port_ptypes_mask_str =
+	TOKEN_STRING_INITIALIZER
+		(struct cmd_set_port_ptypes_result,
+		 ptype_mask, "ptype_mask");
+cmdline_parse_token_num_t cmd_set_port_ptypes_mask_u32 =
+	TOKEN_NUM_INITIALIZER
+		(struct cmd_set_port_ptypes_result,
+		 mask, UINT32);
+
+static void
+cmd_set_port_ptypes_parsed(
+	void *parsed_result,
+	__attribute__((unused)) struct cmdline *cl,
+	__attribute__((unused)) void *data)
+{
+	struct cmd_set_port_ptypes_result *res = parsed_result;
+#define PTYPE_NAMESIZE        256
+	char ptype_name[PTYPE_NAMESIZE];
+	uint16_t port_id = res->port_id;
+	uint32_t ptype_mask = res->mask;
+	int ret, i;
+
+	ret = rte_eth_dev_get_supported_ptypes(port_id, RTE_PTYPE_ALL_MASK,
+					       NULL, 0);
+	if (ret <= 0) {
+		printf("Port %d doesn't support any ptypes.\n", port_id);
+		return;
+	}
+
+	uint32_t ptypes[ret];
+
+	ret = rte_eth_dev_set_ptypes(port_id, ptype_mask, ptypes, ret);
+	if (ret < 0) {
+		printf("Unable to set requested ptypes for Port %d\n", port_id);
+		return;
+	}
+
+	printf("Successfully set following ptypes for Port %d\n", port_id);
+	for (i = 0; i < ret && ptypes[i] != RTE_PTYPE_UNKNOWN; i++) {
+		rte_get_ptype_name(ptypes[i], ptype_name, sizeof(ptype_name));
+		printf("%s\n", ptype_name);
+	}
+
+	clear_ptypes = false;
+}
+
+cmdline_parse_inst_t cmd_set_port_ptypes = {
+	.f = cmd_set_port_ptypes_parsed,
+	.data = NULL,
+	.help_str = "set port <port_id> ptype_mask <mask>",
+	.tokens = {
+		(void *)&cmd_set_port_ptypes_set,
+		(void *)&cmd_set_port_ptypes_port,
+		(void *)&cmd_set_port_ptypes_port_id,
+		(void *)&cmd_set_port_ptypes_mask_str,
+		(void *)&cmd_set_port_ptypes_mask_u32,
+		NULL,
+	},
+};
+
+/* *** display mac addresses added to a port *** */
+struct cmd_showport_macs_result {
+	cmdline_fixed_string_t cmd_show;
+	cmdline_fixed_string_t cmd_port;
+	cmdline_fixed_string_t cmd_keyword;
+	portid_t cmd_pid;
+};
+
+static void
+cmd_showport_macs_parsed(void *parsed_result,
+		__attribute__((unused)) struct cmdline *cl,
+		__attribute__((unused)) void *data)
+{
+	struct cmd_showport_macs_result *res = parsed_result;
+
+	if (port_id_is_invalid(res->cmd_pid, ENABLED_WARN))
+		return;
+
+	if (!strcmp(res->cmd_keyword, "macs"))
+		show_macs(res->cmd_pid);
+	else if (!strcmp(res->cmd_keyword, "mcast_macs"))
+		show_mcast_macs(res->cmd_pid);
+}
+
+cmdline_parse_token_string_t cmd_showport_macs_show =
+	TOKEN_STRING_INITIALIZER(struct cmd_showport_macs_result,
+			cmd_show, "show");
+cmdline_parse_token_string_t cmd_showport_macs_port =
+	TOKEN_STRING_INITIALIZER(struct cmd_showport_macs_result,
+			cmd_port, "port");
+cmdline_parse_token_num_t cmd_showport_macs_pid =
+	TOKEN_NUM_INITIALIZER(struct cmd_showport_macs_result,
+			cmd_pid, UINT16);
+cmdline_parse_token_string_t cmd_showport_macs_keyword =
+	TOKEN_STRING_INITIALIZER(struct cmd_showport_macs_result,
+			cmd_keyword, "macs#mcast_macs");
+
+cmdline_parse_inst_t cmd_showport_macs = {
+	.f = cmd_showport_macs_parsed,
+	.data = NULL,
+	.help_str = "show port <port_id> macs|mcast_macs",
+	.tokens = {
+		(void *)&cmd_showport_macs_show,
+		(void *)&cmd_showport_macs_port,
+		(void *)&cmd_showport_macs_pid,
+		(void *)&cmd_showport_macs_keyword,
+		NULL,
+	},
+};
+
 /* ******************************************************************************** */
 
 /* list of instructions */
@@ -19025,6 +19425,7 @@ cmdline_parse_ctx_t main_ctx[] = {
 	(cmdline_parse_inst_t *)&cmd_config_rx_tx,
 	(cmdline_parse_inst_t *)&cmd_config_mtu,
 	(cmdline_parse_inst_t *)&cmd_config_max_pkt_len,
+	(cmdline_parse_inst_t *)&cmd_config_max_lro_pkt_size,
 	(cmdline_parse_inst_t *)&cmd_config_rx_mode_flag,
 	(cmdline_parse_inst_t *)&cmd_config_rss,
 	(cmdline_parse_inst_t *)&cmd_config_rxtx_ring_size,
@@ -19033,6 +19434,7 @@ cmdline_parse_ctx_t main_ctx[] = {
 	(cmdline_parse_inst_t *)&cmd_setup_rxtx_queue,
 	(cmdline_parse_inst_t *)&cmd_config_rss_reta,
 	(cmdline_parse_inst_t *)&cmd_showport_reta,
+	(cmdline_parse_inst_t *)&cmd_showport_macs,
 	(cmdline_parse_inst_t *)&cmd_config_burst,
 	(cmdline_parse_inst_t *)&cmd_config_thresh,
 	(cmdline_parse_inst_t *)&cmd_config_threshold,
@@ -19155,6 +19557,7 @@ cmdline_parse_ctx_t main_ctx[] = {
 	(cmdline_parse_inst_t *)&cmd_show_vf_stats,
 	(cmdline_parse_inst_t *)&cmd_clear_vf_stats,
 	(cmdline_parse_inst_t *)&cmd_show_port_supported_ptypes,
+	(cmdline_parse_inst_t *)&cmd_set_port_ptypes,
 	(cmdline_parse_inst_t *)&cmd_ptype_mapping_get,
 	(cmdline_parse_inst_t *)&cmd_ptype_mapping_replace,
 	(cmdline_parse_inst_t *)&cmd_ptype_mapping_reset,
@@ -19205,9 +19608,11 @@ cmdline_parse_ctx_t main_ctx[] = {
 #endif
 	(cmdline_parse_inst_t *)&cmd_config_tx_metadata_specific,
 	(cmdline_parse_inst_t *)&cmd_show_tx_metadata,
+	(cmdline_parse_inst_t *)&cmd_show_rx_tx_desc_status,
 	(cmdline_parse_inst_t *)&cmd_set_raw,
 	(cmdline_parse_inst_t *)&cmd_show_set_raw,
 	(cmdline_parse_inst_t *)&cmd_show_set_raw_all,
+	(cmdline_parse_inst_t *)&cmd_config_tx_dynf_specific,
 	NULL,
 };
 

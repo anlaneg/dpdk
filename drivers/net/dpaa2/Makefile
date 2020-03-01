@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2016 Freescale Semiconductor, Inc. All rights reserved.
-# Copyright 2016 NXP
+# Copyright 2016-2019 NXP
 #
 
 include $(RTE_SDK)/mk/rte.vars.mk
@@ -23,9 +23,6 @@ CFLAGS += -I$(RTE_SDK)/drivers/mempool/dpaa2
 
 # versioning export map
 EXPORT_MAP := rte_pmd_dpaa2_version.map
-
-# library version
-LIBABIVER := 2
 
 # depends on fslmc bus which uses experimental API
 CFLAGS += -DALLOW_EXPERIMENTAL_API

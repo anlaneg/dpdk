@@ -512,6 +512,7 @@ static int
 prepare_auth_op(void)
 {
 	struct rte_crypto_sym_op *sym = env.op->sym;
+	uint8_t *pt;
 
 	__rte_crypto_op_reset(env.op, RTE_CRYPTO_OP_TYPE_SYMMETRIC);
 	rte_pktmbuf_reset(env.mbuf);
@@ -519,52 +520,25 @@ prepare_auth_op(void)
 	sym->m_src = env.mbuf;
 	sym->auth.data.offset = 0;
 
-	if (info.op == FIPS_TEST_ENC_AUTH_GEN) {
-		uint8_t *pt;
+	pt = (uint8_t *)rte_pktmbuf_append(env.mbuf, vec.pt.len +
+			vec.cipher_auth.digest.len);
 
-		if (vec.pt.len > RTE_MBUF_MAX_NB_SEGS) {
-			RTE_LOG(ERR, USER1, "PT len %u\n", vec.pt.len);
-			return -EPERM;
-		}
-
-		pt = (uint8_t *)rte_pktmbuf_append(env.mbuf, vec.pt.len +
-				vec.cipher_auth.digest.len);
-
-		if (!pt) {
-			RTE_LOG(ERR, USER1, "Error %i: MBUF too small\n",
-					-ENOMEM);
-			return -ENOMEM;
-		}
-
-		memcpy(pt, vec.pt.val, vec.pt.len);
-		sym->auth.data.length = vec.pt.len;
-		sym->auth.digest.data = pt + vec.pt.len;
-		sym->auth.digest.phys_addr = rte_pktmbuf_mtophys_offset(
-				env.mbuf, vec.pt.len);
-
-	} else {
-		uint8_t *ct;
-
-		if (vec.ct.len > RTE_MBUF_MAX_NB_SEGS) {
-			RTE_LOG(ERR, USER1, "CT len %u\n", vec.ct.len);
-			return -EPERM;
-		}
-
-		ct = (uint8_t *)rte_pktmbuf_append(env.mbuf,
-				vec.ct.len + vec.cipher_auth.digest.len);
-
-		if (!ct) {
-			RTE_LOG(ERR, USER1, "Error %i: MBUF too small\n",
-					-ENOMEM);
-			return -ENOMEM;
-		}
-
-		memcpy(ct, vec.ct.val, vec.ct.len);
-		sym->auth.data.length = vec.ct.len;
-		sym->auth.digest.data = vec.cipher_auth.digest.val;
-		sym->auth.digest.phys_addr = rte_malloc_virt2iova(
-				sym->auth.digest.data);
+	if (!pt) {
+		RTE_LOG(ERR, USER1, "Error %i: MBUF too small\n",
+				-ENOMEM);
+		return -ENOMEM;
 	}
+
+	sym->auth.data.length = vec.pt.len;
+	sym->auth.digest.data = pt + vec.pt.len;
+	sym->auth.digest.phys_addr = rte_pktmbuf_mtophys_offset(
+			env.mbuf, vec.pt.len);
+
+	memcpy(pt, vec.pt.val, vec.pt.len);
+
+	if (info.op == FIPS_TEST_DEC_AUTH_VERIF)
+		memcpy(pt + vec.pt.len, vec.cipher_auth.digest.val,
+				vec.cipher_auth.digest.len);
 
 	rte_crypto_op_attach_sym_session(env.op, env.sess);
 
@@ -932,6 +906,46 @@ prepare_sha_xform(struct rte_crypto_sym_xform *xform)
 		RTE_LOG(ERR, USER1, "PMD %s key length %u digest length %u\n",
 				info.device_name, auth_xform->key.length,
 				auth_xform->digest_length);
+		return -EPERM;
+	}
+
+	return 0;
+}
+
+static int
+prepare_xts_xform(struct rte_crypto_sym_xform *xform)
+{
+	const struct rte_cryptodev_symmetric_capability *cap;
+	struct rte_cryptodev_sym_capability_idx cap_idx;
+	struct rte_crypto_cipher_xform *cipher_xform = &xform->cipher;
+
+	xform->type = RTE_CRYPTO_SYM_XFORM_CIPHER;
+
+	cipher_xform->algo = RTE_CRYPTO_CIPHER_AES_XTS;
+	cipher_xform->op = (info.op == FIPS_TEST_ENC_AUTH_GEN) ?
+			RTE_CRYPTO_CIPHER_OP_ENCRYPT :
+			RTE_CRYPTO_CIPHER_OP_DECRYPT;
+	cipher_xform->key.data = vec.cipher_auth.key.val;
+	cipher_xform->key.length = vec.cipher_auth.key.len;
+	cipher_xform->iv.length = vec.iv.len;
+	cipher_xform->iv.offset = IV_OFF;
+
+	cap_idx.algo.cipher = RTE_CRYPTO_CIPHER_AES_XTS;
+	cap_idx.type = RTE_CRYPTO_SYM_XFORM_CIPHER;
+
+	cap = rte_cryptodev_sym_capability_get(env.dev_id, &cap_idx);
+	if (!cap) {
+		RTE_LOG(ERR, USER1, "Failed to get capability for cdev %u\n",
+				env.dev_id);
+		return -EINVAL;
+	}
+
+	if (rte_cryptodev_sym_capability_check_cipher(cap,
+			cipher_xform->key.length,
+			cipher_xform->iv.length) != 0) {
+		RTE_LOG(ERR, USER1, "PMD %s key length %u IV length %u\n",
+				info.device_name, cipher_xform->key.length,
+				cipher_xform->iv.length);
 		return -EPERM;
 	}
 
@@ -1511,6 +1525,11 @@ init_test_ops(void)
 			test_ops.test = fips_mct_sha_test;
 		else
 			test_ops.test = fips_generic_test;
+		break;
+	case FIPS_TEST_ALGO_AES_XTS:
+		test_ops.prepare_op = prepare_cipher_op;
+		test_ops.prepare_xform = prepare_xts_xform;
+		test_ops.test = fips_generic_test;
 		break;
 	default:
 		if (strstr(info.file_name, "TECB") ||

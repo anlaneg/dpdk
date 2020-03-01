@@ -46,7 +46,7 @@
 #define QEDE_PMD_VER_PREFIX		"QEDE PMD"
 #define QEDE_PMD_VERSION_MAJOR		2
 #define QEDE_PMD_VERSION_MINOR	        11
-#define QEDE_PMD_VERSION_REVISION       0
+#define QEDE_PMD_VERSION_REVISION       3
 #define QEDE_PMD_VERSION_PATCH	        1
 
 #define QEDE_PMD_DRV_VERSION qede_stringify(QEDE_PMD_VERSION_MAJOR) "."     \
@@ -225,6 +225,7 @@ struct qede_dev {
 	struct qede_fastpath *fp_array;
 	struct qede_fastpath_cmt *fp_array_cmt;
 	uint16_t mtu;
+	uint16_t new_mtu;
 	bool enable_tx_switching;
 	bool rss_enable;
 	struct rte_eth_rss_conf rss_conf;

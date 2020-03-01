@@ -395,6 +395,8 @@ struct rte_eth_rxmode {
 	/** The multi-queue packet distribution mode to be used, e.g. RSS. */
 	enum rte_eth_rx_mq_mode mq_mode;
 	uint32_t max_rx_pkt_len;  /**< Only used if JUMBO_FRAME enabled. */
+	/** Maximum allowed size of LRO aggregated packet. */
+	uint32_t max_lro_pkt_size;
 	uint16_t split_hdr_size;  /**< hdr buf size (header_split enabled).*/
 	/**
 	 * Per-port Rx offloads to be set using DEV_RX_OFFLOAD_* flags.
@@ -402,6 +404,9 @@ struct rte_eth_rxmode {
 	 * structure are allowed to be set.
 	 */
 	uint64_t offloads;
+
+	uint64_t reserved_64s[2]; /**< Reserved for future fields */
+	void *reserved_ptrs[2];   /**< Reserved for future fields */
 };
 
 /**
@@ -802,6 +807,9 @@ struct rte_eth_txmode {
 		/**< If set, reject sending out untagged pkts */
 		hw_vlan_insert_pvid : 1;
 		/**< If set, enable port based VLAN insertion */
+
+	uint64_t reserved_64s[2]; /**< Reserved for future fields */
+	void *reserved_ptrs[2];   /**< Reserved for future fields */
 };
 
 /**
@@ -818,6 +826,9 @@ struct rte_eth_rxconf {
 	 * fields on rte_eth_dev_info structure are allowed to be set.
 	 */
 	uint64_t offloads;
+
+	uint64_t reserved_64s[2]; /**< Reserved for future fields */
+	void *reserved_ptrs[2];   /**< Reserved for future fields */
 };
 
 /**
@@ -836,6 +847,49 @@ struct rte_eth_txconf {
 	 * fields on rte_eth_dev_info structure are allowed to be set.
 	 */
 	uint64_t offloads;
+
+	uint64_t reserved_64s[2]; /**< Reserved for future fields */
+	void *reserved_ptrs[2];   /**< Reserved for future fields */
+};
+
+/**
+ * @warning
+ * @b EXPERIMENTAL: this API may change, or be removed, without prior notice
+ *
+ * A structure used to return the hairpin capabilities that are supported.
+ */
+struct rte_eth_hairpin_cap {
+	/** The max number of hairpin queues (different bindings). */
+	uint16_t max_nb_queues;
+	/** Max number of Rx queues to be connected to one Tx queue. */
+	uint16_t max_rx_2_tx;
+	/** Max number of Tx queues to be connected to one Rx queue. */
+	uint16_t max_tx_2_rx;
+	uint16_t max_nb_desc; /**< The max num of descriptors. */
+};
+
+#define RTE_ETH_MAX_HAIRPIN_PEERS 32
+
+/**
+ * @warning
+ * @b EXPERIMENTAL: this API may change, or be removed, without prior notice
+ *
+ * A structure used to hold hairpin peer data.
+ */
+struct rte_eth_hairpin_peer {
+	uint16_t port; /**< Peer port. */
+	uint16_t queue; /**< Peer queue. */
+};
+
+/**
+ * @warning
+ * @b EXPERIMENTAL: this API may change, or be removed, without prior notice
+ *
+ * A structure used to configure hairpin binding.
+ */
+struct rte_eth_hairpin_conf {
+	uint16_t peer_count; /**< The number of peers. */
+	struct rte_eth_hairpin_peer peers[RTE_ETH_MAX_HAIRPIN_PEERS];
 };
 
 /**
@@ -1048,6 +1102,7 @@ struct rte_eth_conf {
 #define DEV_RX_OFFLOAD_KEEP_CRC		0x00010000
 #define DEV_RX_OFFLOAD_SCTP_CKSUM	0x00020000
 #define DEV_RX_OFFLOAD_OUTER_UDP_CKSUM  0x00040000
+#define DEV_RX_OFFLOAD_RSS_HASH		0x00080000
 
 #define DEV_RX_OFFLOAD_CHECKSUM (DEV_RX_OFFLOAD_IPV4_CKSUM | \
 				 DEV_RX_OFFLOAD_UDP_CKSUM | \
@@ -1105,11 +1160,6 @@ struct rte_eth_conf {
 #define DEV_TX_OFFLOAD_IP_TNL_TSO       0x00080000
 /** Device supports outer UDP checksum */
 #define DEV_TX_OFFLOAD_OUTER_UDP_CKSUM  0x00100000
-/**
- * Device supports match on metadata Tx offload..
- * Application must set PKT_TX_METADATA and mbuf metadata field.
- */
-#define DEV_TX_OFFLOAD_MATCH_METADATA   0x00200000
 
 #define RTE_ETH_DEV_CAPA_RUNTIME_RX_QUEUE_SETUP 0x00000001
 /**< Device supports Rx queue setup after device started*/
@@ -1146,7 +1196,7 @@ struct rte_eth_dev_portconf {
  * Default values for switch domain id when ethdev does not support switch
  * domain definitions.
  */
-#define RTE_ETH_DEV_SWITCH_DOMAIN_ID_INVALID	(0)
+#define RTE_ETH_DEV_SWITCH_DOMAIN_ID_INVALID	(UINT16_MAX)
 
 /**
  * Ethernet device associated switch information
@@ -1183,6 +1233,8 @@ struct rte_eth_dev_info {
 	const uint32_t *dev_flags; /**< Device flags */
 	uint32_t min_rx_bufsize; /**< Minimum size of RX buffer. */
 	uint32_t max_rx_pktlen; /**< Maximum configurable length of RX pkt. */
+	/** Maximum configurable size of LRO aggregated packet. */
+	uint32_t max_lro_pkt_size;
 	uint16_t max_rx_queues; /**< Maximum number of RX queues. */
 	uint16_t max_tx_queues; /**< Maximum number of TX queues. */
 	uint32_t max_mac_addrs; /**< Maximum number of MAC addresses. */
@@ -1225,6 +1277,9 @@ struct rte_eth_dev_info {
 	 * embedded managed interconnect/switch.
 	 */
 	struct rte_eth_switch_info switch_info;
+
+	uint64_t reserved_64s[2]; /**< Reserved for future fields */
+	void *reserved_ptrs[2];   /**< Reserved for future fields */
 };
 
 /**
@@ -1247,33 +1302,24 @@ struct rte_eth_txq_info {
 	uint16_t nb_desc;           /**< configured number of TXDs. */
 } __rte_cache_min_aligned;
 
+/* Generic Burst mode flag definition, values can be ORed. */
+
 /**
- * Burst mode types, values can be ORed to define the burst mode of a driver.
+ * If the queues have different burst mode description, this bit will be set
+ * by PMD, then the application can iterate to retrieve burst description for
+ * all other queues.
  */
-enum rte_eth_burst_mode_option {
-	RTE_ETH_BURST_SCALAR = (1 << 0),
-	RTE_ETH_BURST_VECTOR = (1 << 1),
-
-	/**< bits[15:2] are reserved for each vector type */
-	RTE_ETH_BURST_ALTIVEC = (1 << 2),
-	RTE_ETH_BURST_NEON = (1 << 3),
-	RTE_ETH_BURST_SSE = (1 << 4),
-	RTE_ETH_BURST_AVX2 = (1 << 5),
-	RTE_ETH_BURST_AVX512 = (1 << 6),
-
-	RTE_ETH_BURST_SCATTERED = (1 << 16), /**< Support scattered packets */
-	RTE_ETH_BURST_BULK_ALLOC = (1 << 17), /**< Support mbuf bulk alloc */
-	RTE_ETH_BURST_SIMPLE = (1 << 18),
-
-	RTE_ETH_BURST_PER_QUEUE = (1 << 19), /**< Support per queue burst */
-};
+#define RTE_ETH_BURST_FLAG_PER_QUEUE     (1ULL << 0)
 
 /**
  * Ethernet device RX/TX queue packet burst mode information structure.
  * Used to retrieve information about packet burst mode setting.
  */
 struct rte_eth_burst_mode {
-	uint64_t options;
+	uint64_t flags; /**< The ORed values of RTE_ETH_BURST_FLAG_xxx */
+
+#define RTE_ETH_BURST_MODE_INFO_SIZE 1024 /**< Maximum size for information */
+	char info[RTE_ETH_BURST_MODE_INFO_SIZE]; /**< burst mode information */
 };
 
 /** Maximum name length for extended statistics counters */
@@ -1335,12 +1381,6 @@ struct rte_eth_dcb_info {
 	/** rx queues assigned to tc */
 	struct rte_eth_dcb_tc_queue_mapping tc_queue;
 };
-
-/**
- * RX/TX queue states
- */
-#define RTE_ETH_QUEUE_STATE_STOPPED 0
-#define RTE_ETH_QUEUE_STATE_STARTED 1
 
 #define RTE_ETH_ALL RTE_MAX_ETHPORTS
 
@@ -1656,21 +1696,6 @@ int rte_eth_dev_owner_get(const uint16_t port_id,
 		struct rte_eth_dev_owner *owner);
 
 /**
- * Get the total number of Ethernet devices that have been successfully
- * initialized by the matching Ethernet driver during the PCI probing phase
- * and that are available for applications to use. These devices must be
- * accessed by using the ``RTE_ETH_FOREACH_DEV()`` macro to deal with
- * non-contiguous ranges of devices.
- * These non-contiguous ranges can be created by calls to hotplug functions or
- * by some PMDs.
- *
- * @return
- *   - The total number of usable Ethernet devices.
- */
-__rte_deprecated
-uint16_t rte_eth_dev_count(void);
-
-/**
  * Get the number of ports which are usable for the application.
  *
  * These devices must be iterated by using the macro
@@ -1837,6 +1862,37 @@ int rte_eth_rx_queue_setup(uint16_t port_id, uint16_t rx_queue_id,
 		struct rte_mempool *mb_pool);
 
 /**
+ * @warning
+ * @b EXPERIMENTAL: this API may change, or be removed, without prior notice
+ *
+ * Allocate and set up a hairpin receive queue for an Ethernet device.
+ *
+ * The function set up the selected queue to be used in hairpin.
+ *
+ * @param port_id
+ *   The port identifier of the Ethernet device.
+ * @param rx_queue_id
+ *   The index of the receive queue to set up.
+ *   The value must be in the range [0, nb_rx_queue - 1] previously supplied
+ *   to rte_eth_dev_configure().
+ * @param nb_rx_desc
+ *   The number of receive descriptors to allocate for the receive ring.
+ *   0 means the PMD will use default value.
+ * @param conf
+ *   The pointer to the hairpin configuration.
+ *
+ * @return
+ *   - (0) if successful.
+ *   - (-ENOTSUP) if hardware doesn't support.
+ *   - (-EINVAL) if bad parameter.
+ *   - (-ENOMEM) if unable to allocate the resources.
+ */
+__rte_experimental
+int rte_eth_rx_hairpin_queue_setup
+	(uint16_t port_id, uint16_t rx_queue_id, uint16_t nb_rx_desc,
+	 const struct rte_eth_hairpin_conf *conf);
+
+/**
  * Allocate and set up a transmit queue for an Ethernet device.
  *
  * @param port_id
@@ -1889,6 +1945,35 @@ int rte_eth_tx_queue_setup(uint16_t port_id, uint16_t tx_queue_id,
 		const struct rte_eth_txconf *tx_conf);
 
 /**
+ * @warning
+ * @b EXPERIMENTAL: this API may change, or be removed, without prior notice
+ *
+ * Allocate and set up a transmit hairpin queue for an Ethernet device.
+ *
+ * @param port_id
+ *   The port identifier of the Ethernet device.
+ * @param tx_queue_id
+ *   The index of the transmit queue to set up.
+ *   The value must be in the range [0, nb_tx_queue - 1] previously supplied
+ *   to rte_eth_dev_configure().
+ * @param nb_tx_desc
+ *   The number of transmit descriptors to allocate for the transmit ring.
+ *   0 to set default PMD value.
+ * @param conf
+ *   The hairpin configuration.
+ *
+ * @return
+ *   - (0) if successful.
+ *   - (-ENOTSUP) if hardware doesn't support.
+ *   - (-EINVAL) if bad parameter.
+ *   - (-ENOMEM) if unable to allocate the resources.
+ */
+__rte_experimental
+int rte_eth_tx_hairpin_queue_setup
+	(uint16_t port_id, uint16_t tx_queue_id, uint16_t nb_tx_desc,
+	 const struct rte_eth_hairpin_conf *conf);
+
+/**
  * Return the NUMA socket to which an Ethernet device is connected
  *
  * @param port_id
@@ -1923,7 +2008,7 @@ int rte_eth_dev_is_valid_port(uint16_t port_id);
  *   to rte_eth_dev_configure().
  * @return
  *   - 0: Success, the receive queue is started.
- *   - -EINVAL: The port_id or the queue_id out of range.
+ *   - -EINVAL: The port_id or the queue_id out of range or belong to hairpin.
  *   - -EIO: if device is removed.
  *   - -ENOTSUP: The function not supported in PMD driver.
  */
@@ -1940,7 +2025,7 @@ int rte_eth_dev_rx_queue_start(uint16_t port_id, uint16_t rx_queue_id);
  *   to rte_eth_dev_configure().
  * @return
  *   - 0: Success, the receive queue is stopped.
- *   - -EINVAL: The port_id or the queue_id out of range.
+ *   - -EINVAL: The port_id or the queue_id out of range or belong to hairpin.
  *   - -EIO: if device is removed.
  *   - -ENOTSUP: The function not supported in PMD driver.
  */
@@ -1958,7 +2043,7 @@ int rte_eth_dev_rx_queue_stop(uint16_t port_id, uint16_t rx_queue_id);
  *   to rte_eth_dev_configure().
  * @return
  *   - 0: Success, the transmit queue is started.
- *   - -EINVAL: The port_id or the queue_id out of range.
+ *   - -EINVAL: The port_id or the queue_id out of range or belong to hairpin.
  *   - -EIO: if device is removed.
  *   - -ENOTSUP: The function not supported in PMD driver.
  */
@@ -1975,7 +2060,7 @@ int rte_eth_dev_tx_queue_start(uint16_t port_id, uint16_t tx_queue_id);
  *   to rte_eth_dev_configure().
  * @return
  *   - 0: Success, the transmit queue is stopped.
- *   - -EINVAL: The port_id or the queue_id out of range.
+ *   - -EINVAL: The port_id or the queue_id out of range or belong to hairpin.
  *   - -EIO: if device is removed.
  *   - -ENOTSUP: The function not supported in PMD driver.
  */
@@ -2541,6 +2626,42 @@ int rte_eth_dev_fw_version_get(uint16_t port_id,
  */
 int rte_eth_dev_get_supported_ptypes(uint16_t port_id, uint32_t ptype_mask,
 				     uint32_t *ptypes, int num);
+/**
+ * @warning
+ * @b EXPERIMENTAL: this API may change without prior notice.
+ *
+ * Inform Ethernet device about reduced range of packet types to handle.
+ *
+ * Application can use this function to set only specific ptypes that it's
+ * interested. This information can be used by the PMD to optimize Rx path.
+ *
+ * The function accepts an array `set_ptypes` allocated by the caller to
+ * store the packet types set by the driver, the last element of the array
+ * is set to RTE_PTYPE_UNKNOWN. The size of the `set_ptype` array should be
+ * `rte_eth_dev_get_supported_ptypes() + 1` else it might only be filled
+ * partially.
+ *
+ * @param port_id
+ *   The port identifier of the Ethernet device.
+ * @param ptype_mask
+ *   The ptype family that application is interested in should be bitwise OR of
+ *   RTE_PTYPE_*_MASK or 0.
+ * @param set_ptypes
+ *   An array pointer to store set packet types, allocated by caller. The
+ *   function marks the end of array with RTE_PTYPE_UNKNOWN.
+ * @param num
+ *   Size of the array pointed by param ptypes.
+ *   Should be rte_eth_dev_get_supported_ptypes() + 1 to accommodate the
+ *   set ptypes.
+ * @return
+ *   - (0) if Success.
+ *   - (-ENODEV) if *port_id* invalid.
+ *   - (-EINVAL) if *ptype_mask* is invalid (or) set_ptypes is NULL and
+ *     num > 0.
+ */
+__rte_experimental
+int rte_eth_dev_set_ptypes(uint16_t port_id, uint32_t ptype_mask,
+			   uint32_t *set_ptypes, unsigned int num);
 
 /**
  * Retrieve the MTU of an Ethernet device.
@@ -3641,7 +3762,8 @@ int rte_eth_remove_tx_callback(uint16_t port_id, uint16_t queue_id,
  * @return
  *   - 0: Success
  *   - -ENOTSUP: routine is not supported by the device PMD.
- *   - -EINVAL:  The port_id or the queue_id is out of range.
+ *   - -EINVAL:  The port_id or the queue_id is out of range, or the queue
+ *               is hairpin queue.
  */
 int rte_eth_rx_queue_info_get(uint16_t port_id, uint16_t queue_id,
 	struct rte_eth_rxq_info *qinfo);
@@ -3661,7 +3783,8 @@ int rte_eth_rx_queue_info_get(uint16_t port_id, uint16_t queue_id,
  * @return
  *   - 0: Success
  *   - -ENOTSUP: routine is not supported by the device PMD.
- *   - -EINVAL:  The port_id or the queue_id is out of range.
+ *   - -EINVAL:  The port_id or the queue_id is out of range, or the queue
+ *               is hairpin queue.
  */
 int rte_eth_tx_queue_info_get(uint16_t port_id, uint16_t queue_id,
 	struct rte_eth_txq_info *qinfo);
@@ -3707,20 +3830,6 @@ int rte_eth_rx_burst_mode_get(uint16_t port_id, uint16_t queue_id,
 __rte_experimental
 int rte_eth_tx_burst_mode_get(uint16_t port_id, uint16_t queue_id,
 	struct rte_eth_burst_mode *mode);
-
-/**
- * Retrieve name about burst mode option.
- *
- * @param option
- *   The burst mode option of type *rte_eth_burst_mode_option*.
- *
- * @return
- *   - "": Not found
- *   - "xxx": name of the mode option.
- */
-__rte_experimental
-const char *
-rte_eth_burst_mode_option_name(uint64_t option);
 
 /**
  * Retrieve device registers and register attributes (number of registers and
@@ -4159,6 +4268,23 @@ rte_eth_dev_pool_ops_supported(uint16_t port_id, const char *pool);
 void *
 rte_eth_dev_get_sec_ctx(uint16_t port_id);
 
+/**
+ * @warning
+ * @b EXPERIMENTAL: this API may change, or be removed, without prior notice
+ *
+ * Query the device hairpin capabilities.
+ *
+ * @param port_id
+ *   The port identifier of the Ethernet device.
+ * @param cap
+ *   Pointer to a structure that will hold the hairpin capabilities.
+ * @return
+ *   - (0) if successful.
+ *   - (-ENOTSUP) if hardware doesn't support.
+ */
+__rte_experimental
+int rte_eth_dev_hairpin_capability_get(uint16_t port_id,
+				       struct rte_eth_hairpin_cap *cap);
 
 #include <rte_ethdev_core.h>
 

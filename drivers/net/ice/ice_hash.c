@@ -25,8 +25,6 @@
 #include "ice_ethdev.h"
 #include "ice_generic_flow.h"
 
-#define ICE_ACTION_RSS_MAX_QUEUE_NUM 32
-
 struct rss_type_match_hdr {
 	uint32_t hdr_mask;
 	uint64_t eth_rss_hint;
@@ -41,6 +39,11 @@ struct rss_meta {
 	uint32_t pkt_hdr;
 	uint64_t hash_flds;
 	uint8_t hash_function;
+};
+
+struct ice_hash_flow_cfg {
+	bool simple_xor;
+	struct ice_rss_cfg rss_cfg;
 };
 
 static int
@@ -117,22 +120,22 @@ static struct ice_pattern_match_item ice_hash_pattern_list_os[] = {
 
 /* Supported pattern for comms package. */
 static struct ice_pattern_match_item ice_hash_pattern_list_comms[] = {
-	{pattern_eth_ipv4,		 ICE_INSET_NONE,  &hint_1},
-	{pattern_eth_ipv4_udp,		 ICE_INSET_NONE,  &hint_2},
-	{pattern_eth_ipv4_tcp,		 ICE_INSET_NONE,  &hint_3},
-	{pattern_eth_ipv4_sctp,		 ICE_INSET_NONE,  &hint_4},
-	{pattern_eth_ipv6,		 ICE_INSET_NONE,  &hint_5},
-	{pattern_eth_ipv6_udp,		 ICE_INSET_NONE,  &hint_6},
-	{pattern_eth_ipv6_tcp,		 ICE_INSET_NONE,  &hint_7},
-	{pattern_eth_ipv6_sctp,		 ICE_INSET_NONE,  &hint_8},
-	{pattern_empty,			 ICE_INSET_NONE,  &hint_0},
-	{pattern_eth_ipv4_gtpu_ipv4,	 ICE_INSET_NONE,  &hint_9},
-	{pattern_eth_ipv4_gtpu_ipv4_udp, ICE_INSET_NONE,  &hint_9},
-	{pattern_eth_ipv4_gtpu_ipv4_tcp, ICE_INSET_NONE,  &hint_9},
-	{pattern_eth_pppoes_ipv4,	 ICE_INSET_NONE,  &hint_10},
-	{pattern_eth_pppoes_ipv4_udp,	 ICE_INSET_NONE,  &hint_11},
-	{pattern_eth_pppoes_ipv4_tcp,	 ICE_INSET_NONE,  &hint_12},
-	{pattern_eth_pppoes_ipv4_sctp,	 ICE_INSET_NONE,  &hint_13},
+	{pattern_eth_ipv4,		    ICE_INSET_NONE,  &hint_1},
+	{pattern_eth_ipv4_udp,		    ICE_INSET_NONE,  &hint_2},
+	{pattern_eth_ipv4_tcp,		    ICE_INSET_NONE,  &hint_3},
+	{pattern_eth_ipv4_sctp,		    ICE_INSET_NONE,  &hint_4},
+	{pattern_eth_ipv6,		    ICE_INSET_NONE,  &hint_5},
+	{pattern_eth_ipv6_udp,		    ICE_INSET_NONE,  &hint_6},
+	{pattern_eth_ipv6_tcp,		    ICE_INSET_NONE,  &hint_7},
+	{pattern_eth_ipv6_sctp,		    ICE_INSET_NONE,  &hint_8},
+	{pattern_empty,			    ICE_INSET_NONE,  &hint_0},
+	{pattern_eth_ipv4_gtpu_eh_ipv4,	    ICE_INSET_NONE,  &hint_9},
+	{pattern_eth_ipv4_gtpu_eh_ipv4_udp, ICE_INSET_NONE,  &hint_9},
+	{pattern_eth_ipv4_gtpu_eh_ipv4_tcp, ICE_INSET_NONE,  &hint_9},
+	{pattern_eth_pppoes_ipv4,	    ICE_INSET_NONE,  &hint_10},
+	{pattern_eth_pppoes_ipv4_udp,	    ICE_INSET_NONE,  &hint_11},
+	{pattern_eth_pppoes_ipv4_tcp,	    ICE_INSET_NONE,  &hint_12},
+	{pattern_eth_pppoes_ipv4_sctp,	    ICE_INSET_NONE,  &hint_13},
 };
 
 /**
@@ -244,6 +247,8 @@ ice_hash_init(struct ice_adapter *ad)
 		parser = &ice_hash_parser_os;
 	else if (ad->active_pkg_type == ICE_PKG_TYPE_COMMS)
 		parser = &ice_hash_parser_comms;
+	else
+		return -EINVAL;
 
 	return ice_register_parser(parser, ad);
 }
@@ -315,13 +320,13 @@ ice_hash_parse_action(struct ice_pattern_match_item *pattern_match_item,
 
 			/* Check if rss types match pattern. */
 			if (rss->func != RTE_ETH_HASH_FUNCTION_SIMPLE_XOR) {
-				if (((rss_hf & ETH_RSS_IPV4) != m->eth_rss_hint) ||
-				((rss_hf & ETH_RSS_NONFRAG_IPV4_UDP) != m->eth_rss_hint) ||
-				((rss_hf & ETH_RSS_NONFRAG_IPV4_TCP) != m->eth_rss_hint) ||
-				((rss_hf & ETH_RSS_NONFRAG_IPV4_SCTP) != m->eth_rss_hint) ||
-				((rss_hf & ETH_RSS_IPV6) != m->eth_rss_hint) ||
-				((rss_hf & ETH_RSS_NONFRAG_IPV6_UDP) != m->eth_rss_hint) ||
-				((rss_hf & ETH_RSS_NONFRAG_IPV6_TCP) != m->eth_rss_hint) ||
+				if (((rss_hf & ETH_RSS_IPV4) != m->eth_rss_hint) &&
+				((rss_hf & ETH_RSS_NONFRAG_IPV4_UDP) != m->eth_rss_hint) &&
+				((rss_hf & ETH_RSS_NONFRAG_IPV4_TCP) != m->eth_rss_hint) &&
+				((rss_hf & ETH_RSS_NONFRAG_IPV4_SCTP) != m->eth_rss_hint) &&
+				((rss_hf & ETH_RSS_IPV6) != m->eth_rss_hint) &&
+				((rss_hf & ETH_RSS_NONFRAG_IPV6_UDP) != m->eth_rss_hint) &&
+				((rss_hf & ETH_RSS_NONFRAG_IPV6_TCP) != m->eth_rss_hint) &&
 				((rss_hf & ETH_RSS_NONFRAG_IPV6_SCTP) != m->eth_rss_hint))
 					return rte_flow_error_set(error,
 					ENOTSUP, RTE_FLOW_ERROR_TYPE_ACTION,
@@ -333,15 +338,15 @@ ice_hash_parse_action(struct ice_pattern_match_item *pattern_match_item,
 					RTE_FLOW_ERROR_TYPE_ACTION, action,
 					"a nonzero RSS encapsulation level is not supported");
 
-			if (rss->key_len == 0)
+			if (rss->key_len)
 				return rte_flow_error_set(error, ENOTSUP,
 					RTE_FLOW_ERROR_TYPE_ACTION, action,
-					"RSS hash key_len mustn't be 0");
+					"a nonzero RSS key_len is not supported");
 
-			if (rss->queue_num > ICE_ACTION_RSS_MAX_QUEUE_NUM)
+			if (rss->queue)
 				return rte_flow_error_set(error, ENOTSUP,
 					RTE_FLOW_ERROR_TYPE_ACTION, action,
-					"too many queues for RSS context");
+					"a non-NULL RSS queue is not supported");
 
 			/* Check hash function and save it to rss_meta. */
 			if (rss->func ==
@@ -404,7 +409,7 @@ ice_hash_parse_pattern_action(__rte_unused struct ice_adapter *ad,
 			void **meta,
 			struct rte_flow_error *error)
 {
-	int ret = 0;
+	int ret = -rte_errno;
 	struct ice_pattern_match_item *pattern_match_item;
 	struct rss_meta *rss_meta_ptr;
 
@@ -420,11 +425,11 @@ ice_hash_parse_pattern_action(__rte_unused struct ice_adapter *ad,
 	pattern_match_item = ice_search_pattern_match_item(pattern,
 					array, array_len, error);
 	if (!pattern_match_item)
-		return -rte_errno;
+		goto error;
 
 	ret = ice_hash_check_inset(pattern, error);
 	if (ret)
-		return -rte_errno;
+		goto error;
 
 	/* Save protocol header to rss_meta. */
 	*meta = rss_meta_ptr;
@@ -433,12 +438,12 @@ ice_hash_parse_pattern_action(__rte_unused struct ice_adapter *ad,
 
 	/* Check rss action. */
 	ret = ice_hash_parse_action(pattern_match_item, actions, meta, error);
+error:
 	if (ret)
-		return -rte_errno;
-
+		rte_free(rss_meta_ptr);
 	rte_free(pattern_match_item);
 
-	return 0;
+	return ret;
 }
 
 static int
@@ -452,14 +457,14 @@ ice_hash_create(struct ice_adapter *ad,
 	struct ice_vsi *vsi = pf->main_vsi;
 	int ret;
 	uint32_t reg;
-	struct ice_rss_cfg *filter_ptr;
+	struct ice_hash_flow_cfg *filter_ptr;
 
 	uint32_t headermask = ((struct rss_meta *)meta)->pkt_hdr;
 	uint64_t hash_field = ((struct rss_meta *)meta)->hash_flds;
 	uint8_t hash_function = ((struct rss_meta *)meta)->hash_function;
 
 	filter_ptr = rte_zmalloc("ice_rss_filter",
-				sizeof(struct ice_rss_cfg), 0);
+				sizeof(struct ice_hash_flow_cfg), 0);
 	if (!filter_ptr) {
 		rte_flow_error_set(error, EINVAL,
 				RTE_FLOW_ERROR_TYPE_HANDLE, NULL,
@@ -474,19 +479,20 @@ ice_hash_create(struct ice_adapter *ad,
 			(2 << VSIQF_HASH_CTL_HASH_SCHEME_S);
 		ICE_WRITE_REG(hw, VSIQF_HASH_CTL(vsi->vsi_id), reg);
 
-		filter_ptr->symm = 0;
+		filter_ptr->simple_xor = 1;
 
 		goto out;
-	} else if (hash_function == RTE_ETH_HASH_FUNCTION_SYMMETRIC_TOEPLITZ) {
-		ret = ice_add_rss_cfg(hw, vsi->idx, hash_field, headermask, 1);
-		if (ret) {
-			rte_flow_error_set(error, EINVAL,
-					RTE_FLOW_ERROR_TYPE_HANDLE, NULL,
-					"rss flow create fail");
-			goto error;
-		}
 	} else {
-		ret = ice_add_rss_cfg(hw, vsi->idx, hash_field, headermask, 0);
+		filter_ptr->rss_cfg.packet_hdr = headermask;
+		filter_ptr->rss_cfg.hashed_flds = hash_field;
+		filter_ptr->rss_cfg.symm =
+			(hash_function ==
+				RTE_ETH_HASH_FUNCTION_SYMMETRIC_TOEPLITZ);
+
+		ret = ice_add_rss_cfg(hw, vsi->idx,
+				filter_ptr->rss_cfg.hashed_flds,
+				filter_ptr->rss_cfg.packet_hdr,
+				filter_ptr->rss_cfg.symm);
 		if (ret) {
 			rte_flow_error_set(error, EINVAL,
 					RTE_FLOW_ERROR_TYPE_HANDLE, NULL,
@@ -494,9 +500,6 @@ ice_hash_create(struct ice_adapter *ad,
 			goto error;
 		}
 	}
-
-	filter_ptr->packet_hdr = headermask;
-	filter_ptr->hashed_flds = hash_field;
 
 out:
 	flow->rule = filter_ptr;
@@ -519,19 +522,26 @@ ice_hash_destroy(struct ice_adapter *ad,
 	struct ice_vsi *vsi = pf->main_vsi;
 	int ret;
 	uint32_t reg;
-	struct ice_rss_cfg *filter_ptr;
+	struct ice_hash_flow_cfg *filter_ptr;
 
-	filter_ptr = (struct ice_rss_cfg *)flow->rule;
+	filter_ptr = (struct ice_hash_flow_cfg *)flow->rule;
 
-	if (filter_ptr->symm == 0) {
+	if (filter_ptr->simple_xor == 1) {
 		/* Return to symmetric_toeplitz state. */
 		reg = ICE_READ_REG(hw, VSIQF_HASH_CTL(vsi->vsi_id));
 		reg = (reg & (~VSIQF_HASH_CTL_HASH_SCHEME_M)) |
 			(1 << VSIQF_HASH_CTL_HASH_SCHEME_S);
 		ICE_WRITE_REG(hw, VSIQF_HASH_CTL(vsi->vsi_id), reg);
 	} else {
-		ret = ice_rem_vsi_rss_cfg(hw, vsi->idx);
-		if (ret) {
+		ret = ice_rem_rss_cfg(hw, vsi->idx,
+				filter_ptr->rss_cfg.hashed_flds,
+				filter_ptr->rss_cfg.packet_hdr);
+		/* Fixme: Ignore the error if a rule does not exist.
+		 * Currently a rule for inputset change or symm turn on/off
+		 * will overwrite an exist rule, while application still
+		 * have 2 rte_flow handles.
+		 **/
+		if (ret && ret != ICE_ERR_DOES_NOT_EXIST) {
 			rte_flow_error_set(error, EINVAL,
 					RTE_FLOW_ERROR_TYPE_HANDLE, NULL,
 					"rss flow destroy fail");

@@ -1653,6 +1653,7 @@ void ecore_resc_free(struct ecore_dev *p_dev)
 		ecore_dmae_info_free(p_hwfn);
 		ecore_dcbx_info_free(p_hwfn);
 		ecore_dbg_user_data_free(p_hwfn);
+		ecore_fw_overlay_mem_free(p_hwfn, p_hwfn->fw_overlay_mem);
 		/* @@@TBD Flush work-queue ? */
 
 		/* destroy doorbell recovery mechanism */
@@ -3467,6 +3468,8 @@ ecore_hw_init_pf(struct ecore_hwfn *p_hwfn, struct ecore_ptt *p_ptt,
 	if (rc)
 		return rc;
 
+	ecore_fw_overlay_init_ram(p_hwfn, p_ptt, p_hwfn->fw_overlay_mem);
+
 	/* Pure runtime initializations - directly to the HW  */
 	ecore_int_igu_init_pure_rt(p_hwfn, p_ptt, true, true);
 
@@ -3494,7 +3497,7 @@ ecore_hw_init_pf(struct ecore_hwfn *p_hwfn, struct ecore_ptt *p_ptt,
 	if (IS_LEAD_HWFN(p_hwfn)) {
 		rc = ecore_llh_hw_init_pf(p_hwfn, p_ptt,
 					p_params->avoid_eng_affin);
-		if (rc)
+		if (rc != ECORE_SUCCESS)
 			return rc;
 	}
 
@@ -3510,7 +3513,6 @@ ecore_hw_init_pf(struct ecore_hwfn *p_hwfn, struct ecore_ptt *p_ptt,
 		if (rc) {
 			DP_NOTICE(p_hwfn, true,
 				  "Function start ramrod failed\n");
-		} else {
 			return rc;
 		}
 		prs_reg = ecore_rd(p_hwfn, p_ptt, PRS_REG_SEARCH_TAG1);
@@ -3677,6 +3679,8 @@ enum _ecore_status_t ecore_hw_init(struct ecore_dev *p_dev,
 	u32 load_code, resp, param, drv_mb_param;
 	bool b_default_mtu = true;
 	struct ecore_hwfn *p_hwfn;
+	const u32 *fw_overlays;
+	u32 fw_overlays_len;
 	enum _ecore_status_t rc = ECORE_SUCCESS;
 	u16 ether_type;
 	int i;
@@ -3814,6 +3818,17 @@ enum _ecore_status_t ecore_hw_init(struct ecore_dev *p_dev,
 		 * again.
 		 */
 		ecore_pglueb_clear_err(p_hwfn, p_hwfn->p_main_ptt);
+
+		fw_overlays = p_dev->fw_data->fw_overlays;
+		fw_overlays_len = p_dev->fw_data->fw_overlays_len;
+		p_hwfn->fw_overlay_mem =
+			ecore_fw_overlay_mem_alloc(p_hwfn, fw_overlays,
+						   fw_overlays_len);
+		if (!p_hwfn->fw_overlay_mem) {
+			DP_NOTICE(p_hwfn, false,
+				  "Failed to allocate fw overlay memory\n");
+			goto load_err;
+		}
 
 		switch (load_code) {
 		case FW_MSG_CODE_DRV_LOAD_ENGINE:
@@ -5238,7 +5253,6 @@ static void ecore_emul_hw_info_port_num(struct ecore_hwfn *p_hwfn,
 
 	/* MISCS_REG_ECO_RESERVED[15:12]: num of ports in an engine */
 	eco_reserved = ecore_rd(p_hwfn, p_ptt, MISCS_REG_ECO_RESERVED);
-
 	switch ((eco_reserved & 0xf000) >> 12) {
 		case 1:
 			p_dev->num_ports_in_engine = 1;
@@ -5253,7 +5267,7 @@ static void ecore_emul_hw_info_port_num(struct ecore_hwfn *p_hwfn,
 			DP_NOTICE(p_hwfn, false,
 			  "Emulation: Unknown port mode [ECO_RESERVED 0x%08x]\n",
 			  eco_reserved);
-		p_dev->num_ports_in_engine = 2; /* Default to something */
+		p_dev->num_ports_in_engine = 1; /* Default to something */
 		break;
 		}
 
@@ -5266,8 +5280,8 @@ static void ecore_emul_hw_info_port_num(struct ecore_hwfn *p_hwfn,
 static void ecore_hw_info_port_num(struct ecore_hwfn *p_hwfn,
 				   struct ecore_ptt *p_ptt)
 {
+	u32 addr, global_offsize, global_addr, port_mode;
 	struct ecore_dev *p_dev = p_hwfn->p_dev;
-	u32 addr, global_offsize, global_addr;
 
 #ifndef ASIC_ONLY
 	if (CHIP_REV_IS_TEDIBEAR(p_dev)) {
@@ -5289,15 +5303,32 @@ static void ecore_hw_info_port_num(struct ecore_hwfn *p_hwfn,
 		return;
 	}
 
-		addr = SECTION_OFFSIZE_ADDR(p_hwfn->mcp_info->public_base,
-					    PUBLIC_GLOBAL);
-		global_offsize = ecore_rd(p_hwfn, p_ptt, addr);
-		global_addr = SECTION_ADDR(global_offsize, 0);
-		addr = global_addr + OFFSETOF(struct public_global, max_ports);
-		p_dev->num_ports = (u8)ecore_rd(p_hwfn, p_ptt, addr);
+	/* Determine the number of ports per engine */
+	port_mode = ecore_rd(p_hwfn, p_ptt, MISC_REG_PORT_MODE);
+	switch (port_mode) {
+	case 0x0:
+		p_dev->num_ports_in_engine = 1;
+		break;
+	case 0x1:
+		p_dev->num_ports_in_engine = 2;
+		break;
+	case 0x2:
+		p_dev->num_ports_in_engine = 4;
+		break;
+	default:
+		DP_NOTICE(p_hwfn, false, "Unknown port mode 0x%08x\n",
+			  port_mode);
+		p_dev->num_ports_in_engine = 1; /* Default to something */
+		break;
+	}
 
-	p_dev->num_ports_in_engine = p_dev->num_ports >>
-				     (ecore_device_num_engines(p_dev) - 1);
+	/* Get the total number of ports of the device */
+	addr = SECTION_OFFSIZE_ADDR(p_hwfn->mcp_info->public_base,
+				    PUBLIC_GLOBAL);
+	global_offsize = ecore_rd(p_hwfn, p_ptt, addr);
+	global_addr = SECTION_ADDR(global_offsize, 0);
+	addr = global_addr + OFFSETOF(struct public_global, max_ports);
+	p_dev->num_ports = (u8)ecore_rd(p_hwfn, p_ptt, addr);
 }
 
 static void ecore_mcp_get_eee_caps(struct ecore_hwfn *p_hwfn,
@@ -5586,7 +5617,7 @@ ecore_hw_prepare_single(struct ecore_hwfn *p_hwfn, void OSAL_IOMEM *p_regview,
 	p_hwfn->db_phys_addr = db_phys_addr;
 
 	if (IS_VF(p_dev))
-		return ecore_vf_hw_prepare(p_hwfn);
+		return ecore_vf_hw_prepare(p_hwfn, p_params);
 
 	/* Validate that chip access is feasible */
 	if (REG_RD(p_hwfn, PXP_PF_ME_OPAQUE_ADDR) == 0xffffffff) {

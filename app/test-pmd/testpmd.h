@@ -58,8 +58,6 @@ typedef uint16_t portid_t;
 typedef uint16_t queueid_t;
 typedef uint16_t streamid_t;
 
-#define MAX_QUEUE_ID ((1 << (sizeof(queueid_t) * 8)) - 1)
-
 #if defined RTE_LIBRTE_PMD_SOFTNIC
 #define SOFTNIC			1
 #else
@@ -78,8 +76,10 @@ enum {
 	/**< allocate mempool natively, but populate using anonymous memory */
 	MP_ALLOC_XMEM,
 	/**< allocate and populate mempool using anonymous memory */
-	MP_ALLOC_XMEM_HUGE
+	MP_ALLOC_XMEM_HUGE,
 	/**< allocate and populate mempool using anonymous hugepage memory */
+	MP_ALLOC_XBUF
+	/**< allocate mempool natively, use rte_pktmbuf_pool_create_extbuf */
 };
 
 #ifdef RTE_TEST_PMD_RECORD_BURST_STATS
@@ -104,6 +104,13 @@ struct rss_type_info {
  * An entry with a NULL type name terminates the list.
  */
 extern const struct rss_type_info rss_type_table[];
+
+/**
+ * Dynf name array.
+ *
+ * Array that holds the name for each dynf.
+ */
+extern char dynf_names[64][RTE_MBUF_DYN_NAMESIZE];
 
 /**
  * The data structure associated with a forwarding stream between a receive
@@ -179,22 +186,25 @@ struct rte_port {
 	uint8_t                 need_reconfig_queues; /**< need reconfiguring queues or not */
 	uint8_t                 rss_flag;   /**< enable rss or not */
 	uint8_t                 dcb_flag;   /**< enable dcb */
-	uint16_t                nb_rx_desc[MAX_QUEUE_ID+1]; /**< per queue rx desc number */
-	uint16_t                nb_tx_desc[MAX_QUEUE_ID+1]; /**< per queue tx desc number */
-	struct rte_eth_rxconf   rx_conf[MAX_QUEUE_ID+1]; /**< per queue rx configuration */
-	struct rte_eth_txconf   tx_conf[MAX_QUEUE_ID+1]; /**< per queue tx configuration */
+	uint16_t                nb_rx_desc[RTE_MAX_QUEUES_PER_PORT+1]; /**< per queue rx desc number */
+	uint16_t                nb_tx_desc[RTE_MAX_QUEUES_PER_PORT+1]; /**< per queue tx desc number */
+	struct rte_eth_rxconf   rx_conf[RTE_MAX_QUEUES_PER_PORT+1]; /**< per queue rx configuration */
+	struct rte_eth_txconf   tx_conf[RTE_MAX_QUEUES_PER_PORT+1]; /**< per queue tx configuration */
 	struct rte_ether_addr   *mc_addr_pool; /**< pool of multicast addrs */
 	uint32_t                mc_addr_nb; /**< nb. of addr. in mc_addr_pool */
 	uint8_t                 slave_flag; /**< bonding slave port */
 	struct port_flow        *flow_list; /**< Associated flows. */
-	const struct rte_eth_rxtx_callback *rx_dump_cb[MAX_QUEUE_ID+1];
-	const struct rte_eth_rxtx_callback *tx_dump_cb[MAX_QUEUE_ID+1];
+	const struct rte_eth_rxtx_callback *rx_dump_cb[RTE_MAX_QUEUES_PER_PORT+1];
+	const struct rte_eth_rxtx_callback *tx_dump_cb[RTE_MAX_QUEUES_PER_PORT+1];
 #ifdef SOFTNIC
 	struct softnic_port     softport;  /**< softnic params */
 #endif
 	/**< metadata value to insert in Tx packets. */
-	rte_be32_t		tx_metadata;
-	const struct rte_eth_rxtx_callback *tx_set_md_cb[MAX_QUEUE_ID+1];
+	uint32_t		tx_metadata;
+	const struct rte_eth_rxtx_callback *tx_set_md_cb[RTE_MAX_QUEUES_PER_PORT+1];
+	/**< dynamic flags. */
+	uint64_t		mbuf_dynf;
+	const struct rte_eth_rxtx_callback *tx_set_dynf_cb[RTE_MAX_QUEUES_PER_PORT+1];
 };
 
 /**
@@ -335,6 +345,7 @@ extern uint32_t event_print_mask;
 extern bool setup_on_probe_event; /**< disabled by port setup-on iterator */
 extern uint8_t hot_plug; /**< enable by "--hot-plug" parameter */
 extern int do_mlockall; /**< set by "--mlockall" or "--no-mlockall" parameter */
+extern uint8_t clear_ptypes; /**< disabled by set ptype cmd */
 
 #ifdef RTE_LIBRTE_IXGBE_BYPASS
 extern uint32_t bypass_timeout; /**< Store the NIC bypass watchdog timeout */
@@ -386,6 +397,7 @@ extern struct rte_eth_txmode tx_mode;
 
 extern uint64_t rss_hf;
 
+extern queueid_t nb_hairpinq;
 extern queueid_t nb_rxq;
 extern queueid_t nb_txq;
 
@@ -603,6 +615,9 @@ lcore_num(void)
 	rte_panic("lcore_id of current thread not found in fwd_lcores_cpuids\n");
 }
 
+void
+parse_fwd_portlist(const char *port);
+
 static inline struct fwd_lcore *
 current_fwd_lcore(void)
 {
@@ -736,6 +751,7 @@ int port_flow_create(portid_t port_id,
 		     const struct rte_flow_action *actions);
 int port_flow_destroy(portid_t port_id, uint32_t n, const uint32_t *rule);
 int port_flow_flush(portid_t port_id);
+int port_flow_dump(portid_t port_id, const char *file_name);
 int port_flow_query(portid_t port_id, uint32_t rule,
 		    const struct rte_flow_action *action);
 void port_flow_list(portid_t port_id, uint32_t n, const uint32_t *group);
@@ -799,7 +815,7 @@ void stop_port(portid_t pid);
 void close_port(portid_t pid);
 void reset_port(portid_t pid);
 void attach_port(char *identifier);
-void detach_device(char *identifier);
+void detach_devargs(char *identifier);
 void detach_port_device(portid_t port_id);
 int all_ports_stopped(void);
 int port_is_stopped(portid_t port_id);
@@ -837,6 +853,9 @@ int eth_link_get_nowait_print_err(uint16_t port_id, struct rte_eth_link *link);
 int eth_macaddr_get_print_err(uint16_t port_id,
 			struct rte_ether_addr *mac_addr);
 
+/* Functions to display the set of MAC addresses added to a port*/
+void show_macs(portid_t port_id);
+void show_mcast_macs(portid_t port_id);
 
 /* Functions to manage the set of filtered Multicast MAC addresses */
 void mcast_addr_add(portid_t port_id, struct rte_ether_addr *mc_addr);
@@ -861,6 +880,8 @@ queueid_t get_allowed_max_nb_rxq(portid_t *pid);
 int check_nb_rxq(queueid_t rxq);
 queueid_t get_allowed_max_nb_txq(portid_t *pid);
 int check_nb_txq(queueid_t txq);
+queueid_t get_allowed_max_nb_hairpinq(portid_t *pid);
+int check_nb_hairpinq(queueid_t hairpinq);
 
 uint16_t dump_rx_pkts(uint16_t port_id, uint16_t queue, struct rte_mbuf *pkts[],
 		      uint16_t nb_pkts, __rte_unused uint16_t max_pkts,
@@ -880,6 +901,12 @@ uint16_t tx_pkt_set_md(uint16_t port_id, __rte_unused uint16_t queue,
 		       __rte_unused void *user_param);
 void add_tx_md_callback(portid_t portid);
 void remove_tx_md_callback(portid_t portid);
+
+uint16_t tx_pkt_set_dynf(uint16_t port_id, __rte_unused uint16_t queue,
+			 struct rte_mbuf *pkts[], uint16_t nb_pkts,
+			 __rte_unused void *user_param);
+void add_tx_dynf_callback(portid_t portid);
+void remove_tx_dynf_callback(portid_t portid);
 
 /*
  * Work-around of a compilation error with ICC on invocations of the

@@ -72,7 +72,9 @@ memzone_reserve_aligned_thread_unsafe(const char *name, size_t len,
 	/* no more room in config */
 	if (arr->count >= arr->len) {
 	        //不能完成memzone的分配，空闲的memzone均已被填充
-		RTE_LOG(ERR, EAL, "%s(): No more room in config\n", __func__);
+		RTE_LOG(ERR, EAL,
+		"%s(): Number of requested memzone segments exceeds RTE_MAX_MEMZONE\n",
+			__func__);
 		rte_errno = ENOSPC;
 		return NULL;
 	}

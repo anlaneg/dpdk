@@ -131,13 +131,14 @@ read_fd_message(int sockfd, char *buf, int buflen, int *fds, int max_fds,
 	//自socket fd中读取消息
 	ret = recvmsg(sockfd, &msgh, 0);
 	if (ret <= 0) {
-		RTE_LOG(ERR, VHOST_CONFIG, "recvmsg failed\n");
+		if (ret)
+			VHOST_LOG_CONFIG(ERR, "recvmsg failed\n");
 		return ret;
 	}
 
 	//消息被截断，收取失败
 	if (msgh.msg_flags & (MSG_TRUNC | MSG_CTRUNC)) {
-		RTE_LOG(ERR, VHOST_CONFIG, "truncted msg\n");
+		VHOST_LOG_CONFIG(ERR, "truncated msg\n");
 		return -1;
 	}
 
@@ -185,7 +186,7 @@ send_fd_message(int sockfd, char *buf, int buflen, int *fds, int fd_num)
 		msgh.msg_controllen = sizeof(control);
 		cmsg = CMSG_FIRSTHDR(&msgh);
 		if (cmsg == NULL) {
-			RTE_LOG(ERR, VHOST_CONFIG, "cmsg == NULL\n");
+			VHOST_LOG_CONFIG(ERR, "cmsg == NULL\n");
 			errno = EINVAL;
 			return -1;
 		}
@@ -203,7 +204,7 @@ send_fd_message(int sockfd, char *buf, int buflen, int *fds, int fd_num)
 	} while (ret < 0 && errno == EINTR);
 
 	if (ret < 0) {
-		RTE_LOG(ERR, VHOST_CONFIG,  "sendmsg error\n");
+		VHOST_LOG_CONFIG(ERR,  "sendmsg error\n");
 		return ret;
 	}
 
@@ -251,13 +252,13 @@ vhost_user_add_connection(int fd, struct vhost_user_socket *vsocket)
 	if (vsocket->linearbuf)
 		vhost_enable_linearbuf(vid);
 
-	RTE_LOG(INFO, VHOST_CONFIG, "new device, handle is %d\n", vid);
+	VHOST_LOG_CONFIG(INFO, "new device, handle is %d\n", vid);
 
 	//如果有通知回调，则通知出现一个新连接
 	if (vsocket->notify_ops->new_connection) {
 		ret = vsocket->notify_ops->new_connection(vid);
 		if (ret < 0) {
-			RTE_LOG(ERR, VHOST_CONFIG,
+			VHOST_LOG_CONFIG(ERR,
 				"failed to add vhost user connection with fd %d\n",
 				fd);
 			goto err_cleanup;
@@ -274,7 +275,7 @@ vhost_user_add_connection(int fd, struct vhost_user_socket *vsocket)
 	ret = fdset_add(&vhost_user.fdset, fd, vhost_user_read_cb,
 			NULL, conn);
 	if (ret < 0) {
-		RTE_LOG(ERR, VHOST_CONFIG,
+		VHOST_LOG_CONFIG(ERR,
 			"failed to add fd %d into vhost server fdset\n",
 			fd);
 
@@ -312,7 +313,7 @@ vhost_user_server_new_connection(int fd, void *dat, int *remove __rte_unused)
 	if (fd < 0)
 		return;
 
-	RTE_LOG(INFO, VHOST_CONFIG, "new vhost user connection is %d\n", fd);
+	VHOST_LOG_CONFIG(INFO, "new vhost user connection is %d\n", fd);
 	//收到新的连接，加入读事件
 	vhost_user_add_connection(fd, vsocket);
 }
@@ -343,17 +344,16 @@ vhost_user_read_cb(int connfd, void *dat, int *remove)
 
 		vhost_destroy_device(conn->vid);
 
+		if (vsocket->reconnect) {
+			create_unix_socket(vsocket);
+			vhost_user_start_client(vsocket);
+		}
+
 		pthread_mutex_lock(&vsocket->conn_mutex);
 		TAILQ_REMOVE(&vsocket->conn_list, conn, next);
 		pthread_mutex_unlock(&vsocket->conn_mutex);
 
 		free(conn);
-
-		//如果支持重连，则重新创建，并连接
-		if (vsocket->reconnect) {
-			create_unix_socket(vsocket);
-			vhost_user_start_client(vsocket);
-		}
 	}
 }
 
@@ -368,12 +368,12 @@ create_unix_socket(struct vhost_user_socket *vsocket)
 	fd = socket(AF_UNIX, SOCK_STREAM, 0);
 	if (fd < 0)
 		return -1;
-	RTE_LOG(INFO, VHOST_CONFIG, "vhost-user %s: socket created, fd: %d\n",
+	VHOST_LOG_CONFIG(INFO, "vhost-user %s: socket created, fd: %d\n",
 		vsocket->is_server ? "server" : "client", fd);
 
 	//如果不是server,则将fd置为非阻塞
 	if (!vsocket->is_server && fcntl(fd, F_SETFL, O_NONBLOCK)) {
-		RTE_LOG(ERR, VHOST_CONFIG,
+		VHOST_LOG_CONFIG(ERR,
 			"vhost-user: can't set nonblocking mode for socket, fd: "
 			"%d (%s)\n", fd, strerror(errno));
 		close(fd);
@@ -410,12 +410,12 @@ vhost_user_start_server(struct vhost_user_socket *vsocket)
 	//bind到地址un
 	ret = bind(fd, (struct sockaddr *)&vsocket->un, sizeof(vsocket->un));
 	if (ret < 0) {
-		RTE_LOG(ERR, VHOST_CONFIG,
+		VHOST_LOG_CONFIG(ERR,
 			"failed to bind to %s: %s; remove it and try again\n",
 			path, strerror(errno));
 		goto err;
 	}
-	RTE_LOG(INFO, VHOST_CONFIG, "bind to %s\n", path);
+	VHOST_LOG_CONFIG(INFO, "bind to %s\n", path);
 
 	//开始监听地址
 	ret = listen(fd, MAX_VIRTIO_BACKLOG);
@@ -426,7 +426,7 @@ vhost_user_start_server(struct vhost_user_socket *vsocket)
 	ret = fdset_add(&vhost_user.fdset, fd, vhost_user_server_new_connection,
 		  NULL, vsocket);
 	if (ret < 0) {
-		RTE_LOG(ERR, VHOST_CONFIG,
+		VHOST_LOG_CONFIG(ERR,
 			"failed to add listen fd %d to vhost server fdset\n",
 			fd);
 		goto err;
@@ -469,7 +469,7 @@ vhost_user_connect_nonblock(int fd, struct sockaddr *un, size_t sz)
 
 	flags = fcntl(fd, F_GETFL, 0);
 	if (flags < 0) {
-		RTE_LOG(ERR, VHOST_CONFIG,
+		VHOST_LOG_CONFIG(ERR,
 			"can't get flags for connfd %d\n", fd);
 		//fd有问题
 		return -2;
@@ -477,7 +477,7 @@ vhost_user_connect_nonblock(int fd, struct sockaddr *un, size_t sz)
 
 	//将socket 置为非阻塞
 	if ((flags & O_NONBLOCK) && fcntl(fd, F_SETFL, flags & ~O_NONBLOCK)) {
-		RTE_LOG(ERR, VHOST_CONFIG,
+		VHOST_LOG_CONFIG(ERR,
 				"can't disable nonblocking on fd %d\n", fd);
 		//fd有问题
 		return -2;
@@ -510,7 +510,7 @@ vhost_user_client_reconnect(void *arg __rte_unused)
 			if (ret == -2) {
 				//重连失败，主要是fd的问题，不再尝试
 				close(reconn->fd);
-				RTE_LOG(ERR, VHOST_CONFIG,
+				VHOST_LOG_CONFIG(ERR,
 					"reconnection for fd %d failed\n",
 					reconn->fd);
 				goto remove_fd;
@@ -520,7 +520,7 @@ vhost_user_client_reconnect(void *arg __rte_unused)
 				continue;
 
 			//重连成功，加入connect
-			RTE_LOG(INFO, VHOST_CONFIG,
+			VHOST_LOG_CONFIG(INFO,
 				"%s: connected\n", reconn->vsocket->path);
 			vhost_user_add_connection(reconn->fd, reconn->vsocket);
 
@@ -545,7 +545,7 @@ vhost_user_reconnect_init(void)
 
 	ret = pthread_mutex_init(&reconn_list.mutex, NULL);
 	if (ret < 0) {
-		RTE_LOG(ERR, VHOST_CONFIG, "failed to initialize mutex");
+		VHOST_LOG_CONFIG(ERR, "failed to initialize mutex");
 		return ret;
 	}
 	TAILQ_INIT(&reconn_list.head);
@@ -554,9 +554,9 @@ vhost_user_reconnect_init(void)
 	ret = rte_ctrl_thread_create(&reconn_tid, "vhost_reconn", NULL,
 			     vhost_user_client_reconnect, NULL);
 	if (ret != 0) {
-		RTE_LOG(ERR, VHOST_CONFIG, "failed to create reconnect thread");
+		VHOST_LOG_CONFIG(ERR, "failed to create reconnect thread");
 		if (pthread_mutex_destroy(&reconn_list.mutex)) {
-			RTE_LOG(ERR, VHOST_CONFIG,
+			VHOST_LOG_CONFIG(ERR,
 				"failed to destroy reconnect mutex");
 		}
 	}
@@ -582,7 +582,7 @@ vhost_user_start_client(struct vhost_user_socket *vsocket)
 	}
 
 	//连接失败
-	RTE_LOG(WARNING, VHOST_CONFIG,
+	VHOST_LOG_CONFIG(WARNING,
 		"failed to connect to %s: %s\n",
 		path, strerror(errno));
 
@@ -593,10 +593,10 @@ vhost_user_start_client(struct vhost_user_socket *vsocket)
 	}
 
 	//有重连，申请reconn结构，并挂在reconn-list上，重连线程会进行尝试
-	RTE_LOG(INFO, VHOST_CONFIG, "%s: reconnecting...\n", path);
+	VHOST_LOG_CONFIG(INFO, "%s: reconnecting...\n", path);
 	reconn = malloc(sizeof(*reconn));
 	if (reconn == NULL) {
-		RTE_LOG(ERR, VHOST_CONFIG,
+		VHOST_LOG_CONFIG(ERR,
 			"failed to allocate memory for reconnect\n");
 		close(fd);
 		return -1;
@@ -760,7 +760,7 @@ rte_vhost_driver_get_features(const char *path, uint64_t *features)
 	pthread_mutex_lock(&vhost_user.mutex);
 	vsocket = find_vhost_user_socket(path);
 	if (!vsocket) {
-		RTE_LOG(ERR, VHOST_CONFIG,
+		VHOST_LOG_CONFIG(ERR,
 			"socket file %s is not registered yet.\n", path);
 		ret = -1;
 		goto unlock_exit;
@@ -774,7 +774,7 @@ rte_vhost_driver_get_features(const char *path, uint64_t *features)
 	}
 
 	if (vdpa_dev->ops->get_features(did, &vdpa_features) < 0) {
-		RTE_LOG(ERR, VHOST_CONFIG,
+		VHOST_LOG_CONFIG(ERR,
 				"failed to get vdpa features "
 				"for socket file %s.\n", path);
 		ret = -1;
@@ -817,7 +817,7 @@ rte_vhost_driver_get_protocol_features(const char *path,
 	vsocket = find_vhost_user_socket(path);
 	if (!vsocket) {
 		//无对应的socket，报错
-		RTE_LOG(ERR, VHOST_CONFIG,
+		VHOST_LOG_CONFIG(ERR,
 			"socket file %s is not registered yet.\n", path);
 		ret = -1;
 		goto unlock_exit;
@@ -832,7 +832,7 @@ rte_vhost_driver_get_protocol_features(const char *path,
 
 	if (vdpa_dev->ops->get_protocol_features(did,
 				&vdpa_protocol_features) < 0) {
-		RTE_LOG(ERR, VHOST_CONFIG,
+		VHOST_LOG_CONFIG(ERR,
 				"failed to get vdpa protocol features "
 				"for socket file %s.\n", path);
 		ret = -1;
@@ -860,7 +860,7 @@ rte_vhost_driver_get_queue_num(const char *path, uint32_t *queue_num)
 	pthread_mutex_lock(&vhost_user.mutex);
 	vsocket = find_vhost_user_socket(path);
 	if (!vsocket) {
-		RTE_LOG(ERR, VHOST_CONFIG,
+		VHOST_LOG_CONFIG(ERR,
 			"socket file %s is not registered yet.\n", path);
 		ret = -1;
 		goto unlock_exit;
@@ -874,7 +874,7 @@ rte_vhost_driver_get_queue_num(const char *path, uint32_t *queue_num)
 	}
 
 	if (vdpa_dev->ops->get_queue_num(did, &vdpa_queue_num) < 0) {
-		RTE_LOG(ERR, VHOST_CONFIG,
+		VHOST_LOG_CONFIG(ERR,
 				"failed to get vdpa queue number "
 				"for socket file %s.\n", path);
 		ret = -1;
@@ -922,7 +922,7 @@ rte_vhost_driver_register(const char *path, uint64_t flags)
 
 	//vsocket数量已超限，报错
 	if (vhost_user.vsocket_cnt == MAX_VHOST_SOCKET) {
-		RTE_LOG(ERR, VHOST_CONFIG,
+		VHOST_LOG_CONFIG(ERR,
 			"error: the number of vhost sockets reaches maximum\n");
 		goto out;
 	}
@@ -934,7 +934,7 @@ rte_vhost_driver_register(const char *path, uint64_t flags)
 	memset(vsocket, 0, sizeof(struct vhost_user_socket));
 	vsocket->path = strdup(path);
 	if (vsocket->path == NULL) {
-		RTE_LOG(ERR, VHOST_CONFIG,
+		VHOST_LOG_CONFIG(ERR,
 			"error: failed to copy socket path string\n");
 		vhost_user_socket_mem_free(vsocket);
 		goto out;
@@ -942,11 +942,11 @@ rte_vhost_driver_register(const char *path, uint64_t flags)
 	TAILQ_INIT(&vsocket->conn_list);
 	ret = pthread_mutex_init(&vsocket->conn_mutex, NULL);
 	if (ret) {
-		RTE_LOG(ERR, VHOST_CONFIG,
+		VHOST_LOG_CONFIG(ERR,
 			"error: failed to init connection mutex\n");
 		goto out_free;
 	}
-
+	vsocket->vdpa_dev_id = -1;
 	//是否开启出队zero copy
 	vsocket->dequeue_zero_copy = flags & RTE_VHOST_USER_DEQUEUE_ZERO_COPY;
 	vsocket->extbuf = flags & RTE_VHOST_USER_EXTBUF_SUPPORT;
@@ -954,7 +954,7 @@ rte_vhost_driver_register(const char *path, uint64_t flags)
 
 	if (vsocket->dequeue_zero_copy &&
 	    (flags & RTE_VHOST_USER_IOMMU_SUPPORT)) {
-		RTE_LOG(ERR, VHOST_CONFIG,
+		VHOST_LOG_CONFIG(ERR,
 			"error: enabling dequeue zero copy and IOMMU features "
 			"simultaneously is not supported\n");
 		goto out_mutex;
@@ -986,13 +986,13 @@ rte_vhost_driver_register(const char *path, uint64_t flags)
 	 */
 	if (vsocket->dequeue_zero_copy) {
 		if (vsocket->extbuf) {
-			RTE_LOG(ERR, VHOST_CONFIG,
+			VHOST_LOG_CONFIG(ERR,
 			"error: zero copy is incompatible with external buffers\n");
 			ret = -1;
 			goto out_mutex;
 		}
 		if (vsocket->linearbuf) {
-			RTE_LOG(ERR, VHOST_CONFIG,
+			VHOST_LOG_CONFIG(ERR,
 			"error: zero copy is incompatible with linear buffers\n");
 			ret = -1;
 			goto out_mutex;
@@ -1000,7 +1000,7 @@ rte_vhost_driver_register(const char *path, uint64_t flags)
 		vsocket->supported_features &= ~(1ULL << VIRTIO_F_IN_ORDER);
 		vsocket->features &= ~(1ULL << VIRTIO_F_IN_ORDER);
 
-		RTE_LOG(INFO, VHOST_CONFIG,
+		VHOST_LOG_CONFIG(INFO,
 			"Dequeue zero copy requested, disabling postcopy support\n");
 		vsocket->protocol_features &=
 			~(1ULL << VHOST_USER_PROTOCOL_F_PAGEFAULT);
@@ -1017,7 +1017,7 @@ rte_vhost_driver_register(const char *path, uint64_t flags)
 				(1ULL << VIRTIO_NET_F_HOST_TSO6) |
 				(1ULL << VIRTIO_NET_F_HOST_UFO);
 
-		RTE_LOG(INFO, VHOST_CONFIG,
+		VHOST_LOG_CONFIG(INFO,
 			"Linear buffers requested without external buffers, "
 			"disabling host segmentation offloading support\n");
 		vsocket->supported_features &= ~seg_offload_features;
@@ -1035,7 +1035,7 @@ rte_vhost_driver_register(const char *path, uint64_t flags)
 			~(1ULL << VHOST_USER_PROTOCOL_F_PAGEFAULT);
 	} else {
 #ifndef RTE_LIBRTE_VHOST_POSTCOPY
-		RTE_LOG(ERR, VHOST_CONFIG,
+		VHOST_LOG_CONFIG(ERR,
 			"Postcopy requested but not compiled\n");
 		ret = -1;
 		goto out_mutex;
@@ -1066,7 +1066,7 @@ rte_vhost_driver_register(const char *path, uint64_t flags)
 
 out_mutex:
 	if (pthread_mutex_destroy(&vsocket->conn_mutex)) {
-		RTE_LOG(ERR, VHOST_CONFIG,
+		VHOST_LOG_CONFIG(ERR,
 			"error: failed to destroy connection mutex\n");
 	}
 out_free:
@@ -1130,9 +1130,10 @@ again:
 				next = TAILQ_NEXT(conn, next);
 
 				/*
-				 * If r/wcb is executing, release the
-				 * conn_mutex lock, and try again since
-				 * the r/wcb may use the conn_mutex lock.
+				 * If r/wcb is executing, release vsocket's
+				 * conn_mutex and vhost_user's mutex locks, and
+				 * try again since the r/wcb may use the
+				 * conn_mutex and mutex locks.
 				 */
 				if (fdset_try_del(&vhost_user.fdset,
 						  conn->connfd) == -1) {
@@ -1142,7 +1143,7 @@ again:
 					goto again;
 				}
 
-				RTE_LOG(INFO, VHOST_CONFIG,
+				VHOST_LOG_CONFIG(INFO,
 					"free connfd = %d for device '%s'\n",
 					conn->connfd, path);
 				close(conn->connfd);
@@ -1154,9 +1155,18 @@ again:
 
 			//要解注册的就是这个vsocket
 			if (vsocket->is_server) {
+				/*
+				 * If r/wcb is executing, release vhost_user's
+				 * mutex lock, and try again since the r/wcb
+				 * may use the mutex lock.
+				 */
 				//它是服务端，移除掉这个fd,不再管理它
-				fdset_del(&vhost_user.fdset,
-						vsocket->socket_fd);
+				if (fdset_try_del(&vhost_user.fdset,
+						vsocket->socket_fd) == -1) {
+					pthread_mutex_unlock(&vhost_user.mutex);
+					goto again;
+				}
+
 				close(vsocket->socket_fd);
 				unlink(path);
 			} else if (vsocket->reconnect) {
@@ -1236,7 +1246,7 @@ rte_vhost_driver_start(const char *path)
 		 * rebuild the wait list of poll.
 		 */
 		if (fdset_pipe_init(&vhost_user.fdset) < 0) {
-			RTE_LOG(ERR, VHOST_CONFIG,
+			VHOST_LOG_CONFIG(ERR,
 				"failed to create pipe for vhost fdset\n");
 			return -1;
 		}
@@ -1246,7 +1256,7 @@ rte_vhost_driver_start(const char *path)
 			"vhost-events", NULL, fdset_event_dispatch,
 			&vhost_user.fdset);
 		if (ret != 0) {
-			RTE_LOG(ERR, VHOST_CONFIG,
+			VHOST_LOG_CONFIG(ERR,
 				"failed to create fdset handling thread");
 
 			fdset_pipe_uninit(&vhost_user.fdset);

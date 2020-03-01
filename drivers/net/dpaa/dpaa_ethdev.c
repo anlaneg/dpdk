@@ -56,7 +56,8 @@ static uint64_t dev_rx_offloads_nodis =
 		DEV_RX_OFFLOAD_IPV4_CKSUM |
 		DEV_RX_OFFLOAD_UDP_CKSUM |
 		DEV_RX_OFFLOAD_TCP_CKSUM |
-		DEV_RX_OFFLOAD_OUTER_IPV4_CKSUM;
+		DEV_RX_OFFLOAD_OUTER_IPV4_CKSUM |
+		DEV_RX_OFFLOAD_RSS_HASH;
 
 /* Supported Tx offloads */
 static uint64_t dev_tx_offloads_sup =
@@ -173,7 +174,7 @@ dpaa_mtu_set(struct rte_eth_dev *dev, uint16_t mtu)
 	}
 
 	if (frame_size > RTE_ETHER_MAX_LEN)
-		dev->data->dev_conf.rxmode.offloads &=
+		dev->data->dev_conf.rxmode.offloads |=
 						DEV_RX_OFFLOAD_JUMBO_FRAME;
 	else
 		dev->data->dev_conf.rxmode.offloads &=

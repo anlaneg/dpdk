@@ -2,7 +2,6 @@
  * Copyright(c) 2019 Intel Corporation
  */
 
-#include <rte_config.h>
 #include <rte_eal_memconfig.h>
 #include <rte_version.h>
 
@@ -161,4 +160,11 @@ rte_mcfg_timer_unlock(void)
 {
 	struct rte_mem_config *mcfg = rte_eal_get_configuration()->mem_config;
 	rte_spinlock_unlock(&mcfg->tlock);
+}
+
+bool
+rte_mcfg_get_single_file_segments(void)
+{
+	struct rte_mem_config *mcfg = rte_eal_get_configuration()->mem_config;
+	return (bool)mcfg->single_file_segments;
 }

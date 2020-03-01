@@ -35,7 +35,7 @@ void prandom_bytes(void *dest_ptr, size_t len)
 	}
 }
 
-void bnxt_init_vnics(struct bnxt *bp)
+static void bnxt_init_vnics(struct bnxt *bp)
 {
 	struct bnxt_vnic_info *vnic;
 	uint16_t max_vnics;
@@ -51,8 +51,8 @@ void bnxt_init_vnics(struct bnxt *bp)
 		vnic->lb_rule = (uint16_t)HWRM_NA_SIGNATURE;
 		vnic->hash_mode =
 			HWRM_VNIC_RSS_CFG_INPUT_HASH_MODE_FLAGS_DEFAULT;
+		vnic->rx_queue_cnt = 0;
 
-		prandom_bytes(vnic->rss_hash_key, HW_HASH_KEY_SIZE);
 		STAILQ_INIT(&vnic->filter);
 		STAILQ_INIT(&vnic->flow_list);
 		STAILQ_INSERT_TAIL(&bp->free_vnic_list, vnic, next);
@@ -75,12 +75,13 @@ struct bnxt_vnic_info *bnxt_alloc_vnic(struct bnxt *bp)
 
 void bnxt_free_all_vnics(struct bnxt *bp)
 {
-	struct bnxt_vnic_info *temp;
+	struct bnxt_vnic_info *vnic;
 	unsigned int i;
 
-	for (i = 0; i < bp->nr_vnics; i++) {
-		temp = &bp->vnic_info[i];
-		STAILQ_INSERT_TAIL(&bp->free_vnic_list, temp, next);
+	for (i = 0; i < bp->max_vnics; i++) {
+		vnic = &bp->vnic_info[i];
+		STAILQ_INSERT_TAIL(&bp->free_vnic_list, vnic, next);
+		vnic->rx_queue_cnt = 0;
 	}
 }
 
@@ -149,17 +150,6 @@ int bnxt_alloc_vnic_attributes(struct bnxt *bp)
 			return -ENOMEM;
 	}
 	mz_phys_addr = mz->iova;
-	if ((unsigned long)mz->addr == mz_phys_addr) {
-		PMD_DRV_LOG(DEBUG,
-			    "Memzone physical address same as virtual.\n");
-		PMD_DRV_LOG(DEBUG, "Using rte_mem_virt2iova()\n");
-		mz_phys_addr = rte_mem_virt2iova(mz->addr);
-		if (mz_phys_addr == RTE_BAD_IOVA) {
-			PMD_DRV_LOG(ERR,
-				    "unable to map to physical memory\n");
-			return -ENOMEM;
-		}
-	}
 
 	for (i = 0; i < max_vnics; i++) {
 		vnic = &bp->vnic_info[i];
@@ -179,6 +169,7 @@ int bnxt_alloc_vnic_attributes(struct bnxt *bp)
 				HW_HASH_KEY_SIZE);
 		vnic->mc_list_dma_addr = vnic->rss_hash_key_dma_addr +
 				HW_HASH_KEY_SIZE;
+		prandom_bytes(vnic->rss_hash_key, HW_HASH_KEY_SIZE);
 	}
 
 	return 0;
@@ -220,6 +211,7 @@ int bnxt_alloc_vnic_mem(struct bnxt *bp)
 		return -ENOMEM;
 	}
 	bp->vnic_info = vnic_mem;
+	bnxt_init_vnics(bp);
 	return 0;
 }
 

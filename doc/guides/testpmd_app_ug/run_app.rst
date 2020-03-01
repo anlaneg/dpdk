@@ -77,6 +77,13 @@ The command line options are:
 
     Set the hexadecimal bitmask of the ports used by the packet forwarding test.
 
+*   ``--portlist=X``
+
+      Set the forwarding ports based on the user input used by the packet forwarding test.
+      '-' denotes a range of ports to set including the two specified port IDs
+      ',' separates multiple port values.
+      Possible examples like --portlist=0,1 or --portlist=0-2 or --portlist=0,1-2 etc
+
 *   ``--numa``
 
     Enable NUMA-aware allocation of RX/TX rings and of RX memory buffers
@@ -111,6 +118,10 @@ The command line options are:
 *   ``--max-pkt-len=N``
 
     Set the maximum packet size to N bytes, where N >= 64. The default value is 1518.
+
+*   ``--max-lro-pkt-size=N``
+
+    Set the maximum LRO aggregated packet size to N bytes, where N >= 64.
 
 *   ``--eth-peers-configfile=name``
 
@@ -265,6 +276,17 @@ The command line options are:
 
     Set the number of descriptors in the TX rings to N, where N > 0.
     The default value is 512.
+
+*   ``--hairpinq=N``
+
+    Set the number of hairpin queues per port to N, where 1 <= N <= 65535.
+    The default value is 0. The number of hairpin queues are added to the
+    number of TX queues and to the number of RX queues. then the first
+    RX hairpin is binded to the first TX hairpin, the second RX hairpin is
+    binded to the second TX hairpin and so on. The index of the first
+    RX hairpin queue is the number of RX queues as configured using --rxq.
+    The index of the first TX hairpin queue is the number of TX queues
+    as configured using --txq.
 
 *   ``--burst=N``
 

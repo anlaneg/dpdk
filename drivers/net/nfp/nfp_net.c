@@ -1,34 +1,8 @@
-/*
+/* SPDX-License-Identifier: BSD-3-Clause
  * Copyright (c) 2014-2018 Netronome Systems, Inc.
  * All rights reserved.
  *
  * Small portions derived from code Copyright(c) 2010-2015 Intel Corporation.
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice,
- *  this list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright
- *  notice, this list of conditions and the following disclaimer in the
- *  documentation and/or other materials provided with the distribution
- *
- * 3. Neither the name of the copyright holder nor the names of its
- *  contributors may be used to endorse or promote products derived from this
- *  software without specific prior written permission.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
- * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
- * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
- * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
- * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
- * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
- * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
- * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
- * POSSIBILITY OF SUCH DAMAGE.
  */
 
 /*
@@ -409,6 +383,9 @@ nfp_net_configure(struct rte_eth_dev *dev)
 	dev_conf = &dev->data->dev_conf;
 	rxmode = &dev_conf->rxmode;
 	txmode = &dev_conf->txmode;
+
+	if (rxmode->mq_mode & ETH_MQ_RX_RSS_FLAG)
+		rxmode->offloads |= DEV_RX_OFFLOAD_RSS_HASH;
 
 	/* Checking TX mode */
 	if (txmode->mq_mode) {
@@ -1239,7 +1216,8 @@ nfp_net_infos_get(struct rte_eth_dev *dev, struct rte_eth_dev_info *dev_info)
 					     DEV_RX_OFFLOAD_UDP_CKSUM |
 					     DEV_RX_OFFLOAD_TCP_CKSUM;
 
-	dev_info->rx_offload_capa |= DEV_RX_OFFLOAD_JUMBO_FRAME;
+	dev_info->rx_offload_capa |= DEV_RX_OFFLOAD_JUMBO_FRAME |
+				     DEV_RX_OFFLOAD_RSS_HASH;
 
 	if (hw->cap & NFP_NET_CFG_CTRL_TXVLAN)
 		dev_info->tx_offload_capa = DEV_TX_OFFLOAD_VLAN_INSERT;
@@ -1402,9 +1380,9 @@ nfp_net_dev_link_status_print(struct rte_eth_dev *dev)
 		PMD_DRV_LOG(INFO, " Port %d: Link Down",
 			    dev->data->port_id);
 
-	PMD_DRV_LOG(INFO, "PCI Address: %04d:%02d:%02d:%d",
-		pci_dev->addr.domain, pci_dev->addr.bus,
-		pci_dev->addr.devid, pci_dev->addr.function);
+	PMD_DRV_LOG(INFO, "PCI Address: " PCI_PRI_FMT,
+		    pci_dev->addr.domain, pci_dev->addr.bus,
+		    pci_dev->addr.devid, pci_dev->addr.function);
 }
 
 /* Interrupt configuration and handling */

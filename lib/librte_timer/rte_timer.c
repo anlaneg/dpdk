@@ -26,7 +26,6 @@
 #include <rte_memzone.h>
 #include <rte_malloc.h>
 #include <rte_errno.h>
-#include <rte_function_versioning.h>
 
 #include "rte_timer.h"
 
@@ -68,9 +67,6 @@ static int *volatile rte_timer_mz_refcnt;
 static struct rte_timer_data *rte_timer_data_arr;
 static const uint32_t default_data_id;
 static uint32_t rte_timer_subsystem_initialized;
-
-/* For maintaining older interfaces for a period */
-static struct rte_timer_data default_timer_data;
 
 /* when debug is enabled, store some statistics */
 #ifdef RTE_LIBRTE_TIMER_DEBUG
@@ -132,32 +128,15 @@ rte_timer_data_dealloc(uint32_t id)
 	return 0;
 }
 
-void __vsym
-//timer库初始化
-rte_timer_subsystem_init_v20(void)
-{
-	unsigned lcore_id;
-	struct priv_timer *priv_timer = default_timer_data.priv_timer;
-
-	/* since priv_timer is static, it's zeroed by default, so only init some
-	 * fields.
-	 */
-	//每core一个
-	for (lcore_id = 0; lcore_id < RTE_MAX_LCORE; lcore_id ++) {
-		rte_spinlock_init(&priv_timer[lcore_id].list_lock);
-		priv_timer[lcore_id].prev_lcore = lcore_id;
-	}
-}
-VERSION_SYMBOL(rte_timer_subsystem_init, _v20, 2.0);
-
 /* Init the timer library. Allocate an array of timer data structs in shared
  * memory, and allocate the zeroth entry for use with original timer
  * APIs. Since the intersection of the sets of lcore ids in primary and
  * secondary processes should be empty, the zeroth entry can be shared by
  * multiple processes.
  */
-int __vsym
-rte_timer_subsystem_init_v1905(void)
+//timer库初始化
+int
+rte_timer_subsystem_init(void)
 {
 	const struct rte_memzone *mz;
 	struct rte_timer_data *data;
@@ -193,6 +172,7 @@ rte_timer_subsystem_init_v1905(void)
 		for (i = 0; i < RTE_MAX_DATA_ELS; i++) {
 			data = &rte_timer_data_arr[i];
 
+			//每core一个
 			for (lcore_id = 0; lcore_id < RTE_MAX_LCORE;
 			     lcore_id++) {
 				rte_spinlock_init(
@@ -212,9 +192,6 @@ rte_timer_subsystem_init_v1905(void)
 
 	return 0;
 }
-MAP_STATIC_SYMBOL(int rte_timer_subsystem_init(void),
-		  rte_timer_subsystem_init_v1905);
-BIND_DEFAULT_SYMBOL(rte_timer_subsystem_init, _v1905, 19.05);
 
 void
 rte_timer_subsystem_finalize(void)
@@ -566,44 +543,14 @@ __rte_timer_reset(struct rte_timer *tim, uint64_t expire,//timer及过期时间
 /* Reset and start the timer associated with the timer handle tim */
 //重置timer,将其过期时间定在ticks之后，定时器类型，定时器位于那个core,定时器过期回调
 //定时器过期回调参数
-int __vsym
-rte_timer_reset_v20(struct rte_timer *tim, uint64_t ticks,
-		    enum rte_timer_type type, unsigned int tim_lcore,
-		    rte_timer_cb_t fct, void *arg)
-{
-	uint64_t cur_time = rte_get_timer_cycles();
-	uint64_t period;
-
-	if (unlikely((tim_lcore != (unsigned)LCORE_ID_ANY) &&
-			!(rte_lcore_is_enabled(tim_lcore) ||
-			  rte_lcore_has_role(tim_lcore, ROLE_SERVICE))))
-		return -1;//参数校验
-
-	//检查是否为周期性定时器
-	if (type == PERIODICAL)
-		period = ticks;
-	else
-		period = 0;
-
-	return __rte_timer_reset(tim,  cur_time + ticks, period, tim_lcore,
-			  fct, arg, 0, &default_timer_data);
-}
-VERSION_SYMBOL(rte_timer_reset, _v20, 2.0);
-
-int __vsym
-rte_timer_reset_v1905(struct rte_timer *tim, uint64_t ticks,
+int
+rte_timer_reset(struct rte_timer *tim, uint64_t ticks,
 		      enum rte_timer_type type, unsigned int tim_lcore,
 		      rte_timer_cb_t fct, void *arg)
 {
 	return rte_timer_alt_reset(default_data_id, tim, ticks, type,
 				   tim_lcore, fct, arg);
 }
-MAP_STATIC_SYMBOL(int rte_timer_reset(struct rte_timer *tim, uint64_t ticks,
-				      enum rte_timer_type type,
-				      unsigned int tim_lcore,
-				      rte_timer_cb_t fct, void *arg),
-		  rte_timer_reset_v1905);
-BIND_DEFAULT_SYMBOL(rte_timer_reset, _v1905, 19.05);
 
 int
 rte_timer_alt_reset(uint32_t timer_data_id, struct rte_timer *tim,
@@ -616,6 +563,7 @@ rte_timer_alt_reset(uint32_t timer_data_id, struct rte_timer *tim,
 
 	TIMER_DATA_VALID_GET_OR_ERR_RET(timer_data_id, timer_data, -EINVAL);
 
+	//检查是否为周期性定时器
 	if (type == PERIODICAL)
 		period = ticks;
 	else
@@ -673,21 +621,11 @@ __rte_timer_stop(struct rte_timer *tim, int local_is_locked,
 }
 
 /* Stop the timer associated with the timer handle tim */
-int __vsym
-rte_timer_stop_v20(struct rte_timer *tim)
-{
-	return __rte_timer_stop(tim, 0, &default_timer_data);
-}
-VERSION_SYMBOL(rte_timer_stop, _v20, 2.0);
-
-int __vsym
-rte_timer_stop_v1905(struct rte_timer *tim)
+int
+rte_timer_stop(struct rte_timer *tim)
 {
 	return rte_timer_alt_stop(default_data_id, tim);
 }
-MAP_STATIC_SYMBOL(int rte_timer_stop(struct rte_timer *tim),
-		  rte_timer_stop_v1905);
-BIND_DEFAULT_SYMBOL(rte_timer_stop, _v1905, 19.05);
 
 int
 rte_timer_alt_stop(uint32_t timer_data_id, struct rte_timer *tim)
@@ -836,15 +774,8 @@ __rte_timer_manage(struct rte_timer_data *timer_data)
 	priv_timer[lcore_id].running_tim = NULL;
 }
 
-void __vsym
-rte_timer_manage_v20(void)
-{
-	__rte_timer_manage(&default_timer_data);
-}
-VERSION_SYMBOL(rte_timer_manage, _v20, 2.0);
-
-int __vsym
-rte_timer_manage_v1905(void)
+int
+rte_timer_manage(void)
 {
 	struct rte_timer_data *timer_data;
 
@@ -854,8 +785,6 @@ rte_timer_manage_v1905(void)
 
 	return 0;
 }
-MAP_STATIC_SYMBOL(int rte_timer_manage(void), rte_timer_manage_v1905);
-BIND_DEFAULT_SYMBOL(rte_timer_manage, _v1905, 19.05);
 
 int
 rte_timer_alt_manage(uint32_t timer_data_id,
@@ -1067,6 +996,33 @@ rte_timer_stop_all(uint32_t timer_data_id, unsigned int *walk_lcores,
 	return 0;
 }
 
+int64_t
+rte_timer_next_ticks(void)
+{
+	unsigned int lcore_id = rte_lcore_id();
+	struct rte_timer_data *timer_data;
+	struct priv_timer *priv_timer;
+	const struct rte_timer *tm;
+	uint64_t cur_time;
+	int64_t left = -ENOENT;
+
+	TIMER_DATA_VALID_GET_OR_ERR_RET(default_data_id, timer_data, -EINVAL);
+
+	priv_timer = timer_data->priv_timer;
+	cur_time = rte_get_timer_cycles();
+
+	rte_spinlock_lock(&priv_timer[lcore_id].list_lock);
+	tm = priv_timer[lcore_id].pending_head.sl_next[0];
+	if (tm) {
+		left = tm->expire - cur_time;
+		if (left < 0)
+			left = 0;
+	}
+	rte_spinlock_unlock(&priv_timer[lcore_id].list_lock);
+
+	return left;
+}
+
 /* dump statistics about timers */
 static void
 __rte_timer_dump_stats(struct rte_timer_data *timer_data __rte_unused, FILE *f)
@@ -1093,21 +1049,11 @@ __rte_timer_dump_stats(struct rte_timer_data *timer_data __rte_unused, FILE *f)
 #endif
 }
 
-void __vsym
-rte_timer_dump_stats_v20(FILE *f)
-{
-	__rte_timer_dump_stats(&default_timer_data, f);
-}
-VERSION_SYMBOL(rte_timer_dump_stats, _v20, 2.0);
-
-int __vsym
-rte_timer_dump_stats_v1905(FILE *f)
+int
+rte_timer_dump_stats(FILE *f)
 {
 	return rte_timer_alt_dump_stats(default_data_id, f);
 }
-MAP_STATIC_SYMBOL(int rte_timer_dump_stats(FILE *f),
-		  rte_timer_dump_stats_v1905);
-BIND_DEFAULT_SYMBOL(rte_timer_dump_stats, _v1905, 19.05);
 
 int
 rte_timer_alt_dump_stats(uint32_t timer_data_id __rte_unused, FILE *f)

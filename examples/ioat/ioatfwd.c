@@ -170,7 +170,7 @@ print_stats(char *prgname)
 	unsigned int *ids_xstats, nb_xstats;
 	char status_string[120]; /* to print at the top of the output */
 	int status_strlen;
-
+	int ret;
 
 	const char clr[] = { 27, '[', '2', 'J', '\0' };
 	const char topLeft[] = { 27, '[', '1', ';', '1', 'H', '\0' };
@@ -197,8 +197,11 @@ print_stats(char *prgname)
 		"Ring Size = %d\n", ring_size);
 
 	/* Allocate memory for xstats names and values */
-	nb_xstats = rte_rawdev_xstats_names_get(
+	ret = rte_rawdev_xstats_names_get(
 		cfg.ports[0].ioat_ids[0], NULL, 0);
+	if (ret < 0)
+		return;
+	nb_xstats = (unsigned int)ret;
 
 	names_xstats = malloc(sizeof(*names_xstats) * nb_xstats);
 	if (names_xstats == NULL) {
@@ -457,7 +460,7 @@ ioat_tx_port(struct rxtx_port_config *tx_config)
 				MAX_PKT_BURST, NULL);
 		}
 
-		if (nb_dq == 0)
+		if ((int32_t) nb_dq <= 0)
 			return;
 
 		if (copy_mode == COPY_MODE_IOAT_NUM)
@@ -694,7 +697,7 @@ check_link_status(uint32_t port_mask)
 {
 	uint16_t portid;
 	struct rte_eth_link link;
-	int retval = 0;
+	int ret, link_status = 0;
 
 	printf("\nChecking link status\n");
 	RTE_ETH_FOREACH_DEV(portid) {
@@ -702,7 +705,12 @@ check_link_status(uint32_t port_mask)
 			continue;
 
 		memset(&link, 0, sizeof(link));
-		rte_eth_link_get(portid, &link);
+		ret = rte_eth_link_get(portid, &link);
+		if (ret < 0) {
+			printf("Port %u link get failed: err=%d\n",
+					portid, ret);
+			continue;
+		}
 
 		/* Print link status */
 		if (link.link_status) {
@@ -711,11 +719,11 @@ check_link_status(uint32_t port_mask)
 				portid, link.link_speed,
 				(link.link_duplex == ETH_LINK_FULL_DUPLEX) ?
 				("full-duplex") : ("half-duplex\n"));
-			retval = 1;
+			link_status = 1;
 		} else
 			printf("Port %d Link Down\n", portid);
 	}
-	return retval;
+	return link_status;
 }
 
 static void
@@ -748,8 +756,9 @@ assign_rawdevs(void)
 				if (rdev_id == rte_rawdev_count())
 					goto end;
 				rte_rawdev_info_get(rdev_id++, &rdev_info);
-			} while (strcmp(rdev_info.driver_name,
-				IOAT_PMD_RAWDEV_NAME_STR) != 0);
+			} while (rdev_info.driver_name == NULL ||
+					strcmp(rdev_info.driver_name,
+						IOAT_PMD_RAWDEV_NAME_STR) != 0);
 
 			cfg.ports[i].ioat_ids[j] = rdev_id - 1;
 			configure_rawdev_queue(cfg.ports[i].ioat_ids[j]);
@@ -820,7 +829,11 @@ port_init(uint16_t portid, struct rte_mempool *mbuf_pool, uint16_t nb_queues)
 	/* Init port */
 	printf("Initializing port %u... ", portid);
 	fflush(stdout);
-	rte_eth_dev_info_get(portid, &dev_info);
+	ret = rte_eth_dev_info_get(portid, &dev_info);
+	if (ret < 0)
+		rte_exit(EXIT_FAILURE, "Cannot get device info: %s, port=%u\n",
+			rte_strerror(-ret), portid);
+
 	local_port_conf.rx_adv_conf.rss_conf.rss_hf &=
 		dev_info.flow_type_rss_offloads;
 	if (dev_info.tx_offload_capa & DEV_TX_OFFLOAD_MBUF_FAST_FREE)

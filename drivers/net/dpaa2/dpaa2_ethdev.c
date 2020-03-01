@@ -45,6 +45,7 @@ static uint64_t dev_rx_offloads_sup =
 
 /* Rx offloads which cannot be disabled */
 static uint64_t dev_rx_offloads_nodis =
+		DEV_RX_OFFLOAD_RSS_HASH |
 		DEV_RX_OFFLOAD_SCATTER;
 
 /* Supported Tx offloads */
@@ -1288,7 +1289,7 @@ dpaa2_dev_mtu_set(struct rte_eth_dev *dev, uint16_t mtu)
 		return -EINVAL;
 
 	if (frame_size > RTE_ETHER_MAX_LEN)
-		dev->data->dev_conf.rxmode.offloads &=
+		dev->data->dev_conf.rxmode.offloads |=
 						DEV_RX_OFFLOAD_JUMBO_FRAME;
 	else
 		dev->data->dev_conf.rxmode.offloads &=

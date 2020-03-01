@@ -5,6 +5,7 @@
 #include <rte_ethdev_driver.h>
 #include <rte_net.h>
 
+#include "rte_pmd_ice.h"
 #include "ice_rxtx.h"
 
 #define ICE_TX_CKSUM_OFFLOAD_MASK (		 \
@@ -13,18 +14,36 @@
 		PKT_TX_TCP_SEG |		 \
 		PKT_TX_OUTER_IP_CKSUM)
 
-static inline uint8_t
-ice_rxdid_to_proto_xtr_type(uint8_t rxdid)
-{
-	static uint8_t xtr_map[] = {
-		[ICE_RXDID_COMMS_AUX_VLAN]      = PROTO_XTR_VLAN,
-		[ICE_RXDID_COMMS_AUX_IPV4]      = PROTO_XTR_IPV4,
-		[ICE_RXDID_COMMS_AUX_IPV6]      = PROTO_XTR_IPV6,
-		[ICE_RXDID_COMMS_AUX_IPV6_FLOW] = PROTO_XTR_IPV6_FLOW,
-		[ICE_RXDID_COMMS_AUX_TCP]       = PROTO_XTR_TCP,
-	};
+/* Offset of mbuf dynamic field for protocol extraction data */
+int rte_net_ice_dynfield_proto_xtr_metadata_offs = -1;
 
-	return rxdid < RTE_DIM(xtr_map) ? xtr_map[rxdid] : PROTO_XTR_NONE;
+/* Mask of mbuf dynamic flags for protocol extraction type */
+uint64_t rte_net_ice_dynflag_proto_xtr_vlan_mask;
+uint64_t rte_net_ice_dynflag_proto_xtr_ipv4_mask;
+uint64_t rte_net_ice_dynflag_proto_xtr_ipv6_mask;
+uint64_t rte_net_ice_dynflag_proto_xtr_ipv6_flow_mask;
+uint64_t rte_net_ice_dynflag_proto_xtr_tcp_mask;
+
+static inline uint64_t
+ice_rxdid_to_proto_xtr_ol_flag(uint8_t rxdid)
+{
+	static uint64_t *ol_flag_map[] = {
+		[ICE_RXDID_COMMS_AUX_VLAN] =
+				&rte_net_ice_dynflag_proto_xtr_vlan_mask,
+		[ICE_RXDID_COMMS_AUX_IPV4] =
+				&rte_net_ice_dynflag_proto_xtr_ipv4_mask,
+		[ICE_RXDID_COMMS_AUX_IPV6] =
+				&rte_net_ice_dynflag_proto_xtr_ipv6_mask,
+		[ICE_RXDID_COMMS_AUX_IPV6_FLOW] =
+				&rte_net_ice_dynflag_proto_xtr_ipv6_flow_mask,
+		[ICE_RXDID_COMMS_AUX_TCP] =
+				&rte_net_ice_dynflag_proto_xtr_tcp_mask,
+	};
+	uint64_t *ol_flag;
+
+	ol_flag = rxdid < RTE_DIM(ol_flag_map) ? ol_flag_map[rxdid] : NULL;
+
+	return ol_flag != NULL ? *ol_flag : 0ULL;
 }
 
 static inline uint8_t
@@ -405,7 +424,7 @@ ice_rx_queue_start(struct rte_eth_dev *dev, uint16_t rx_queue_id)
 	/* Init the RX tail register. */
 	ICE_PCI_REG_WRITE(rxq->qrx_tail, rxq->nb_rx_desc - 1);
 
-	err = ice_switch_rx_queue(hw, rxq->reg_idx, TRUE);
+	err = ice_switch_rx_queue(hw, rxq->reg_idx, true);
 	if (err) {
 		PMD_DRV_LOG(ERR, "Failed to switch RX queue %u on",
 			    rx_queue_id);
@@ -431,7 +450,7 @@ ice_rx_queue_stop(struct rte_eth_dev *dev, uint16_t rx_queue_id)
 	if (rx_queue_id < dev->data->nb_rx_queues) {
 		rxq = dev->data->rx_queues[rx_queue_id];
 
-		err = ice_switch_rx_queue(hw, rxq->reg_idx, FALSE);
+		err = ice_switch_rx_queue(hw, rxq->reg_idx, false);
 		if (err) {
 			PMD_DRV_LOG(ERR, "Failed to switch RX queue %u off",
 				    rx_queue_id);
@@ -516,7 +535,7 @@ ice_fdir_program_hw_rx_queue(struct ice_rx_queue *rxq)
 {
 	struct ice_vsi *vsi = rxq->vsi;
 	struct ice_hw *hw = ICE_VSI_TO_HW(vsi);
-	uint32_t rxdid = ICE_RXDID_COMMS_GENERIC;
+	uint32_t rxdid = ICE_RXDID_LEGACY_1;
 	struct ice_rlan_ctx rx_ctx;
 	enum ice_status err;
 	uint32_t regval;
@@ -531,9 +550,7 @@ ice_fdir_program_hw_rx_queue(struct ice_rx_queue *rxq)
 	rx_ctx.dbuf = rxq->rx_buf_len >> ICE_RLAN_CTX_DBUF_S;
 	rx_ctx.hbuf = rxq->rx_hdr_len >> ICE_RLAN_CTX_HBUF_S;
 	rx_ctx.dtype = 0; /* No Header Split mode */
-#ifndef RTE_LIBRTE_ICE_16BYTE_RX_DESC
 	rx_ctx.dsize = 1; /* 32B descriptors */
-#endif
 	rx_ctx.rxmax = RTE_ETHER_MAX_LEN;
 	/* TPH: Transaction Layer Packet (TLP) processing hints */
 	rx_ctx.tphrdesc_ena = 1;
@@ -613,7 +630,7 @@ ice_fdir_rx_queue_start(struct rte_eth_dev *dev, uint16_t rx_queue_id)
 	/* Init the RX tail register. */
 	ICE_PCI_REG_WRITE(rxq->qrx_tail, rxq->nb_rx_desc - 1);
 
-	err = ice_switch_rx_queue(hw, rxq->reg_idx, TRUE);
+	err = ice_switch_rx_queue(hw, rxq->reg_idx, true);
 	if (err) {
 		PMD_DRV_LOG(ERR, "Failed to switch FDIR RX queue %u on",
 			    rx_queue_id);
@@ -799,7 +816,7 @@ ice_fdir_rx_queue_stop(struct rte_eth_dev *dev, uint16_t rx_queue_id)
 
 	rxq = pf->fdir.rxq;
 
-	err = ice_switch_rx_queue(hw, rxq->reg_idx, FALSE);
+	err = ice_switch_rx_queue(hw, rxq->reg_idx, false);
 	if (err) {
 		PMD_DRV_LOG(ERR, "Failed to switch FDIR RX queue %u off",
 			    rx_queue_id);
@@ -953,7 +970,7 @@ ice_rx_queue_setup(struct rte_eth_dev *dev,
 	}
 
 	ice_reset_rx_queue(rxq);
-	rxq->q_set = TRUE;
+	rxq->q_set = true;
 	dev->data->rx_queues[queue_idx] = rxq;
 	rxq->rx_rel_mbufs = _ice_rx_queue_release_mbufs;
 
@@ -1166,7 +1183,7 @@ ice_tx_queue_setup(struct rte_eth_dev *dev,
 	}
 
 	ice_reset_tx_queue(txq);
-	txq->q_set = TRUE;
+	txq->q_set = true;
 	dev->data->tx_queues[queue_idx] = txq;
 	txq->tx_rel_mbufs = _ice_tx_queue_release_mbufs;
 	ice_set_tx_function_flag(dev, txq);
@@ -1325,9 +1342,37 @@ ice_rxd_to_vlan_tci(struct rte_mbuf *mb, volatile union ice_rx_flex_desc *rxdp)
 		   mb->vlan_tci, mb->vlan_tci_outer);
 }
 
+#ifndef RTE_LIBRTE_ICE_16BYTE_RX_DESC
 #define ICE_RX_PROTO_XTR_VALID \
 	((1 << ICE_RX_FLEX_DESC_STATUS1_XTRMD4_VALID_S) | \
 	 (1 << ICE_RX_FLEX_DESC_STATUS1_XTRMD5_VALID_S))
+
+static void
+ice_rxd_to_proto_xtr(struct rte_mbuf *mb,
+		     volatile struct ice_32b_rx_flex_desc_comms *desc)
+{
+	uint16_t stat_err = rte_le_to_cpu_16(desc->status_error1);
+	uint32_t metadata;
+	uint64_t ol_flag;
+
+	if (unlikely(!(stat_err & ICE_RX_PROTO_XTR_VALID)))
+		return;
+
+	ol_flag = ice_rxdid_to_proto_xtr_ol_flag(desc->rxdid);
+	if (unlikely(!ol_flag))
+		return;
+
+	mb->ol_flags |= ol_flag;
+
+	metadata = stat_err & (1 << ICE_RX_FLEX_DESC_STATUS1_XTRMD4_VALID_S) ?
+				rte_le_to_cpu_16(desc->flex_ts.flex.aux0) : 0;
+
+	if (likely(stat_err & (1 << ICE_RX_FLEX_DESC_STATUS1_XTRMD5_VALID_S)))
+		metadata |= rte_le_to_cpu_16(desc->flex_ts.flex.aux1) << 16;
+
+	*RTE_NET_ICE_DYNF_PROTO_XTR_METADATA(mb) = metadata;
+}
+#endif
 
 static inline void
 ice_rxd_to_pkt_fields(struct rte_mbuf *mb,
@@ -1344,28 +1389,13 @@ ice_rxd_to_pkt_fields(struct rte_mbuf *mb,
 	}
 
 #ifndef RTE_LIBRTE_ICE_16BYTE_RX_DESC
-	init_proto_xtr_flds(mb);
-
-	stat_err = rte_le_to_cpu_16(desc->status_error1);
-	if (stat_err & ICE_RX_PROTO_XTR_VALID) {
-		struct proto_xtr_flds *xtr = get_proto_xtr_flds(mb);
-
-		if (stat_err & (1 << ICE_RX_FLEX_DESC_STATUS1_XTRMD4_VALID_S))
-			xtr->u.raw.data0 =
-				rte_le_to_cpu_16(desc->flex_ts.flex.aux0);
-
-		if (stat_err & (1 << ICE_RX_FLEX_DESC_STATUS1_XTRMD5_VALID_S))
-			xtr->u.raw.data1 =
-				rte_le_to_cpu_16(desc->flex_ts.flex.aux1);
-
-		xtr->type = ice_rxdid_to_proto_xtr_type(desc->rxdid);
-		xtr->magic = PROTO_XTR_MAGIC_ID;
-	}
-
 	if (desc->flow_id != 0xFFFFFFFF) {
 		mb->ol_flags |= PKT_RX_FDIR | PKT_RX_FDIR_ID;
 		mb->hash.fdir.hi = rte_le_to_cpu_32(desc->flow_id);
 	}
+
+	if (unlikely(rte_net_ice_dynf_proto_xtr_metadata_avail()))
+		ice_rxd_to_proto_xtr(mb, desc);
 #endif
 }
 
@@ -1773,9 +1803,14 @@ ice_recv_scattered_pkts(void *rx_queue,
 const uint32_t *
 ice_dev_supported_ptypes_get(struct rte_eth_dev *dev)
 {
-	static const uint32_t ptypes[] = {
+	struct ice_adapter *ad =
+		ICE_DEV_PRIVATE_TO_ADAPTER(dev->data->dev_private);
+	const uint32_t *ptypes;
+
+	static const uint32_t ptypes_os[] = {
 		/* refers to ice_get_default_pkt_type() */
 		RTE_PTYPE_L2_ETHER,
+		RTE_PTYPE_L2_ETHER_TIMESYNC,
 		RTE_PTYPE_L2_ETHER_LLDP,
 		RTE_PTYPE_L2_ETHER_ARP,
 		RTE_PTYPE_L3_IPV4_EXT_UNKNOWN,
@@ -1789,7 +1824,34 @@ ice_dev_supported_ptypes_get(struct rte_eth_dev *dev)
 		RTE_PTYPE_TUNNEL_GRENAT,
 		RTE_PTYPE_TUNNEL_IP,
 		RTE_PTYPE_INNER_L2_ETHER,
-		RTE_PTYPE_INNER_L2_ETHER_VLAN,
+		RTE_PTYPE_INNER_L3_IPV4_EXT_UNKNOWN,
+		RTE_PTYPE_INNER_L3_IPV6_EXT_UNKNOWN,
+		RTE_PTYPE_INNER_L4_FRAG,
+		RTE_PTYPE_INNER_L4_ICMP,
+		RTE_PTYPE_INNER_L4_NONFRAG,
+		RTE_PTYPE_INNER_L4_SCTP,
+		RTE_PTYPE_INNER_L4_TCP,
+		RTE_PTYPE_INNER_L4_UDP,
+		RTE_PTYPE_UNKNOWN
+	};
+
+	static const uint32_t ptypes_comms[] = {
+		/* refers to ice_get_default_pkt_type() */
+		RTE_PTYPE_L2_ETHER,
+		RTE_PTYPE_L2_ETHER_TIMESYNC,
+		RTE_PTYPE_L2_ETHER_LLDP,
+		RTE_PTYPE_L2_ETHER_ARP,
+		RTE_PTYPE_L3_IPV4_EXT_UNKNOWN,
+		RTE_PTYPE_L3_IPV6_EXT_UNKNOWN,
+		RTE_PTYPE_L4_FRAG,
+		RTE_PTYPE_L4_ICMP,
+		RTE_PTYPE_L4_NONFRAG,
+		RTE_PTYPE_L4_SCTP,
+		RTE_PTYPE_L4_TCP,
+		RTE_PTYPE_L4_UDP,
+		RTE_PTYPE_TUNNEL_GRENAT,
+		RTE_PTYPE_TUNNEL_IP,
+		RTE_PTYPE_INNER_L2_ETHER,
 		RTE_PTYPE_INNER_L3_IPV4_EXT_UNKNOWN,
 		RTE_PTYPE_INNER_L3_IPV6_EXT_UNKNOWN,
 		RTE_PTYPE_INNER_L4_FRAG,
@@ -1800,8 +1862,14 @@ ice_dev_supported_ptypes_get(struct rte_eth_dev *dev)
 		RTE_PTYPE_INNER_L4_UDP,
 		RTE_PTYPE_TUNNEL_GTPC,
 		RTE_PTYPE_TUNNEL_GTPU,
+		RTE_PTYPE_L2_ETHER_PPPOE,
 		RTE_PTYPE_UNKNOWN
 	};
+
+	if (ad->active_pkg_type == ICE_PKG_TYPE_COMMS)
+		ptypes = ptypes_comms;
+	else
+		ptypes = ptypes_os;
 
 	if (dev->rx_pkt_burst == ice_recv_pkts ||
 #ifdef RTE_LIBRTE_ICE_RX_ALLOW_BULK_ALLOC
@@ -1972,7 +2040,7 @@ ice_fdir_setup_tx_resources(struct ice_pf *pf)
 	 * don't need to allocate software ring and reset for the fdir
 	 * program queue just set the queue has been configured.
 	 */
-	txq->q_set = TRUE;
+	txq->q_set = true;
 	pf->fdir.txq = txq;
 
 	txq->tx_rel_mbufs = _ice_tx_queue_release_mbufs;
@@ -2007,7 +2075,7 @@ ice_fdir_setup_rx_resources(struct ice_pf *pf)
 	}
 
 	/* Allocate RX hardware ring descriptors. */
-	ring_size = sizeof(union ice_rx_flex_desc) * ICE_FDIR_NUM_RX_DESC;
+	ring_size = sizeof(union ice_32byte_rx_desc) * ICE_FDIR_NUM_RX_DESC;
 	ring_size = RTE_ALIGN(ring_size, ICE_DMA_MEM_ALIGN);
 
 	rz = rte_eth_dma_zone_reserve(dev, "fdir_rx_ring",
@@ -2026,14 +2094,14 @@ ice_fdir_setup_rx_resources(struct ice_pf *pf)
 
 	rxq->rx_ring_dma = rz->iova;
 	memset(rz->addr, 0, ICE_FDIR_NUM_RX_DESC *
-	       sizeof(union ice_rx_flex_desc));
+	       sizeof(union ice_32byte_rx_desc));
 	rxq->rx_ring = (union ice_rx_flex_desc *)rz->addr;
 
 	/*
 	 * Don't need to allocate software ring and reset for the fdir
 	 * rx queue, just set the queue has been configured.
 	 */
-	rxq->q_set = TRUE;
+	rxq->q_set = true;
 	pf->fdir.rxq = rxq;
 
 	rxq->rx_rel_mbufs = _ice_rx_queue_release_mbufs;
@@ -2353,6 +2421,24 @@ ice_set_tso_ctx(struct rte_mbuf *mbuf, union ice_tx_offload tx_offload)
 	return ctx_desc;
 }
 
+/* HW requires that TX buffer size ranges from 1B up to (16K-1)B. */
+#define ICE_MAX_DATA_PER_TXD \
+	(ICE_TXD_QW1_TX_BUF_SZ_M >> ICE_TXD_QW1_TX_BUF_SZ_S)
+/* Calculate the number of TX descriptors needed for each pkt */
+static inline uint16_t
+ice_calc_pkt_desc(struct rte_mbuf *tx_pkt)
+{
+	struct rte_mbuf *txd = tx_pkt;
+	uint16_t count = 0;
+
+	while (txd != NULL) {
+		count += DIV_ROUND_UP(txd->data_len, ICE_MAX_DATA_PER_TXD);
+		txd = txd->next;
+	}
+
+	return count;
+}
+
 uint16_t
 ice_xmit_pkts(void *tx_queue, struct rte_mbuf **tx_pkts, uint16_t nb_pkts)
 {
@@ -2372,6 +2458,7 @@ ice_xmit_pkts(void *tx_queue, struct rte_mbuf **tx_pkts, uint16_t nb_pkts)
 	uint32_t td_offset = 0;
 	uint32_t td_tag = 0;
 	uint16_t tx_last;
+	uint16_t slen;
 	uint64_t buf_dma_addr;
 	uint64_t ol_flags;
 	union ice_tx_offload tx_offload = {0};
@@ -2384,7 +2471,7 @@ ice_xmit_pkts(void *tx_queue, struct rte_mbuf **tx_pkts, uint16_t nb_pkts)
 
 	/* Check if the descriptor ring needs to be cleaned. */
 	if (txq->nb_tx_free < txq->tx_free_thresh)
-		ice_xmit_cleanup(txq);
+		(void)ice_xmit_cleanup(txq);
 
 	for (nb_tx = 0; nb_tx < nb_pkts; nb_tx++) {
 		tx_pkt = *tx_pkts++;
@@ -2403,8 +2490,15 @@ ice_xmit_pkts(void *tx_queue, struct rte_mbuf **tx_pkts, uint16_t nb_pkts)
 		/* The number of descriptors that must be allocated for
 		 * a packet equals to the number of the segments of that
 		 * packet plus the number of context descriptor if needed.
+		 * Recalculate the needed tx descs when TSO enabled in case
+		 * the mbuf data size exceeds max data size that hw allows
+		 * per tx desc.
 		 */
-		nb_used = (uint16_t)(tx_pkt->nb_segs + nb_ctx);
+		if (ol_flags & PKT_TX_TCP_SEG)
+			nb_used = (uint16_t)(ice_calc_pkt_desc(tx_pkt) +
+					     nb_ctx);
+		else
+			nb_used = (uint16_t)(tx_pkt->nb_segs + nb_ctx);
 		tx_last = (uint16_t)(tx_id + nb_used - 1);
 
 		/* Circular ring */
@@ -2494,15 +2588,37 @@ ice_xmit_pkts(void *tx_queue, struct rte_mbuf **tx_pkts, uint16_t nb_pkts)
 			txe->mbuf = m_seg;
 
 			/* Setup TX Descriptor */
+			slen = m_seg->data_len;
 			buf_dma_addr = rte_mbuf_data_iova(m_seg);
+
+			while ((ol_flags & PKT_TX_TCP_SEG) &&
+				unlikely(slen > ICE_MAX_DATA_PER_TXD)) {
+				txd->buf_addr = rte_cpu_to_le_64(buf_dma_addr);
+				txd->cmd_type_offset_bsz =
+				rte_cpu_to_le_64(ICE_TX_DESC_DTYPE_DATA |
+				((uint64_t)td_cmd << ICE_TXD_QW1_CMD_S) |
+				((uint64_t)td_offset << ICE_TXD_QW1_OFFSET_S) |
+				((uint64_t)ICE_MAX_DATA_PER_TXD <<
+				 ICE_TXD_QW1_TX_BUF_SZ_S) |
+				((uint64_t)td_tag << ICE_TXD_QW1_L2TAG1_S));
+
+				buf_dma_addr += ICE_MAX_DATA_PER_TXD;
+				slen -= ICE_MAX_DATA_PER_TXD;
+
+				txe->last_id = tx_last;
+				tx_id = txe->next_id;
+				txe = txn;
+				txd = &tx_ring[tx_id];
+				txn = &sw_ring[txe->next_id];
+			}
+
 			txd->buf_addr = rte_cpu_to_le_64(buf_dma_addr);
 			txd->cmd_type_offset_bsz =
 				rte_cpu_to_le_64(ICE_TX_DESC_DTYPE_DATA |
-				((uint64_t)td_cmd  << ICE_TXD_QW1_CMD_S) |
+				((uint64_t)td_cmd << ICE_TXD_QW1_CMD_S) |
 				((uint64_t)td_offset << ICE_TXD_QW1_OFFSET_S) |
-				((uint64_t)m_seg->data_len  <<
-				 ICE_TXD_QW1_TX_BUF_SZ_S) |
-				((uint64_t)td_tag  << ICE_TXD_QW1_L2TAG1_S));
+				((uint64_t)slen << ICE_TXD_QW1_TX_BUF_SZ_S) |
+				((uint64_t)td_tag << ICE_TXD_QW1_L2TAG1_S));
 
 			txe->last_id = tx_last;
 			tx_id = txe->next_id;
@@ -2573,6 +2689,116 @@ ice_tx_free_bufs(struct ice_tx_queue *txq)
 		txq->tx_next_dd = (uint16_t)(txq->tx_rs_thresh - 1);
 
 	return txq->tx_rs_thresh;
+}
+
+static int
+ice_tx_done_cleanup_full(struct ice_tx_queue *txq,
+			uint32_t free_cnt)
+{
+	struct ice_tx_entry *swr_ring = txq->sw_ring;
+	uint16_t i, tx_last, tx_id;
+	uint16_t nb_tx_free_last;
+	uint16_t nb_tx_to_clean;
+	uint32_t pkt_cnt;
+
+	/* Start free mbuf from the next of tx_tail */
+	tx_last = txq->tx_tail;
+	tx_id  = swr_ring[tx_last].next_id;
+
+	if (txq->nb_tx_free == 0 && ice_xmit_cleanup(txq))
+		return 0;
+
+	nb_tx_to_clean = txq->nb_tx_free;
+	nb_tx_free_last = txq->nb_tx_free;
+	if (!free_cnt)
+		free_cnt = txq->nb_tx_desc;
+
+	/* Loop through swr_ring to count the amount of
+	 * freeable mubfs and packets.
+	 */
+	for (pkt_cnt = 0; pkt_cnt < free_cnt; ) {
+		for (i = 0; i < nb_tx_to_clean &&
+			pkt_cnt < free_cnt &&
+			tx_id != tx_last; i++) {
+			if (swr_ring[tx_id].mbuf != NULL) {
+				rte_pktmbuf_free_seg(swr_ring[tx_id].mbuf);
+				swr_ring[tx_id].mbuf = NULL;
+
+				/*
+				 * last segment in the packet,
+				 * increment packet count
+				 */
+				pkt_cnt += (swr_ring[tx_id].last_id == tx_id);
+			}
+
+			tx_id = swr_ring[tx_id].next_id;
+		}
+
+		if (txq->tx_rs_thresh > txq->nb_tx_desc -
+			txq->nb_tx_free || tx_id == tx_last)
+			break;
+
+		if (pkt_cnt < free_cnt) {
+			if (ice_xmit_cleanup(txq))
+				break;
+
+			nb_tx_to_clean = txq->nb_tx_free - nb_tx_free_last;
+			nb_tx_free_last = txq->nb_tx_free;
+		}
+	}
+
+	return (int)pkt_cnt;
+}
+
+#ifdef RTE_ARCH_X86
+static int
+ice_tx_done_cleanup_vec(struct ice_tx_queue *txq __rte_unused,
+			uint32_t free_cnt __rte_unused)
+{
+	return -ENOTSUP;
+}
+#endif
+
+static int
+ice_tx_done_cleanup_simple(struct ice_tx_queue *txq,
+			uint32_t free_cnt)
+{
+	int i, n, cnt;
+
+	if (free_cnt == 0 || free_cnt > txq->nb_tx_desc)
+		free_cnt = txq->nb_tx_desc;
+
+	cnt = free_cnt - free_cnt % txq->tx_rs_thresh;
+
+	for (i = 0; i < cnt; i += n) {
+		if (txq->nb_tx_desc - txq->nb_tx_free < txq->tx_rs_thresh)
+			break;
+
+		n = ice_tx_free_bufs(txq);
+
+		if (n == 0)
+			break;
+	}
+
+	return i;
+}
+
+int
+ice_tx_done_cleanup(void *txq, uint32_t free_cnt)
+{
+	struct ice_tx_queue *q = (struct ice_tx_queue *)txq;
+	struct rte_eth_dev *dev = &rte_eth_devices[q->port_id];
+	struct ice_adapter *ad =
+		ICE_DEV_PRIVATE_TO_ADAPTER(dev->data->dev_private);
+
+#ifdef RTE_ARCH_X86
+	if (ad->tx_vec_allowed)
+		return ice_tx_done_cleanup_vec(q, free_cnt);
+#endif
+	if (ad->tx_simple_allowed)
+		return ice_tx_done_cleanup_simple(q, free_cnt);
+	else
+		return ice_tx_done_cleanup_full(q, free_cnt);
 }
 
 /* Populate 4 descriptors with data from 4 mbufs */
@@ -2793,37 +3019,39 @@ ice_set_rx_function(struct rte_eth_dev *dev)
 	}
 }
 
+static const struct {
+	eth_rx_burst_t pkt_burst;
+	const char *info;
+} ice_rx_burst_infos[] = {
+	{ ice_recv_scattered_pkts,          "Scalar Scattered" },
+	{ ice_recv_pkts_bulk_alloc,         "Scalar Bulk Alloc" },
+	{ ice_recv_pkts,                    "Scalar" },
+#ifdef RTE_ARCH_X86
+	{ ice_recv_scattered_pkts_vec_avx2, "Vector AVX2 Scattered" },
+	{ ice_recv_pkts_vec_avx2,           "Vector AVX2" },
+	{ ice_recv_scattered_pkts_vec,      "Vector SSE Scattered" },
+	{ ice_recv_pkts_vec,                "Vector SSE" },
+#endif
+};
+
 int
 ice_rx_burst_mode_get(struct rte_eth_dev *dev, __rte_unused uint16_t queue_id,
 		      struct rte_eth_burst_mode *mode)
 {
 	eth_rx_burst_t pkt_burst = dev->rx_pkt_burst;
-	uint64_t options;
+	int ret = -EINVAL;
+	unsigned int i;
 
-	if (pkt_burst == ice_recv_scattered_pkts)
-		options = RTE_ETH_BURST_SCALAR | RTE_ETH_BURST_SCATTERED;
-	else if (pkt_burst == ice_recv_pkts_bulk_alloc)
-		options = RTE_ETH_BURST_SCALAR | RTE_ETH_BURST_BULK_ALLOC;
-	else if (pkt_burst == ice_recv_pkts)
-		options = RTE_ETH_BURST_SCALAR;
-#ifdef RTE_ARCH_X86
-	else if (pkt_burst == ice_recv_scattered_pkts_vec_avx2)
-		options = RTE_ETH_BURST_VECTOR | RTE_ETH_BURST_AVX2 |
-			  RTE_ETH_BURST_SCATTERED;
-	else if (pkt_burst == ice_recv_pkts_vec_avx2)
-		options = RTE_ETH_BURST_VECTOR | RTE_ETH_BURST_AVX2;
-	else if (pkt_burst == ice_recv_scattered_pkts_vec)
-		options = RTE_ETH_BURST_VECTOR | RTE_ETH_BURST_SSE |
-			  RTE_ETH_BURST_SCATTERED;
-	else if (pkt_burst == ice_recv_pkts_vec)
-		options = RTE_ETH_BURST_VECTOR | RTE_ETH_BURST_SSE;
-#endif
-	else
-		options = 0;
+	for (i = 0; i < RTE_DIM(ice_rx_burst_infos); ++i) {
+		if (pkt_burst == ice_rx_burst_infos[i].pkt_burst) {
+			snprintf(mode->info, sizeof(mode->info), "%s",
+				 ice_rx_burst_infos[i].info);
+			ret = 0;
+			break;
+		}
+	}
 
-	mode->options = options;
-
-	return options != 0 ? 0 : -EINVAL;
+	return ret;
 }
 
 void __attribute__((cold))
@@ -2949,29 +3177,36 @@ ice_set_tx_function(struct rte_eth_dev *dev)
 	}
 }
 
+static const struct {
+	eth_tx_burst_t pkt_burst;
+	const char *info;
+} ice_tx_burst_infos[] = {
+	{ ice_xmit_pkts_simple,   "Scalar Simple" },
+	{ ice_xmit_pkts,          "Scalar" },
+#ifdef RTE_ARCH_X86
+	{ ice_xmit_pkts_vec_avx2, "Vector AVX2" },
+	{ ice_xmit_pkts_vec,      "Vector SSE" },
+#endif
+};
+
 int
 ice_tx_burst_mode_get(struct rte_eth_dev *dev, __rte_unused uint16_t queue_id,
 		      struct rte_eth_burst_mode *mode)
 {
 	eth_tx_burst_t pkt_burst = dev->tx_pkt_burst;
-	uint64_t options;
+	int ret = -EINVAL;
+	unsigned int i;
 
-	if (pkt_burst == ice_xmit_pkts_simple)
-		options = RTE_ETH_BURST_SCALAR | RTE_ETH_BURST_SIMPLE;
-	else if (pkt_burst == ice_xmit_pkts)
-		options = RTE_ETH_BURST_SCALAR;
-#ifdef RTE_ARCH_X86
-	else if (pkt_burst == ice_xmit_pkts_vec_avx2)
-		options = RTE_ETH_BURST_VECTOR | RTE_ETH_BURST_AVX2;
-	else if (pkt_burst == ice_xmit_pkts_vec)
-		options = RTE_ETH_BURST_VECTOR | RTE_ETH_BURST_SSE;
-#endif
-	else
-		options = 0;
+	for (i = 0; i < RTE_DIM(ice_tx_burst_infos); ++i) {
+		if (pkt_burst == ice_tx_burst_infos[i].pkt_burst) {
+			snprintf(mode->info, sizeof(mode->info), "%s",
+				 ice_tx_burst_infos[i].info);
+			ret = 0;
+			break;
+		}
+	}
 
-	mode->options = options;
-
-	return options != 0 ? 0 : -EINVAL;
+	return ret;
 }
 
 /* For each value it means, datasheet of hardware can tell more details
@@ -2986,7 +3221,8 @@ ice_get_default_pkt_type(uint16_t ptype)
 		/* L2 types */
 		/* [0] reserved */
 		[1] = RTE_PTYPE_L2_ETHER,
-		/* [2] - [5] reserved */
+		[2] = RTE_PTYPE_L2_ETHER_TIMESYNC,
+		/* [3] - [5] reserved */
 		[6] = RTE_PTYPE_L2_ETHER_LLDP,
 		/* [7] - [10] reserved */
 		[11] = RTE_PTYPE_L2_ETHER_ARP,
@@ -3176,77 +3412,7 @@ ice_get_default_pkt_type(uint16_t ptype)
 		       RTE_PTYPE_TUNNEL_GRENAT | RTE_PTYPE_INNER_L2_ETHER |
 		       RTE_PTYPE_INNER_L3_IPV6_EXT_UNKNOWN |
 		       RTE_PTYPE_INNER_L4_ICMP,
-
-		/* IPv4 --> GRE/Teredo/VXLAN --> MAC/VLAN */
-		[73] = RTE_PTYPE_L2_ETHER | RTE_PTYPE_L3_IPV4_EXT_UNKNOWN |
-		       RTE_PTYPE_TUNNEL_GRENAT |
-		       RTE_PTYPE_INNER_L2_ETHER_VLAN,
-
-		/* IPv4 --> GRE/Teredo/VXLAN --> MAC/VLAN --> IPv4 */
-		[74] = RTE_PTYPE_L2_ETHER | RTE_PTYPE_L3_IPV4_EXT_UNKNOWN |
-		       RTE_PTYPE_TUNNEL_GRENAT |
-		       RTE_PTYPE_INNER_L2_ETHER_VLAN |
-		       RTE_PTYPE_INNER_L3_IPV4_EXT_UNKNOWN |
-		       RTE_PTYPE_INNER_L4_FRAG,
-		[75] = RTE_PTYPE_L2_ETHER | RTE_PTYPE_L3_IPV4_EXT_UNKNOWN |
-		       RTE_PTYPE_TUNNEL_GRENAT |
-		       RTE_PTYPE_INNER_L2_ETHER_VLAN |
-		       RTE_PTYPE_INNER_L3_IPV4_EXT_UNKNOWN |
-		       RTE_PTYPE_INNER_L4_NONFRAG,
-		[76] = RTE_PTYPE_L2_ETHER | RTE_PTYPE_L3_IPV4_EXT_UNKNOWN |
-		       RTE_PTYPE_TUNNEL_GRENAT |
-		       RTE_PTYPE_INNER_L2_ETHER_VLAN |
-		       RTE_PTYPE_INNER_L3_IPV4_EXT_UNKNOWN |
-		       RTE_PTYPE_INNER_L4_UDP,
-		/* [77] reserved */
-		[78] = RTE_PTYPE_L2_ETHER | RTE_PTYPE_L3_IPV4_EXT_UNKNOWN |
-		       RTE_PTYPE_TUNNEL_GRENAT |
-		       RTE_PTYPE_INNER_L2_ETHER_VLAN |
-		       RTE_PTYPE_INNER_L3_IPV4_EXT_UNKNOWN |
-		       RTE_PTYPE_INNER_L4_TCP,
-		[79] = RTE_PTYPE_L2_ETHER | RTE_PTYPE_L3_IPV4_EXT_UNKNOWN |
-		       RTE_PTYPE_TUNNEL_GRENAT |
-		       RTE_PTYPE_INNER_L2_ETHER_VLAN |
-		       RTE_PTYPE_INNER_L3_IPV4_EXT_UNKNOWN |
-		       RTE_PTYPE_INNER_L4_SCTP,
-		[80] = RTE_PTYPE_L2_ETHER | RTE_PTYPE_L3_IPV4_EXT_UNKNOWN |
-		       RTE_PTYPE_TUNNEL_GRENAT |
-		       RTE_PTYPE_INNER_L2_ETHER_VLAN |
-		       RTE_PTYPE_INNER_L3_IPV4_EXT_UNKNOWN |
-		       RTE_PTYPE_INNER_L4_ICMP,
-
-		/* IPv4 --> GRE/Teredo/VXLAN --> MAC/VLAN --> IPv6 */
-		[81] = RTE_PTYPE_L2_ETHER | RTE_PTYPE_L3_IPV4_EXT_UNKNOWN |
-		       RTE_PTYPE_TUNNEL_GRENAT |
-		       RTE_PTYPE_INNER_L2_ETHER_VLAN |
-		       RTE_PTYPE_INNER_L3_IPV6_EXT_UNKNOWN |
-		       RTE_PTYPE_INNER_L4_FRAG,
-		[82] = RTE_PTYPE_L2_ETHER | RTE_PTYPE_L3_IPV4_EXT_UNKNOWN |
-		       RTE_PTYPE_TUNNEL_GRENAT |
-		       RTE_PTYPE_INNER_L2_ETHER_VLAN |
-		       RTE_PTYPE_INNER_L3_IPV6_EXT_UNKNOWN |
-		       RTE_PTYPE_INNER_L4_NONFRAG,
-		[83] = RTE_PTYPE_L2_ETHER | RTE_PTYPE_L3_IPV4_EXT_UNKNOWN |
-		       RTE_PTYPE_TUNNEL_GRENAT |
-		       RTE_PTYPE_INNER_L2_ETHER_VLAN |
-		       RTE_PTYPE_INNER_L3_IPV6_EXT_UNKNOWN |
-		       RTE_PTYPE_INNER_L4_UDP,
-		/* [84] reserved */
-		[85] = RTE_PTYPE_L2_ETHER | RTE_PTYPE_L3_IPV4_EXT_UNKNOWN |
-		       RTE_PTYPE_TUNNEL_GRENAT |
-		       RTE_PTYPE_INNER_L2_ETHER_VLAN |
-		       RTE_PTYPE_INNER_L3_IPV6_EXT_UNKNOWN |
-		       RTE_PTYPE_INNER_L4_TCP,
-		[86] = RTE_PTYPE_L2_ETHER | RTE_PTYPE_L3_IPV4_EXT_UNKNOWN |
-		       RTE_PTYPE_TUNNEL_GRENAT |
-		       RTE_PTYPE_INNER_L2_ETHER_VLAN |
-		       RTE_PTYPE_INNER_L3_IPV6_EXT_UNKNOWN |
-		       RTE_PTYPE_INNER_L4_SCTP,
-		[87] = RTE_PTYPE_L2_ETHER | RTE_PTYPE_L3_IPV4_EXT_UNKNOWN |
-		       RTE_PTYPE_TUNNEL_GRENAT |
-		       RTE_PTYPE_INNER_L2_ETHER_VLAN |
-		       RTE_PTYPE_INNER_L3_IPV6_EXT_UNKNOWN |
-		       RTE_PTYPE_INNER_L4_ICMP,
+		/* [73] - [87] reserved */
 
 		/* Non tunneled IPv6 */
 		[88] = RTE_PTYPE_L2_ETHER | RTE_PTYPE_L3_IPV6_EXT_UNKNOWN |
@@ -3432,96 +3598,154 @@ ice_get_default_pkt_type(uint16_t ptype)
 			RTE_PTYPE_TUNNEL_GRENAT | RTE_PTYPE_INNER_L2_ETHER |
 			RTE_PTYPE_INNER_L3_IPV6_EXT_UNKNOWN |
 			RTE_PTYPE_INNER_L4_ICMP,
+		/* [139] - [299] reserved */
 
-		/* IPv6 --> GRE/Teredo/VXLAN --> MAC/VLAN */
-		[139] = RTE_PTYPE_L2_ETHER | RTE_PTYPE_L3_IPV6_EXT_UNKNOWN |
-			RTE_PTYPE_TUNNEL_GRENAT |
-			RTE_PTYPE_INNER_L2_ETHER_VLAN,
+		/* PPPoE */
+		[300] = RTE_PTYPE_L2_ETHER_PPPOE,
+		[301] = RTE_PTYPE_L2_ETHER_PPPOE,
 
-		/* IPv6 --> GRE/Teredo/VXLAN --> MAC/VLAN --> IPv4 */
-		[140] = RTE_PTYPE_L2_ETHER | RTE_PTYPE_L3_IPV6_EXT_UNKNOWN |
-			RTE_PTYPE_TUNNEL_GRENAT |
-			RTE_PTYPE_INNER_L2_ETHER_VLAN |
+		/* PPPoE --> IPv4 */
+		[302] = RTE_PTYPE_L2_ETHER_PPPOE |
+			RTE_PTYPE_L3_IPV4_EXT_UNKNOWN |
+			RTE_PTYPE_L4_FRAG,
+		[303] = RTE_PTYPE_L2_ETHER_PPPOE |
+			RTE_PTYPE_L3_IPV4_EXT_UNKNOWN |
+			RTE_PTYPE_L4_NONFRAG,
+		[304] = RTE_PTYPE_L2_ETHER_PPPOE |
+			RTE_PTYPE_L3_IPV4_EXT_UNKNOWN |
+			RTE_PTYPE_L4_UDP,
+		[305] = RTE_PTYPE_L2_ETHER_PPPOE |
+			RTE_PTYPE_L3_IPV4_EXT_UNKNOWN |
+			RTE_PTYPE_L4_TCP,
+		[306] = RTE_PTYPE_L2_ETHER_PPPOE |
+			RTE_PTYPE_L3_IPV4_EXT_UNKNOWN |
+			RTE_PTYPE_L4_SCTP,
+		[307] = RTE_PTYPE_L2_ETHER_PPPOE |
+			RTE_PTYPE_L3_IPV4_EXT_UNKNOWN |
+			RTE_PTYPE_L4_ICMP,
+
+		/* PPPoE --> IPv6 */
+		[308] = RTE_PTYPE_L2_ETHER_PPPOE |
+			RTE_PTYPE_L3_IPV6_EXT_UNKNOWN |
+			RTE_PTYPE_L4_FRAG,
+		[309] = RTE_PTYPE_L2_ETHER_PPPOE |
+			RTE_PTYPE_L3_IPV6_EXT_UNKNOWN |
+			RTE_PTYPE_L4_NONFRAG,
+		[310] = RTE_PTYPE_L2_ETHER_PPPOE |
+			RTE_PTYPE_L3_IPV6_EXT_UNKNOWN |
+			RTE_PTYPE_L4_UDP,
+		[311] = RTE_PTYPE_L2_ETHER_PPPOE |
+			RTE_PTYPE_L3_IPV6_EXT_UNKNOWN |
+			RTE_PTYPE_L4_TCP,
+		[312] = RTE_PTYPE_L2_ETHER_PPPOE |
+			RTE_PTYPE_L3_IPV6_EXT_UNKNOWN |
+			RTE_PTYPE_L4_SCTP,
+		[313] = RTE_PTYPE_L2_ETHER_PPPOE |
+			RTE_PTYPE_L3_IPV6_EXT_UNKNOWN |
+			RTE_PTYPE_L4_ICMP,
+		/* [314] - [324] reserved */
+
+		/* IPv4/IPv6 --> GTPC/GTPU */
+		[325] = RTE_PTYPE_L2_ETHER | RTE_PTYPE_L3_IPV4_EXT_UNKNOWN |
+			RTE_PTYPE_TUNNEL_GTPC,
+		[326] = RTE_PTYPE_L2_ETHER | RTE_PTYPE_L3_IPV6_EXT_UNKNOWN |
+			RTE_PTYPE_TUNNEL_GTPC,
+		[327] = RTE_PTYPE_L2_ETHER | RTE_PTYPE_L3_IPV4_EXT_UNKNOWN |
+			RTE_PTYPE_TUNNEL_GTPC,
+		[328] = RTE_PTYPE_L2_ETHER | RTE_PTYPE_L3_IPV6_EXT_UNKNOWN |
+			RTE_PTYPE_TUNNEL_GTPC,
+		[329] = RTE_PTYPE_L2_ETHER | RTE_PTYPE_L3_IPV4_EXT_UNKNOWN |
+			RTE_PTYPE_TUNNEL_GTPU,
+		[330] = RTE_PTYPE_L2_ETHER | RTE_PTYPE_L3_IPV6_EXT_UNKNOWN |
+			RTE_PTYPE_TUNNEL_GTPU,
+
+		/* IPv4 --> GTPU --> IPv4 */
+		[331] = RTE_PTYPE_L2_ETHER | RTE_PTYPE_L3_IPV4_EXT_UNKNOWN |
+			RTE_PTYPE_TUNNEL_GTPU |
 			RTE_PTYPE_INNER_L3_IPV4_EXT_UNKNOWN |
 			RTE_PTYPE_INNER_L4_FRAG,
-		[141] = RTE_PTYPE_L2_ETHER | RTE_PTYPE_L3_IPV6_EXT_UNKNOWN |
-			RTE_PTYPE_TUNNEL_GRENAT |
-			RTE_PTYPE_INNER_L2_ETHER_VLAN |
+		[332] = RTE_PTYPE_L2_ETHER | RTE_PTYPE_L3_IPV4_EXT_UNKNOWN |
+			RTE_PTYPE_TUNNEL_GTPU |
 			RTE_PTYPE_INNER_L3_IPV4_EXT_UNKNOWN |
 			RTE_PTYPE_INNER_L4_NONFRAG,
-		[142] = RTE_PTYPE_L2_ETHER | RTE_PTYPE_L3_IPV6_EXT_UNKNOWN |
-			RTE_PTYPE_TUNNEL_GRENAT |
-			RTE_PTYPE_INNER_L2_ETHER_VLAN |
+		[333] = RTE_PTYPE_L2_ETHER | RTE_PTYPE_L3_IPV4_EXT_UNKNOWN |
+			RTE_PTYPE_TUNNEL_GTPU |
 			RTE_PTYPE_INNER_L3_IPV4_EXT_UNKNOWN |
 			RTE_PTYPE_INNER_L4_UDP,
-		/* [143] reserved */
-		[144] = RTE_PTYPE_L2_ETHER | RTE_PTYPE_L3_IPV6_EXT_UNKNOWN |
-			RTE_PTYPE_TUNNEL_GRENAT |
-			RTE_PTYPE_INNER_L2_ETHER_VLAN |
+		[334] = RTE_PTYPE_L2_ETHER | RTE_PTYPE_L3_IPV4_EXT_UNKNOWN |
+			RTE_PTYPE_TUNNEL_GTPU |
 			RTE_PTYPE_INNER_L3_IPV4_EXT_UNKNOWN |
 			RTE_PTYPE_INNER_L4_TCP,
-		[145] = RTE_PTYPE_L2_ETHER | RTE_PTYPE_L3_IPV6_EXT_UNKNOWN |
-			RTE_PTYPE_TUNNEL_GRENAT |
-			RTE_PTYPE_INNER_L2_ETHER_VLAN |
-			RTE_PTYPE_INNER_L3_IPV4_EXT_UNKNOWN |
-			RTE_PTYPE_INNER_L4_SCTP,
-		[146] = RTE_PTYPE_L2_ETHER | RTE_PTYPE_L3_IPV6_EXT_UNKNOWN |
-			RTE_PTYPE_TUNNEL_GRENAT |
-			RTE_PTYPE_INNER_L2_ETHER_VLAN |
+		[335] = RTE_PTYPE_L2_ETHER | RTE_PTYPE_L3_IPV4_EXT_UNKNOWN |
+			RTE_PTYPE_TUNNEL_GTPU |
 			RTE_PTYPE_INNER_L3_IPV4_EXT_UNKNOWN |
 			RTE_PTYPE_INNER_L4_ICMP,
 
-		/* IPv6 --> GRE/Teredo/VXLAN --> MAC/VLAN --> IPv6 */
-		[147] = RTE_PTYPE_L2_ETHER | RTE_PTYPE_L3_IPV6_EXT_UNKNOWN |
-			RTE_PTYPE_TUNNEL_GRENAT |
-			RTE_PTYPE_INNER_L2_ETHER_VLAN |
+		/* IPv6 --> GTPU --> IPv4 */
+		[336] = RTE_PTYPE_L2_ETHER | RTE_PTYPE_L3_IPV6_EXT_UNKNOWN |
+			RTE_PTYPE_TUNNEL_GTPU |
+			RTE_PTYPE_INNER_L3_IPV4_EXT_UNKNOWN |
+			RTE_PTYPE_INNER_L4_FRAG,
+		[337] = RTE_PTYPE_L2_ETHER | RTE_PTYPE_L3_IPV6_EXT_UNKNOWN |
+			RTE_PTYPE_TUNNEL_GTPU |
+			RTE_PTYPE_INNER_L3_IPV4_EXT_UNKNOWN |
+			RTE_PTYPE_INNER_L4_NONFRAG,
+		[338] = RTE_PTYPE_L2_ETHER | RTE_PTYPE_L3_IPV6_EXT_UNKNOWN |
+			RTE_PTYPE_TUNNEL_GTPU |
+			RTE_PTYPE_INNER_L3_IPV4_EXT_UNKNOWN |
+			RTE_PTYPE_INNER_L4_UDP,
+		[339] = RTE_PTYPE_L2_ETHER | RTE_PTYPE_L3_IPV6_EXT_UNKNOWN |
+			RTE_PTYPE_TUNNEL_GTPU |
+			RTE_PTYPE_INNER_L3_IPV4_EXT_UNKNOWN |
+			RTE_PTYPE_INNER_L4_TCP,
+		[340] = RTE_PTYPE_L2_ETHER | RTE_PTYPE_L3_IPV6_EXT_UNKNOWN |
+			RTE_PTYPE_TUNNEL_GTPU |
+			RTE_PTYPE_INNER_L3_IPV4_EXT_UNKNOWN |
+			RTE_PTYPE_INNER_L4_ICMP,
+
+		/* IPv4 --> GTPU --> IPv6 */
+		[341] = RTE_PTYPE_L2_ETHER | RTE_PTYPE_L3_IPV4_EXT_UNKNOWN |
+			RTE_PTYPE_TUNNEL_GTPU |
 			RTE_PTYPE_INNER_L3_IPV6_EXT_UNKNOWN |
 			RTE_PTYPE_INNER_L4_FRAG,
-		[148] = RTE_PTYPE_L2_ETHER | RTE_PTYPE_L3_IPV6_EXT_UNKNOWN |
-			RTE_PTYPE_TUNNEL_GRENAT |
-			RTE_PTYPE_INNER_L2_ETHER_VLAN |
+		[342] = RTE_PTYPE_L2_ETHER | RTE_PTYPE_L3_IPV4_EXT_UNKNOWN |
+			RTE_PTYPE_TUNNEL_GTPU |
 			RTE_PTYPE_INNER_L3_IPV6_EXT_UNKNOWN |
 			RTE_PTYPE_INNER_L4_NONFRAG,
-		[149] = RTE_PTYPE_L2_ETHER | RTE_PTYPE_L3_IPV6_EXT_UNKNOWN |
-			RTE_PTYPE_TUNNEL_GRENAT |
-			RTE_PTYPE_INNER_L2_ETHER_VLAN |
+		[343] = RTE_PTYPE_L2_ETHER | RTE_PTYPE_L3_IPV4_EXT_UNKNOWN |
+			RTE_PTYPE_TUNNEL_GTPU |
 			RTE_PTYPE_INNER_L3_IPV6_EXT_UNKNOWN |
 			RTE_PTYPE_INNER_L4_UDP,
-		/* [150] reserved */
-		[151] = RTE_PTYPE_L2_ETHER | RTE_PTYPE_L3_IPV6_EXT_UNKNOWN |
-			RTE_PTYPE_TUNNEL_GRENAT |
-			RTE_PTYPE_INNER_L2_ETHER_VLAN |
+		[344] = RTE_PTYPE_L2_ETHER | RTE_PTYPE_L3_IPV4_EXT_UNKNOWN |
+			RTE_PTYPE_TUNNEL_GTPU |
 			RTE_PTYPE_INNER_L3_IPV6_EXT_UNKNOWN |
 			RTE_PTYPE_INNER_L4_TCP,
-		[152] = RTE_PTYPE_L2_ETHER | RTE_PTYPE_L3_IPV6_EXT_UNKNOWN |
-			RTE_PTYPE_TUNNEL_GRENAT |
-			RTE_PTYPE_INNER_L2_ETHER_VLAN |
-			RTE_PTYPE_INNER_L3_IPV6_EXT_UNKNOWN |
-			RTE_PTYPE_INNER_L4_SCTP,
-		[153] = RTE_PTYPE_L2_ETHER | RTE_PTYPE_L3_IPV6_EXT_UNKNOWN |
-			RTE_PTYPE_TUNNEL_GRENAT |
-			RTE_PTYPE_INNER_L2_ETHER_VLAN |
+		[345] = RTE_PTYPE_L2_ETHER | RTE_PTYPE_L3_IPV4_EXT_UNKNOWN |
+			RTE_PTYPE_TUNNEL_GTPU |
 			RTE_PTYPE_INNER_L3_IPV6_EXT_UNKNOWN |
 			RTE_PTYPE_INNER_L4_ICMP,
-		/* [154] - [255] reserved */
-		[256] = RTE_PTYPE_L2_ETHER | RTE_PTYPE_L3_IPV4_EXT_UNKNOWN |
-			RTE_PTYPE_TUNNEL_GTPC,
-		[257] = RTE_PTYPE_L2_ETHER | RTE_PTYPE_L3_IPV4_EXT_UNKNOWN |
-			RTE_PTYPE_TUNNEL_GTPC,
-		[258] = RTE_PTYPE_L2_ETHER | RTE_PTYPE_L3_IPV4_EXT_UNKNOWN |
-				RTE_PTYPE_TUNNEL_GTPU,
-		[259] = RTE_PTYPE_L2_ETHER | RTE_PTYPE_L3_IPV4_EXT_UNKNOWN |
-				RTE_PTYPE_TUNNEL_GTPU,
-		/* [260] - [263] reserved */
-		[264] = RTE_PTYPE_L2_ETHER | RTE_PTYPE_L3_IPV6_EXT_UNKNOWN |
-			RTE_PTYPE_TUNNEL_GTPC,
-		[265] = RTE_PTYPE_L2_ETHER | RTE_PTYPE_L3_IPV6_EXT_UNKNOWN |
-			RTE_PTYPE_TUNNEL_GTPC,
-		[266] = RTE_PTYPE_L2_ETHER | RTE_PTYPE_L3_IPV6_EXT_UNKNOWN |
-				RTE_PTYPE_TUNNEL_GTPU,
-		[267] = RTE_PTYPE_L2_ETHER | RTE_PTYPE_L3_IPV6_EXT_UNKNOWN |
-				RTE_PTYPE_TUNNEL_GTPU,
 
+		/* IPv6 --> GTPU --> IPv6 */
+		[346] = RTE_PTYPE_L2_ETHER | RTE_PTYPE_L3_IPV6_EXT_UNKNOWN |
+			RTE_PTYPE_TUNNEL_GTPU |
+			RTE_PTYPE_INNER_L3_IPV6_EXT_UNKNOWN |
+			RTE_PTYPE_INNER_L4_FRAG,
+		[347] = RTE_PTYPE_L2_ETHER | RTE_PTYPE_L3_IPV6_EXT_UNKNOWN |
+			RTE_PTYPE_TUNNEL_GTPU |
+			RTE_PTYPE_INNER_L3_IPV6_EXT_UNKNOWN |
+			RTE_PTYPE_INNER_L4_NONFRAG,
+		[348] = RTE_PTYPE_L2_ETHER | RTE_PTYPE_L3_IPV6_EXT_UNKNOWN |
+			RTE_PTYPE_TUNNEL_GTPU |
+			RTE_PTYPE_INNER_L3_IPV6_EXT_UNKNOWN |
+			RTE_PTYPE_INNER_L4_UDP,
+		[349] = RTE_PTYPE_L2_ETHER | RTE_PTYPE_L3_IPV6_EXT_UNKNOWN |
+			RTE_PTYPE_TUNNEL_GTPU |
+			RTE_PTYPE_INNER_L3_IPV6_EXT_UNKNOWN |
+			RTE_PTYPE_INNER_L4_TCP,
+		[350] = RTE_PTYPE_L2_ETHER | RTE_PTYPE_L3_IPV6_EXT_UNKNOWN |
+			RTE_PTYPE_TUNNEL_GTPU |
+			RTE_PTYPE_INNER_L3_IPV6_EXT_UNKNOWN |
+			RTE_PTYPE_INNER_L4_ICMP,
 		/* All others reserved */
 	};
 
@@ -3539,12 +3763,81 @@ ice_set_default_ptype_table(struct rte_eth_dev *dev)
 		ad->ptype_tbl[i] = ice_get_default_pkt_type(i);
 }
 
+#define ICE_RX_PROG_STATUS_DESC_WB_QW1_PROGID_S	1
+#define ICE_RX_PROG_STATUS_DESC_WB_QW1_PROGID_M	\
+			(0x3UL << ICE_RX_PROG_STATUS_DESC_WB_QW1_PROGID_S)
+#define ICE_RX_PROG_STATUS_DESC_WB_QW1_PROG_ADD 0
+#define ICE_RX_PROG_STATUS_DESC_WB_QW1_PROG_DEL 0x1
+
+#define ICE_RX_PROG_STATUS_DESC_WB_QW1_FAIL_S	4
+#define ICE_RX_PROG_STATUS_DESC_WB_QW1_FAIL_M	\
+	(1 << ICE_RX_PROG_STATUS_DESC_WB_QW1_FAIL_S)
+#define ICE_RX_PROG_STATUS_DESC_WB_QW1_FAIL_PROF_S	5
+#define ICE_RX_PROG_STATUS_DESC_WB_QW1_FAIL_PROF_M	\
+	(1 << ICE_RX_PROG_STATUS_DESC_WB_QW1_FAIL_PROF_S)
+
+/*
+ * check the programming status descriptor in rx queue.
+ * done after Programming Flow Director is programmed on
+ * tx queue
+ */
+static inline int
+ice_check_fdir_programming_status(struct ice_rx_queue *rxq)
+{
+	volatile union ice_32byte_rx_desc *rxdp;
+	uint64_t qword1;
+	uint32_t rx_status;
+	uint32_t error;
+	uint32_t id;
+	int ret = -EAGAIN;
+
+	rxdp = (volatile union ice_32byte_rx_desc *)
+		(&rxq->rx_ring[rxq->rx_tail]);
+	qword1 = rte_le_to_cpu_64(rxdp->wb.qword1.status_error_len);
+	rx_status = (qword1 & ICE_RXD_QW1_STATUS_M)
+			>> ICE_RXD_QW1_STATUS_S;
+
+	if (rx_status & (1 << ICE_RX_DESC_STATUS_DD_S)) {
+		ret = 0;
+		error = (qword1 & ICE_RX_PROG_STATUS_DESC_WB_QW1_FAIL_M) >>
+			ICE_RX_PROG_STATUS_DESC_WB_QW1_FAIL_S;
+		id = (qword1 & ICE_RX_PROG_STATUS_DESC_WB_QW1_PROGID_M) >>
+			ICE_RX_PROG_STATUS_DESC_WB_QW1_PROGID_S;
+		if (error) {
+			if (id == ICE_RX_PROG_STATUS_DESC_WB_QW1_PROG_ADD)
+				PMD_DRV_LOG(ERR, "Failed to add FDIR rule.");
+			else if (id == ICE_RX_PROG_STATUS_DESC_WB_QW1_PROG_DEL)
+				PMD_DRV_LOG(ERR, "Failed to remove FDIR rule.");
+			ret = -EINVAL;
+			goto err;
+		}
+		error = (qword1 & ICE_RX_PROG_STATUS_DESC_WB_QW1_FAIL_PROF_M) >>
+			ICE_RX_PROG_STATUS_DESC_WB_QW1_FAIL_PROF_S;
+		if (error) {
+			PMD_DRV_LOG(ERR, "Failed to create FDIR profile.");
+			ret = -EINVAL;
+		}
+err:
+		rxdp->wb.qword1.status_error_len = 0;
+		rxq->rx_tail++;
+		if (unlikely(rxq->rx_tail == rxq->nb_rx_desc))
+			rxq->rx_tail = 0;
+		if (rxq->rx_tail == 0)
+			ICE_PCI_REG_WRITE(rxq->qrx_tail, rxq->nb_rx_desc - 1);
+		else
+			ICE_PCI_REG_WRITE(rxq->qrx_tail, rxq->rx_tail - 1);
+	}
+
+	return ret;
+}
+
 #define ICE_FDIR_MAX_WAIT_US 10000
 
 int
 ice_fdir_programming(struct ice_pf *pf, struct ice_fltr_desc *fdir_desc)
 {
 	struct ice_tx_queue *txq = pf->fdir.txq;
+	struct ice_rx_queue *rxq = pf->fdir.rxq;
 	volatile struct ice_fltr_desc *fdirdp;
 	volatile struct ice_tx_desc *txdp;
 	uint32_t td_cmd;
@@ -3582,5 +3875,19 @@ ice_fdir_programming(struct ice_pf *pf, struct ice_fltr_desc *fdir_desc)
 		return -ETIMEDOUT;
 	}
 
-	return 0;
+	for (; i < ICE_FDIR_MAX_WAIT_US; i++) {
+		int ret;
+
+		ret = ice_check_fdir_programming_status(rxq);
+		if (ret == -EAGAIN)
+			rte_delay_us(1);
+		else
+			return ret;
+	}
+
+	PMD_DRV_LOG(ERR,
+		    "Failed to program FDIR filter: programming status reported.");
+	return -ETIMEDOUT;
+
+
 }

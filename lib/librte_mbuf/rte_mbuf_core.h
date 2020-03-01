@@ -187,14 +187,9 @@ extern "C" {
 /* add new RX flags here, don't forget to update PKT_FIRST_FREE */
 
 #define PKT_FIRST_FREE (1ULL << 23)
-#define PKT_LAST_FREE (1ULL << 39)
+#define PKT_LAST_FREE (1ULL << 40)
 
 /* add new TX flags here, don't forget to update PKT_LAST_FREE  */
-
-/**
- * Indicate that the metadata field in the mbuf is in use.
- */
-#define PKT_TX_METADATA	(1ULL << 40)
 
 /**
  * Outer UDP checksum offload flag. This flag is used for enabling
@@ -390,8 +385,7 @@ extern "C" {
 		PKT_TX_MACSEC |		 \
 		PKT_TX_SEC_OFFLOAD |	 \
 		PKT_TX_UDP_SEG |	 \
-		PKT_TX_OUTER_UDP_CKSUM | \
-		PKT_TX_METADATA)
+		PKT_TX_OUTER_UDP_CKSUM)
 
 /**
  * Mbuf having an external buffer attached. shinfo in mbuf must be filled.
@@ -412,19 +406,6 @@ extern "C" {
 #define	RTE_MBUF_DEFAULT_DATAROOM	2048
 #define	RTE_MBUF_DEFAULT_BUF_SIZE	\
 	(RTE_MBUF_DEFAULT_DATAROOM + RTE_PKTMBUF_HEADROOM)
-
-/*
- * define a set of marker types that can be used to refer to set points in the
- * mbuf.
- */
-__extension__
-typedef void    *MARKER[0];   /**< generic marker for a point in a structure */
-__extension__
-typedef uint8_t  MARKER8[0];  /**< generic marker with 1B alignment */
-
- /** marker that allows us to overwrite 8 bytes with a single assignment */
-__extension__
-typedef uint64_t MARKER64[0];
 
 struct rte_mbuf_sched {
 	uint32_t queue_id;   /**< Queue ID. */
@@ -485,7 +466,7 @@ enum {
  * The generic rte_mbuf, containing a packet mbuf.
  */
 struct rte_mbuf {
-	MARKER cacheline0;// 这种写法很帅气
+	RTE_MARKER cacheline0;// 这种写法很帅气
 
 	//mbuf的数据缓冲起始地址
 	void *buf_addr;           /**< Virtual address of segment buffer. */
@@ -502,7 +483,7 @@ struct rte_mbuf {
 	} __rte_aligned(sizeof(rte_iova_t));
 
 	/* next 8 bytes are initialised on RX descriptor rearm */
-	MARKER64 rearm_data;
+	RTE_MARKER64 rearm_data;
 	uint16_t data_off;//真实存放数据的位置（自buf_addr偏移data_off)
 
 	/**
@@ -531,7 +512,7 @@ struct rte_mbuf {
 	uint64_t ol_flags;        /**< Offload features. */
 
 	/* remaining bytes are set on RX when pulling packet from descriptor */
-	MARKER rx_descriptor_fields1;
+	RTE_MARKER rx_descriptor_fields1;
 
 	/*
 	 * The packet type, which is the combination of outer/inner L2, L3, L4
@@ -607,17 +588,6 @@ struct rte_mbuf {
 			/**< User defined tags. See rte_distributor_process() */
 			uint32_t usr;
 		} hash;                   /**< hash information */
-		struct {
-			/**
-			 * Application specific metadata value
-			 * for egress flow rule match.
-			 * Valid if PKT_TX_METADATA is set.
-			 * Located here to allow conjunct use
-			 * with hash.sched.hi.
-			 */
-			uint32_t tx_metadata;
-			uint32_t reserved;
-		};
 	};
 
 	/** Outer VLAN TCI (CPU order), valid if PKT_RX_QINQ is set. */
@@ -633,7 +603,7 @@ struct rte_mbuf {
 	uint64_t timestamp;
 
 	/* second cache line - fields only used in slow path or on TX */
-	MARKER cacheline1 __rte_cache_min_aligned;
+	RTE_MARKER cacheline1 __rte_cache_min_aligned;
 
 	RTE_STD_C11
 	union {

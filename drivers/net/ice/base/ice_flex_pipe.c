@@ -3069,7 +3069,8 @@ ice_free_prof_mask(struct ice_hw *hw, enum ice_block blk, u16 mask_idx)
 	hw->blk[blk].masks.masks[mask_idx].idx = 0;
 
 	/* update mask as unused entry */
-	ice_debug(hw, ICE_DBG_PKG, "Free mask, blk %d, mask %d", blk, mask_idx);
+	ice_debug(hw, ICE_DBG_PKG, "Free mask, blk %d, mask %d\n", blk,
+		  mask_idx);
 	ice_write_prof_mask_reg(hw, blk, mask_idx, 0, 0);
 
 exit_ice_free_prof_mask:
@@ -3618,6 +3619,61 @@ static void ice_init_flow_profs(struct ice_hw *hw, u8 blk_idx)
 }
 
 /**
+ * ice_clear_hw_tbls - clear HW tables and flow profiles
+ * @hw: pointer to the hardware structure
+ */
+void ice_clear_hw_tbls(struct ice_hw *hw)
+{
+	u8 i;
+
+	for (i = 0; i < ICE_BLK_COUNT; i++) {
+		struct ice_prof_redir *prof_redir = &hw->blk[i].prof_redir;
+		struct ice_prof_tcam *prof = &hw->blk[i].prof;
+		struct ice_xlt1 *xlt1 = &hw->blk[i].xlt1;
+		struct ice_xlt2 *xlt2 = &hw->blk[i].xlt2;
+		struct ice_es *es = &hw->blk[i].es;
+
+		if (hw->blk[i].is_list_init) {
+			ice_free_prof_map(hw, i);
+			ice_free_flow_profs(hw, i);
+		}
+
+		ice_free_vsig_tbl(hw, (enum ice_block)i);
+
+		ice_memset(xlt1->ptypes, 0, xlt1->count * sizeof(*xlt1->ptypes),
+			   ICE_NONDMA_MEM);
+		ice_memset(xlt1->ptg_tbl, 0,
+			   ICE_MAX_PTGS * sizeof(*xlt1->ptg_tbl),
+			   ICE_NONDMA_MEM);
+		ice_memset(xlt1->t, 0, xlt1->count * sizeof(*xlt1->t),
+			   ICE_NONDMA_MEM);
+
+		ice_memset(xlt2->vsis, 0, xlt2->count * sizeof(*xlt2->vsis),
+			   ICE_NONDMA_MEM);
+		ice_memset(xlt2->vsig_tbl, 0,
+			   xlt2->count * sizeof(*xlt2->vsig_tbl),
+			   ICE_NONDMA_MEM);
+		ice_memset(xlt2->t, 0, xlt2->count * sizeof(*xlt2->t),
+			   ICE_NONDMA_MEM);
+
+		ice_memset(prof->t, 0, prof->count * sizeof(*prof->t),
+			   ICE_NONDMA_MEM);
+		ice_memset(prof_redir->t, 0,
+			   prof_redir->count * sizeof(*prof_redir->t),
+			   ICE_NONDMA_MEM);
+
+		ice_memset(es->t, 0, es->count * sizeof(*es->t),
+			   ICE_NONDMA_MEM);
+		ice_memset(es->ref_count, 0, es->count * sizeof(*es->ref_count),
+			   ICE_NONDMA_MEM);
+		ice_memset(es->written, 0, es->count * sizeof(*es->written),
+			   ICE_NONDMA_MEM);
+		ice_memset(es->mask_ena, 0, es->count * sizeof(*es->mask_ena),
+			   ICE_NONDMA_MEM);
+	}
+}
+
+/**
  * ice_init_hw_tbls - init hardware table memory
  * @hw: pointer to the hardware structure
  */
@@ -4118,7 +4174,7 @@ ice_upd_prof_hw(struct ice_hw *hw, enum ice_block blk,
 	/* update package */
 	status = ice_update_pkg(hw, ice_pkg_buf(b), 1);
 	if (status == ICE_ERR_AQ_ERROR)
-		ice_debug(hw, ICE_DBG_INIT, "Unable to update HW profile.");
+		ice_debug(hw, ICE_DBG_INIT, "Unable to update HW profile\n");
 
 error_tmp:
 	ice_pkg_buf_free(hw, b);
@@ -5002,6 +5058,26 @@ static void ice_set_tcam_flags(u16 mask, u8 dc_mask[ICE_TCAM_KEY_VAL_SZ])
 	flag_word = (u16 *)dc_mask;
 	*flag_word = ~mask;
 }
+
+/**
+ * ice_rem_chg_tcam_ent - remove a specific tcam entry from change list
+ * @hw: pointer to the HW struct
+ * @idx: the index of the tcam entry to remove
+ * @chg: the list of change structures to search
+ */
+static void
+ice_rem_chg_tcam_ent(struct ice_hw *hw, u16 idx, struct LIST_HEAD_TYPE *chg)
+{
+	struct ice_chs_chg *pos, *tmp;
+
+	LIST_FOR_EACH_ENTRY_SAFE(tmp, pos, chg, ice_chs_chg, list_entry) {
+		if (tmp->type == ICE_TCAM_ADD && tmp->tcam_idx == idx) {
+			LIST_DEL(&tmp->list_entry);
+			ice_free(hw, tmp);
+		}
+	}
+}
+
 /**
  * ice_prof_tcam_ena_dis - add enable or disable TCAM change
  * @hw: pointer to the HW struct
@@ -5021,14 +5097,19 @@ ice_prof_tcam_ena_dis(struct ice_hw *hw, enum ice_block blk, bool enable,
 	enum ice_status status;
 	struct ice_chs_chg *p;
 
-	/* Default: enable means change the low flag bit to don't care */
-	u8 dc_msk[ICE_TCAM_KEY_VAL_SZ] = { 0x01, 0x00, 0x00, 0x00, 0x00 };
+	u8 vl_msk[ICE_TCAM_KEY_VAL_SZ] = { 0xFF, 0xFF, 0xFF, 0xFF, 0xFF };
+	u8 dc_msk[ICE_TCAM_KEY_VAL_SZ] = { 0xFF, 0xFF, 0x00, 0x00, 0x00 };
 	u8 nm_msk[ICE_TCAM_KEY_VAL_SZ] = { 0x00, 0x00, 0x00, 0x00, 0x00 };
-	u8 vl_msk[ICE_TCAM_KEY_VAL_SZ] = { 0x01, 0x00, 0x00, 0x00, 0x00 };
 
 	/* if disabling, free the tcam */
 	if (!enable) {
-		status = ice_free_tcam_ent(hw, blk, tcam->tcam_idx);
+		status = ice_rel_tcam_idx(hw, blk, tcam->tcam_idx);
+
+		/* if we have already created a change for this tcam entry, then
+		 * we need to remove that entry, in order to prevent writing to
+		 * a tcam entry we no longer will have ownership of.
+		 */
+		ice_rem_chg_tcam_ent(hw, tcam->tcam_idx, chg);
 		tcam->tcam_idx = 0;
 		tcam->in_use = 0;
 		return status;
@@ -5147,11 +5228,12 @@ ice_adj_prof_priorities(struct ice_hw *hw, enum ice_block blk, u16 vsig,
  * @blk: hardware block
  * @vsig: the VSIG to which this profile is to be added
  * @hdl: the profile handle indicating the profile to add
+ * @rev: true to add entries to the end of the list
  * @chg: the change list
  */
 static enum ice_status
 ice_add_prof_id_vsig(struct ice_hw *hw, enum ice_block blk, u16 vsig, u64 hdl,
-		     struct LIST_HEAD_TYPE *chg)
+		     bool rev, struct LIST_HEAD_TYPE *chg)
 {
 	/* Masks that ignore flags */
 	u8 vl_msk[ICE_TCAM_KEY_VAL_SZ] = { 0xFF, 0xFF, 0xFF, 0xFF, 0xFF };
@@ -5160,7 +5242,7 @@ ice_add_prof_id_vsig(struct ice_hw *hw, enum ice_block blk, u16 vsig, u64 hdl,
 	struct ice_prof_map *map;
 	struct ice_vsig_prof *t;
 	struct ice_chs_chg *p;
-	u16 i;
+	u16 vsig_idx, i;
 
 	/* Get the details on the profile specified by the handle ID */
 	map = ice_search_prof_id(hw, blk, hdl);
@@ -5227,8 +5309,13 @@ ice_add_prof_id_vsig(struct ice_hw *hw, enum ice_block blk, u16 vsig, u64 hdl,
 	}
 
 	/* add profile to VSIG */
-	LIST_ADD(&t->list,
-		 &hw->blk[blk].xlt2.vsig_tbl[(vsig & ICE_VSIG_IDX_M)].prop_lst);
+	vsig_idx = vsig & ICE_VSIG_IDX_M;
+	if (rev)
+		LIST_ADD_TAIL(&t->list,
+			      &hw->blk[blk].xlt2.vsig_tbl[vsig_idx].prop_lst);
+	else
+		LIST_ADD(&t->list,
+			 &hw->blk[blk].xlt2.vsig_tbl[vsig_idx].prop_lst);
 
 	return ICE_SUCCESS;
 
@@ -5268,7 +5355,7 @@ ice_create_prof_id_vsig(struct ice_hw *hw, enum ice_block blk, u16 vsi, u64 hdl,
 	if (status)
 		goto err_ice_create_prof_id_vsig;
 
-	status = ice_add_prof_id_vsig(hw, blk, new_vsig, hdl, chg);
+	status = ice_add_prof_id_vsig(hw, blk, new_vsig, hdl, false, chg);
 	if (status)
 		goto err_ice_create_prof_id_vsig;
 
@@ -5293,11 +5380,13 @@ err_ice_create_prof_id_vsig:
  * @blk: hardware block
  * @vsi: the initial VSI that will be in VSIG
  * @lst: the list of profile that will be added to the VSIG
+ * @new_vsig: return of new vsig
  * @chg: the change list
  */
 static enum ice_status
 ice_create_vsig_from_lst(struct ice_hw *hw, enum ice_block blk, u16 vsi,
-			 struct LIST_HEAD_TYPE *lst, struct LIST_HEAD_TYPE *chg)
+			 struct LIST_HEAD_TYPE *lst, u16 *new_vsig,
+			 struct LIST_HEAD_TYPE *chg)
 {
 	struct ice_vsig_prof *t;
 	enum ice_status status;
@@ -5312,11 +5401,14 @@ ice_create_vsig_from_lst(struct ice_hw *hw, enum ice_block blk, u16 vsi,
 		return status;
 
 	LIST_FOR_EACH_ENTRY(t, lst, ice_vsig_prof, list) {
+		/* Reverse the order here since we are copying the list */
 		status = ice_add_prof_id_vsig(hw, blk, vsig, t->profile_cookie,
-					      chg);
+					      true, chg);
 		if (status)
 			return status;
 	}
+
+	*new_vsig = vsig;
 
 	return ICE_SUCCESS;
 }
@@ -5481,7 +5573,8 @@ ice_add_prof_id_flow(struct ice_hw *hw, enum ice_block blk, u16 vsi, u64 hdl)
 			 * not sharing entries and we can simply add the new
 			 * profile to the VSIG.
 			 */
-			status = ice_add_prof_id_vsig(hw, blk, vsig, hdl, &chg);
+			status = ice_add_prof_id_vsig(hw, blk, vsig, hdl, false,
+						      &chg);
 			if (status)
 				goto err_ice_add_prof_id_flow;
 
@@ -5492,7 +5585,8 @@ ice_add_prof_id_flow(struct ice_hw *hw, enum ice_block blk, u16 vsi, u64 hdl)
 		} else {
 			/* No match, so we need a new VSIG */
 			status = ice_create_vsig_from_lst(hw, blk, vsi,
-							  &union_lst, &chg);
+							  &union_lst, &vsig,
+							  &chg);
 			if (status)
 				goto err_ice_add_prof_id_flow;
 
@@ -5664,7 +5758,8 @@ ice_rem_prof_id_flow(struct ice_hw *hw, enum ice_block blk, u16 vsi, u64 hdl)
 				 * new VSIG and TCAM entries
 				 */
 				status = ice_create_vsig_from_lst(hw, blk, vsi,
-								  &copy, &chg);
+								  &copy, &vsig,
+								  &chg);
 				if (status)
 					goto err_ice_rem_prof_id_flow;
 

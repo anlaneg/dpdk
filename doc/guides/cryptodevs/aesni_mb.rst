@@ -65,12 +65,18 @@ To build DPDK with the AESNI_MB_PMD the user is required to download the multi-b
 library from `here <https://github.com/01org/intel-ipsec-mb>`_
 and compile it on their user system before building DPDK.
 The latest version of the library supported by this PMD is v0.53, which
-can be downloaded from `<https://github.com/01org/intel-ipsec-mb/archive/v0.53.zip>`.
+can be downloaded from `<https://github.com/01org/intel-ipsec-mb/archive/v0.53.zip>`_.
 
 .. code-block:: console
 
     make
     make install
+
+.. note::
+
+   Compilation of the Multi-Buffer library is broken when GCC < 5.0, if library <= v0.53.
+   If a lower GCC version than 5.0, the workaround proposed by the following link
+   should be used: `<https://github.com/intel/intel-ipsec-mb/issues/40>`_.
 
 As a reference, the following table shows a mapping between the past DPDK versions
 and the Multi-Buffer library version supported by them:

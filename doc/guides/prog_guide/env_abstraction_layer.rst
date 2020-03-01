@@ -249,7 +249,7 @@ manual memory management.
 
 + Using heap API's for externally allocated memory
 
-Using using a set of malloc heap API's is the recommended way to use externally
+Using a set of malloc heap API's is the recommended way to use externally
 allocated memory in DPDK. In this way, support for externally allocated memory
 is implemented through overloading the socket ID - externally allocated heaps
 will have socket ID's that would be considered invalid under normal
@@ -297,7 +297,7 @@ set of API's under the ``rte_extmem_*`` namespace.
 
 These API's are (as their name implies) intended to allow registering or
 unregistering externally allocated memory to/from DPDK's internal page table, to
-allow API's like ``rte_virt2memseg`` etc. to work with externally allocated
+allow API's like ``rte_mem_virt2memseg`` etc. to work with externally allocated
 memory. Memory added this way will not be available for any regular DPDK
 allocators; DPDK will leave this memory for the user application to manage.
 
@@ -474,6 +474,9 @@ devices would fail anyway.
     If a PCI driver does not support RTE_IOVA_PA mode, the
     ``RTE_PCI_DRV_NEED_IOVA_AS_VA`` flag is used to dictate that this PCI
     driver can only work in RTE_IOVA_VA mode.
+
+    When the KNI kernel module is detected, RTE_IOVA_PA mode is preferred as a
+    performance penalty is expected in RTE_IOVA_VA mode.
 
 IOVA Mode Configuration
 ~~~~~~~~~~~~~~~~~~~~~~~

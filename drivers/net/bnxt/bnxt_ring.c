@@ -38,15 +38,13 @@ void bnxt_free_ring(struct bnxt_ring *ring)
  * Ring groups
  */
 
-int bnxt_init_ring_grps(struct bnxt *bp)
+static void bnxt_init_ring_grps(struct bnxt *bp)
 {
 	unsigned int i;
 
 	for (i = 0; i < bp->max_ring_grps; i++)
 		memset(&bp->grp_info[i], (uint8_t)HWRM_NA_SIGNATURE,
 		       sizeof(struct bnxt_ring_grp_info));
-
-	return 0;
 }
 
 int bnxt_alloc_ring_grps(struct bnxt *bp)
@@ -76,6 +74,7 @@ int bnxt_alloc_ring_grps(struct bnxt *bp)
 				    "Failed to alloc grp info tbl.\n");
 			return -ENOMEM;
 		}
+		bnxt_init_ring_grps(bp);
 	}
 
 	return 0;
@@ -111,9 +110,7 @@ int bnxt_alloc_rings(struct bnxt *bp, uint16_t qidx,
 	uint64_t rx_offloads = bp->eth_dev->data->dev_conf.rxmode.offloads;
 	const struct rte_memzone *mz = NULL;
 	char mz_name[RTE_MEMZONE_NAMESIZE];
-	rte_iova_t mz_phys_addr_base;
 	rte_iova_t mz_phys_addr;
-	int sz;
 
 	int stats_len = (tx_ring_info || rx_ring_info) ?
 	    RTE_CACHE_LINE_ROUNDUP(sizeof(struct hwrm_stat_ctx_query_output) -
@@ -215,22 +212,7 @@ int bnxt_alloc_rings(struct bnxt *bp, uint16_t qidx,
 			return -ENOMEM;
 	}
 	memset(mz->addr, 0, mz->len);
-	mz_phys_addr_base = mz->iova;
 	mz_phys_addr = mz->iova;
-	if ((unsigned long)mz->addr == mz_phys_addr_base) {
-		PMD_DRV_LOG(DEBUG,
-			    "Memzone physical address same as virtual.\n");
-		PMD_DRV_LOG(DEBUG, "Using rte_mem_virt2iova()\n");
-		for (sz = 0; sz < total_alloc_len; sz += getpagesize())
-			rte_mem_lock_page(((char *)mz->addr) + sz);
-		mz_phys_addr_base = rte_mem_virt2iova(mz->addr);
-		mz_phys_addr = rte_mem_virt2iova(mz->addr);
-		if (mz_phys_addr == RTE_BAD_IOVA) {
-			PMD_DRV_LOG(ERR,
-			"unable to map ring address to physical memory\n");
-			return -ENOMEM;
-		}
-	}
 
 	if (tx_ring_info) {
 		txq->mz = mz;

@@ -5,7 +5,7 @@
 MAPFILE=$1
 OBJFILE=$2
 
-LIST_SYMBOL=$RTE_SDK/buildtools/map-list-symbol.sh
+LIST_SYMBOL=$(dirname $(readlink -f $0))/map-list-symbol.sh
 
 # added check for "make -C test/" usage
 if [ ! -e $MAPFILE ] || [ ! -f $OBJFILE ]
@@ -23,10 +23,10 @@ trap 'rm -f "$DUMPFILE"' EXIT
 objdump -t $OBJFILE >$DUMPFILE
 
 ret=0
-for SYM in `$LIST_SYMBOL -S EXPERIMENTAL $MAPFILE`
+for SYM in `$LIST_SYMBOL -S EXPERIMENTAL $MAPFILE |cut -d ' ' -f 3`
 do
-	if grep -q "\.text.*$SYM$" $DUMPFILE &&
-		! grep -q "\.text\.experimental.*$SYM$" $DUMPFILE
+	if grep -q "\.text.*[[:space:]]$SYM$" $DUMPFILE &&
+		! grep -q "\.text\.experimental.*[[:space:]]$SYM$" $DUMPFILE
 	then
 		cat >&2 <<- END_OF_MESSAGE
 		$SYM is not flagged as experimental

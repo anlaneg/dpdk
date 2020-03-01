@@ -5,7 +5,7 @@ ICE Poll Mode Driver
 ======================
 
 The ice PMD (librte_pmd_ice) provides poll mode driver support for
-10/25 Gbps Intel® Ethernet 810 Series Network Adapters based on
+10/25/50/100 Gbps Intel® Ethernet 810 Series Network Adapters based on
 the Intel Ethernet Controller E810.
 
 
@@ -20,6 +20,22 @@ Prerequisites
 - To get better performance on Intel platforms, please follow the "How to get best performance with NICs on Intel platforms"
   section of the :ref:`Getting Started Guide for Linux <linux_gsg>`.
 
+Recommended Matching List
+-------------------------
+
+It is highly recommended to upgrade the ice kernel driver and firmware and
+DDP packages to avoid the compatibility issues with ice PMD. Here is the
+suggested matching list.
+
+   +----------------------+-----------------------+------------------+----------------+-------------------+
+   |     DPDK version     | Kernel driver version | Firmware version | DDP OS Package | DDP COMMS Package |
+   +======================+=======================+==================+================+===================+
+   |        19.11         |        0.12.25        |     1.1.16.39    |      1.3.4     |       1.3.10      |
+   +----------------------+-----------------------+------------------+----------------+-------------------+
+   | 19.08 (experimental) |        0.10.1         |     1.1.12.7     |      1.2.0     |        N/A        |
+   +----------------------+-----------------------+------------------+----------------+-------------------+
+   | 19.05 (experimental) |        0.9.4          |     1.1.10.16    |      1.1.0     |        N/A        |
+   +----------------------+-----------------------+------------------+----------------+-------------------+
 
 Pre-Installation Configuration
 ------------------------------
@@ -80,10 +96,22 @@ Runtime Config Options
 
     -w 80:00.0,pipeline-mode-support=1
 
+- ``Flow Mark Support`` (default ``0``)
+
+  This is a hint to the driver to select the data path that supports flow mark extraction
+  by default.
+  NOTE: This is an experimental devarg, it will be removed when any of below conditions
+  is ready.
+  1) all data paths support flow mark (currently vPMD does not)
+  2) a new offload like RTE_DEV_RX_OFFLOAD_FLOW_MARK be introduced as a standard way to hint.
+  Example::
+
+    -w 80:00.0,flow-mark-support=1
+
 - ``Protocol extraction for per queue``
 
-  Configure the RX queues to do protocol extraction into ``rte_mbuf::udata64``
-  for protocol handling acceleration, like checking the TCP SYN packets quickly.
+  Configure the RX queues to do protocol extraction into mbuf for protocol
+  handling acceleration, like checking the TCP SYN packets quickly.
 
   The argument format is::
 
@@ -111,7 +139,8 @@ Runtime Config Options
   This setting means queues 1, 2-3, 8-9 are TCP extraction, queues 10-23 are
   IPv6 extraction, other queues use the default VLAN extraction.
 
-  The extraction will be copied into the lower 32 bit of ``rte_mbuf::udata64``.
+  The extraction metadata is copied into the registered dynamic mbuf field, and
+  the related dynamic mbuf flags is set.
 
   .. table:: Protocol extraction : ``vlan``
 
@@ -175,10 +204,11 @@ Runtime Config Options
 
   TCPHDR2 - Reserved
 
-  Use ``get_proto_xtr_flds(struct rte_mbuf *mb)`` to access the protocol
-  extraction, do not use ``rte_mbuf::udata64`` directly.
+  Use ``rte_net_ice_dynf_proto_xtr_metadata_get`` to access the protocol
+  extraction metadata, and use ``RTE_PKT_RX_DYNF_PROTO_XTR_*`` to get the
+  metadata type of ``struct rte_mbuf::ol_flags``.
 
-  The ``dump_proto_xtr_flds(struct rte_mbuf *mb)`` routine shows how to
+  The ``rte_net_ice_dump_proto_xtr_metadata`` routine shows how to
   access the protocol extraction result in ``struct rte_mbuf``.
 
 Driver compilation and testing

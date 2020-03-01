@@ -93,6 +93,7 @@ The application has a number of command line options::
    ./build/ipsec-secgw [EAL options] --
                         -p PORTMASK -P -u PORTMASK -j FRAMESIZE
                         -l -w REPLAY_WINOW_SIZE -e -a
+                        -c SAD_CACHE_SIZE
                         --config (port,queue,lcore)[,(port,queue,lcore]
                         --single-sa SAIDX
                         --rxoffload MASK
@@ -132,6 +133,11 @@ Where:
 *   ``-a``: enables Security Association sequence number atomic behavior
     (available only with librte_ipsec code path).
 
+*   ``-c``: specifies the SAD cache size. Stores the most recent SA in a per
+    lcore cache. Cache represents flat array containing SA's indexed by SPI.
+    Zero value disables cache.
+    Default value: 128.
+
 *   ``--config (port,queue,lcore)[,(port,queue,lcore)]``: determines which queues
     from which ports are mapped to which cores.
 
@@ -158,7 +164,7 @@ Where:
     If packet is not reassembled within this time, received fragments
     will be discarded. Fragment lifetime should be decreased when
     there is a high fragmented traffic loss in high bandwidth networks.
-    Should be lower for for low number of reassembly buckets.
+    Should be lower for low number of reassembly buckets.
     Valid values: from 1 ns to 10 s. Default value: 10000000 (10 s).
 
 *   ``--reassemble NUM``: max number of entries in reassemble fragment table.
