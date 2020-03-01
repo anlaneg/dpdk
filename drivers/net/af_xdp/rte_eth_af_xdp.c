@@ -99,7 +99,7 @@ struct pkt_rx_queue {
 
 	struct pkt_tx_queue *pair;
 	struct pollfd fds[1];
-	int xsk_queue_idx;
+	int xsk_queue_idx;/*XDP队列编号*/
 };
 
 struct tx_stats {

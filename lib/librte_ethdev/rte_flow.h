@@ -125,7 +125,7 @@ enum rte_flow_item_type {
 	 *
 	 * No associated specification structure.
 	 */
-	RTE_FLOW_ITEM_TYPE_END,//标明flow-item结束
+	RTE_FLOW_ITEM_TYPE_END,//标明flow-item结束（匹配结束）
 
 	/**
 	 * [META]
@@ -221,14 +221,14 @@ enum rte_flow_item_type {
 	 *
 	 * See struct rte_flow_item_ipv4.
 	 */
-	RTE_FLOW_ITEM_TYPE_IPV4,
+	RTE_FLOW_ITEM_TYPE_IPV4,//ipv4头部匹配
 
 	/**
 	 * Matches an IPv6 header.
 	 *
 	 * See struct rte_flow_item_ipv6.
 	 */
-	RTE_FLOW_ITEM_TYPE_IPV6,
+	RTE_FLOW_ITEM_TYPE_IPV6,//ipv6头部匹配
 
 	/**
 	 * Matches an ICMP header.
@@ -242,7 +242,7 @@ enum rte_flow_item_type {
 	 *
 	 * See struct rte_flow_item_udp.
 	 */
-	RTE_FLOW_ITEM_TYPE_UDP,
+	RTE_FLOW_ITEM_TYPE_UDP,//udp匹配
 
 	/**
 	 * Matches a TCP header.
@@ -1573,7 +1573,7 @@ enum rte_flow_action_type {
 	 *
 	 * No associated configuration structure.
 	 */
-	RTE_FLOW_ACTION_TYPE_DROP,//丢包
+	RTE_FLOW_ACTION_TYPE_DROP,//丢包action
 
 	/**
 	 * Enables counters for this flow rule.
@@ -1623,7 +1623,7 @@ enum rte_flow_action_type {
 	 *
 	 * See struct rte_flow_action_port_id.
 	 */
-	RTE_FLOW_ACTION_TYPE_PORT_ID,
+	RTE_FLOW_ACTION_TYPE_PORT_ID,/*报文送指定port*/
 
 	/**
 	 * Traffic metering and policing (MTR).
@@ -1754,7 +1754,7 @@ enum rte_flow_action_type {
 	 * RFC7348) then the PMD should return a RTE_FLOW_ERROR_TYPE_ACTION
 	 * error.
 	 */
-	RTE_FLOW_ACTION_TYPE_VXLAN_DECAP,
+	RTE_FLOW_ACTION_TYPE_VXLAN_DECAP,//vxlan隧道解封装
 
 	/**
 	 * Encapsulate flow in NVGRE tunnel defined in the
@@ -2286,6 +2286,7 @@ struct rte_flow_action_of_push_mpls {
  * - ETH / VLAN / IPV4 / UDP / VXLAN / END
  *
  */
+//用于定义vxlan封装时需要设置的信息
 struct rte_flow_action_vxlan_encap {
 	/**
 	 * Encapsulating vxlan tunnel definition
