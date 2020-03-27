@@ -877,6 +877,7 @@ struct rte_eth_hairpin_cap {
  * A structure used to hold hairpin peer data.
  */
 struct rte_eth_hairpin_peer {
+    /*port编号及队列编号*/
 	uint16_t port; /**< Peer port. */
 	uint16_t queue; /**< Peer queue. */
 };

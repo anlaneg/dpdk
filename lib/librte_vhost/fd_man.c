@@ -136,7 +136,7 @@ fdset_init(struct fdset *pfdset)
  */
 //向fdset中注册一个fd及其回调
 int
-fdset_add(struct fdset *pfdset, int fd, fd_cb rcb, fd_cb wcb, void *dat)
+fdset_add(struct fdset *pfdset, int fd, fd_cb rcb/*读回调*/, fd_cb wcb/*写回调*/, void *dat)
 {
 	int i;
 
@@ -242,7 +242,7 @@ fdset_try_del(struct fdset *pfdset, int fd)
  * will wait until the flag is reset to zero(which indicates the callback is
  * finished), then it could free the context after fdset_del.
  */
-//poll相关的fd,并对依据事件调用不同的回调函数
+//vhost事件处理，poll相关的fd,并对依据事件调用不同的回调函数
 void *
 fdset_event_dispatch(void *arg)
 {
@@ -280,6 +280,7 @@ fdset_event_dispatch(void *arg)
 			continue;
 
 		need_shrink = 0;
+		//遍历每个fd,检查事件并触发相应回调
 		for (i = 0; i < numfds; i++) {
 			pthread_mutex_lock(&pfdset->fd_mutex);
 

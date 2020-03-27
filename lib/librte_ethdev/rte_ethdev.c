@@ -894,6 +894,7 @@ rte_eth_dev_rx_queue_config(struct rte_eth_dev *dev, uint16_t nb_queues)
 	return 0;
 }
 
+//启动设备的rx队列
 int
 rte_eth_dev_rx_queue_start(uint16_t port_id, uint16_t rx_queue_id)
 {
@@ -909,6 +910,7 @@ rte_eth_dev_rx_queue_start(uint16_t port_id, uint16_t rx_queue_id)
 		return -EINVAL;
 	}
 
+	//队列id不能过大
 	if (rx_queue_id >= dev->data->nb_rx_queues) {
 		RTE_ETHDEV_LOG(ERR, "Invalid RX queue_id=%u\n", rx_queue_id);
 		return -EINVAL;
@@ -916,6 +918,7 @@ rte_eth_dev_rx_queue_start(uint16_t port_id, uint16_t rx_queue_id)
 
 	RTE_FUNC_PTR_OR_ERR_RET(*dev->dev_ops->rx_queue_start, -ENOTSUP);
 
+	//hairpin队列不能以此方式启动
 	if (rte_eth_dev_is_rx_hairpin_queue(dev, rx_queue_id)) {
 		RTE_ETHDEV_LOG(INFO,
 			"Can't start Rx hairpin queue %"PRIu16" of device with port_id=%"PRIu16"\n",
@@ -923,6 +926,7 @@ rte_eth_dev_rx_queue_start(uint16_t port_id, uint16_t rx_queue_id)
 		return -EINVAL;
 	}
 
+	//如果此队列已启动，则报错
 	if (dev->data->rx_queue_state[rx_queue_id] != RTE_ETH_QUEUE_STATE_STOPPED) {
 		RTE_ETHDEV_LOG(INFO,
 			"Queue %"PRIu16" of device with port_id=%"PRIu16" already started\n",
@@ -930,11 +934,13 @@ rte_eth_dev_rx_queue_start(uint16_t port_id, uint16_t rx_queue_id)
 		return 0;
 	}
 
+	//执行队列启动
 	return eth_err(port_id, dev->dev_ops->rx_queue_start(dev,
 							     rx_queue_id));
 
 }
 
+//停止设备的rx队列
 int
 rte_eth_dev_rx_queue_stop(uint16_t port_id, uint16_t rx_queue_id)
 {
@@ -950,6 +956,7 @@ rte_eth_dev_rx_queue_stop(uint16_t port_id, uint16_t rx_queue_id)
 
 	RTE_FUNC_PTR_OR_ERR_RET(*dev->dev_ops->rx_queue_stop, -ENOTSUP);
 
+	//hairpin队列不能采用此回调停止
 	if (rte_eth_dev_is_rx_hairpin_queue(dev, rx_queue_id)) {
 		RTE_ETHDEV_LOG(INFO,
 			"Can't stop Rx hairpin queue %"PRIu16" of device with port_id=%"PRIu16"\n",
@@ -968,6 +975,7 @@ rte_eth_dev_rx_queue_stop(uint16_t port_id, uint16_t rx_queue_id)
 
 }
 
+//启动tx队列
 int
 rte_eth_dev_tx_queue_start(uint16_t port_id, uint16_t tx_queue_id)
 {
@@ -1967,7 +1975,7 @@ rte_eth_rx_queue_setup(uint16_t port_id, uint16_t rx_queue_id,
 	return eth_err(port_id, ret);
 }
 
-//构造发队列
+//构造hairpin收取队列
 int
 rte_eth_rx_hairpin_queue_setup(uint16_t port_id, uint16_t rx_queue_id,
 			       uint16_t nb_rx_desc,
@@ -2144,9 +2152,10 @@ rte_eth_tx_queue_setup(uint16_t port_id, uint16_t tx_queue_id,
 		       tx_queue_id, nb_tx_desc, socket_id, &local_conf));
 }
 
+//构造hairpin发送队列
 int
 rte_eth_tx_hairpin_queue_setup(uint16_t port_id, uint16_t tx_queue_id,
-			       uint16_t nb_tx_desc,
+			       uint16_t nb_tx_desc/*tx描述符数目*/,
 			       const struct rte_eth_hairpin_conf *conf)
 {
 	struct rte_eth_dev *dev;
@@ -2158,6 +2167,7 @@ rte_eth_tx_hairpin_queue_setup(uint16_t port_id, uint16_t tx_queue_id,
 
 	RTE_ETH_VALID_PORTID_OR_ERR_RET(port_id, -EINVAL);
 	dev = &rte_eth_devices[port_id];
+	/*tx队列数过大，报错*/
 	if (tx_queue_id >= dev->data->nb_tx_queues) {
 		RTE_ETHDEV_LOG(ERR, "Invalid TX queue_id=%u\n", tx_queue_id);
 		return -EINVAL;
@@ -2170,12 +2180,15 @@ rte_eth_tx_hairpin_queue_setup(uint16_t port_id, uint16_t tx_queue_id,
 	/* if nb_rx_desc is zero use max number of desc from the driver. */
 	if (nb_tx_desc == 0)
 		nb_tx_desc = cap.max_nb_desc;
+	/*描述符不能超过指定值*/
 	if (nb_tx_desc > cap.max_nb_desc) {
 		RTE_ETHDEV_LOG(ERR,
 			"Invalid value for nb_tx_desc(=%hu), should be: <= %hu",
 			nb_tx_desc, cap.max_nb_desc);
 		return -EINVAL;
 	}
+
+	/*tx 2 rx时对端数目*/
 	if (conf->peer_count > cap.max_tx_2_rx) {
 		RTE_ETHDEV_LOG(ERR,
 			"Invalid value for number of peers for Tx queue(=%hu), should be: <= %hu",
@@ -4649,6 +4662,7 @@ rte_eth_remove_tx_callback(uint16_t port_id, uint16_t queue_id,
 	return ret;
 }
 
+//rx队列信息获取
 int
 rte_eth_rx_queue_info_get(uint16_t port_id, uint16_t queue_id,
 	struct rte_eth_rxq_info *qinfo)
@@ -4666,6 +4680,7 @@ rte_eth_rx_queue_info_get(uint16_t port_id, uint16_t queue_id,
 		return -EINVAL;
 	}
 
+	//hairpin队列不能以这种方式获取info信息
 	if (rte_eth_dev_is_rx_hairpin_queue(dev, queue_id)) {
 		RTE_ETHDEV_LOG(INFO,
 			"Can't get hairpin Rx queue %"PRIu16" info of device with port_id=%"PRIu16"\n",
@@ -4680,6 +4695,7 @@ rte_eth_rx_queue_info_get(uint16_t port_id, uint16_t queue_id,
 	return 0;
 }
 
+//tx队列信息获取
 int
 rte_eth_tx_queue_info_get(uint16_t port_id, uint16_t queue_id,
 	struct rte_eth_txq_info *qinfo)
@@ -5059,6 +5075,7 @@ rte_eth_dev_adjust_nb_rx_tx_desc(uint16_t port_id,
 	return 0;
 }
 
+/*获取网卡的hairpin支持能力*/
 int
 rte_eth_dev_hairpin_capability_get(uint16_t port_id,
 				   struct rte_eth_hairpin_cap *cap)
@@ -5070,9 +5087,11 @@ rte_eth_dev_hairpin_capability_get(uint16_t port_id,
 	dev = &rte_eth_devices[port_id];
 	RTE_FUNC_PTR_OR_ERR_RET(*dev->dev_ops->hairpin_cap_get, -ENOTSUP);
 	memset(cap, 0, sizeof(*cap));
+	/*取hairpin能力*/
 	return eth_err(port_id, (*dev->dev_ops->hairpin_cap_get)(dev, cap));
 }
 
+//检查队列queue_id是否为rx hairpin队列
 int
 rte_eth_dev_is_rx_hairpin_queue(struct rte_eth_dev *dev, uint16_t queue_id)
 {

@@ -34,6 +34,7 @@ extern "C" {
 /* support mbuf with external buffer attached */
 #define RTE_VHOST_USER_EXTBUF_SUPPORT	(1ULL << 5)
 /* support only linear buffers (no chained mbufs) */
+//行式buffer
 #define RTE_VHOST_USER_LINEARBUF_SUPPORT	(1ULL << 6)
 
 /** Protocol features. */

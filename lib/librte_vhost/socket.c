@@ -30,7 +30,8 @@ TAILQ_HEAD(vhost_user_connection_list, vhost_user_connection);
  * vhost_user_socket struct will be created.
  */
 struct vhost_user_socket {
-	struct vhost_user_connection_list conn_list;//有这个socket上有多少个连接
+    //有这个socket上有多少个连接
+	struct vhost_user_connection_list conn_list;
 	pthread_mutex_t conn_mutex;
 	char *path;//server unix socket地址
 	int socket_fd;//unix socket对应的fd
@@ -41,7 +42,7 @@ struct vhost_user_socket {
 	bool iommu_support;
 	bool use_builtin_virtio_net;//是否使用内建的virtio_net
 	bool extbuf;
-	bool linearbuf;
+	bool linearbuf;/*是否line buffer*/
 
 	/*
 	 * The "supported_features" indicates the feature bits the
@@ -631,7 +632,6 @@ find_vhost_user_socket(const char *path)
 	return NULL;
 }
 
-//vsocket关掉某此功能
 int
 rte_vhost_driver_attach_vdpa_device(const char *path, int did)
 {
@@ -1230,7 +1230,8 @@ int
 rte_vhost_driver_start(const char *path)
 {
 	struct vhost_user_socket *vsocket;
-	static pthread_t fdset_tid;//全局的fd维护线程
+	//全局的fd维护线程
+	static pthread_t fdset_tid;
 
 	pthread_mutex_lock(&vhost_user.mutex);
 	vsocket = find_vhost_user_socket(path);

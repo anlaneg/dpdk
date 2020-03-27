@@ -138,6 +138,7 @@ pci_vfio_get_msix_bar(int fd, struct pci_msix_table *msix_table)
 				return -1;
 			}
 
+			/*记录msix表*/
 			msix_table->bar_index = reg & RTE_PCI_MSIX_TABLE_BIR;
 			msix_table->offset = reg & RTE_PCI_MSIX_TABLE_OFFSET;
 			msix_table->size =
@@ -247,6 +248,7 @@ pci_vfio_setup_interrupts(struct rte_pci_device *dev, int vfio_dev_fd)
 		}
 
 		/* set up an eventfd for interrupts */
+		/*创建eventfd来处理vfio的中断*/
 		fd = eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC);
 		if (fd < 0) {
 			RTE_LOG(ERR, EAL, "  cannot set up eventfd, "
@@ -651,6 +653,7 @@ pci_vfio_map_resource_primary(struct rte_pci_device *dev)
 	struct vfio_device_info device_info = { .argsz = sizeof(device_info) };
 	char pci_addr[PATH_MAX] = {0};
 	int vfio_dev_fd;
+	/*取设备pci地址*/
 	struct rte_pci_addr *loc = &dev->addr;
 	int i, ret;
 	struct mapped_pci_resource *vfio_res = NULL;
@@ -683,6 +686,7 @@ pci_vfio_map_resource_primary(struct rte_pci_device *dev)
 	memcpy(&vfio_res->pci_addr, &dev->addr, sizeof(vfio_res->pci_addr));
 
 	/* get number of registers (up to BAR5) */
+	/*获取bar数目*/
 	vfio_res->nb_maps = RTE_MIN((int) device_info.num_regions,
 			VFIO_PCI_BAR5_REGION_INDEX + 1);
 
@@ -869,6 +873,7 @@ int
 pci_vfio_map_resource(struct rte_pci_device *dev)
 {
 	if (rte_eal_process_type() == RTE_PROC_PRIMARY)
+	    /*实现主进程资源映射*/
 		return pci_vfio_map_resource_primary(dev);
 	else
 		return pci_vfio_map_resource_secondary(dev);
@@ -1062,6 +1067,7 @@ pci_vfio_ioport_unmap(struct rte_pci_ioport *p)
 	return -1;
 }
 
+/*检查vfio是否已启用*/
 int
 pci_vfio_is_enabled(void)
 {

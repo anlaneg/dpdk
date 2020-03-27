@@ -2134,6 +2134,7 @@ mlx5_rxq_verify(struct rte_eth_dev *dev)
 enum mlx5_rxq_type
 mlx5_rxq_get_type(struct rte_eth_dev *dev, uint16_t idx)
 {
+    //获取指定队列类型
 	struct mlx5_priv *priv = dev->data->dev_private;
 	struct mlx5_rxq_ctrl *rxq_ctrl = NULL;
 

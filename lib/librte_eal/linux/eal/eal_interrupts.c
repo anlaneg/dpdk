@@ -127,6 +127,7 @@ vfio_enable_intx(const struct rte_intr_handle *intr_handle) {
 	fd_ptr = (int *) &irq_set->data;
 	*fd_ptr = intr_handle->fd;
 
+	//通过vfio设置中断（向kernel知会中断关联的eventfd)
 	ret = ioctl(intr_handle->vfio_dev_fd, VFIO_DEVICE_SET_IRQS, irq_set);
 
 	if (ret) {
@@ -1047,7 +1048,7 @@ eal_intr_handle_interrupts(int pfd, unsigned totalfds)
  * @return
  *  never return;
  */
-//中断主线程
+//中断处理主线程
 static __attribute__((noreturn)) void *
 eal_intr_thread_main(__rte_unused void *arg)
 {

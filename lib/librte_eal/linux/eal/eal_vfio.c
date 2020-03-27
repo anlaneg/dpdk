@@ -44,8 +44,8 @@ struct user_mem_maps {
 struct vfio_config {
 	int vfio_enabled;
 	int vfio_container_fd;
-	int vfio_active_groups;
-	const struct vfio_iommu_type *vfio_iommu_type;
+	int vfio_active_groups;//vfio_groups中活跃的group数目
+	const struct vfio_iommu_type *vfio_iommu_type;//使用哪种iommu类型
 	struct vfio_group vfio_groups[VFIO_MAX_GROUPS];
 	struct user_mem_maps mem_maps;
 };
@@ -271,10 +271,15 @@ vfio_open_group_fd(int iommu_group_num)
 	/* if primary, try to open the group */
 	if (internal_config.process_type == RTE_PROC_PRIMARY) {
 		/* try regular group format */
+	    //取vfio-group字符设备地址,例如
+	    //host# ls -al /dev/vfio/59
+	    //crw------- 1 root root 236, 0 Mar 23 09:45 /dev/vfio/59
 		snprintf(filename, sizeof(filename),
 				 VFIO_GROUP_FMT, iommu_group_num);
+		//打开指定group_fd
 		vfio_group_fd = open(filename, O_RDWR);
 		if (vfio_group_fd < 0) {
+		    //失败后，尝试noiommu情况
 			/* if file not found, it's not an error */
 			if (errno != ENOENT) {
 				RTE_LOG(ERR, EAL, "Cannot open %s: %s\n", filename,
@@ -298,6 +303,7 @@ vfio_open_group_fd(int iommu_group_num)
 			/* noiommu group found */
 		}
 
+		//直接返回对应的vfio_group_fd
 		return vfio_group_fd;
 	}
 	/* if we're in a secondary process, request group fd from the primary
@@ -328,6 +334,7 @@ vfio_open_group_fd(int iommu_group_num)
 	return vfio_group_fd;
 }
 
+//给定iommu_group_num获取对应的vfio_config
 static struct vfio_config *
 get_vfio_cfg_by_group_num(int iommu_group_num)
 {
@@ -346,6 +353,7 @@ get_vfio_cfg_by_group_num(int iommu_group_num)
 	return NULL;
 }
 
+//获取或创建vfio group对应的fd
 static int
 vfio_get_group_fd(struct vfio_config *vfio_cfg,
 		int iommu_group_num)
@@ -355,17 +363,20 @@ vfio_get_group_fd(struct vfio_config *vfio_cfg,
 	struct vfio_group *cur_grp;
 
 	/* check if we already have the group descriptor open */
+	/*如果已打开，则直接返回*/
 	for (i = 0; i < VFIO_MAX_GROUPS; i++)
 		if (vfio_cfg->vfio_groups[i].group_num == iommu_group_num)
 			return vfio_cfg->vfio_groups[i].fd;
 
 	/* Lets see first if there is room for a new group */
+	//空间达到最大数量，报错
 	if (vfio_cfg->vfio_active_groups == VFIO_MAX_GROUPS) {
 		RTE_LOG(ERR, EAL, "Maximum number of VFIO groups reached!\n");
 		return -1;
 	}
 
 	/* Now lets get an index for the new group */
+	//查找一个空闲的vfio_groups空间，用于存放新的group
 	for (i = 0; i < VFIO_MAX_GROUPS; i++)
 		if (vfio_cfg->vfio_groups[i].group_num == -1) {
 			cur_grp = &vfio_cfg->vfio_groups[i];
@@ -373,11 +384,13 @@ vfio_get_group_fd(struct vfio_config *vfio_cfg,
 		}
 
 	/* This should not happen */
+	//空间已满
 	if (i == VFIO_MAX_GROUPS) {
 		RTE_LOG(ERR, EAL, "No VFIO group free slot found\n");
 		return -1;
 	}
 
+	//创建此group 编号的fd (例如/dev/vfio/59)
 	vfio_group_fd = vfio_open_group_fd(iommu_group_num);
 	if (vfio_group_fd < 0) {
 		RTE_LOG(ERR, EAL, "Failed to open group %d\n", iommu_group_num);
@@ -407,6 +420,7 @@ get_vfio_cfg_by_group_fd(int vfio_group_fd)
 	return NULL;
 }
 
+//通过container fd查找vfio config
 static struct vfio_config *
 get_vfio_cfg_by_container_fd(int container_fd)
 {
@@ -423,6 +437,7 @@ get_vfio_cfg_by_container_fd(int container_fd)
 	return NULL;
 }
 
+/*获取或创建iommu_group对应的fd*/
 int
 rte_vfio_get_group_fd(int iommu_group_num)
 {
@@ -430,6 +445,7 @@ rte_vfio_get_group_fd(int iommu_group_num)
 
 	/* get the vfio_config it belongs to */
 	vfio_cfg = get_vfio_cfg_by_group_num(iommu_group_num);
+	/*如果还未创建vfio_cfg,则使用默认config*/
 	vfio_cfg = vfio_cfg ? vfio_cfg : default_vfio_cfg;
 
 	return vfio_get_group_fd(vfio_cfg, iommu_group_num);
@@ -489,6 +505,7 @@ vfio_group_device_put(int vfio_group_fd)
 		vfio_cfg->vfio_groups[i].devices--;
 }
 
+//检查此group下设备数目
 static int
 vfio_group_device_count(int vfio_group_fd)
 {
@@ -658,8 +675,8 @@ rte_vfio_clear_group(int vfio_group_fd)
 }
 
 int
-rte_vfio_setup_device(const char *sysfs_base, const char *dev_addr,
-		int *vfio_dev_fd, struct vfio_device_info *device_info)
+rte_vfio_setup_device(const char *sysfs_base/*sysfs基准*/, const char *dev_addr/*设备pci地址*/,
+		int *vfio_dev_fd/*出参，vfio设备fd*/, struct vfio_device_info *device_info)
 {
 	struct vfio_group_status group_status = {
 			.argsz = sizeof(group_status)
@@ -668,7 +685,7 @@ rte_vfio_setup_device(const char *sysfs_base, const char *dev_addr,
 	struct user_mem_maps *user_mem_maps;
 	int vfio_container_fd;
 	int vfio_group_fd;
-	int iommu_group_num;
+	int iommu_group_num;/*设备对应的iommu group编号*/
 	int i, ret;
 
 	/* get group number */
@@ -701,14 +718,17 @@ rte_vfio_setup_device(const char *sysfs_base, const char *dev_addr,
 	 */
 
 	/* check if the group is viable */
+	//获取当前group的状态（再检查其是否可见）
 	ret = ioctl(vfio_group_fd, VFIO_GROUP_GET_STATUS, &group_status);
 	if (ret) {
+	    /*获取失败*/
 		RTE_LOG(ERR, EAL, "  %s cannot get group status, "
 				"error %i (%s)\n", dev_addr, errno, strerror(errno));
 		close(vfio_group_fd);
 		rte_vfio_clear_group(vfio_group_fd);
 		return -1;
 	} else if (!(group_status.flags & VFIO_GROUP_FLAGS_VIABLE)) {
+	    /*对外不可见*/
 		RTE_LOG(ERR, EAL, "  %s VFIO group is not viable! "
 				"Not all devices in IOMMU group bound to VFIO or unbound\n",
 				dev_addr);
@@ -724,9 +744,11 @@ rte_vfio_setup_device(const char *sysfs_base, const char *dev_addr,
 	user_mem_maps = &vfio_cfg->mem_maps;
 
 	/* check if group does not have a container yet */
+	//检查当前group是否已设置container
 	if (!(group_status.flags & VFIO_GROUP_FLAGS_CONTAINER_SET)) {
 
 		/* add group to a container */
+	    //为其添加container
 		ret = ioctl(vfio_group_fd, VFIO_GROUP_SET_CONTAINER,
 				&vfio_container_fd);
 		if (ret) {
@@ -751,6 +773,7 @@ rte_vfio_setup_device(const char *sysfs_base, const char *dev_addr,
 			const struct vfio_iommu_type *t;
 
 			/* select an IOMMU type which we will be using */
+			//设置iommu type,为container_fd选用相应驱动
 			t = vfio_set_iommu_type(vfio_container_fd);
 			if (!t) {
 				RTE_LOG(ERR, EAL,
@@ -792,6 +815,7 @@ rte_vfio_setup_device(const char *sysfs_base, const char *dev_addr,
 				struct user_mem_map *map;
 				map = &user_mem_maps->maps[i];
 
+				//执行vfio的dma映射
 				ret = t->dma_user_map_func(
 						vfio_container_fd,
 						map->addr, map->iova, map->len,
@@ -853,6 +877,7 @@ rte_vfio_setup_device(const char *sysfs_base, const char *dev_addr,
 	}
 
 	/* get a file descriptor for the device */
+	/*获取设备对应的vfio_dev*/
 	*vfio_dev_fd = ioctl(vfio_group_fd, VFIO_GROUP_GET_DEVICE_FD, dev_addr);
 	if (*vfio_dev_fd < 0) {
 		/* if we cannot get a device fd, this implies a problem with
@@ -1092,6 +1117,7 @@ vfio_get_iommu_type(void)
 	return default_vfio_cfg->vfio_iommu_type->type_id;
 }
 
+//为container_fd尝试设置iommu 驱动
 const struct vfio_iommu_type *
 vfio_set_iommu_type(int vfio_container_fd)
 {
@@ -1115,6 +1141,7 @@ vfio_set_iommu_type(int vfio_container_fd)
 	return NULL;
 }
 
+//检查container_fd是否支持扩展
 int
 vfio_has_supported_extensions(int vfio_container_fd)
 {
@@ -1123,6 +1150,7 @@ vfio_has_supported_extensions(int vfio_container_fd)
 	for (idx = 0; idx < RTE_DIM(iommu_types); idx++) {
 		const struct vfio_iommu_type *t = &iommu_types[idx];
 
+		//检查t->type_id对应的扩展是否支持
 		ret = ioctl(vfio_container_fd, VFIO_CHECK_EXTENSION,
 				t->type_id);
 		if (ret < 0) {
@@ -1142,6 +1170,7 @@ vfio_has_supported_extensions(int vfio_container_fd)
 
 	/* if we didn't find any supported IOMMU types, fail */
 	if (!n_extensions) {
+	    /*不支持所有扩展*/
 		close(vfio_container_fd);
 		return -1;
 	}
@@ -1149,6 +1178,7 @@ vfio_has_supported_extensions(int vfio_container_fd)
 	return 0;
 }
 
+//创建container_fd
 int
 rte_vfio_get_container_fd(void)
 {
@@ -1161,6 +1191,7 @@ rte_vfio_get_container_fd(void)
 
 	/* if we're in a primary process, try to open the container */
 	if (internal_config.process_type == RTE_PROC_PRIMARY) {
+	    //打开/dev/vfio/vfio设备，做为container_fd
 		vfio_container_fd = open(VFIO_CONTAINER_PATH, O_RDWR);
 		if (vfio_container_fd < 0) {
 			RTE_LOG(ERR, EAL, "  cannot open VFIO container, "
@@ -1169,6 +1200,7 @@ rte_vfio_get_container_fd(void)
 		}
 
 		/* check VFIO API version */
+		// api版本检查
 		ret = ioctl(vfio_container_fd, VFIO_GET_API_VERSION);
 		if (ret != VFIO_API_VERSION) {
 			if (ret < 0)
@@ -1180,6 +1212,7 @@ rte_vfio_get_container_fd(void)
 			return -1;
 		}
 
+		//扩展检查
 		ret = vfio_has_supported_extensions(vfio_container_fd);
 		if (ret) {
 			RTE_LOG(ERR, EAL, "  no supported IOMMU "
@@ -1215,11 +1248,12 @@ rte_vfio_get_container_fd(void)
 	return -1;
 }
 
+//获取指定设备的iommu_group 编号
 int
 rte_vfio_get_group_num(const char *sysfs_base,
-		const char *dev_addr, int *iommu_group_num)
+		const char *dev_addr, int *iommu_group_num/*出参，获取指定设备的group_num*/)
 {
-	char linkname[PATH_MAX];
+	char linkname[PATH_MAX]/*iommu_group link地址*/;
 	char filename[PATH_MAX];
 	char *tok[16], *group_tok, *end;
 	int ret;
@@ -1228,6 +1262,9 @@ rte_vfio_get_group_num(const char *sysfs_base,
 	memset(filename, 0, sizeof(filename));
 
 	/* try to find out IOMMU group for this device */
+	//取设备对应的iommu_group,例如
+	//host# readlink  /sys/bus/pci/devices/0000\:02\:00.2/iommu_group
+	//../../../../kernel/iommu_groups/59
 	snprintf(linkname, sizeof(linkname),
 			 "%s/%s/iommu_group", sysfs_base, dev_addr);
 
@@ -1249,6 +1286,7 @@ rte_vfio_get_group_num(const char *sysfs_base,
 	errno = 0;
 	group_tok = tok[ret - 1];
 	end = group_tok;
+	/*转换iommu_group_num号*/
 	*iommu_group_num = strtol(group_tok, &end, 10);
 	if ((end != group_tok && *end != '\0') || errno != 0) {
 		RTE_LOG(ERR, EAL, "  %s error parsing IOMMU number!\n", dev_addr);
@@ -1310,6 +1348,7 @@ vfio_type1_dma_mem_map(int vfio_container_fd, uint64_t vaddr, uint64_t iova,
 		dma_map.flags = VFIO_DMA_MAP_FLAG_READ |
 				VFIO_DMA_MAP_FLAG_WRITE;
 
+		//执行dma内存映射
 		ret = ioctl(vfio_container_fd, VFIO_IOMMU_MAP_DMA, &dma_map);
 		if (ret) {
 			/**
@@ -1891,17 +1930,20 @@ rte_vfio_noiommu_is_enabled(void)
 	return c == 'Y';
 }
 
+//vfio_container创建
 int
 rte_vfio_container_create(void)
 {
 	int i;
 
 	/* Find an empty slot to store new vfio config */
+	// 查找一个空闲的vfio_cfg空间
 	for (i = 1; i < VFIO_MAX_CONTAINERS; i++) {
 		if (vfio_cfgs[i].vfio_container_fd == -1)
 			break;
 	}
 
+	// 数量超限
 	if (i == VFIO_MAX_CONTAINERS) {
 		RTE_LOG(ERR, EAL, "exceed max vfio container limit\n");
 		return -1;
@@ -1946,6 +1988,7 @@ rte_vfio_container_group_bind(int container_fd, int iommu_group_num)
 {
 	struct vfio_config *vfio_cfg;
 
+	//通过container fd取vfio 配置
 	vfio_cfg = get_vfio_cfg_by_container_fd(container_fd);
 	if (vfio_cfg == NULL) {
 		RTE_LOG(ERR, EAL, "Invalid container fd\n");

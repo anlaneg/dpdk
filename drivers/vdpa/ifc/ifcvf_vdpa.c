@@ -50,7 +50,7 @@ struct ifcvf_internal {
 	struct rte_vdpa_dev_addr dev_addr;
 	struct rte_pci_device *pdev;
 	struct ifcvf_hw hw;
-	int vfio_container_fd;
+	int vfio_container_fd;//vfio container对应的fd
 	int vfio_group_fd;
 	int vfio_dev_fd;
 	pthread_t tid;	/* thread for notify relay */

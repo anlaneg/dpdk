@@ -2854,6 +2854,7 @@ flow_check_hairpin_split(struct rte_eth_dev *dev,
 			 const struct rte_flow_attr *attr,
 			 const struct rte_flow_action actions[])
 {
+    //如注释所释，在rx方向不支持encap,故需要将action split成两部分
 	int queue_action = 0;
 	int action_n = 0;
 	int encap = 0;
@@ -2861,14 +2862,20 @@ flow_check_hairpin_split(struct rte_eth_dev *dev,
 	const struct rte_flow_action_rss *rss;
 	const struct rte_flow_action_raw_encap *raw_encap;
 
+	/*仅容许ingress方向*/
 	if (!attr->ingress)
 		return 0;
+
+	/*action遍历*/
 	for (; actions->type != RTE_FLOW_ACTION_TYPE_END; actions++) {
 		switch (actions->type) {
+		//报文进某个队列
 		case RTE_FLOW_ACTION_TYPE_QUEUE:
+		    /*必须指定队列id*/
 			queue = actions->conf;
 			if (queue == NULL)
 				return 0;
+			/*如果非hairpin,则直接返回*/
 			if (mlx5_rxq_get_type(dev, queue->index) !=
 			    MLX5_RXQ_TYPE_HAIRPIN)
 				return 0;
@@ -2903,8 +2910,11 @@ flow_check_hairpin_split(struct rte_eth_dev *dev,
 			break;
 		}
 	}
+	/*如果代码即要执行encap,又要执行hairpin,
+	 * 则返回action总数，表示需要split*/
 	if (encap == 1 && queue_action)
 		return action_n;
+	/*不需要split*/
 	return 0;
 }
 
@@ -3331,8 +3341,8 @@ flow_mreg_update_copy_table(struct rte_eth_dev *dev,
 static int
 flow_hairpin_split(struct rte_eth_dev *dev,
 		   const struct rte_flow_action actions[],
-		   struct rte_flow_action actions_rx[],
-		   struct rte_flow_action actions_tx[],
+		   struct rte_flow_action actions_rx[]/*出参，rx需要执行的action*/,
+		   struct rte_flow_action actions_tx[]/*出参，tx需要执行的action*/,
 		   struct rte_flow_item pattern_tx[],
 		   uint32_t *flow_id)
 {
@@ -3346,11 +3356,14 @@ flow_hairpin_split(struct rte_eth_dev *dev,
 	char *addr;
 	int encap = 0;
 
+	//分配flow_id
 	mlx5_flow_id_get(priv->sh->flow_id_pool, flow_id);
+	//遍历所有action
 	for (; actions->type != RTE_FLOW_ACTION_TYPE_END; actions++) {
 		switch (actions->type) {
 		case RTE_FLOW_ACTION_TYPE_VXLAN_ENCAP:
 		case RTE_FLOW_ACTION_TYPE_NVGRE_ENCAP:
+		    /*将encap移至tx actions中*/
 			rte_memcpy(actions_tx, actions,
 			       sizeof(struct rte_flow_action));
 			actions_tx++;
@@ -3371,6 +3384,7 @@ flow_hairpin_split(struct rte_eth_dev *dev,
 			if (raw_encap->size >
 			    (sizeof(struct rte_flow_item_eth) +
 			     sizeof(struct rte_flow_item_ipv4))) {
+			    /*将encap移至tx actions中*/
 				memcpy(actions_tx, actions,
 				       sizeof(struct rte_flow_action));
 				actions_tx++;
@@ -3396,6 +3410,7 @@ flow_hairpin_split(struct rte_eth_dev *dev,
 			}
 			break;
 		default:
+		    /*其它均移到 rx actions中*/
 			rte_memcpy(actions_rx, actions,
 				   sizeof(struct rte_flow_action));
 			actions_rx++;
@@ -3875,6 +3890,7 @@ flow_create_split_metadata(struct rte_eth_dev *dev,
 			queue = qrss->conf;
 			if (mlx5_rxq_get_type(dev, queue->index) ==
 			    MLX5_RXQ_TYPE_HAIRPIN)
+			    /*要进入的为hairpin队列*/
 				qrss = NULL;
 		} else if (qrss->type == RTE_FLOW_ACTION_TYPE_RSS) {
 			const struct rte_flow_action_rss *rss;
@@ -4244,12 +4260,16 @@ flow_list_create(struct rte_eth_dev *dev, struct mlx5_flows *list,
 
 	if (ret < 0)
 		return NULL;
+	/*检查是否为hairpin且encap的flow*/
 	hairpin_flow = flow_check_hairpin_split(dev, attr, actions);
 	if (hairpin_flow > 0) {
 		if (hairpin_flow > MLX5_MAX_SPLIT_ACTIONS) {
+		    //hairpin flow action长度不能超限
 			rte_errno = EINVAL;
 			return NULL;
 		}
+
+		//将hairpin且encap的flow拆成两部分 actions_rx,action_hairpin_tx
 		flow_hairpin_split(dev, actions, actions_rx.actions,
 				   actions_hairpin_tx.actions, items_tx.items,
 				   &hairpin_id);
@@ -4436,6 +4456,7 @@ mlx5_flow_create(struct rte_eth_dev *dev,
 {
 	struct mlx5_priv *priv = dev->data->dev_private;
 
+	/*创建flow*/
 	return flow_list_create(dev, &priv->flows,
 				attr, items, actions, true, error);
 }
@@ -4794,6 +4815,7 @@ mlx5_flow_isolate(struct rte_eth_dev *dev,
 				   "port must be stopped first");
 		return -rte_errno;
 	}
+	/*如果开启isolate模式，则使用isolate相关的ops*/
 	priv->isolated = !!enable;
 	if (enable)
 		dev->dev_ops = &mlx5_dev_ops_isolate;

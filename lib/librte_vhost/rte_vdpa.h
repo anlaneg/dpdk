@@ -42,7 +42,7 @@ struct rte_vdpa_dev_addr {
  */
 struct rte_vdpa_dev_ops {
 	/** Get capabilities of this device */
-	int (*get_queue_num)(int did, uint32_t *queue_num);
+	int (*get_queue_num)(int did/*设备id*/, uint32_t *queue_num/*出参，设备队列数*/);
 
 	/** Get supported features of this device */
 	int (*get_features)(int did, uint64_t *features);

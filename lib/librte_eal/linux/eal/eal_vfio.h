@@ -91,8 +91,8 @@ struct vfio_iommu_spapr_tce_info {
  * the group fd via an ioctl() call.
  */
 struct vfio_group {
-	int group_num;
-	int fd;
+	int group_num;//vfio-iommu group编号
+	int fd;// group对应的fd (例如/dev/vfio/59)
 	int devices;
 };
 
@@ -113,6 +113,7 @@ typedef int (*vfio_dma_user_func_t)(int fd, uint64_t vaddr, uint64_t iova,
 struct vfio_iommu_type {
 	int type_id;
 	const char *name;
+	//iommu-type的dma映射函数
 	vfio_dma_user_func_t dma_user_map_func;
 	vfio_dma_func_t dma_map_func;
 };

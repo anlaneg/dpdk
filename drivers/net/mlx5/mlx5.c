@@ -261,6 +261,7 @@ mlx5_flow_id_pool_release(struct mlx5_flow_id_pool *pool)
 uint32_t
 mlx5_flow_id_get(struct mlx5_flow_id_pool *pool, uint32_t *id)
 {
+    //生成一个id号
 	if (pool->curr == pool->free_arr) {
 		if (pool->base_index == pool->max_id) {
 			rte_errno  = ENOMEM;

@@ -70,9 +70,11 @@ rte_pci_map_device(struct rte_pci_device *dev)
 
 	/* try mapping the NIC resources using VFIO if it exists */
 	switch (dev->kdrv) {
-	case RTE_KDRV_VFIO://采用vfio驱动
+	case RTE_KDRV_VFIO:
+	    //采用vfio驱动
 #ifdef VFIO_PRESENT
 		if (pci_vfio_is_enabled())
+		    /*vfio开启了，对其资源进行映射*/
 			ret = pci_vfio_map_resource(dev);
 #endif
 		break;

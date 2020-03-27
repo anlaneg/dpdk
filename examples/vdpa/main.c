@@ -150,12 +150,14 @@ start_vdpa(struct vdpa_port *vport)
 	if (client_mode)
 		vport->flags |= RTE_VHOST_USER_CLIENT;
 
+	/*socket_path对应的文件路径必须存在*/
 	if (access(socket_path, F_OK) != -1 && !client_mode) {
 		RTE_LOG(ERR, VDPA,
 			"%s exists, please remove it or specify another file and try again.\n",
 			socket_path);
 		return -1;
 	}
+
 	ret = rte_vhost_driver_register(socket_path, vport->flags);
 	if (ret != 0)
 		rte_exit(EXIT_FAILURE,
@@ -410,6 +412,7 @@ main(int argc, char *argv[])
 	argc -= ret;
 	argv += ret;
 
+	/*取vdpa设备数目*/
 	dev_total = rte_vdpa_get_device_num();
 	if (dev_total <= 0)
 		rte_exit(EXIT_FAILURE, "No available vdpa device found\n");
@@ -434,6 +437,7 @@ main(int argc, char *argv[])
 			snprintf(vports[i].ifname, MAX_PATH_LEN, "%s%d",
 					iface, i);
 
+			//开启vdpa端口vports
 			start_vdpa(&vports[i]);
 		}
 

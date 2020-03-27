@@ -1130,6 +1130,7 @@ check_nb_rxq(queueid_t rxq)
 queueid_t
 get_allowed_max_nb_txq(portid_t *pid)
 {
+    //遍历所有port,取设备支持的最小tx队列数返回
 	queueid_t allowed_max_txq = RTE_MAX_QUEUES_PER_PORT;
 	bool max_txq_valid = false;
 	portid_t pi;
@@ -1160,6 +1161,7 @@ check_nb_txq(queueid_t txq)
 	queueid_t allowed_max_txq;
 	portid_t pid = 0;
 
+	//取卡可支持的最大队列数，检查配置值是否可满足此限制
 	allowed_max_txq = get_allowed_max_nb_txq(&pid);
 	if (txq > allowed_max_txq) {
 		printf("Fail: input txq (%u) can't be greater "
@@ -1184,6 +1186,7 @@ get_allowed_max_nb_hairpinq(portid_t *pid)
 	portid_t pi;
 	struct rte_eth_hairpin_cap cap;
 
+	//遍历所有设备的最大hairpinq支持数目，取最小值返回
 	RTE_ETH_FOREACH_DEV(pi) {
 		if (rte_eth_dev_hairpin_capability_get(pi, &cap) != 0) {
 			*pid = pi;
@@ -1209,6 +1212,7 @@ check_nb_hairpinq(queueid_t hairpinq)
 	queueid_t allowed_max_hairpinq;
 	portid_t pid = 0;
 
+	//取卡能支持的hairpinq最大数目，如果配置数大于此值，则报错
 	allowed_max_hairpinq = get_allowed_max_nb_hairpinq(&pid);
 	if (hairpinq > allowed_max_hairpinq) {
 		printf("Fail: input hairpin (%u) can't be greater "
@@ -2188,8 +2192,11 @@ setup_hairpin_queues(portid_t pi)
 	};
 	int i;
 	int diag;
+
+	/*要配置的port*/
 	struct rte_port *port = &ports[pi];
 
+	/*在tx队列之后，使用nb_hairpinq个队列，用于hairpin*/
 	for (qi = nb_txq, i = 0; qi < nb_hairpinq + nb_txq; qi++) {
 		hairpin_conf.peers[0].port = pi;
 		hairpin_conf.peers[0].queue = i + nb_rxq;
@@ -2211,6 +2218,8 @@ setup_hairpin_queues(portid_t pi)
 		port->need_reconfig_queues = 1;
 		return -1;
 	}
+
+	/*在rx队列之后，使用nb_hairpinq个队列，用于hairpin*/
 	for (qi = nb_rxq, i = 0; qi < nb_hairpinq + nb_rxq; qi++) {
 		hairpin_conf.peers[0].port = pi;
 		hairpin_conf.peers[0].queue = i + nb_txq;
@@ -2379,6 +2388,7 @@ start_port(portid_t pid)
 				return -1;
 			}
 			/* setup hairpin queues */
+			/*使能hairpin队列*/
 			if (setup_hairpin_queues(pi) != 0)
 				return -1;
 		}

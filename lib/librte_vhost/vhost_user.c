@@ -2491,6 +2491,7 @@ vhost_user_postcopy_end(struct virtio_net **pdev, struct VhostUserMsg *msg,
 typedef int (*vhost_message_handler_t)(struct virtio_net **pdev,
 					struct VhostUserMsg *msg,
 					int main_fd);
+/*各请求的处理函数*/
 static vhost_message_handler_t vhost_message_handlers[VHOST_USER_MAX] = {
 	[VHOST_USER_NONE] = NULL,
 	[VHOST_USER_GET_FEATURES] = vhost_user_get_features,
@@ -2919,6 +2920,7 @@ vhost_user_msg_handler(int vid, int fd)
 	if (request > VHOST_USER_NONE && request < VHOST_USER_MAX) {
 		if (!vhost_message_handlers[request])
 			goto skip_to_post_handle;
+		/*通过回调处理此请求*/
 		ret = vhost_message_handlers[request](&dev, &msg, fd);
 
 		switch (ret) {
@@ -3012,7 +3014,7 @@ skip_to_post_handle:
 	if (vdpa_dev && virtio_is_ready(dev) &&
 			!(dev->flags & VIRTIO_DEV_VDPA_CONFIGURED) &&
 			msg.request.master == VHOST_USER_SET_VRING_CALL) {
-		//置vdap_dev　ready
+		//置vdap_dev ready,执行设备配置
 		if (vdpa_dev->ops->dev_conf)
 			vdpa_dev->ops->dev_conf(dev->vid);
 		dev->flags |= VIRTIO_DEV_VDPA_CONFIGURED;

@@ -2038,12 +2038,14 @@ int mlx5_get_module_eeprom(struct rte_eth_dev *dev,
 int mlx5_hairpin_cap_get(struct rte_eth_dev *dev,
 			 struct rte_eth_hairpin_cap *cap)
 {
+    //返回cx5网卡的hairpin能力
 	struct mlx5_priv *priv = dev->data->dev_private;
 
 	if (priv->sh->devx == 0) {
 		rte_errno = ENOTSUP;
 		return -rte_errno;
 	}
+	/*cx5网卡的hairpin能力情况*/
 	cap->max_nb_queues = UINT16_MAX;
 	cap->max_rx_2_tx = 1;
 	cap->max_tx_2_rx = 1;

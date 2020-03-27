@@ -746,10 +746,13 @@ struct eth_dev_ops {
 	eth_pool_ops_supported_t pool_ops_supported;
 	/**< Test if a port supports specific mempool ops */
 
+	/*获取指定设备的hairpin能力*/
 	eth_hairpin_cap_get_t hairpin_cap_get;
 	/**< Returns the hairpin capabilities. */
+	//使用hairpin的rx队列
 	eth_rx_hairpin_queue_setup_t rx_hairpin_queue_setup;
 	/**< Set up device RX hairpin queue. */
+	//网卡使能hairpin的tx队列
 	eth_tx_hairpin_queue_setup_t tx_hairpin_queue_setup;
 	/**< Set up device TX hairpin queue. */
 };
@@ -864,8 +867,10 @@ struct rte_eth_dev_data {
 		all_multicast : 1, /**< RX all multicast mode ON(1) / OFF(0). */
 		dev_started : 1,   /**< Device state: STARTED(1) / STOPPED(0). */
 		lro         : 1;   /**< RX LRO is ON(1) / OFF(0) */
+	//rx队列状态
 	uint8_t rx_queue_state[RTE_MAX_QUEUES_PER_PORT];
 		/**< Queues state: HAIRPIN(2) / STARTED(1) / STOPPED(0). */
+	//tx队列状态
 	uint8_t tx_queue_state[RTE_MAX_QUEUES_PER_PORT];
 		/**< Queues state: HAIRPIN(2) / STARTED(1) / STOPPED(0). */
 	uint32_t dev_flags;             /**< Capabilities. */

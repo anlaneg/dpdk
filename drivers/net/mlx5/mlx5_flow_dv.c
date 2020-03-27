@@ -7440,7 +7440,7 @@ cnt_err:
 			action_flags |= MLX5_FLOW_ACTION_OF_SET_VLAN_VID;
 			break;
 		case RTE_FLOW_ACTION_TYPE_VXLAN_ENCAP:
-		case RTE_FLOW_ACTION_TYPE_NVGRE_ENCAP:
+		    //做vxlan封装
 			if (flow_dv_create_action_l2_encap(dev, actions,
 							   dev_flow,
 							   attr->transfer,

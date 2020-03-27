@@ -447,6 +447,7 @@ mlx5_vdpa_pci_probe(struct rte_pci_driver *pci_drv __rte_unused,
 	priv->ctx = ctx;
 	priv->dev_addr.pci_addr = pci_dev->addr;
 	priv->dev_addr.type = PCI_ADDR;
+	//注册vdpa设备
 	priv->id = rte_vdpa_register_device(&priv->dev_addr, &mlx5_vdpa_ops);
 	if (priv->id < 0) {
 		DRV_LOG(ERR, "Failed to register vDPA device.");
@@ -539,6 +540,7 @@ static const struct rte_pci_id mlx5_vdpa_pci_id_map[] = {
 	}
 };
 
+/*指明mlx5的vdpa驱动*/
 static struct rte_pci_driver mlx5_vdpa_driver = {
 	.driver = {
 		.name = "mlx5_vdpa",

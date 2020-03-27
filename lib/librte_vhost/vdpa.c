@@ -80,7 +80,7 @@ rte_vdpa_register_device(struct rte_vdpa_dev_addr *addr,
 	memcpy(&dev->addr, addr, sizeof(struct rte_vdpa_dev_addr));
 	dev->ops = ops;
 	vdpa_devices[i] = dev;
-	vdpa_device_num++;
+	vdpa_device_num++;/*增加vdpa设备数量*/
 
 	return i;
 }
@@ -128,6 +128,7 @@ rte_vdpa_get_device(int did)
 	return vdpa_devices[did];
 }
 
+/*返回vdpa设备数目*/
 int
 rte_vdpa_get_device_num(void)
 {

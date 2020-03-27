@@ -1050,6 +1050,7 @@ launch_args_parse(int argc, char** argv)
 			if (!strcmp(lgopts[opt_idx].name, "rss-udp"))
 				rss_hf = ETH_RSS_UDP;
 			if (!strcmp(lgopts[opt_idx].name, "rxq")) {
+			    /*设置每个port收队列数*/
 				n = atoi(optarg);
 				if (n >= 0 && check_nb_rxq((queueid_t)n) == 0)
 					nb_rxq = (queueid_t) n;
@@ -1059,6 +1060,7 @@ launch_args_parse(int argc, char** argv)
 						  get_allowed_max_nb_rxq(&pid));
 			}
 			if (!strcmp(lgopts[opt_idx].name, "txq")) {
+			    /*设置每个port发队列数*/
 				n = atoi(optarg);
 				if (n >= 0 && check_nb_txq((queueid_t)n) == 0)
 					nb_txq = (queueid_t) n;
@@ -1067,16 +1069,20 @@ launch_args_parse(int argc, char** argv)
 						  " >= 0 && <= %u\n", n,
 						  get_allowed_max_nb_txq(&pid));
 			}
+			/*用户指定hairpin队列总数*/
 			if (!strcmp(lgopts[opt_idx].name, "hairpinq")) {
 				n = atoi(optarg);
 				if (n >= 0 &&
 				    check_nb_hairpinq((queueid_t)n) == 0)
+				    /*配置确认有效，记录*/
 					nb_hairpinq = (queueid_t) n;
 				else
 					rte_exit(EXIT_FAILURE, "txq %d invalid - must be"
 						  " >= 0 && <= %u\n", n,
 						  get_allowed_max_nb_hairpinq
 						  (&pid));
+
+				//tx队列数和上hairpin队列数后不能超限
 				if ((n + nb_txq) < 0 ||
 				    check_nb_txq((queueid_t)(n + nb_txq)) != 0)
 					rte_exit(EXIT_FAILURE, "txq + hairpinq "
@@ -1084,6 +1090,8 @@ launch_args_parse(int argc, char** argv)
 						  " >= 0 && <= %u\n",
 						  n + nb_txq,
 						  get_allowed_max_nb_txq(&pid));
+
+				//rx队列数合上hairpin队列数后不能超限
 				if ((n + nb_rxq) < 0 ||
 				    check_nb_rxq((queueid_t)(n + nb_rxq)) != 0)
 					rte_exit(EXIT_FAILURE, "rxq + hairpinq "
@@ -1092,10 +1100,13 @@ launch_args_parse(int argc, char** argv)
 						  n + nb_rxq,
 						  get_allowed_max_nb_rxq(&pid));
 			}
+
+			/*此时，rx,tx队列必须已配置*/
 			if (!nb_rxq && !nb_txq) {
 				rte_exit(EXIT_FAILURE, "Either rx or tx queues should "
 						"be non-zero\n");
 			}
+
 			if (!strcmp(lgopts[opt_idx].name, "burst")) {
 				n = atoi(optarg);
 				if (n == 0) {
