@@ -410,7 +410,8 @@ hns3vf_configure_all_mc_mac_addr(struct hns3_adapter *hns, bool del)
 }
 
 static int
-hns3vf_set_promisc_mode(struct hns3_hw *hw, bool en_bc_pmc)
+hns3vf_set_promisc_mode(struct hns3_hw *hw, bool en_bc_pmc,
+			bool en_uc_pmc, bool en_mc_pmc)
 {
 	struct hns3_mbx_vf_to_pf_cmd *req;
 	struct hns3_cmd_desc desc;
@@ -418,15 +419,203 @@ hns3vf_set_promisc_mode(struct hns3_hw *hw, bool en_bc_pmc)
 
 	req = (struct hns3_mbx_vf_to_pf_cmd *)desc.data;
 
+	/*
+	 * The hns3 VF PMD driver depends on the hns3 PF kernel ethdev driver,
+	 * so there are some features for promiscuous/allmulticast mode in hns3
+	 * VF PMD driver as below:
+	 * 1. The promiscuous/allmulticast mode can be configured successfully
+	 *    only based on the trusted VF device. If based on the non trusted
+	 *    VF device, configuring promiscuous/allmulticast mode will fail.
+	 *    The hns3 VF device can be confiruged as trusted device by hns3 PF
+	 *    kernel ethdev driver on the host by the following command:
+	 *      "ip link set <eth num> vf <vf id> turst on"
+	 * 2. After the promiscuous mode is configured successfully, hns3 VF PMD
+	 *    driver can receive the ingress and outgoing traffic. In the words,
+	 *    all the ingress packets, all the packets sent from the PF and
+	 *    other VFs on the same physical port.
+	 * 3. Note: Because of the hardware constraints, By default vlan filter
+	 *    is enabled and couldn't be turned off based on VF device, so vlan
+	 *    filter is still effective even in promiscuous mode. If upper
+	 *    applications don't call rte_eth_dev_vlan_filter API function to
+	 *    set vlan based on VF device, hns3 VF PMD driver will can't receive
+	 *    the packets with vlan tag in promiscuoue mode.
+	 */
 	hns3_cmd_setup_basic_desc(&desc, HNS3_OPC_MBX_VF_TO_PF, false);
 	req->msg[0] = HNS3_MBX_SET_PROMISC_MODE;
 	req->msg[1] = en_bc_pmc ? 1 : 0;
+	req->msg[2] = en_uc_pmc ? 1 : 0;
+	req->msg[3] = en_mc_pmc ? 1 : 0;
 
 	ret = hns3_cmd_send(hw, &desc, 1);
 	if (ret)
-		hns3_err(hw, "Set promisc mode fail, status is %d", ret);
+		hns3_err(hw, "Set promisc mode fail, ret = %d", ret);
 
 	return ret;
+}
+
+static int
+hns3vf_dev_promiscuous_enable(struct rte_eth_dev *dev)
+{
+	struct hns3_adapter *hns = dev->data->dev_private;
+	struct hns3_hw *hw = &hns->hw;
+	int ret;
+
+	ret = hns3vf_set_promisc_mode(hw, true, true, true);
+	if (ret)
+		hns3_err(hw, "Failed to enable promiscuous mode, ret = %d",
+			ret);
+	return ret;
+}
+
+static int
+hns3vf_dev_promiscuous_disable(struct rte_eth_dev *dev)
+{
+	bool allmulti = dev->data->all_multicast ? true : false;
+	struct hns3_adapter *hns = dev->data->dev_private;
+	struct hns3_hw *hw = &hns->hw;
+	int ret;
+
+	ret = hns3vf_set_promisc_mode(hw, true, false, allmulti);
+	if (ret)
+		hns3_err(hw, "Failed to disable promiscuous mode, ret = %d",
+			ret);
+	return ret;
+}
+
+static int
+hns3vf_dev_allmulticast_enable(struct rte_eth_dev *dev)
+{
+	struct hns3_adapter *hns = dev->data->dev_private;
+	struct hns3_hw *hw = &hns->hw;
+	int ret;
+
+	if (dev->data->promiscuous)
+		return 0;
+
+	ret = hns3vf_set_promisc_mode(hw, true, false, true);
+	if (ret)
+		hns3_err(hw, "Failed to enable allmulticast mode, ret = %d",
+			ret);
+	return ret;
+}
+
+static int
+hns3vf_dev_allmulticast_disable(struct rte_eth_dev *dev)
+{
+	struct hns3_adapter *hns = dev->data->dev_private;
+	struct hns3_hw *hw = &hns->hw;
+	int ret;
+
+	if (dev->data->promiscuous)
+		return 0;
+
+	ret = hns3vf_set_promisc_mode(hw, true, false, false);
+	if (ret)
+		hns3_err(hw, "Failed to disable allmulticast mode, ret = %d",
+			ret);
+	return ret;
+}
+
+static int
+hns3vf_restore_promisc(struct hns3_adapter *hns)
+{
+	struct hns3_hw *hw = &hns->hw;
+	bool allmulti = hw->data->all_multicast ? true : false;
+
+	if (hw->data->promiscuous)
+		return hns3vf_set_promisc_mode(hw, true, true, true);
+
+	return hns3vf_set_promisc_mode(hw, true, false, allmulti);
+}
+
+static int
+hns3vf_bind_ring_with_vector(struct hns3_hw *hw, uint8_t vector_id,
+			     bool mmap, enum hns3_ring_type queue_type,
+			     uint16_t queue_id)
+{
+	struct hns3_vf_bind_vector_msg bind_msg;
+	const char *op_str;
+	uint16_t code;
+	int ret;
+
+	memset(&bind_msg, 0, sizeof(bind_msg));
+	code = mmap ? HNS3_MBX_MAP_RING_TO_VECTOR :
+		HNS3_MBX_UNMAP_RING_TO_VECTOR;
+	bind_msg.vector_id = vector_id;
+
+	if (queue_type == HNS3_RING_TYPE_RX)
+		bind_msg.param[0].int_gl_index = HNS3_RING_GL_RX;
+	else
+		bind_msg.param[0].int_gl_index = HNS3_RING_GL_TX;
+
+	bind_msg.param[0].ring_type = queue_type;
+	bind_msg.ring_num = 1;
+	bind_msg.param[0].tqp_index = queue_id;
+	op_str = mmap ? "Map" : "Unmap";
+	ret = hns3_send_mbx_msg(hw, code, 0, (uint8_t *)&bind_msg,
+				sizeof(bind_msg), false, NULL, 0);
+	if (ret) {
+		hns3_err(hw, "%s TQP %d fail, vector_id is %d, ret is %d.",
+			 op_str, queue_id, bind_msg.vector_id, ret);
+		return ret;
+	}
+
+	return 0;
+}
+
+static int
+hns3vf_init_ring_with_vector(struct hns3_hw *hw)
+{
+	uint8_t vec;
+	int ret;
+	int i;
+
+	/*
+	 * In hns3 network engine, vector 0 is always the misc interrupt of this
+	 * function, vector 1~N can be used respectively for the queues of the
+	 * function. Tx and Rx queues with the same number share the interrupt
+	 * vector. In the initialization clearing the all hardware mapping
+	 * relationship configurations between queues and interrupt vectors is
+	 * needed, so some error caused by the residual configurations, such as
+	 * the unexpected Tx interrupt, can be avoid. Because of the hardware
+	 * constraints in hns3 hardware engine, we have to implement clearing
+	 * the mapping relationship configurations by binding all queues to the
+	 * last interrupt vector and reserving the last interrupt vector. This
+	 * method results in a decrease of the maximum queues when upper
+	 * applications call the rte_eth_dev_configure API function to enable
+	 * Rx interrupt.
+	 */
+	vec = hw->num_msi - 1; /* vector 0 for misc interrupt, not for queue */
+	hw->intr_tqps_num = vec - 1; /* the last interrupt is reserved */
+	for (i = 0; i < hw->intr_tqps_num; i++) {
+		/*
+		 * Set gap limiter and rate limiter configuration of queue's
+		 * interrupt.
+		 */
+		hns3_set_queue_intr_gl(hw, i, HNS3_RING_GL_RX,
+				       HNS3_TQP_INTR_GL_DEFAULT);
+		hns3_set_queue_intr_gl(hw, i, HNS3_RING_GL_TX,
+				       HNS3_TQP_INTR_GL_DEFAULT);
+		hns3_set_queue_intr_rl(hw, i, HNS3_TQP_INTR_RL_DEFAULT);
+
+		ret = hns3vf_bind_ring_with_vector(hw, vec, false,
+						   HNS3_RING_TYPE_TX, i);
+		if (ret) {
+			PMD_INIT_LOG(ERR, "VF fail to unbind TX ring(%d) with "
+					  "vector: %d, ret=%d", i, vec, ret);
+			return ret;
+		}
+
+		ret = hns3vf_bind_ring_with_vector(hw, vec, false,
+						   HNS3_RING_TYPE_RX, i);
+		if (ret) {
+			PMD_INIT_LOG(ERR, "VF fail to unbind RX ring(%d) with "
+					  "vector: %d, ret=%d", i, vec, ret);
+			return ret;
+		}
+	}
+
+	return 0;
 }
 
 static int
@@ -529,12 +718,14 @@ hns3vf_dev_mtu_set(struct rte_eth_dev *dev, uint16_t mtu)
 	uint32_t frame_size = mtu + HNS3_ETH_OVERHEAD;
 	int ret;
 
-	if (dev->data->dev_started) {
-		hns3_err(hw, "Failed to set mtu, port %u must be stopped "
-			 "before configuration", dev->data->port_id);
-		return -EBUSY;
-	}
-
+	/*
+	 * The hns3 PF/VF devices on the same port share the hardware MTU
+	 * configuration. Currently, we send mailbox to inform hns3 PF kernel
+	 * ethdev driver to finish hardware MTU configuration in hns3 VF PMD
+	 * driver, there is no need to stop the port for hns3 VF device, and the
+	 * MTU value issued by hns3 VF PMD driver must be less than or equal to
+	 * PF's MTU.
+	 */
 	if (rte_atomic16_read(&hw->reset.resetting)) {
 		hns3_err(hw, "Failed to set mtu during resetting");
 		return -EIO;
@@ -563,8 +754,16 @@ hns3vf_dev_infos_get(struct rte_eth_dev *eth_dev, struct rte_eth_dev_info *info)
 {
 	struct hns3_adapter *hns = eth_dev->data->dev_private;
 	struct hns3_hw *hw = &hns->hw;
+	uint16_t q_num = hw->tqps_num;
 
-	info->max_rx_queues = hw->tqps_num;
+	/*
+	 * In interrupt mode, 'max_rx_queues' is set based on the number of
+	 * MSI-X interrupt resources of the hardware.
+	 */
+	if (hw->data->dev_conf.intr_conf.rxq == 1)
+		q_num = hw->intr_tqps_num;
+
+	info->max_rx_queues = q_num;
 	info->max_tx_queues = hw->tqps_num;
 	info->max_rx_pktlen = HNS3_MAX_FRAME_LEN; /* CRC included */
 	info->min_rx_bufsize = hw->rx_buf_len;
@@ -592,6 +791,10 @@ hns3vf_dev_infos_get(struct rte_eth_dev *eth_dev, struct rte_eth_dev_info *info)
 				 DEV_TX_OFFLOAD_VLAN_INSERT |
 				 DEV_TX_OFFLOAD_QINQ_INSERT |
 				 DEV_TX_OFFLOAD_MULTI_SEGS |
+				 DEV_TX_OFFLOAD_TCP_TSO |
+				 DEV_TX_OFFLOAD_VXLAN_TNL_TSO |
+				 DEV_TX_OFFLOAD_GRE_TNL_TSO |
+				 DEV_TX_OFFLOAD_GENEVE_TNL_TSO |
 				 info->tx_queue_offload_capa);
 
 	info->rx_desc_lim = (struct rte_eth_desc_lim) {
@@ -1111,13 +1314,42 @@ hns3vf_service_handler(void *param)
 }
 
 static int
+hns3_query_vf_resource(struct hns3_hw *hw)
+{
+	struct hns3_vf_res_cmd *req;
+	struct hns3_cmd_desc desc;
+	uint16_t num_msi;
+	int ret;
+
+	hns3_cmd_setup_basic_desc(&desc, HNS3_OPC_QUERY_VF_RSRC, true);
+	ret = hns3_cmd_send(hw, &desc, 1);
+	if (ret) {
+		hns3_err(hw, "query vf resource failed, ret = %d", ret);
+		return ret;
+	}
+
+	req = (struct hns3_vf_res_cmd *)desc.data;
+	num_msi = hns3_get_field(rte_le_to_cpu_16(req->vf_intr_vector_number),
+				 HNS3_VEC_NUM_M, HNS3_VEC_NUM_S);
+	if (num_msi < HNS3_MIN_VECTOR_NUM) {
+		hns3_err(hw, "Just %u msi resources, not enough for vf(min:%d)",
+			 num_msi, HNS3_MIN_VECTOR_NUM);
+		return -EINVAL;
+	}
+
+	hw->num_msi = (num_msi > hw->tqps_num + 1) ? hw->tqps_num + 1 : num_msi;
+
+	return 0;
+}
+
+static int
 hns3vf_init_hardware(struct hns3_adapter *hns)
 {
 	struct hns3_hw *hw = &hns->hw;
 	uint16_t mtu = hw->data->mtu;
 	int ret;
 
-	ret = hns3vf_set_promisc_mode(hw, true);
+	ret = hns3vf_set_promisc_mode(hw, true, false, false);
 	if (ret)
 		return ret;
 
@@ -1147,7 +1379,7 @@ hns3vf_init_hardware(struct hns3_adapter *hns)
 	return 0;
 
 err_init_hardware:
-	(void)hns3vf_set_promisc_mode(hw, false);
+	(void)hns3vf_set_promisc_mode(hw, false, false, false);
 	return ret;
 }
 
@@ -1185,6 +1417,11 @@ hns3vf_init_vf(struct rte_eth_dev *eth_dev)
 		PMD_INIT_LOG(ERR, "Failed to init cmd: %d", ret);
 		goto err_cmd_init;
 	}
+
+	/* Get VF resource */
+	ret = hns3_query_vf_resource(hw);
+	if (ret)
+		goto err_cmd_init;
 
 	rte_spinlock_init(&hw->mbx_resp.lock);
 
@@ -1235,6 +1472,16 @@ hns3vf_init_vf(struct rte_eth_dev *eth_dev)
 
 	hns3_set_default_rss_args(hw);
 
+	/*
+	 * In the initialization clearing the all hardware mapping relationship
+	 * configurations between queues and interrupt vectors is needed, so
+	 * some error caused by the residual configurations, such as the
+	 * unexpected interrupt, can be avoid.
+	 */
+	ret = hns3vf_init_ring_with_vector(hw);
+	if (ret)
+		goto err_get_config;
+
 	return 0;
 
 err_get_config:
@@ -1265,7 +1512,7 @@ hns3vf_uninit_vf(struct rte_eth_dev *eth_dev)
 
 	hns3_rss_uninit(hns);
 	(void)hns3vf_set_alive(hw, false);
-	(void)hns3vf_set_promisc_mode(hw, false);
+	(void)hns3vf_set_promisc_mode(hw, false, false, false);
 	hns3vf_disable_irq0(hw);
 	rte_intr_disable(&pci_dev->intr_handle);
 	hns3_intr_unregister(&pci_dev->intr_handle, hns3vf_interrupt_handler,
@@ -1273,36 +1520,6 @@ hns3vf_uninit_vf(struct rte_eth_dev *eth_dev)
 	hns3_cmd_uninit(hw);
 	hns3_cmd_destroy_queue(hw);
 	hw->io_base = NULL;
-}
-
-static int
-hns3vf_bind_ring_with_vector(struct rte_eth_dev *dev, uint8_t vector_id,
-			     bool mmap, uint16_t queue_id)
-
-{
-	struct hns3_hw *hw = HNS3_DEV_PRIVATE_TO_HW(dev->data->dev_private);
-	struct hns3_vf_bind_vector_msg bind_msg;
-	uint16_t code;
-	int ret;
-
-	memset(&bind_msg, 0, sizeof(bind_msg));
-	code = mmap ? HNS3_MBX_MAP_RING_TO_VECTOR :
-		HNS3_MBX_UNMAP_RING_TO_VECTOR;
-	bind_msg.vector_id = vector_id;
-	bind_msg.ring_num = 1;
-	bind_msg.param[0].ring_type = HNS3_RING_TYPE_RX;
-	bind_msg.param[0].tqp_index = queue_id;
-	bind_msg.param[0].int_gl_index = HNS3_RING_GL_RX;
-
-	ret = hns3_send_mbx_msg(hw, code, 0, (uint8_t *)&bind_msg,
-				sizeof(bind_msg), false, NULL, 0);
-	if (ret) {
-		hns3_err(hw, "Map TQP %d fail, vector_id is %d, ret is %d.",
-			 queue_id, vector_id, ret);
-		return ret;
-	}
-
-	return 0;
 }
 
 static int
@@ -1341,7 +1558,8 @@ hns3vf_unmap_rx_interrupt(struct rte_eth_dev *dev)
 	}
 	if (rte_intr_dp_is_en(intr_handle)) {
 		for (q_id = 0; q_id < hw->used_rx_queues; q_id++) {
-			(void)hns3vf_bind_ring_with_vector(dev, vec, false,
+			(void)hns3vf_bind_ring_with_vector(hw, vec, false,
+							   HNS3_RING_TYPE_RX,
 							   q_id);
 			if (vec < base + intr_handle->nb_efd - 1)
 				vec++;
@@ -1507,7 +1725,8 @@ hns3vf_map_rx_interrupt(struct rte_eth_dev *dev)
 	}
 	if (rte_intr_dp_is_en(intr_handle)) {
 		for (q_id = 0; q_id < hw->used_rx_queues; q_id++) {
-			ret = hns3vf_bind_ring_with_vector(dev, vec, true,
+			ret = hns3vf_bind_ring_with_vector(hw, vec, true,
+							   HNS3_RING_TYPE_RX,
 							   q_id);
 			if (ret)
 				goto vf_bind_vector_error;
@@ -1776,6 +1995,10 @@ hns3vf_restore_conf(struct hns3_adapter *hns)
 	if (ret)
 		goto err_mc_mac;
 
+	ret = hns3vf_restore_promisc(hns);
+	if (ret)
+		goto err_vlan_table;
+
 	ret = hns3vf_restore_vlan_conf(hns);
 	if (ret)
 		goto err_vlan_table;
@@ -1928,6 +2151,10 @@ static const struct eth_dev_ops hns3vf_eth_dev_ops = {
 	.dev_stop           = hns3vf_dev_stop,
 	.dev_close          = hns3vf_dev_close,
 	.mtu_set            = hns3vf_dev_mtu_set,
+	.promiscuous_enable = hns3vf_dev_promiscuous_enable,
+	.promiscuous_disable = hns3vf_dev_promiscuous_disable,
+	.allmulticast_enable = hns3vf_dev_allmulticast_enable,
+	.allmulticast_disable = hns3vf_dev_allmulticast_disable,
 	.stats_get          = hns3_stats_get,
 	.stats_reset        = hns3_stats_reset,
 	.xstats_get         = hns3_dev_xstats_get,

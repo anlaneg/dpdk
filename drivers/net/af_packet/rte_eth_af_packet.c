@@ -19,6 +19,7 @@
 #include <linux/if_packet.h>
 #include <arpa/inet.h>
 #include <net/if.h>
+#include <net/if_arp.h>
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <sys/ioctl.h>
@@ -36,8 +37,6 @@
 
 #define DFLT_FRAME_SIZE		(1 << 11)
 #define DFLT_FRAME_COUNT	(1 << 9)
-
-#define RTE_PMD_AF_PACKET_MAX_RINGS 16
 
 struct pkt_rx_queue {
 	int sockfd;
@@ -77,8 +76,8 @@ struct pmd_internals {
 
 	struct tpacket_req req;
 
-	struct pkt_rx_queue rx_queue[RTE_PMD_AF_PACKET_MAX_RINGS];
-	struct pkt_tx_queue tx_queue[RTE_PMD_AF_PACKET_MAX_RINGS];
+	struct pkt_rx_queue *rx_queue;
+	struct pkt_tx_queue *tx_queue;
 };
 
 static const char *valid_arguments[] = {
@@ -469,6 +468,32 @@ eth_dev_mtu_set(struct rte_eth_dev *dev, uint16_t mtu)
 }
 
 static int
+eth_dev_macaddr_set(struct rte_eth_dev *dev, struct rte_ether_addr *addr)
+{
+	struct pmd_internals *internals = dev->data->dev_private;
+	struct ifreq ifr = { };
+	int sockfd = internals->rx_queue[0].sockfd;
+	int ret;
+
+	if (sockfd == -1) {
+		PMD_LOG(ERR, "receive socket not found");
+		return -EINVAL;
+	}
+
+	strlcpy(ifr.ifr_name, internals->if_name, IFNAMSIZ);
+	ifr.ifr_hwaddr.sa_family = ARPHRD_ETHER;
+	memcpy(ifr.ifr_hwaddr.sa_data, addr, sizeof(*addr));
+	ret = ioctl(sockfd, SIOCSIFHWADDR, &ifr);
+
+	if (ret < 0) {
+		PMD_LOG_ERRNO(ERR, "ioctl(SIOCSIFHWADDR) failed");
+		return -EINVAL;
+	}
+
+	return 0;
+}
+
+static int
 eth_dev_change_flags(char *if_name, uint32_t flags, uint32_t mask)
 {
 	struct ifreq ifr;
@@ -517,6 +542,7 @@ static const struct eth_dev_ops ops = {
 	.dev_close = eth_dev_close,
 	.dev_configure = eth_dev_configure,
 	.dev_infos_get = eth_dev_info,
+	.mac_addr_set = eth_dev_macaddr_set,
 	.mtu_set = eth_dev_mtu_set,
 	.promiscuous_enable = eth_dev_promiscuous_enable,
 	.promiscuous_disable = eth_dev_promiscuous_disable,
@@ -600,6 +626,21 @@ rte_pmd_init_internals(struct rte_vdev_device *dev,
 	                                0, numa_node);
 	if (*internals == NULL)
 		return -1;
+
+
+	(*internals)->rx_queue = rte_calloc_socket("af_packet_rx",
+						nb_queues,
+						sizeof(struct pkt_rx_queue),
+						0, numa_node);
+	(*internals)->tx_queue = rte_calloc_socket("af_packet_tx",
+						nb_queues,
+						sizeof(struct pkt_tx_queue),
+						0, numa_node);
+	if (!(*internals)->rx_queue || !(*internals)->tx_queue) {
+		rte_free((*internals)->rx_queue);
+		rte_free((*internals)->tx_queue);
+		return -1;
+	}
 
 	for (q = 0; q < nb_queues; q++) {
 		(*internals)->rx_queue[q].map = MAP_FAILED;
@@ -846,8 +887,7 @@ rte_eth_from_packet(struct rte_vdev_device *dev,
 		pair = &kvlist->pairs[k_idx];
 		if (strstr(pair->key, ETH_AF_PACKET_NUM_Q_ARG) != NULL) {
 			qpairs = atoi(pair->value);
-			if (qpairs < 1 ||
-			    qpairs > RTE_PMD_AF_PACKET_MAX_RINGS) {
+			if (qpairs < 1) {
 				PMD_LOG(ERR,
 					"%s: invalid qpairs value",
 				        name);
@@ -1019,6 +1059,8 @@ rte_pmd_af_packet_remove(struct rte_vdev_device *dev)
 		rte_free(internals->tx_queue[q].rd);
 	}
 	free(internals->if_name);
+	rte_free(internals->rx_queue);
+	rte_free(internals->tx_queue);
 
 	rte_eth_dev_release_port(eth_dev);
 

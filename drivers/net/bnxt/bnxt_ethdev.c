@@ -133,6 +133,7 @@ static int bnxt_init_resources(struct bnxt *bp, bool reconfig_dev);
 static int bnxt_uninit_resources(struct bnxt *bp, bool reconfig_dev);
 static void bnxt_cancel_fw_health_check(struct bnxt *bp);
 static int bnxt_restore_vlan_filters(struct bnxt *bp);
+static void bnxt_dev_recover(void *arg);
 
 int is_bnxt_in_error(struct bnxt *bp)
 {
@@ -980,6 +981,10 @@ static void bnxt_dev_close_op(struct rte_eth_dev *eth_dev)
 {
 	struct bnxt *bp = eth_dev->data->dev_private;
 
+	/* cancel the recovery handler before remove dev */
+	rte_eal_alarm_cancel(bnxt_dev_reset_and_resume, (void *)bp);
+	rte_eal_alarm_cancel(bnxt_dev_recover, (void *)bp);
+
 	if (eth_dev->data->dev_started)
 		bnxt_dev_stop_op(eth_dev);
 
@@ -1102,6 +1107,10 @@ static int bnxt_mac_addr_add_op(struct rte_eth_dev *eth_dev,
 		PMD_DRV_LOG(ERR, "VNIC not found for pool %d!\n", pool);
 		return -EINVAL;
 	}
+
+	/* Filter settings will get applied when port is started */
+	if (!eth_dev->data->dev_started)
+		return 0;
 
 	rc = bnxt_add_mac_filter(bp, vnic, mac_addr, index, pool);
 
@@ -2093,6 +2102,10 @@ bnxt_set_default_mac_addr_op(struct rte_eth_dev *dev,
 
 	if (rte_is_zero_ether_addr(addr))
 		return -EINVAL;
+
+	/* Filter settings will get applied when port is started */
+	if (!dev->data->dev_started)
+		return 0;
 
 	/* Check if the requested MAC is already added */
 	if (memcmp(addr, bp->mac_addr, RTE_ETHER_ADDR_LEN) == 0)

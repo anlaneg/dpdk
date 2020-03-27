@@ -1771,7 +1771,7 @@ flow_dev_get_vlan_info_from_items(const struct rte_flow_item *items,
 		/* Only full match values are accepted */
 		if ((vlan_m->tci & MLX5DV_FLOW_VLAN_PCP_MASK_BE) ==
 		     MLX5DV_FLOW_VLAN_PCP_MASK_BE) {
-			vlan->vlan_tci &= MLX5DV_FLOW_VLAN_PCP_MASK;
+			vlan->vlan_tci &= ~MLX5DV_FLOW_VLAN_PCP_MASK;
 			vlan->vlan_tci |=
 				rte_be_to_cpu_16(vlan_v->tci &
 						 MLX5DV_FLOW_VLAN_PCP_MASK_BE);
@@ -2109,10 +2109,6 @@ flow_dv_validate_action_set_meta(struct rte_eth_dev *dev,
 		return rte_flow_error_set(error, EINVAL,
 					  RTE_FLOW_ERROR_TYPE_ACTION, action,
 					  "meta data must be within reg C0");
-	if (!(conf->data & conf->mask))
-		return rte_flow_error_set(error, EINVAL,
-					  RTE_FLOW_ERROR_TYPE_ACTION, action,
-					  "zero value has no effect");
 	return 0;
 }
 
@@ -4490,12 +4486,34 @@ flow_dv_validate(struct rte_eth_dev *dev, const struct rte_flow_attr *attr,
 	const struct rte_flow_action_raw_decap *decap;
 	const struct rte_flow_action_raw_encap *encap;
 	const struct rte_flow_action_rss *rss;
-	struct rte_flow_item_tcp nic_tcp_mask = {
+	const struct rte_flow_item_tcp nic_tcp_mask = {
 		.hdr = {
 			.tcp_flags = 0xFF,
 			.src_port = RTE_BE16(UINT16_MAX),
 			.dst_port = RTE_BE16(UINT16_MAX),
 		}
+	};
+	const struct rte_flow_item_ipv4 nic_ipv4_mask = {
+		.hdr = {
+			.src_addr = RTE_BE32(0xffffffff),
+			.dst_addr = RTE_BE32(0xffffffff),
+			.type_of_service = 0xff,
+			.next_proto_id = 0xff,
+			.time_to_live = 0xff,
+		},
+	};
+	const struct rte_flow_item_ipv6 nic_ipv6_mask = {
+		.hdr = {
+			.src_addr =
+			"\xff\xff\xff\xff\xff\xff\xff\xff"
+			"\xff\xff\xff\xff\xff\xff\xff\xff",
+			.dst_addr =
+			"\xff\xff\xff\xff\xff\xff\xff\xff"
+			"\xff\xff\xff\xff\xff\xff\xff\xff",
+			.vtc_flow = RTE_BE32(0xffffffff),
+			.proto = 0xff,
+			.hop_limits = 0xff,
+		},
 	};
 	struct mlx5_priv *priv = dev->data->dev_private;
 	struct mlx5_dev_config *dev_conf = &priv->config;
@@ -4563,7 +4581,8 @@ flow_dv_validate(struct rte_eth_dev *dev, const struct rte_flow_attr *attr,
 						  &item_flags, &tunnel);
 			ret = mlx5_flow_validate_item_ipv4(items, item_flags,
 							   last_item,
-							   ether_type, NULL,
+							   ether_type,
+							   &nic_ipv4_mask,
 							   error);
 			if (ret < 0)
 				return ret;
@@ -4588,7 +4607,8 @@ flow_dv_validate(struct rte_eth_dev *dev, const struct rte_flow_attr *attr,
 						  &item_flags, &tunnel);
 			ret = mlx5_flow_validate_item_ipv6(items, item_flags,
 							   last_item,
-							   ether_type, NULL,
+							   ether_type,
+							   &nic_ipv6_mask,
 							   error);
 			if (ret < 0)
 				return ret;
@@ -5421,6 +5441,7 @@ flow_dv_translate_item_ipv4(void *matcher, void *key,
 			.dst_addr = RTE_BE32(0xffffffff),
 			.type_of_service = 0xff,
 			.next_proto_id = 0xff,
+			.time_to_live = 0xff,
 		},
 	};
 	void *headers_m;
@@ -5443,6 +5464,13 @@ flow_dv_translate_item_ipv4(void *matcher, void *key,
 	else
 		MLX5_SET(fte_match_set_lyr_2_4, headers_m, ip_version, 0x4);
 	MLX5_SET(fte_match_set_lyr_2_4, headers_v, ip_version, 4);
+	/*
+	 * On outer header (which must contains L2), or inner header with L2,
+	 * set cvlan_tag mask bit to mark this packet as untagged.
+	 * This should be done even if item->spec is empty.
+	 */
+	if (!inner || item_flags & MLX5_FLOW_LAYER_INNER_L2)
+		MLX5_SET(fte_match_set_lyr_2_4, headers_m, cvlan_tag, 1);
 	if (!ipv4_v)
 		return;
 	if (!ipv4_m)
@@ -5470,12 +5498,10 @@ flow_dv_translate_item_ipv4(void *matcher, void *key,
 		 ipv4_m->hdr.next_proto_id);
 	MLX5_SET(fte_match_set_lyr_2_4, headers_v, ip_protocol,
 		 ipv4_v->hdr.next_proto_id & ipv4_m->hdr.next_proto_id);
-	/*
-	 * On outer header (which must contains L2), or inner header with L2,
-	 * set cvlan_tag mask bit to mark this packet as untagged.
-	 */
-	if (!inner || item_flags & MLX5_FLOW_LAYER_INNER_L2)
-		MLX5_SET(fte_match_set_lyr_2_4, headers_m, cvlan_tag, 1);
+	MLX5_SET(fte_match_set_lyr_2_4, headers_m, ip_ttl_hoplimit,
+		 ipv4_m->hdr.time_to_live);
+	MLX5_SET(fte_match_set_lyr_2_4, headers_v, ip_ttl_hoplimit,
+		 ipv4_v->hdr.time_to_live & ipv4_m->hdr.time_to_live);
 }
 
 /**
@@ -5540,6 +5566,13 @@ flow_dv_translate_item_ipv6(void *matcher, void *key,
 	else
 		MLX5_SET(fte_match_set_lyr_2_4, headers_m, ip_version, 0x6);
 	MLX5_SET(fte_match_set_lyr_2_4, headers_v, ip_version, 6);
+	/*
+	 * On outer header (which must contains L2), or inner header with L2,
+	 * set cvlan_tag mask bit to mark this packet as untagged.
+	 * This should be done even if item->spec is empty.
+	 */
+	if (!inner || item_flags & MLX5_FLOW_LAYER_INNER_L2)
+		MLX5_SET(fte_match_set_lyr_2_4, headers_m, cvlan_tag, 1);
 	if (!ipv6_v)
 		return;
 	if (!ipv6_m)
@@ -5583,12 +5616,11 @@ flow_dv_translate_item_ipv6(void *matcher, void *key,
 		 ipv6_m->hdr.proto);
 	MLX5_SET(fte_match_set_lyr_2_4, headers_v, ip_protocol,
 		 ipv6_v->hdr.proto & ipv6_m->hdr.proto);
-	/*
-	 * On outer header (which must contains L2), or inner header with L2,
-	 * set cvlan_tag mask bit to mark this packet as untagged.
-	 */
-	if (!inner || item_flags & MLX5_FLOW_LAYER_INNER_L2)
-		MLX5_SET(fte_match_set_lyr_2_4, headers_m, cvlan_tag, 1);
+	/* Hop limit. */
+	MLX5_SET(fte_match_set_lyr_2_4, headers_m, ip_ttl_hoplimit,
+		 ipv6_m->hdr.hop_limits);
+	MLX5_SET(fte_match_set_lyr_2_4, headers_v, ip_ttl_hoplimit,
+		 ipv6_v->hdr.hop_limits & ipv6_m->hdr.hop_limits);
 }
 
 /**

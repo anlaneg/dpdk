@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: BSD-3-Clause
- * Copyright 2018-2019 NXP
+ * Copyright 2018-2020 NXP
  */
 
 #include <stdbool.h>
@@ -146,6 +146,15 @@ enetc_hardware_init(struct enetc_eth_hw *hw)
 	/* Calculating and storing the base HW addresses */
 	hw->hw.port = (void *)((size_t)hw->hw.reg + ENETC_PORT_BASE);
 	hw->hw.global = (void *)((size_t)hw->hw.reg + ENETC_GLOBAL_BASE);
+
+	/* WA for Rx lock-up HW erratum */
+	enetc_port_wr(enetc_hw, ENETC_PM0_RX_FIFO, 1);
+
+	/* set ENETC transaction flags to coherent, don't allocate.
+	 * BD writes merge with surrounding cache line data, frame data writes
+	 * overwrite cache line.
+	 */
+	enetc_wr(enetc_hw, ENETC_SICAR0, ENETC_SICAR0_COHERENT);
 
 	/* Enabling Station Interface */
 	enetc_wr(enetc_hw, ENETC_SIMR, ENETC_SIMR_EN);

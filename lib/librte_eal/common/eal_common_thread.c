@@ -165,9 +165,13 @@ struct rte_thread_ctrl_params {
 static void *rte_thread_init(void *arg)
 {
 	int ret;
+	rte_cpuset_t *cpuset = &internal_config.ctrl_cpuset;
 	struct rte_thread_ctrl_params *params = arg;
 	void *(*start_routine)(void *) = params->start_routine;
 	void *routine_arg = params->arg;
+
+	/* Store cpuset in TLS for quick access */
+	memmove(&RTE_PER_LCORE(_cpuset), cpuset, sizeof(rte_cpuset_t));
 
 	//等待barrier
 	ret = pthread_barrier_wait(&params->configured);
