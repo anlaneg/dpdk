@@ -67,15 +67,8 @@ static struct proto_xtr_ol_flag ice_proto_xtr_ol_flag_params[] = {
 
 #define ICE_DFLT_OUTER_TAG_TYPE ICE_AQ_VSI_OUTER_TAG_VLAN_9100
 
-/* DDP package search path */
-#define ICE_PKG_FILE_DEFAULT "/lib/firmware/intel/ice/ddp/ice.pkg"
-#define ICE_PKG_FILE_UPDATES "/lib/firmware/updates/intel/ice/ddp/ice.pkg"
-#define ICE_PKG_FILE_SEARCH_PATH_DEFAULT "/lib/firmware/intel/ice/ddp/"
-#define ICE_PKG_FILE_SEARCH_PATH_UPDATES "/lib/firmware/updates/intel/ice/ddp/"
-
 #define ICE_OS_DEFAULT_PKG_NAME		"ICE OS Default Package"
 #define ICE_COMMS_PKG_NAME			"ICE COMMS Package"
-#define ICE_MAX_PKG_FILENAME_SIZE   256
 #define ICE_MAX_RES_DESC_NUM        1024
 
 int ice_logtype_init;
@@ -163,11 +156,11 @@ static const struct rte_pci_id pci_id_ice_map[] = {
 	{ RTE_PCI_DEVICE(ICE_INTEL_VENDOR_ID, ICE_DEV_ID_E810_XXV_BACKPLANE) },
 	{ RTE_PCI_DEVICE(ICE_INTEL_VENDOR_ID, ICE_DEV_ID_E810_XXV_QSFP) },
 	{ RTE_PCI_DEVICE(ICE_INTEL_VENDOR_ID, ICE_DEV_ID_E810_XXV_SFP) },
-	{ RTE_PCI_DEVICE(ICE_INTEL_VENDOR_ID, ICE_DEV_ID_C822N_BACKPLANE) },
-	{ RTE_PCI_DEVICE(ICE_INTEL_VENDOR_ID, ICE_DEV_ID_C822N_QSFP) },
-	{ RTE_PCI_DEVICE(ICE_INTEL_VENDOR_ID, ICE_DEV_ID_C822N_SFP) },
-	{ RTE_PCI_DEVICE(ICE_INTEL_VENDOR_ID, ICE_DEV_ID_C822N_10G_BASE_T) },
-	{ RTE_PCI_DEVICE(ICE_INTEL_VENDOR_ID, ICE_DEV_ID_C822N_SGMII) },
+	{ RTE_PCI_DEVICE(ICE_INTEL_VENDOR_ID, ICE_DEV_ID_E822C_BACKPLANE) },
+	{ RTE_PCI_DEVICE(ICE_INTEL_VENDOR_ID, ICE_DEV_ID_E822C_QSFP) },
+	{ RTE_PCI_DEVICE(ICE_INTEL_VENDOR_ID, ICE_DEV_ID_E822C_SFP) },
+	{ RTE_PCI_DEVICE(ICE_INTEL_VENDOR_ID, ICE_DEV_ID_E822C_10G_BASE_T) },
+	{ RTE_PCI_DEVICE(ICE_INTEL_VENDOR_ID, ICE_DEV_ID_E822C_SGMII) },
 	{ .vendor_id = 0, /* sentinel */ },
 };
 
@@ -1833,7 +1826,7 @@ fail_dsn:
 	return 0;
 }
 
-static enum ice_pkg_type
+enum ice_pkg_type
 ice_load_pkg_type(struct ice_hw *hw)
 {
 	enum ice_pkg_type package_type;
@@ -2443,24 +2436,6 @@ ice_dev_uninit(struct rte_eth_dev *dev)
 	return 0;
 }
 
-static int
-ice_dev_configure(struct rte_eth_dev *dev)
-{
-	struct ice_adapter *ad =
-		ICE_DEV_PRIVATE_TO_ADAPTER(dev->data->dev_private);
-
-	/* Initialize to TRUE. If any of Rx queues doesn't meet the
-	 * bulk allocation or vector Rx preconditions we will reset it.
-	 */
-	ad->rx_bulk_alloc_allowed = true;
-	ad->tx_simple_allowed = true;
-
-	if (dev->data->dev_conf.rxmode.mq_mode & ETH_MQ_RX_RSS_FLAG)
-		dev->data->dev_conf.rxmode.offloads |= DEV_RX_OFFLOAD_RSS_HASH;
-
-	return 0;
-}
-
 static int ice_init_rss(struct ice_pf *pf)
 {
 	struct ice_hw *hw = ICE_PF_TO_HW(pf);
@@ -2587,6 +2562,32 @@ static int ice_init_rss(struct ice_pf *pf)
 	if (ret)
 		PMD_DRV_LOG(ERR, "%s PPPoE/PPPoD_SessionID rss flow fail %d",
 				__func__, ret);
+
+	return 0;
+}
+
+static int
+ice_dev_configure(struct rte_eth_dev *dev)
+{
+	struct ice_adapter *ad =
+		ICE_DEV_PRIVATE_TO_ADAPTER(dev->data->dev_private);
+	struct ice_pf *pf = ICE_DEV_PRIVATE_TO_PF(dev->data->dev_private);
+	int ret;
+
+	/* Initialize to TRUE. If any of Rx queues doesn't meet the
+	 * bulk allocation or vector Rx preconditions we will reset it.
+	 */
+	ad->rx_bulk_alloc_allowed = true;
+	ad->tx_simple_allowed = true;
+
+	if (dev->data->dev_conf.rxmode.mq_mode & ETH_MQ_RX_RSS_FLAG)
+		dev->data->dev_conf.rxmode.offloads |= DEV_RX_OFFLOAD_RSS_HASH;
+
+	ret = ice_init_rss(pf);
+	if (ret) {
+		PMD_DRV_LOG(ERR, "Failed to enable rss for PF");
+		return ret;
+	}
 
 	return 0;
 }
@@ -2792,12 +2793,6 @@ ice_dev_start(struct rte_eth_dev *dev)
 			PMD_DRV_LOG(ERR, "fail to start Rx queue %u", nb_rxq);
 			goto rx_err;
 		}
-	}
-
-	ret = ice_init_rss(pf);
-	if (ret) {
-		PMD_DRV_LOG(ERR, "Failed to enable rss for PF");
-		goto rx_err;
 	}
 
 	ice_set_rx_function(dev);
@@ -3170,7 +3165,7 @@ ice_force_phys_link_state(struct ice_hw *hw, bool link_up)
 	cfg.phy_type_low = pcaps->phy_type_low;
 	cfg.phy_type_high = pcaps->phy_type_high;
 	cfg.caps = pcaps->caps | ICE_AQ_PHY_ENA_AUTO_LINK_UPDT;
-	cfg.low_power_ctrl = pcaps->low_power_ctrl;
+	cfg.low_power_ctrl_an = pcaps->low_power_ctrl_an;
 	cfg.eee_cap = pcaps->eee_cap;
 	cfg.eeer_value = pcaps->eeer_value;
 	cfg.link_fec_opt = pcaps->link_fec_options;
@@ -3846,21 +3841,19 @@ static int
 ice_fw_version_get(struct rte_eth_dev *dev, char *fw_version, size_t fw_size)
 {
 	struct ice_hw *hw = ICE_DEV_PRIVATE_TO_HW(dev->data->dev_private);
-	u32 full_ver;
 	u8 ver, patch;
 	u16 build;
 	int ret;
 
-	full_ver = hw->nvm.oem_ver;
-	ver = (u8)(full_ver >> 24);
-	build = (u16)((full_ver >> 8) & 0xffff);
-	patch = (u8)(full_ver & 0xff);
+	ver = hw->nvm.orom.major;
+	patch = hw->nvm.orom.patch;
+	build = hw->nvm.orom.build;
 
 	ret = snprintf(fw_version, fw_size,
-			"%d.%d%d 0x%08x %d.%d.%d",
-			((hw->nvm.ver >> 12) & 0xf),
-			((hw->nvm.ver >> 4) & 0xff),
-			(hw->nvm.ver & 0xf), hw->nvm.eetrack,
+			"%d.%d 0x%08x %d.%d.%d",
+			hw->nvm.major_ver,
+			hw->nvm.minor_ver,
+			hw->nvm.eetrack,
 			ver, build, patch);
 
 	/* add the size of '\0' */

@@ -143,49 +143,6 @@ ceil_byte_length(uint32_t num_bits)
 }
 
 static void
-process_cpu_gmac_op(uint8_t dev_id, struct rte_crypto_op *op)
-{
-	int32_t n, st;
-	void *iv;
-	struct rte_crypto_sym_op *sop;
-	union rte_crypto_sym_ofs ofs;
-	struct rte_crypto_sgl sgl;
-	struct rte_crypto_sym_vec symvec;
-	struct rte_crypto_vec vec[UINT8_MAX];
-
-	sop = op->sym;
-
-	n = rte_crypto_mbuf_to_vec(sop->m_src, sop->auth.data.offset,
-		sop->auth.data.length, vec, RTE_DIM(vec));
-
-	if (n < 0 || n != sop->m_src->nb_segs) {
-		op->status = RTE_CRYPTO_OP_STATUS_ERROR;
-		return;
-	}
-
-	sgl.vec = vec;
-	sgl.num = n;
-	symvec.sgl = &sgl;
-	iv = rte_crypto_op_ctod_offset(op, void *, IV_OFFSET);
-	symvec.iv = &iv;
-	symvec.aad = NULL;
-	symvec.digest = (void **)&sop->auth.digest.data;
-	symvec.status = &st;
-	symvec.num = 1;
-
-	ofs.raw = 0;
-
-	n = rte_cryptodev_sym_cpu_crypto_process(dev_id, sop->session, ofs,
-		&symvec);
-
-	if (n != 1)
-		op->status = RTE_CRYPTO_OP_STATUS_AUTH_FAILED;
-	else
-		op->status = RTE_CRYPTO_OP_STATUS_SUCCESS;
-}
-
-
-static void
 process_cpu_aead_op(uint8_t dev_id, struct rte_crypto_op *op)
 {
 	int32_t n, st;
@@ -217,6 +174,51 @@ process_cpu_aead_op(uint8_t dev_id, struct rte_crypto_op *op)
 	symvec.num = 1;
 
 	ofs.raw = 0;
+
+	n = rte_cryptodev_sym_cpu_crypto_process(dev_id, sop->session, ofs,
+		&symvec);
+
+	if (n != 1)
+		op->status = RTE_CRYPTO_OP_STATUS_AUTH_FAILED;
+	else
+		op->status = RTE_CRYPTO_OP_STATUS_SUCCESS;
+}
+
+static void
+process_cpu_crypt_auth_op(uint8_t dev_id, struct rte_crypto_op *op)
+{
+	int32_t n, st;
+	void *iv;
+	struct rte_crypto_sym_op *sop;
+	union rte_crypto_sym_ofs ofs;
+	struct rte_crypto_sgl sgl;
+	struct rte_crypto_sym_vec symvec;
+	struct rte_crypto_vec vec[UINT8_MAX];
+
+	sop = op->sym;
+
+	n = rte_crypto_mbuf_to_vec(sop->m_src, sop->auth.data.offset,
+		sop->auth.data.length, vec, RTE_DIM(vec));
+
+	if (n < 0 || n != sop->m_src->nb_segs) {
+		op->status = RTE_CRYPTO_OP_STATUS_ERROR;
+		return;
+	}
+
+	sgl.vec = vec;
+	sgl.num = n;
+	symvec.sgl = &sgl;
+	iv = rte_crypto_op_ctod_offset(op, void *, IV_OFFSET);
+	symvec.iv = &iv;
+	symvec.aad = (void **)&sop->aead.aad.data;
+	symvec.digest = (void **)&sop->auth.digest.data;
+	symvec.status = &st;
+	symvec.num = 1;
+
+	ofs.raw = 0;
+	ofs.ofs.cipher.head = sop->cipher.data.offset - sop->auth.data.offset;
+	ofs.ofs.cipher.tail = (sop->auth.data.offset + sop->auth.data.length) -
+		(sop->cipher.data.offset + sop->cipher.data.length);
 
 	n = rte_cryptodev_sym_cpu_crypto_process(dev_id, sop->session, ofs,
 		&symvec);
@@ -1538,8 +1540,14 @@ test_AES_CBC_HMAC_SHA1_encrypt_digest(void)
 	sym_op->cipher.data.length = QUOTE_512_BYTES;
 
 	/* Process crypto operation */
-	TEST_ASSERT_NOT_NULL(process_crypto_request(ts_params->valid_devs[0],
-			ut_params->op), "failed to process sym crypto op");
+	if (gbl_action_type == RTE_SECURITY_ACTION_TYPE_CPU_CRYPTO)
+		process_cpu_crypt_auth_op(ts_params->valid_devs[0],
+			ut_params->op);
+	else
+		TEST_ASSERT_NOT_NULL(
+			process_crypto_request(ts_params->valid_devs[0],
+				ut_params->op),
+				"failed to process sym crypto op");
 
 	TEST_ASSERT_EQUAL(ut_params->op->status, RTE_CRYPTO_OP_STATUS_SUCCESS,
 			"crypto op processing failed");
@@ -1689,8 +1697,14 @@ test_AES_CBC_HMAC_SHA512_decrypt_perform(struct rte_cryptodev_sym_session *sess,
 	sym_op->cipher.data.length = QUOTE_512_BYTES;
 
 	/* Process crypto operation */
-	TEST_ASSERT_NOT_NULL(process_crypto_request(ts_params->valid_devs[0],
-			ut_params->op), "failed to process sym crypto op");
+	if (gbl_action_type == RTE_SECURITY_ACTION_TYPE_CPU_CRYPTO)
+		process_cpu_crypt_auth_op(ts_params->valid_devs[0],
+			ut_params->op);
+	else
+		TEST_ASSERT_NOT_NULL(
+				process_crypto_request(ts_params->valid_devs[0],
+					ut_params->op),
+					"failed to process sym crypto op");
 
 	TEST_ASSERT_EQUAL(ut_params->op->status, RTE_CRYPTO_OP_STATUS_SUCCESS,
 			"crypto op processing failed");
@@ -1721,7 +1735,6 @@ test_blockcipher(enum blockcipher_test_type test_type)
 		ts_params->op_mpool,
 		ts_params->session_mpool, ts_params->session_priv_mpool,
 		ts_params->valid_devs[0],
-		gbl_driver_id,
 		test_type);
 
 	if (status == -ENOTSUP)
@@ -2637,8 +2650,13 @@ test_kasumi_authentication(const struct kasumi_hash_test_data *tdata)
 	if (retval < 0)
 		return retval;
 
-	ut_params->op = process_crypto_request(ts_params->valid_devs[0],
-				ut_params->op);
+	if (gbl_action_type == RTE_SECURITY_ACTION_TYPE_CPU_CRYPTO)
+		process_cpu_crypt_auth_op(ts_params->valid_devs[0],
+			ut_params->op);
+	else
+		ut_params->op = process_crypto_request(ts_params->valid_devs[0],
+			ut_params->op);
+
 	ut_params->obuf = ut_params->op->sym->m_src;
 	TEST_ASSERT_NOT_NULL(ut_params->op, "failed to retrieve obuf");
 	ut_params->digest = rte_pktmbuf_mtod(ut_params->obuf, uint8_t *)
@@ -6885,9 +6903,15 @@ create_aead_operation(enum rte_crypto_aead_operation op,
 		uint8_t *iv_ptr = rte_crypto_op_ctod_offset(ut_params->op,
 				uint8_t *, IV_OFFSET);
 
-		rte_memcpy(iv_ptr, tdata->iv.data, tdata->iv.len);
-		debug_hexdump(stdout, "iv:", iv_ptr,
-			tdata->iv.len);
+		if (tdata->iv.len == 0) {
+			rte_memcpy(iv_ptr, tdata->iv.data, AES_GCM_J0_LENGTH);
+			debug_hexdump(stdout, "iv:", iv_ptr,
+				AES_GCM_J0_LENGTH);
+		} else {
+			rte_memcpy(iv_ptr, tdata->iv.data, tdata->iv.len);
+			debug_hexdump(stdout, "iv:", iv_ptr,
+				tdata->iv.len);
+		}
 	}
 
 	/* Append plaintext/ciphertext */
@@ -7713,6 +7737,12 @@ test_AES_GCM_authenticated_encryption_test_case_8(void)
 }
 
 static int
+test_AES_GCM_J0_authenticated_encryption_test_case_1(void)
+{
+	return test_authenticated_encryption(&gcm_J0_test_case_1);
+}
+
+static int
 test_AES_GCM_auth_encryption_test_case_192_1(void)
 {
 	return test_authenticated_encryption(&gcm_test_case_192_1);
@@ -8043,6 +8073,12 @@ static int
 test_AES_GCM_authenticated_decryption_test_case_8(void)
 {
 	return test_authenticated_decryption(&gcm_test_case_8);
+}
+
+static int
+test_AES_GCM_J0_authenticated_decryption_test_case_1(void)
+{
+	return test_authenticated_decryption(&gcm_J0_test_case_1);
 }
 
 static int
@@ -8715,6 +8751,9 @@ test_stats(void)
 	struct rte_cryptodev *dev;
 	cryptodev_stats_get_t temp_pfn;
 
+	if (gbl_action_type == RTE_SECURITY_ACTION_TYPE_CPU_CRYPTO)
+		return -ENOTSUP;
+
 	/* Verify the capabilities */
 	struct rte_cryptodev_sym_capability_idx cap_idx;
 	cap_idx.type = RTE_CRYPTO_SYM_XFORM_AUTH;
@@ -8886,8 +8925,14 @@ test_MD5_HMAC_generate(const struct HMAC_MD5_vector *test_case)
 	if (MD5_HMAC_create_op(ut_params, test_case, &plaintext))
 		return TEST_FAILED;
 
-	TEST_ASSERT_NOT_NULL(process_crypto_request(ts_params->valid_devs[0],
-			ut_params->op), "failed to process sym crypto op");
+	if (gbl_action_type == RTE_SECURITY_ACTION_TYPE_CPU_CRYPTO)
+		process_cpu_crypt_auth_op(ts_params->valid_devs[0],
+			ut_params->op);
+	else
+		TEST_ASSERT_NOT_NULL(
+			process_crypto_request(ts_params->valid_devs[0],
+				ut_params->op),
+				"failed to process sym crypto op");
 
 	TEST_ASSERT_EQUAL(ut_params->op->status, RTE_CRYPTO_OP_STATUS_SUCCESS,
 			"crypto op processing failed");
@@ -8938,8 +8983,14 @@ test_MD5_HMAC_verify(const struct HMAC_MD5_vector *test_case)
 	if (MD5_HMAC_create_op(ut_params, test_case, &plaintext))
 		return TEST_FAILED;
 
-	TEST_ASSERT_NOT_NULL(process_crypto_request(ts_params->valid_devs[0],
-			ut_params->op), "failed to process sym crypto op");
+	if (gbl_action_type == RTE_SECURITY_ACTION_TYPE_CPU_CRYPTO)
+		process_cpu_crypt_auth_op(ts_params->valid_devs[0],
+			ut_params->op);
+	else
+		TEST_ASSERT_NOT_NULL(
+			process_crypto_request(ts_params->valid_devs[0],
+				ut_params->op),
+				"failed to process sym crypto op");
 
 	TEST_ASSERT_EQUAL(ut_params->op->status, RTE_CRYPTO_OP_STATUS_SUCCESS,
 			"HMAC_MD5 crypto op processing failed");
@@ -9852,7 +9903,8 @@ test_AES_GMAC_authentication(const struct gmac_test_data *tdata)
 	ut_params->op->sym->m_src = ut_params->ibuf;
 
 	if (gbl_action_type == RTE_SECURITY_ACTION_TYPE_CPU_CRYPTO)
-		process_cpu_gmac_op(ts_params->valid_devs[0], ut_params->op);
+		process_cpu_crypt_auth_op(ts_params->valid_devs[0],
+			ut_params->op);
 	else
 		TEST_ASSERT_NOT_NULL(
 			process_crypto_request(ts_params->valid_devs[0],
@@ -9968,7 +10020,8 @@ test_AES_GMAC_authentication_verify(const struct gmac_test_data *tdata)
 	ut_params->op->sym->m_src = ut_params->ibuf;
 
 	if (gbl_action_type == RTE_SECURITY_ACTION_TYPE_CPU_CRYPTO)
-		process_cpu_gmac_op(ts_params->valid_devs[0], ut_params->op);
+		process_cpu_crypt_auth_op(ts_params->valid_devs[0],
+			ut_params->op);
 	else
 		TEST_ASSERT_NOT_NULL(
 			process_crypto_request(ts_params->valid_devs[0],
@@ -10528,10 +10581,17 @@ test_authentication_verify_fail_when_data_corruption(
 	else
 		tag_corruption(plaintext, reference->plaintext.len);
 
-	ut_params->op = process_crypto_request(ts_params->valid_devs[0],
+	if (gbl_action_type == RTE_SECURITY_ACTION_TYPE_CPU_CRYPTO) {
+		process_cpu_crypt_auth_op(ts_params->valid_devs[0],
 			ut_params->op);
-
-	TEST_ASSERT_NULL(ut_params->op, "authentication not failed");
+		TEST_ASSERT_NOT_EQUAL(ut_params->op->status,
+			RTE_CRYPTO_OP_STATUS_SUCCESS,
+			"authentication not failed");
+	} else {
+		ut_params->op = process_crypto_request(ts_params->valid_devs[0],
+			ut_params->op);
+		TEST_ASSERT_NULL(ut_params->op, "authentication not failed");
+	}
 
 	return 0;
 }
@@ -10593,7 +10653,8 @@ test_authentication_verify_GMAC_fail_when_corruption(
 		tag_corruption(plaintext, reference->aad.len);
 
 	if (gbl_action_type == RTE_SECURITY_ACTION_TYPE_CPU_CRYPTO) {
-		process_cpu_gmac_op(ts_params->valid_devs[0], ut_params->op);
+		process_cpu_crypt_auth_op(ts_params->valid_devs[0],
+			ut_params->op);
 		TEST_ASSERT_NOT_EQUAL(ut_params->op->status,
 			RTE_CRYPTO_OP_STATUS_SUCCESS,
 			"authentication not failed");
@@ -10666,10 +10727,17 @@ test_authenticated_decryption_fail_when_corruption(
 	else
 		tag_corruption(ciphertext, reference->ciphertext.len);
 
-	ut_params->op = process_crypto_request(ts_params->valid_devs[0],
+	if (gbl_action_type == RTE_SECURITY_ACTION_TYPE_CPU_CRYPTO) {
+		process_cpu_crypt_auth_op(ts_params->valid_devs[0],
 			ut_params->op);
-
-	TEST_ASSERT_NULL(ut_params->op, "authentication not failed");
+		TEST_ASSERT_NOT_EQUAL(ut_params->op->status,
+			RTE_CRYPTO_OP_STATUS_SUCCESS,
+			"authentication not failed");
+	} else {
+		ut_params->op = process_crypto_request(ts_params->valid_devs[0],
+			ut_params->op);
+		TEST_ASSERT_NULL(ut_params->op, "authentication not failed");
+	}
 
 	return 0;
 }
@@ -10757,8 +10825,12 @@ test_authenticated_encryt_with_esn(
 	if (retval < 0)
 		return retval;
 
-	ut_params->op = process_crypto_request(ts_params->valid_devs[0],
+	if (gbl_action_type == RTE_SECURITY_ACTION_TYPE_CPU_CRYPTO)
+		process_cpu_crypt_auth_op(ts_params->valid_devs[0],
 			ut_params->op);
+	else
+		ut_params->op = process_crypto_request(
+			ts_params->valid_devs[0], ut_params->op);
 
 	TEST_ASSERT_NOT_NULL(ut_params->op, "no crypto operation returned");
 
@@ -10873,7 +10945,11 @@ test_authenticated_decrypt_with_esn(
 	if (retval < 0)
 		return retval;
 
-	ut_params->op = process_crypto_request(ts_params->valid_devs[0],
+	if (gbl_action_type == RTE_SECURITY_ACTION_TYPE_CPU_CRYPTO)
+		process_cpu_crypt_auth_op(ts_params->valid_devs[0],
+			ut_params->op);
+	else
+		ut_params->op = process_crypto_request(ts_params->valid_devs[0],
 			ut_params->op);
 
 	TEST_ASSERT_NOT_NULL(ut_params->op, "failed crypto process");
@@ -11755,6 +11831,8 @@ static struct unit_test_suite cryptodev_testsuite  = {
 			test_AES_GCM_authenticated_encryption_test_case_7),
 		TEST_CASE_ST(ut_setup, ut_teardown,
 			test_AES_GCM_authenticated_encryption_test_case_8),
+		TEST_CASE_ST(ut_setup, ut_teardown,
+			test_AES_GCM_J0_authenticated_encryption_test_case_1),
 
 		/** AES GCM Authenticated Decryption */
 		TEST_CASE_ST(ut_setup, ut_teardown,
@@ -11773,6 +11851,8 @@ static struct unit_test_suite cryptodev_testsuite  = {
 			test_AES_GCM_authenticated_decryption_test_case_7),
 		TEST_CASE_ST(ut_setup, ut_teardown,
 			test_AES_GCM_authenticated_decryption_test_case_8),
+		TEST_CASE_ST(ut_setup, ut_teardown,
+			test_AES_GCM_J0_authenticated_decryption_test_case_1),
 
 		/** AES GCM Authenticated Encryption 192 bits key */
 		TEST_CASE_ST(ut_setup, ut_teardown,
@@ -13117,6 +13197,7 @@ static struct unit_test_suite cryptodev_nitrox_testsuite  = {
 		TEST_CASE_ST(ut_setup, ut_teardown,
 				test_device_configure_invalid_queue_pair_ids),
 		TEST_CASE_ST(ut_setup, ut_teardown, test_AES_chain_all),
+		TEST_CASE_ST(ut_setup, ut_teardown, test_3DES_chain_all),
 
 		TEST_CASES_END() /**< NULL terminate unit test array */
 	}
@@ -13375,6 +13456,29 @@ test_cryptodev_aesni_mb(void /*argv __rte_unused, int argc __rte_unused*/)
 	}
 
 	return unit_test_suite_runner(&cryptodev_testsuite);
+}
+
+static int
+test_cryptodev_cpu_aesni_mb(void)
+{
+	int32_t rc;
+	enum rte_security_session_action_type at;
+
+	gbl_driver_id =	rte_cryptodev_driver_id_get(
+			RTE_STR(CRYPTODEV_NAME_AESNI_MB_PMD));
+
+	if (gbl_driver_id == -1) {
+		RTE_LOG(ERR, USER1, "AESNI MB PMD must be loaded. Check if "
+				"CONFIG_RTE_LIBRTE_PMD_AESNI_MB is enabled "
+				"in config file to run this testsuite.\n");
+		return TEST_SKIPPED;
+	}
+
+	at = gbl_action_type;
+	gbl_action_type = RTE_SECURITY_ACTION_TYPE_CPU_CRYPTO;
+	rc = unit_test_suite_runner(&cryptodev_testsuite);
+	gbl_action_type = at;
+	return rc;
 }
 
 static int
@@ -13668,6 +13772,8 @@ test_cryptodev_nitrox(void)
 
 REGISTER_TEST_COMMAND(cryptodev_qat_autotest, test_cryptodev_qat);
 REGISTER_TEST_COMMAND(cryptodev_aesni_mb_autotest, test_cryptodev_aesni_mb);
+REGISTER_TEST_COMMAND(cryptodev_cpu_aesni_mb_autotest,
+	test_cryptodev_cpu_aesni_mb);
 REGISTER_TEST_COMMAND(cryptodev_openssl_autotest, test_cryptodev_openssl);
 REGISTER_TEST_COMMAND(cryptodev_aesni_gcm_autotest, test_cryptodev_aesni_gcm);
 REGISTER_TEST_COMMAND(cryptodev_cpu_aesni_gcm_autotest,

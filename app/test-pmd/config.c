@@ -52,6 +52,8 @@
 
 #include "testpmd.h"
 
+#define ETHDEV_FWVERS_LEN 32
+
 static char *flowtype_to_str(uint16_t flow_type);
 
 static const struct {
@@ -73,10 +75,16 @@ static const struct {
 };
 
 const struct rss_type_info rss_type_table[] = {
-	{ "all", ETH_RSS_IP | ETH_RSS_TCP |
-			ETH_RSS_UDP | ETH_RSS_SCTP |
-			ETH_RSS_L2_PAYLOAD },
+	{ "all", ETH_RSS_ETH | ETH_RSS_VLAN | ETH_RSS_IP | ETH_RSS_TCP |
+		ETH_RSS_UDP | ETH_RSS_SCTP | ETH_RSS_L2_PAYLOAD |
+		ETH_RSS_L2TPV3 | ETH_RSS_ESP | ETH_RSS_AH | ETH_RSS_PFCP},
 	{ "none", 0 },
+	{ "eth", ETH_RSS_ETH },
+	{ "l2-src-only", ETH_RSS_L2_SRC_ONLY },
+	{ "l2-dst-only", ETH_RSS_L2_DST_ONLY },
+	{ "vlan", ETH_RSS_VLAN },
+	{ "s-vlan", ETH_RSS_S_VLAN },
+	{ "c-vlan", ETH_RSS_C_VLAN },
 	{ "ipv4", ETH_RSS_IPV4 },
 	{ "ipv4-frag", ETH_RSS_FRAG_IPV4 },
 	{ "ipv4-tcp", ETH_RSS_NONFRAG_IPV4_TCP },
@@ -106,6 +114,10 @@ const struct rss_type_info rss_type_table[] = {
 	{ "l3-dst-only", ETH_RSS_L3_DST_ONLY },
 	{ "l4-src-only", ETH_RSS_L4_SRC_ONLY },
 	{ "l4-dst-only", ETH_RSS_L4_DST_ONLY },
+	{ "esp", ETH_RSS_ESP },
+	{ "ah", ETH_RSS_AH },
+	{ "l2tpv3", ETH_RSS_L2TPV3 },
+	{ "pfcp", ETH_RSS_PFCP },
 	{ NULL, 0 },
 };
 
@@ -523,6 +535,7 @@ port_infos_display(portid_t port_id)
 	uint16_t mtu;
 	char name[RTE_ETH_NAME_MAX_LEN];
 	int ret;
+	char fw_version[ETHDEV_FWVERS_LEN];
 
 	if (port_id_is_invalid(port_id, ENABLED_WARN)) {
 		print_valid_ports();
@@ -544,6 +557,13 @@ port_infos_display(portid_t port_id)
 	rte_eth_dev_get_name_by_port(port_id, name);
 	printf("\nDevice name: %s", name);
 	printf("\nDriver name: %s", dev_info.driver_name);
+
+	if (rte_eth_dev_fw_version_get(port_id, fw_version,
+						ETHDEV_FWVERS_LEN) == 0)
+		printf("\nFirmware-version: %s", fw_version);
+	else
+		printf("\nFirmware-version: %s", "not available");
+
 	if (dev_info.device->devargs && dev_info.device->devargs->args)
 		printf("\nDevargs: %s", dev_info.device->devargs->args);
 	printf("\nConnect to socket: %u", port->socket_id);

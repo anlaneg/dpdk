@@ -1798,15 +1798,6 @@ dpaa2_sec_queue_pair_setup(struct rte_cryptodev *dev, uint16_t qp_id,
 	return retcode;
 }
 
-/** Return the number of allocated queue pairs */
-static uint32_t
-dpaa2_sec_queue_pair_count(struct rte_cryptodev *dev)
-{
-	PMD_INIT_FUNC_TRACE();
-
-	return dev->data->nb_queue_pairs;
-}
-
 /** Returns the size of the aesni gcm session structure */
 static unsigned int
 dpaa2_sec_sym_session_get_size(struct rte_cryptodev *dev __rte_unused)
@@ -3539,7 +3530,7 @@ void dpaa2_sec_stats_reset(struct rte_cryptodev *dev)
 	}
 }
 
-static void __attribute__((hot))
+static void __rte_hot
 dpaa2_sec_process_parallel_event(struct qbman_swp *swp,
 				 const struct qbman_fd *fd,
 				 const struct qbman_result *dq,
@@ -3565,7 +3556,7 @@ dpaa2_sec_process_parallel_event(struct qbman_swp *swp,
 	qbman_swp_dqrr_consume(swp, dq);
 }
 static void
-dpaa2_sec_process_atomic_event(struct qbman_swp *swp __attribute__((unused)),
+dpaa2_sec_process_atomic_event(struct qbman_swp *swp __rte_unused,
 				 const struct qbman_fd *fd,
 				 const struct qbman_result *dq,
 				 struct dpaa2_queue *rxq,
@@ -3674,7 +3665,6 @@ static struct rte_cryptodev_ops crypto_ops = {
 	.stats_reset	      = dpaa2_sec_stats_reset,
 	.queue_pair_setup     = dpaa2_sec_queue_pair_setup,
 	.queue_pair_release   = dpaa2_sec_queue_pair_release,
-	.queue_pair_count     = dpaa2_sec_queue_pair_count,
 	.sym_session_get_size     = dpaa2_sec_sym_session_get_size,
 	.sym_session_configure    = dpaa2_sec_sym_session_configure,
 	.sym_session_clear        = dpaa2_sec_sym_session_clear,
@@ -3729,10 +3719,6 @@ dpaa2_sec_dev_init(struct rte_cryptodev *cryptodev)
 
 	PMD_INIT_FUNC_TRACE();
 	dpaa2_dev = container_of(dev, struct rte_dpaa2_device, device);
-	if (dpaa2_dev == NULL) {
-		DPAA2_SEC_ERR("DPAA2 SEC device not found");
-		return -1;
-	}
 	hw_id = dpaa2_dev->object_id;
 
 	cryptodev->driver_id = cryptodev_driver_id;

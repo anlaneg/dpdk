@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: BSD-3-Clause
- * Copyright(c) 2001-2019
+ * Copyright(c) 2001-2020
  */
 
 #ifndef _ICE_FDIR_H_
@@ -36,9 +36,6 @@ struct ice_fd_fltr_desc_ctx {
 
 enum ice_status ice_alloc_fd_res_cntr(struct ice_hw *hw, u16 *cntr_id);
 enum ice_status ice_free_fd_res_cntr(struct ice_hw *hw, u16 cntr_id);
-void
-ice_set_fd_desc_val(struct ice_fd_fltr_desc_ctx *fd_fltr_ctx,
-		    struct ice_fltr_desc *fdir_desc);
 void ice_set_dflt_val_fd_desc(struct ice_fd_fltr_desc_ctx *fd_fltr_ctx);
 enum ice_status
 ice_alloc_fd_guar_item(struct ice_hw *hw, u16 *cntr_id, u16 num_fltr);
@@ -151,9 +148,9 @@ struct ice_fdir_v6 {
 struct ice_fdir_udp_gtp {
 	u8 flags;
 	u8 msg_type;
-	u16 rsrvd_len;
-	u32 teid;
-	u16 rsrvd_seq_nbr;
+	__be16 rsrvd_len;
+	__be32 teid;
+	__be16 rsrvd_seq_nbr;
 	u8 rsrvd_n_pdu_nbr;
 	u8 rsrvd_next_ext_type;
 	u8 rsvrd_ext_len;
@@ -202,8 +199,10 @@ struct ice_fdir_fltr {
 	u8 cnt_ena;
 	u8 fltr_status;
 	u16 cnt_index;
-	u8 fdid_prio;
 	u32 fltr_id;
+	u8 fdid_prio;
+	/* Set to true for an ACL filter */
+	bool acl_fltr;
 };
 
 /* Dummy packet filter definition structure. */
@@ -234,6 +233,7 @@ bool ice_fdir_has_frag(enum ice_fltr_ptype flow);
 struct ice_fdir_fltr *
 ice_fdir_find_fltr_by_idx(struct ice_hw *hw, u32 fltr_idx);
 void
-ice_fdir_update_cntrs(struct ice_hw *hw, enum ice_fltr_ptype flow, bool add);
+ice_fdir_update_cntrs(struct ice_hw *hw, enum ice_fltr_ptype flow,
+		      bool acl_fltr, bool add);
 void ice_fdir_list_add_fltr(struct ice_hw *hw, struct ice_fdir_fltr *input);
 #endif /* _ICE_FDIR_H_ */

@@ -70,7 +70,13 @@ nix_lf_alloc(struct otx2_eth_dev *dev, uint32_t nb_rxq, uint32_t nb_txq)
 		req->rx_cfg |= BIT_ULL(37 /* CSUM_OL4 */);
 		req->rx_cfg |= BIT_ULL(36 /* CSUM_IL4 */);
 	}
-	req->rx_cfg |= BIT_ULL(32 /* DROP_RE */);
+	req->rx_cfg |= (BIT_ULL(32 /* DROP_RE */)             |
+			BIT_ULL(33 /* Outer L2 Length */)     |
+			BIT_ULL(38 /* Inner L4 UDP Length */) |
+			BIT_ULL(39 /* Inner L3 Length */)     |
+			BIT_ULL(40 /* Outer L4 UDP Length */) |
+			BIT_ULL(41 /* Outer L3 Length */));
+
 	if (dev->rss_tag_as_xor == 0)
 		req->flags = NIX_LF_RSS_TAG_LSB_AS_ADDER;
 
@@ -105,6 +111,12 @@ nix_lf_switch_header_type_enable(struct otx2_eth_dev *dev, bool enable)
 
 	if (dev->npc_flow.switch_header_type == 0)
 		return 0;
+
+	if (dev->npc_flow.switch_header_type == OTX2_PRIV_FLAGS_LEN_90B &&
+	    !otx2_dev_is_sdp(dev)) {
+		otx2_err("chlen90b is not supported on non-SDP device");
+		return -EINVAL;
+	}
 
 	/* Notify AF about higig2 config */
 	req = otx2_mbox_alloc_msg_npc_set_pkind(mbox);
@@ -992,7 +1004,7 @@ otx2_nix_tx_queue_release(void *_txq)
 	otx2_nix_dbg("Releasing txq %u", txq->sq);
 
 	/* Flush and disable tm */
-	otx2_nix_tm_sw_xoff(txq, eth_dev->data->dev_started);
+	otx2_nix_sq_flush_pre(txq, eth_dev->data->dev_started);
 
 	/* Free sqb's and disable sq */
 	nix_sq_uninit(txq);
@@ -1001,6 +1013,7 @@ otx2_nix_tx_queue_release(void *_txq)
 		rte_mempool_free(txq->sqb_pool);
 		txq->sqb_pool = NULL;
 	}
+	otx2_nix_sq_flush_post(txq);
 	rte_free(txq);
 }
 
@@ -1132,10 +1145,12 @@ nix_store_queue_cfg_and_then_release(struct rte_eth_dev *eth_dev)
 	txq = (struct otx2_eth_txq **)eth_dev->data->tx_queues;
 	for (i = 0; i < nb_txq; i++) {
 		if (txq[i] == NULL) {
-			otx2_err("txq[%d] is already released", i);
-			goto fail;
+			tx_qconf[i].valid = false;
+			otx2_info("txq[%d] is already released", i);
+			continue;
 		}
 		memcpy(&tx_qconf[i], &txq[i]->qconf, sizeof(*tx_qconf));
+		tx_qconf[i].valid = true;
 		otx2_nix_tx_queue_release(txq[i]);
 		eth_dev->data->tx_queues[i] = NULL;
 	}
@@ -1143,10 +1158,12 @@ nix_store_queue_cfg_and_then_release(struct rte_eth_dev *eth_dev)
 	rxq = (struct otx2_eth_rxq **)eth_dev->data->rx_queues;
 	for (i = 0; i < nb_rxq; i++) {
 		if (rxq[i] == NULL) {
-			otx2_err("rxq[%d] is already released", i);
-			goto fail;
+			rx_qconf[i].valid = false;
+			otx2_info("rxq[%d] is already released", i);
+			continue;
 		}
 		memcpy(&rx_qconf[i], &rxq[i]->qconf, sizeof(*rx_qconf));
+		rx_qconf[i].valid = true;
 		otx2_nix_rx_queue_release(rxq[i]);
 		eth_dev->data->rx_queues[i] = NULL;
 	}
@@ -1201,6 +1218,8 @@ nix_restore_queue_cfg(struct rte_eth_dev *eth_dev)
 	 * queues are already setup in port_configure().
 	 */
 	for (i = 0; i < nb_txq; i++) {
+		if (!tx_qconf[i].valid)
+			continue;
 		rc = otx2_nix_tx_queue_setup(eth_dev, i, tx_qconf[i].nb_desc,
 					     tx_qconf[i].socket_id,
 					     &tx_qconf[i].conf.tx);
@@ -1216,6 +1235,8 @@ nix_restore_queue_cfg(struct rte_eth_dev *eth_dev)
 	free(tx_qconf); tx_qconf = NULL;
 
 	for (i = 0; i < nb_rxq; i++) {
+		if (!rx_qconf[i].valid)
+			continue;
 		rc = otx2_nix_rx_queue_setup(eth_dev, i, rx_qconf[i].nb_desc,
 					     rx_qconf[i].socket_id,
 					     &rx_qconf[i].conf.rx,
@@ -1592,11 +1613,6 @@ otx2_nix_configure(struct rte_eth_dev *eth_dev)
 		goto fail_configure;
 	}
 
-	if (conf->link_speeds & ETH_LINK_SPEED_FIXED) {
-		otx2_err("Setting link speed/duplex not supported");
-		goto fail_configure;
-	}
-
 	if (conf->dcb_capability_en == 1) {
 		otx2_err("dcb enable is not supported");
 		goto fail_configure;
@@ -1659,6 +1675,9 @@ otx2_nix_configure(struct rte_eth_dev *eth_dev)
 		otx2_err("Failed to init nix_lf rc=%d", rc);
 		goto fail_offloads;
 	}
+
+	otx2_nix_err_intr_enb_dis(eth_dev, true);
+	otx2_nix_ras_intr_enb_dis(eth_dev, true);
 
 	if (dev->ptp_en &&
 	    dev->npc_flow.switch_header_type == OTX2_PRIV_FLAGS_HIGIG) {
@@ -1773,6 +1792,13 @@ otx2_nix_configure(struct rte_eth_dev *eth_dev)
 		rte_eth_random_addr((uint8_t *)ea);
 
 	rte_ether_format_addr(ea_fmt, RTE_ETHER_ADDR_FMT_SIZE, ea);
+
+	/* Apply new link configurations if changed */
+	rc = otx2_apply_link_speed(eth_dev);
+	if (rc) {
+		otx2_err("Failed to set link configuration");
+		goto uninstall_mc_list;
+	}
 
 	otx2_nix_dbg("Configured port%d mac=%s nb_rxq=%d nb_txq=%d"
 		" rx_offloads=0x%" PRIx64 " tx_offloads=0x%" PRIx64 ""
@@ -2025,6 +2051,7 @@ static const struct eth_dev_ops otx2_eth_dev_ops = {
 	.link_update              = otx2_nix_link_update,
 	.tx_queue_setup           = otx2_nix_tx_queue_setup,
 	.tx_queue_release         = otx2_nix_tx_queue_release,
+	.tm_ops_get               = otx2_nix_tm_ops_get,
 	.rx_queue_setup           = otx2_nix_rx_queue_setup,
 	.rx_queue_release         = otx2_nix_rx_queue_release,
 	.dev_start                = otx2_nix_dev_start,
@@ -2070,6 +2097,7 @@ static const struct eth_dev_ops otx2_eth_dev_ops = {
 	.rx_descriptor_status     = otx2_nix_rx_descriptor_status,
 	.tx_descriptor_status     = otx2_nix_tx_descriptor_status,
 	.tx_done_cleanup          = otx2_nix_tx_done_cleanup,
+	.set_queue_rate_limit     = otx2_nix_tm_set_queue_rate_limit,
 	.pool_ops_supported       = otx2_nix_pool_ops_supported,
 	.filter_ctrl              = otx2_nix_dev_filter_ctrl,
 	.get_module_info          = otx2_nix_get_module_info,

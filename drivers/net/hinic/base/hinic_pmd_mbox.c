@@ -191,8 +191,7 @@ static int recv_vf_mbox_handler(struct hinic_mbox_func_to_func *func_to_func,
 						buf_out, out_size);
 		break;
 	default:
-		PMD_DRV_LOG(ERR, "No handler, mod = %d",
-				recv_mbox->mod);
+		PMD_DRV_LOG(ERR, "No handler, mod: %d", recv_mbox->mod);
 		rc = HINIC_MBOX_VF_CMD_ERROR;
 		break;
 	}
@@ -870,7 +869,7 @@ static int hinic_func_to_func_init(struct hinic_hwdev *hwdev)
 
 	err = alloc_mbox_info(func_to_func->mbox_resp);
 	if (err) {
-		PMD_DRV_LOG(ERR, "Allocating memory for mailbox responsing failed");
+		PMD_DRV_LOG(ERR, "Allocating memory for mailbox responding failed");
 		goto alloc_mbox_for_resp_err;
 	}
 

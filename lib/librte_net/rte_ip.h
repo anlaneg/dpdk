@@ -41,7 +41,7 @@ struct rte_ipv4_hdr {
 	rte_be16_t hdr_checksum;	/**< header checksum */
 	rte_be32_t src_addr;		/**< source address */
 	rte_be32_t dst_addr;		/**< destination address */
-} __attribute__((__packed__));
+} __rte_packed;
 
 /** Create IPv4 address */
 #define RTE_IPV4(a, b, c, d) ((uint32_t)(((a) & 0xff) << 24) | \
@@ -362,7 +362,7 @@ struct rte_ipv6_hdr {
 	uint8_t  hop_limits;	/**< Hop limits. */
 	uint8_t  src_addr[16];	/**< IP address of source host. */
 	uint8_t  dst_addr[16];	/**< IP address of destination host(s). */
-} __attribute__((__packed__));
+} __rte_packed;
 
 /* IPv6 vtc_flow: IPv / TC / flow_label */
 #define RTE_IPV6_HDR_FL_SHIFT 0
@@ -372,6 +372,8 @@ struct rte_ipv6_hdr {
 #define RTE_IPV6_HDR_DSCP_MASK	(0xfc << RTE_IPV6_HDR_TC_SHIFT)
 #define RTE_IPV6_HDR_ECN_MASK	(0x03 << RTE_IPV6_HDR_TC_SHIFT)
 #define RTE_IPV6_HDR_ECN_CE	RTE_IPV6_HDR_ECN_MASK
+
+#define RTE_IPV6_MIN_MTU 1280 /**< Minimum MTU for IPv6, see RFC 8200. */
 
 /**
  * Process the pseudo-header checksum of an IPv6 header.

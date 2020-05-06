@@ -33,6 +33,7 @@ struct mlx5_devx_mkey_attr {
 	uint32_t pd;
 	uint32_t log_entity_size;
 	uint32_t pg_access:1;
+	uint32_t relaxed_ordering:1;
 	struct mlx5_klm *klm_array;
 	int klm_num;
 };
@@ -182,7 +183,7 @@ struct mlx5_devx_tir_attr {
 	uint32_t rx_hash_fn:4;
 	uint32_t self_lb_block:2;
 	uint32_t transport_domain:24;
-	uint32_t rx_hash_toeplitz_key[10];
+	uint8_t rx_hash_toeplitz_key[MLX5_RSS_HASH_KEY_LEN];
 	struct mlx5_rx_hash_field_select rx_hash_field_selector_outer;
 	struct mlx5_rx_hash_field_select rx_hash_field_selector_inner;
 };

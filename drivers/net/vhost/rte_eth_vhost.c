@@ -36,6 +36,8 @@ enum {VIRTIO_RXQ, VIRTIO_TXQ, VIRTIO_QNUM};
 #define ETH_VHOST_IOMMU_SUPPORT		"iommu-support"
 #define ETH_VHOST_POSTCOPY_SUPPORT	"postcopy-support"
 #define ETH_VHOST_VIRTIO_NET_F_HOST_TSO "tso"
+#define ETH_VHOST_LINEAR_BUF  "linear-buffer"
+#define ETH_VHOST_EXT_BUF  "ext-buffer"
 #define VHOST_MAX_PKT_BURST 32
 
 //vhost驱动支持的参数
@@ -47,6 +49,8 @@ static const char *valid_arguments[] = {
 	ETH_VHOST_IOMMU_SUPPORT,
 	ETH_VHOST_POSTCOPY_SUPPORT,
 	ETH_VHOST_VIRTIO_NET_F_HOST_TSO,
+	ETH_VHOST_LINEAR_BUF,
+	ETH_VHOST_EXT_BUF,
 	NULL
 };
 
@@ -1095,17 +1099,14 @@ eth_dev_close(struct rte_eth_dev *dev)
 
 	eth_dev_stop(dev);
 
-	//socket关闭
-	rte_vhost_driver_unregister(internal->iface_name);
-
 	list = find_internal_resource(internal->iface_name);
-	if (!list)
-		return;
-
-	pthread_mutex_lock(&internal_list_lock);
-	TAILQ_REMOVE(&internal_list, list, next);
-	pthread_mutex_unlock(&internal_list_lock);
-	rte_free(list);
+	if (list) {
+		rte_vhost_driver_unregister(internal->iface_name);
+		pthread_mutex_lock(&internal_list_lock);
+		TAILQ_REMOVE(&internal_list, list, next);
+		pthread_mutex_unlock(&internal_list_lock);
+		rte_free(list);
+	}
 
 	//释放rx队列
 	if (dev->data->rx_queues)
@@ -1374,6 +1375,8 @@ eth_dev_vhost_create(struct rte_vdev_device *dev, char *iface_name,
 	internal->disable_flags = disable_flags;
 	data->dev_link = pmd_link;
 	data->dev_flags = RTE_ETH_DEV_INTR_LSC | RTE_ETH_DEV_CLOSE_REMOVE;
+	data->promiscuous = 1;
+	data->all_multicast = 1;
 
 	eth_dev->dev_ops = &ops;
 
@@ -1438,6 +1441,8 @@ rte_pmd_vhost_probe(struct rte_vdev_device *dev)
 	int iommu_support = 0;
 	int postcopy_support = 0;
 	int tso = 0;
+	int linear_buf = 0;
+	int ext_buf = 0;
 	struct rte_eth_dev *eth_dev;
 	const char *name = rte_vdev_device_name(dev);
 
@@ -1547,6 +1552,28 @@ rte_pmd_vhost_probe(struct rte_vdev_device *dev)
 		}
 	}
 
+	if (rte_kvargs_count(kvlist, ETH_VHOST_LINEAR_BUF) == 1) {
+		ret = rte_kvargs_process(kvlist,
+				ETH_VHOST_LINEAR_BUF,
+				&open_int, &linear_buf);
+		if (ret < 0)
+			goto out_free;
+
+		if (linear_buf == 1)
+			flags |= RTE_VHOST_USER_LINEARBUF_SUPPORT;
+	}
+
+	if (rte_kvargs_count(kvlist, ETH_VHOST_EXT_BUF) == 1) {
+		ret = rte_kvargs_process(kvlist,
+				ETH_VHOST_EXT_BUF,
+				&open_int, &ext_buf);
+		if (ret < 0)
+			goto out_free;
+
+		if (ext_buf == 1)
+			flags |= RTE_VHOST_USER_EXTBUF_SUPPORT;
+	}
+
 	//设置numa_node(如果any,则取当前core对应socket)
 	if (dev->device.numa_node == SOCKET_ID_ANY)
 		dev->device.numa_node = rte_socket_id();
@@ -1605,7 +1632,9 @@ RTE_PMD_REGISTER_PARAM_STRING(net_vhost,
 	"dequeue-zero-copy=<0|1> "
 	"iommu-support=<0|1> "
 	"postcopy-support=<0|1> "
-	"tso=<0|1>");
+	"tso=<0|1> "
+	"linear-buffer=<0|1> "
+	"ext-buffer=<0|1>");
 
 //注册vhost log模块
 RTE_INIT(vhost_init_log);

@@ -16,6 +16,7 @@ cc = meson.get_compiler('c')
 dpdk_conf = configuration_data()
 dpdk_libraries = []
 dpdk_static_libraries = []
+dpdk_graph_nodes = []
 dpdk_driver_classes = []
 dpdk_drivers = []
 dpdk_extra_ldflags = []
@@ -28,8 +29,8 @@ abi_version_file = files('ABI_VERSION')
 # able to be included in any file. We also store a global array of include dirs
 # for passing to pmdinfogen scripts
 global_inc = include_directories('.', 'config',
-	'lib/librte_eal/common/include',
-	'lib/librte_eal/@0@/eal/include'.format(host_machine.system()),
+	'lib/librte_eal/include',
+	'lib/librte_eal/@0@/include'.format(host_machine.system()),
 )
 subdir('config')
 

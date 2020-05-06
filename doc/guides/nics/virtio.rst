@@ -356,6 +356,13 @@ Below devargs are supported by the PCI virtio driver:
     a virtio device needs to work in vDPA mode.
     (Default: 0 (disabled))
 
+#.  ``speed``:
+
+    It is used to specify link speed of virtio device. Link speed is a part of
+    link status structure. It could be requested by application using
+    rte_eth_link_get_nowait function.
+    (Default: 10000 (10G))
+
 Below devargs are supported by the virtio-user vdev:
 
 #.  ``path``:
@@ -402,6 +409,14 @@ Below devargs are supported by the virtio-user vdev:
 
     It is used to enable virtio device packed virtqueue feature.
     (Default: 0 (disabled))
+
+#.  ``speed``:
+
+    It is used to specify link speed of virtio device. Link speed is a part of
+    link status structure. It could be requested by application using
+    rte_eth_link_get_nowait function.
+    (Default: 10000 (10G))
+
 
 Virtio paths Selection and Usage
 --------------------------------

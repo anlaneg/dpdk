@@ -170,6 +170,7 @@ enum index {
 	ITEM_FUZZY,
 	ITEM_FUZZY_THRESH,
 	ITEM_GTP,
+	ITEM_GTP_FLAGS,
 	ITEM_GTP_MSG_TYPE,
 	ITEM_GTP_TEID,
 	ITEM_GTPC,
@@ -342,6 +343,8 @@ enum index {
 	ACTION_SET_IPV4_DSCP_VALUE,
 	ACTION_SET_IPV6_DSCP,
 	ACTION_SET_IPV6_DSCP_VALUE,
+	ACTION_AGE,
+	ACTION_AGE_TIMEOUT,
 };
 
 /** Maximum size for pattern in struct rte_flow_item_raw. */
@@ -938,6 +941,7 @@ static const enum index item_gre_key[] = {
 };
 
 static const enum index item_gtp[] = {
+	ITEM_GTP_FLAGS,
 	ITEM_GTP_MSG_TYPE,
 	ITEM_GTP_TEID,
 	ITEM_NEXT,
@@ -1035,7 +1039,6 @@ static const enum index item_pppoes[] = {
 };
 
 static const enum index item_pppoe_proto_id[] = {
-	ITEM_PPPOE_PROTO_ID,
 	ITEM_NEXT,
 	ZERO,
 };
@@ -1144,6 +1147,7 @@ static const enum index next_action[] = {
 	ACTION_SET_META,
 	ACTION_SET_IPV4_DSCP,
 	ACTION_SET_IPV6_DSCP,
+	ACTION_AGE,
 	ZERO,
 };
 
@@ -1365,6 +1369,13 @@ static const enum index action_set_ipv4_dscp[] = {
 
 static const enum index action_set_ipv6_dscp[] = {
 	ACTION_SET_IPV6_DSCP_VALUE,
+	ACTION_NEXT,
+	ZERO,
+};
+
+static const enum index action_age[] = {
+	ACTION_AGE,
+	ACTION_AGE_TIMEOUT,
 	ACTION_NEXT,
 	ZERO,
 };
@@ -2347,12 +2358,18 @@ static const struct token token_list[] = {
 		.next = NEXT(item_gtp),
 		.call = parse_vc,
 	},
+	[ITEM_GTP_FLAGS] = {
+		.name = "v_pt_rsv_flags",
+		.help = "GTP flags",
+		.next = NEXT(item_gtp, NEXT_ENTRY(UNSIGNED), item_param),
+		.args = ARGS(ARGS_ENTRY(struct rte_flow_item_gtp,
+					v_pt_rsv_flags)),
+	},
 	[ITEM_GTP_MSG_TYPE] = {
 		.name = "msg_type",
 		.help = "GTP message type",
 		.next = NEXT(item_gtp, NEXT_ENTRY(UNSIGNED), item_param),
-		.args = ARGS(ARGS_ENTRY_HTON(struct rte_flow_item_gtp,
-					     msg_type)),
+		.args = ARGS(ARGS_ENTRY(struct rte_flow_item_gtp, msg_type)),
 	},
 	[ITEM_GTP_TEID] = {
 		.name = "teid",
@@ -2641,11 +2658,14 @@ static const struct token token_list[] = {
 					session_id)),
 	},
 	[ITEM_PPPOE_PROTO_ID] = {
-		.name = "proto_id",
+		.name = "pppoe_proto_id",
 		.help = "match PPPoE session protocol identifier",
 		.priv = PRIV_ITEM(PPPOE_PROTO_ID,
 				sizeof(struct rte_flow_item_pppoe_proto_id)),
-		.next = NEXT(item_pppoe_proto_id),
+		.next = NEXT(item_pppoe_proto_id, NEXT_ENTRY(UNSIGNED),
+			     item_param),
+		.args = ARGS(ARGS_ENTRY_HTON
+			     (struct rte_flow_item_pppoe_proto_id, proto_id)),
 		.call = parse_vc,
 	},
 	[ITEM_HIGIG2] = {
@@ -3682,6 +3702,22 @@ static const struct token token_list[] = {
 		.next = NEXT(action_set_ipv6_dscp, NEXT_ENTRY(UNSIGNED)),
 		.args = ARGS(ARGS_ENTRY
 			     (struct rte_flow_action_set_dscp, dscp)),
+		.call = parse_vc_conf,
+	},
+	[ACTION_AGE] = {
+		.name = "age",
+		.help = "set a specific metadata header",
+		.next = NEXT(action_age),
+		.priv = PRIV_ACTION(AGE,
+			sizeof(struct rte_flow_action_age)),
+		.call = parse_vc,
+	},
+	[ACTION_AGE_TIMEOUT] = {
+		.name = "timeout",
+		.help = "flow age timeout value",
+		.args = ARGS(ARGS_ENTRY_BF(struct rte_flow_action_age,
+					   timeout, 24)),
+		.next = NEXT(action_age, NEXT_ENTRY(UNSIGNED)),
 		.call = parse_vc_conf,
 	},
 };
@@ -6603,6 +6639,9 @@ cmd_set_raw_parsed(const struct buffer *in)
 		case RTE_FLOW_ITEM_TYPE_AH:
 			size = sizeof(struct rte_flow_item_ah);
 			proto = 0x33;
+			break;
+		case RTE_FLOW_ITEM_TYPE_GTP:
+			size = sizeof(struct rte_flow_item_gtp);
 			break;
 		case RTE_FLOW_ITEM_TYPE_PFCP:
 			size = sizeof(struct rte_flow_item_pfcp);

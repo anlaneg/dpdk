@@ -584,7 +584,7 @@ ice_fdir_prof_rm(struct ice_pf *pf, enum ice_fltr_ptype ptype, bool is_tunnel)
 						     hw_prof->vsi_h[i]);
 			ice_rem_prof_id_flow(hw, ICE_BLK_FD,
 					     vsi_num, ptype);
-			ice_flow_rem_entry(hw,
+			ice_flow_rem_entry(hw, ICE_BLK_FD,
 					   hw_prof->entry_h[i][is_tunnel]);
 			hw_prof->entry_h[i][is_tunnel] = 0;
 		}
@@ -876,7 +876,7 @@ ice_fdir_hw_tbl_conf(struct ice_pf *pf, struct ice_vsi *vsi,
 err_add_entry:
 	vsi_num = ice_get_hw_vsi_num(hw, vsi->idx);
 	ice_rem_prof_id_flow(hw, ICE_BLK_FD, vsi_num, prof_id);
-	ice_flow_rem_entry(hw, entry_1);
+	ice_flow_rem_entry(hw, ICE_BLK_FD, entry_1);
 err_add_prof:
 	ice_flow_rem_prof(hw, ICE_BLK_FD, prof_id);
 
@@ -1061,6 +1061,9 @@ ice_fdir_init(struct ice_adapter *ad)
 	struct ice_flow_parser *parser;
 	int ret;
 
+	if (ad->hw.dcf_enabled)
+		return 0;
+
 	ret = ice_fdir_setup(pf);
 	if (ret)
 		return ret;
@@ -1080,6 +1083,9 @@ ice_fdir_uninit(struct ice_adapter *ad)
 {
 	struct ice_pf *pf = &ad->pf;
 	struct ice_flow_parser *parser;
+
+	if (ad->hw.dcf_enabled)
+		return;
 
 	if (ad->active_pkg_type == ICE_PKG_TYPE_COMMS)
 		parser = &ice_fdir_parser_comms;

@@ -149,7 +149,7 @@ typedef struct VhostUserMsg {
 	} payload;
 	int fds[VHOST_MEMORY_MAX_NREGIONS];//对端传送过来的fd
 	int fd_num;
-} __attribute((packed)) VhostUserMsg;
+} __rte_packed VhostUserMsg;
 
 //即VhostUserMsg的头部(payload之前占用的字节）
 #define VHOST_USER_HDR_SIZE offsetof(VhostUserMsg, payload.u64)

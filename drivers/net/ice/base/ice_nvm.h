@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: BSD-3-Clause
- * Copyright(c) 2001-2019
+ * Copyright(c) 2001-2020
  */
 
 #ifndef _ICE_NVM_H_
@@ -84,6 +84,12 @@ ice_nvm_access_get_features(struct ice_nvm_access_cmd *cmd,
 enum ice_status
 ice_handle_nvm_access(struct ice_hw *hw, struct ice_nvm_access_cmd *cmd,
 		      union ice_nvm_access_data *data);
+enum ice_status
+ice_read_flat_nvm(struct ice_hw *hw, u32 offset, u32 *length, u8 *data,
+		  bool read_shadow_ram);
+enum ice_status
+ice_get_pfa_module_tlv(struct ice_hw *hw, u16 *module_tlv, u16 *module_tlv_len,
+		       u16 module_type);
 enum ice_status ice_init_nvm(struct ice_hw *hw);
 enum ice_status ice_read_sr_word(struct ice_hw *hw, u16 offset, u16 *data);
 enum ice_status

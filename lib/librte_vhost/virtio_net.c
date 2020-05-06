@@ -44,6 +44,36 @@ is_valid_virt_queue_idx(uint32_t idx, int is_tx, uint32_t nr_vring)
 	return (is_tx ^ (idx & 1)) == 0 && idx < nr_vring;
 }
 
+static inline void
+do_data_copy_enqueue(struct virtio_net *dev, struct vhost_virtqueue *vq)
+{
+	struct batch_copy_elem *elem = vq->batch_copy_elems;
+	uint16_t count = vq->batch_copy_nb_elems;
+	int i;
+
+	for (i = 0; i < count; i++) {
+		rte_memcpy(elem[i].dst, elem[i].src, elem[i].len);
+		vhost_log_cache_write_iova(dev, vq, elem[i].log_addr,
+					   elem[i].len);
+		PRINT_PACKET(dev, (uintptr_t)elem[i].dst, elem[i].len, 0);
+	}
+
+	vq->batch_copy_nb_elems = 0;
+}
+
+static inline void
+do_data_copy_dequeue(struct vhost_virtqueue *vq)
+{
+	struct batch_copy_elem *elem = vq->batch_copy_elems;
+	uint16_t count = vq->batch_copy_nb_elems;
+	int i;
+
+	for (i = 0; i < count; i++)
+		rte_memcpy(elem[i].dst, elem[i].src, elem[i].len);
+
+	vq->batch_copy_nb_elems = 0;
+}
+
 static __rte_always_inline void
 do_flush_shadow_used_ring_split(struct virtio_net *dev,
 			struct vhost_virtqueue *vq,
@@ -189,6 +219,11 @@ vhost_flush_enqueue_batch_packed(struct virtio_net *dev,
 	uint16_t i;
 	uint16_t flags;
 
+	if (vq->shadow_used_idx) {
+		do_data_copy_enqueue(dev, vq);
+		vhost_flush_enqueue_shadow_packed(dev, vq);
+	}
+
 	flags = PACKED_DESC_ENQUEUE_USED_FLAG(vq->used_wrap_counter);
 
 	vhost_for_each_try_unroll(i, 0, PACKED_BATCH_SIZE) {
@@ -328,37 +363,6 @@ vhost_shadow_dequeue_single_packed_inorder(struct vhost_virtqueue *vq,
 	vq_inc_last_used_packed(vq, count);
 }
 
-static inline void
-do_data_copy_enqueue(struct virtio_net *dev, struct vhost_virtqueue *vq)
-{
-	struct batch_copy_elem *elem = vq->batch_copy_elems;
-	uint16_t count = vq->batch_copy_nb_elems;
-	int i;
-
-	for (i = 0; i < count; i++) {
-		rte_memcpy(elem[i].dst, elem[i].src, elem[i].len);
-		vhost_log_cache_write_iova(dev, vq, elem[i].log_addr,
-					   elem[i].len);
-		PRINT_PACKET(dev, (uintptr_t)elem[i].dst, elem[i].len, 0);
-	}
-
-	vq->batch_copy_nb_elems = 0;
-}
-
-//实现batch信息的copy
-static inline void
-do_data_copy_dequeue(struct vhost_virtqueue *vq)
-{
-	struct batch_copy_elem *elem = vq->batch_copy_elems;
-	uint16_t count = vq->batch_copy_nb_elems;
-	int i;
-
-	for (i = 0; i < count; i++)
-		rte_memcpy(elem[i].dst, elem[i].src, elem[i].len);
-
-	vq->batch_copy_nb_elems = 0;
-}
-
 static __rte_always_inline void
 vhost_shadow_enqueue_single_packed(struct virtio_net *dev,
 				   struct vhost_virtqueue *vq,
@@ -383,25 +387,6 @@ vhost_shadow_enqueue_single_packed(struct virtio_net *dev,
 	if (vq->shadow_aligned_idx >= PACKED_BATCH_SIZE) {
 		do_data_copy_enqueue(dev, vq);
 		vhost_flush_enqueue_shadow_packed(dev, vq);
-	}
-}
-
-static __rte_always_inline void
-vhost_flush_dequeue_packed(struct virtio_net *dev,
-			   struct vhost_virtqueue *vq)
-{
-	int shadow_count;
-	if (!vq->shadow_used_idx)
-		return;
-
-	shadow_count = vq->last_used_idx - vq->shadow_last_used_idx;
-	if (shadow_count <= 0)
-		shadow_count += vq->size;
-
-	if ((uint32_t)shadow_count >= (vq->size - MAX_PKT_BURST)) {
-		do_data_copy_dequeue(vq);
-		vhost_flush_dequeue_shadow_packed(dev, vq);
-		vhost_vring_call_packed(dev, vq);
 	}
 }
 
@@ -2117,7 +2102,7 @@ virtio_dev_tx_batch_packed_zmbuf(struct virtio_net *dev,
 
 	vhost_for_each_try_unroll(i, 0, PACKED_BATCH_SIZE) {
 		zmbufs[i]->mbuf = pkts[i];
-		zmbufs[i]->desc_idx = avail_idx + i;
+		zmbufs[i]->desc_idx = ids[i];
 		zmbufs[i]->desc_count = 1;
 	}
 
@@ -2158,7 +2143,7 @@ virtio_dev_tx_single_packed_zmbuf(struct virtio_net *dev,
 		return -1;
 	}
 	zmbuf->mbuf = *pkts;
-	zmbuf->desc_idx = vq->last_avail_idx;
+	zmbuf->desc_idx = buf_id;
 	zmbuf->desc_count = desc_count;
 
 	rte_mbuf_refcnt_update(*pkts, 1);
@@ -2246,20 +2231,6 @@ virtio_dev_tx_packed_zmbuf(struct virtio_net *dev,
 	return pkt_idx;
 }
 
-static __rte_always_inline bool
-next_desc_is_avail(const struct vhost_virtqueue *vq)
-{
-	bool wrap_counter = vq->avail_wrap_counter;
-	uint16_t next_used_idx = vq->last_used_idx + 1;
-
-	if (next_used_idx >= vq->size) {
-		next_used_idx -= vq->size;
-		wrap_counter ^= 1;
-	}
-
-	return desc_is_avail(&vq->desc_packed[next_used_idx], wrap_counter);
-}
-
 static __rte_noinline uint16_t
 virtio_dev_tx_packed(struct virtio_net *dev,
 		     struct vhost_virtqueue *vq,
@@ -2276,7 +2247,6 @@ virtio_dev_tx_packed(struct virtio_net *dev,
 		if (remained >= PACKED_BATCH_SIZE) {
 			if (!virtio_dev_tx_batch_packed(dev, vq, mbuf_pool,
 							&pkts[pkt_idx])) {
-				vhost_flush_dequeue_packed(dev, vq);
 				pkt_idx += PACKED_BATCH_SIZE;
 				remained -= PACKED_BATCH_SIZE;
 				continue;
@@ -2286,7 +2256,6 @@ virtio_dev_tx_packed(struct virtio_net *dev,
 		if (virtio_dev_tx_single_packed(dev, vq, mbuf_pool,
 						&pkts[pkt_idx]))
 			break;
-		vhost_flush_dequeue_packed(dev, vq);
 		pkt_idx++;
 		remained--;
 
@@ -2295,15 +2264,8 @@ virtio_dev_tx_packed(struct virtio_net *dev,
 	if (vq->shadow_used_idx) {
 		do_data_copy_dequeue(vq);
 
-		if (remained && !next_desc_is_avail(vq)) {
-			/*
-			 * The guest may be waiting to TX some buffers to
-			 * enqueue more to avoid bufferfloat, so we try to
-			 * reduce latency here.
-			 */
-			vhost_flush_dequeue_shadow_packed(dev, vq);
-			vhost_vring_call_packed(dev, vq);
-		}
+		vhost_flush_dequeue_shadow_packed(dev, vq);
+		vhost_vring_call_packed(dev, vq);
 	}
 
 	return pkt_idx;

@@ -113,6 +113,24 @@ rte_log_get_level(uint32_t type)
 	return rte_logs.dynamic_types[type].loglevel;
 }
 
+bool
+rte_log_can_log(uint32_t logtype, uint32_t level)
+{
+	int log_level;
+
+	if (level > rte_log_get_global_level())
+		return false;
+
+	log_level = rte_log_get_level(logtype);
+	if (log_level < 0)
+		return false;
+
+	if (level > (uint32_t)log_level)
+		return false;
+
+	return true;
+}
+
 //设置模块的日志级别
 int
 rte_log_set_level(uint32_t type, uint32_t level)
@@ -307,7 +325,7 @@ rte_log_register_type_and_pick_level(const char *name, uint32_t level_def)
 			continue;
 
 		if (opt_ll->pattern) {
-			if (fnmatch(opt_ll->pattern, name, 0))
+			if (fnmatch(opt_ll->pattern, name, 0) == 0)
 				level = opt_ll->level;
 		} else {
 			if (regexec(&opt_ll->re_match, name, 0, NULL, 0) == 0)
@@ -422,11 +440,9 @@ rte_vlog(uint32_t level, uint32_t logtype, const char *format, va_list ap)
 	FILE *f = rte_log_get_stream();
 	int ret;
 
-	if (level > rte_logs.level)
-		return 0;
 	if (logtype >= rte_logs.dynamic_types_len)
 		return -1;
-	if (level > rte_logs.dynamic_types[logtype].loglevel)
+	if (!rte_log_can_log(logtype, level))
 		return 0;
 
 	/* save loglevel and logtype in a global per-lcore variable */

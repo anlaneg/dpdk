@@ -315,7 +315,7 @@ hns3_init_tx_queue_hw(struct hns3_tx_queue *txq)
 		       HNS3_CFG_DESC_NUM(txq->nb_tx_desc));
 }
 
-static void
+void
 hns3_enable_all_queues(struct hns3_hw *hw, bool en)
 {
 	uint16_t nb_rx_q = hw->data->nb_rx_queues;
@@ -543,6 +543,26 @@ hns3_queue_intr_enable(struct hns3_hw *hw, uint16_t queue_id, bool en)
 	hns3_write_dev(hw, addr, value);
 }
 
+/*
+ * Enable all rx queue interrupt when in interrupt rx mode.
+ * This api was called before enable queue rx&tx (in normal start or reset
+ * recover scenes), used to fix hardware rx queue interrupt enable was clear
+ * when FLR.
+ */
+void
+hns3_dev_all_rx_queue_intr_enable(struct hns3_hw *hw, bool en)
+{
+	struct rte_eth_dev *dev = &rte_eth_devices[hw->data->port_id];
+	uint16_t nb_rx_q = hw->data->nb_rx_queues;
+	int i;
+
+	if (dev->data->dev_conf.intr_conf.rxq == 0)
+		return;
+
+	for (i = 0; i < nb_rx_q; i++)
+		hns3_queue_intr_enable(hw, i, en);
+}
+
 int
 hns3_dev_rx_queue_intr_enable(struct rte_eth_dev *dev, uint16_t queue_id)
 {
@@ -742,6 +762,10 @@ hns3_start_tx_queues(struct hns3_adapter *hns)
 	hns3_init_tx_ring_tc(hns);
 }
 
+/*
+ * Start all queues.
+ * Note: just init and setup queues, and don't enable queue rx&tx.
+ */
 int
 hns3_start_queues(struct hns3_adapter *hns, bool reset_queue)
 {
@@ -763,7 +787,6 @@ hns3_start_queues(struct hns3_adapter *hns, bool reset_queue)
 	}
 
 	hns3_start_tx_queues(hns);
-	hns3_enable_all_queues(hw, true);
 
 	return 0;
 }
@@ -1582,7 +1605,7 @@ hns3_recv_pkts(void *rx_queue, struct rte_mbuf **rx_pkts, uint16_t nb_pkts)
 		first_seg->pkt_len = pkt_len;
 		first_seg->port = rxq->port_id;
 		first_seg->hash.rss = rte_le_to_cpu_32(rxd.rx.rss_hash);
-		first_seg->ol_flags |= PKT_RX_RSS_HASH;
+		first_seg->ol_flags = PKT_RX_RSS_HASH;
 		if (unlikely(hns3_get_bit(bd_base_info, HNS3_RXD_LUM_B))) {
 			first_seg->hash.fdir.hi =
 				rte_le_to_cpu_32(rxd.rx.fd_id);
@@ -1599,7 +1622,8 @@ hns3_recv_pkts(void *rx_queue, struct rte_mbuf **rx_pkts, uint16_t nb_pkts)
 								  ol_info);
 
 		if (bd_base_info & BIT(HNS3_RXD_L3L4P_B))
-			hns3_rx_set_cksum_flag(rxm, first_seg->packet_type,
+			hns3_rx_set_cksum_flag(first_seg,
+					       first_seg->packet_type,
 					       cksum_err);
 
 		first_seg->vlan_tci = rte_le_to_cpu_16(rxd.rx.vlan_tag);

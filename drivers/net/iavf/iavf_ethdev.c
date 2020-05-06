@@ -27,11 +27,13 @@
 
 #include "iavf.h"
 #include "iavf_rxtx.h"
+#include "iavf_generic_flow.h"
 
 static int iavf_dev_configure(struct rte_eth_dev *dev);
 static int iavf_dev_start(struct rte_eth_dev *dev);
 static void iavf_dev_stop(struct rte_eth_dev *dev);
 static void iavf_dev_close(struct rte_eth_dev *dev);
+static int iavf_dev_reset(struct rte_eth_dev *dev);
 static int iavf_dev_info_get(struct rte_eth_dev *dev,
 			     struct rte_eth_dev_info *dev_info);
 static const uint32_t *iavf_dev_supported_ptypes_get(struct rte_eth_dev *dev);
@@ -67,6 +69,11 @@ static int iavf_dev_rx_queue_intr_enable(struct rte_eth_dev *dev,
 					uint16_t queue_id);
 static int iavf_dev_rx_queue_intr_disable(struct rte_eth_dev *dev,
 					 uint16_t queue_id);
+static int iavf_dev_filter_ctrl(struct rte_eth_dev *dev,
+		     enum rte_filter_type filter_type,
+		     enum rte_filter_op filter_op,
+		     void *arg);
+
 
 int iavf_logtype_init;
 int iavf_logtype_driver;
@@ -91,6 +98,7 @@ static const struct eth_dev_ops iavf_eth_dev_ops = {
 	.dev_start                  = iavf_dev_start,
 	.dev_stop                   = iavf_dev_stop,
 	.dev_close                  = iavf_dev_close,
+	.dev_reset                  = iavf_dev_reset,
 	.dev_infos_get              = iavf_dev_info_get,
 	.dev_supported_ptypes_get   = iavf_dev_supported_ptypes_get,
 	.link_update                = iavf_dev_link_update,
@@ -125,6 +133,7 @@ static const struct eth_dev_ops iavf_eth_dev_ops = {
 	.mtu_set                    = iavf_dev_mtu_set,
 	.rx_queue_intr_enable       = iavf_dev_rx_queue_intr_enable,
 	.rx_queue_intr_disable      = iavf_dev_rx_queue_intr_disable,
+	.filter_ctrl                = iavf_dev_filter_ctrl,
 };
 
 static int
@@ -1074,7 +1083,7 @@ iavf_dev_stats_get(struct rte_eth_dev *dev, struct rte_eth_stats *stats)
 	} else {
 		PMD_DRV_LOG(ERR, "Get statistics failed");
 	}
-	return -EIO;
+	return ret;
 }
 
 static int
@@ -1236,6 +1245,14 @@ iavf_init_vf(struct rte_eth_dev *dev)
 			goto err_rss;
 		}
 	}
+
+	if (vf->vf_res->vf_cap_flags & VIRTCHNL_VF_OFFLOAD_RX_FLEX_DESC) {
+		if (iavf_get_supported_rxdid(adapter) != 0) {
+			PMD_INIT_LOG(ERR, "failed to do get supported rxdid");
+			goto err_rss;
+		}
+	}
+
 	return 0;
 err_rss:
 	rte_free(vf->rss_key);
@@ -1291,12 +1308,41 @@ iavf_dev_interrupt_handler(void *param)
 }
 
 static int
+iavf_dev_filter_ctrl(struct rte_eth_dev *dev,
+		     enum rte_filter_type filter_type,
+		     enum rte_filter_op filter_op,
+		     void *arg)
+{
+	int ret = 0;
+
+	if (!dev)
+		return -EINVAL;
+
+	switch (filter_type) {
+	case RTE_ETH_FILTER_GENERIC:
+		if (filter_op != RTE_ETH_FILTER_GET)
+			return -EINVAL;
+		*(const void **)arg = &iavf_flow_ops;
+		break;
+	default:
+		PMD_DRV_LOG(WARNING, "Filter type (%d) not supported",
+			    filter_type);
+		ret = -EINVAL;
+		break;
+	}
+
+	return ret;
+}
+
+
+static int
 iavf_dev_init(struct rte_eth_dev *eth_dev)
 {
 	struct iavf_adapter *adapter =
 		IAVF_DEV_PRIVATE_TO_ADAPTER(eth_dev->data->dev_private);
 	struct iavf_hw *hw = IAVF_DEV_PRIVATE_TO_HW(adapter);
 	struct rte_pci_device *pci_dev = RTE_ETH_DEV_TO_PCI(eth_dev);
+	int ret = 0;
 
 	PMD_INIT_FUNC_TRACE();
 
@@ -1334,6 +1380,9 @@ iavf_dev_init(struct rte_eth_dev *eth_dev)
 		return -1;
 	}
 
+	/* set default ptype table */
+	adapter->ptype_tbl = iavf_get_default_ptype_table();
+
 	/* copy mac addr */
 	eth_dev->data->mac_addrs = rte_zmalloc(
 		"iavf_mac", RTE_ETHER_ADDR_LEN * IAVF_NUM_MACADDR_MAX, 0);
@@ -1363,6 +1412,12 @@ iavf_dev_init(struct rte_eth_dev *eth_dev)
 	/* configure and enable device interrupt */
 	iavf_enable_irq0(hw);
 
+	ret = iavf_flow_init(adapter);
+	if (ret) {
+		PMD_INIT_LOG(ERR, "Failed to initialize flow");
+		return ret;
+	}
+
 	return 0;
 }
 
@@ -1372,6 +1427,8 @@ iavf_dev_close(struct rte_eth_dev *dev)
 	struct iavf_hw *hw = IAVF_DEV_PRIVATE_TO_HW(dev->data->dev_private);
 	struct rte_pci_device *pci_dev = RTE_ETH_DEV_TO_PCI(dev);
 	struct rte_intr_handle *intr_handle = &pci_dev->intr_handle;
+	struct iavf_adapter *adapter =
+		IAVF_DEV_PRIVATE_TO_ADAPTER(dev->data->dev_private);
 
 	iavf_dev_stop(dev);
 	iavf_shutdown_adminq(hw);
@@ -1382,6 +1439,8 @@ iavf_dev_close(struct rte_eth_dev *dev)
 	rte_intr_callback_unregister(intr_handle,
 				     iavf_dev_interrupt_handler, dev);
 	iavf_disable_irq0(hw);
+
+	iavf_flow_uninit(adapter);
 }
 
 static int
@@ -1416,9 +1475,66 @@ iavf_dev_uninit(struct rte_eth_dev *dev)
 	return 0;
 }
 
+/*
+ * Reset VF device only to re-initialize resources in PMD layer
+ */
+static int
+iavf_dev_reset(struct rte_eth_dev *dev)
+{
+	int ret;
+
+	ret = iavf_dev_uninit(dev);
+	if (ret)
+		return ret;
+
+	return iavf_dev_init(dev);
+}
+
+static int
+iavf_dcf_cap_check_handler(__rte_unused const char *key,
+			   const char *value, __rte_unused void *opaque)
+{
+	if (strcmp(value, "dcf"))
+		return -1;
+
+	return 0;
+}
+
+static int
+iavf_dcf_cap_selected(struct rte_devargs *devargs)
+{
+	struct rte_kvargs *kvlist;
+	const char *key = "cap";
+	int ret = 0;
+
+	if (devargs == NULL)
+		return 0;
+
+	kvlist = rte_kvargs_parse(devargs->args, NULL);
+	if (kvlist == NULL)
+		return 0;
+
+	if (!rte_kvargs_count(kvlist, key))
+		goto exit;
+
+	/* dcf capability selected when there's a key-value pair: cap=dcf */
+	if (rte_kvargs_process(kvlist, key,
+			       iavf_dcf_cap_check_handler, NULL) < 0)
+		goto exit;
+
+	ret = 1;
+
+exit:
+	rte_kvargs_free(kvlist);
+	return ret;
+}
+
 static int eth_iavf_pci_probe(struct rte_pci_driver *pci_drv __rte_unused,
 			     struct rte_pci_device *pci_dev)
 {
+	if (iavf_dcf_cap_selected(pci_dev->device.devargs))
+		return 1;
+
 	return rte_eth_dev_pci_generic_probe(pci_dev,
 		sizeof(struct iavf_adapter), iavf_dev_init);
 }
@@ -1439,6 +1555,7 @@ static struct rte_pci_driver rte_iavf_pmd = {
 RTE_PMD_REGISTER_PCI(net_iavf, rte_iavf_pmd);
 RTE_PMD_REGISTER_PCI_TABLE(net_iavf, pci_id_iavf_map);
 RTE_PMD_REGISTER_KMOD_DEP(net_iavf, "* igb_uio | vfio-pci");
+RTE_PMD_REGISTER_PARAM_STRING(net_iavf, "cap=dcf");
 RTE_INIT(iavf_init_log)
 {
 	iavf_logtype_init = rte_log_register("pmd.net.iavf.init");

@@ -17,6 +17,8 @@ endif
 SRCS-y += mlx5_devx_cmds.c
 SRCS-y += mlx5_common.c
 SRCS-y += mlx5_nl.c
+SRCS-y += mlx5_common_mp.c
+SRCS-y += mlx5_common_mr.c
 ifeq ($(CONFIG_RTE_IBVERBS_LINK_DLOPEN),y)
 INSTALL-y-lib += $(LIB_GLUE)
 endif
@@ -149,6 +151,11 @@ mlx5_autoconf.h.new: $(RTE_SDK)/buildtools/auto-config-h.sh
 		HAVE_IBV_DEVX_ASYNC \
 		infiniband/mlx5dv.h \
 		func mlx5dv_devx_obj_query_async \
+		$(AUTOCONF_OUTPUT)
+	$Q sh -- '$<' '$@' \
+		HAVE_IBV_DEVX_QP \
+		infiniband/mlx5dv.h \
+		func mlx5dv_devx_qp_query \
 		$(AUTOCONF_OUTPUT)
 	$Q sh -- '$<' '$@' \
 		HAVE_MLX5DV_DR_ACTION_DEST_DEVX_TIR \

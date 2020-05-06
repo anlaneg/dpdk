@@ -401,6 +401,11 @@ pci_scan_one(const char *dirname, const struct rte_pci_addr *addr)
 						 */
 						RTE_LOG(ERR, EAL, "Unexpected device scan at %s!\n",
 							filename);
+					else if (dev2->device.devargs !=
+						 dev->device.devargs) {
+						rte_devargs_remove(dev2->device.devargs);
+						pci_name_set(dev2);
+					}
 				}
 				free(dev);
 			}
@@ -587,7 +592,40 @@ pci_device_iommu_support_va(const struct rte_pci_device *dev)
 bool
 pci_device_iommu_support_va(__rte_unused const struct rte_pci_device *dev)
 {
-	return false;
+	/*
+	 * IOMMU is always present on a PowerNV host (IOMMUv2).
+	 * IOMMU is also present in a KVM/QEMU VM (IOMMUv1) but is not
+	 * currently supported by DPDK. Test for our current environment
+	 * and report VA support as appropriate.
+	 */
+
+	char *line = NULL;
+	size_t len = 0;
+	char filename[PATH_MAX] = "/proc/cpuinfo";
+	FILE *fp = fopen(filename, "r");
+	bool ret = false;
+
+	if (fp == NULL) {
+		RTE_LOG(ERR, EAL, "%s(): can't open %s: %s\n",
+			__func__, filename, strerror(errno));
+		return ret;
+	}
+
+	/* Check for a PowerNV platform */
+	while (getline(&line, &len, fp) != -1) {
+		if (strstr(line, "platform") != NULL)
+			continue;
+
+		if (strstr(line, "PowerNV") != NULL) {
+			RTE_LOG(DEBUG, EAL, "Running on a PowerNV system\n");
+			ret = true;
+			break;
+		}
+	}
+
+	free(line);
+	fclose(fp);
+	return ret;
 }
 #else
 bool

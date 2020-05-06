@@ -395,7 +395,7 @@ sym_session_clear(int driver_id, struct rte_cryptodev_sym_session *sess)
 	rte_mempool_put(pool, priv);
 }
 
-static __rte_always_inline int32_t __hot
+static __rte_always_inline int32_t __rte_hot
 otx2_cpt_enqueue_req(const struct otx2_cpt_qp *qp,
 		     struct pending_queue *pend_q,
 		     struct cpt_request_info *req)
@@ -443,7 +443,7 @@ otx2_cpt_enqueue_req(const struct otx2_cpt_qp *qp,
 	return 0;
 }
 
-static __rte_always_inline int32_t __hot
+static __rte_always_inline int32_t __rte_hot
 otx2_cpt_enqueue_asym(struct otx2_cpt_qp *qp,
 		      struct rte_crypto_op *op,
 		      struct pending_queue *pend_q)
@@ -526,7 +526,7 @@ req_fail:
 	return ret;
 }
 
-static __rte_always_inline int __hot
+static __rte_always_inline int __rte_hot
 otx2_cpt_enqueue_sym(struct otx2_cpt_qp *qp, struct rte_crypto_op *op,
 		     struct pending_queue *pend_q)
 {
@@ -569,7 +569,7 @@ otx2_cpt_enqueue_sym(struct otx2_cpt_qp *qp, struct rte_crypto_op *op,
 	return ret;
 }
 
-static __rte_always_inline int __hot
+static __rte_always_inline int __rte_hot
 otx2_cpt_enqueue_sym_sessless(struct otx2_cpt_qp *qp, struct rte_crypto_op *op,
 			      struct pending_queue *pend_q)
 {
@@ -1204,7 +1204,6 @@ struct rte_cryptodev_ops otx2_cpt_ops = {
 	.stats_reset = NULL,
 	.queue_pair_setup = otx2_cpt_queue_pair_setup,
 	.queue_pair_release = otx2_cpt_queue_pair_release,
-	.queue_pair_count = NULL,
 
 	/* Symmetric crypto ops */
 	.sym_session_get_size = otx2_cpt_sym_session_get_size,

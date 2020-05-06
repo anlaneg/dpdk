@@ -55,8 +55,8 @@ mlx5_flow_meter_action_create(struct mlx5_priv *priv,
 	MLX5_SET(flow_meter_parameters,
 		 attr, ebs_mantissa, srtcm->ebs_mantissa);
 	mtr_init.next_table =
-		fm->attr.transfer ? fm->mfts->transfer.tbl->obj :
-		    fm->attr.egress ? fm->mfts->egress.tbl->obj :
+		fm->transfer ? fm->mfts->transfer.tbl->obj :
+		    fm->egress ? fm->mfts->egress.tbl->obj :
 				       fm->mfts->ingress.tbl->obj;
 	mtr_init.reg_c_index = priv->mtr_color_reg - REG_C_0;
 	mtr_init.flow_meter_parameter = fm->mfts->fmp;
@@ -631,6 +631,7 @@ mlx5_flow_meter_create(struct rte_eth_dev *dev, uint32_t meter_id,
 			};
 	int ret;
 	unsigned int i;
+	uint32_t idx = 0;
 
 	if (!priv->mtr_en)
 		return -rte_mtr_error_set(error, ENOTSUP,
@@ -647,16 +648,18 @@ mlx5_flow_meter_create(struct rte_eth_dev *dev, uint32_t meter_id,
 					  RTE_MTR_ERROR_TYPE_METER_PROFILE_ID,
 					  NULL, "Meter profile id not valid.");
 	/* Allocate the flow meter memory. */
-	fm = rte_calloc(__func__, 1,
-			sizeof(struct mlx5_flow_meter), RTE_CACHE_LINE_SIZE);
+	fm = mlx5_ipool_zmalloc(priv->sh->ipool[MLX5_IPOOL_MTR], &idx);
 	if (fm == NULL)
 		return -rte_mtr_error_set(error, ENOMEM,
 					  RTE_MTR_ERROR_TYPE_UNSPECIFIED, NULL,
 					  "Memory alloc failed for meter.");
+	fm->idx = idx;
 	/* Fill the flow meter parameters. */
 	fm->meter_id = meter_id;
 	fm->profile = fmp;
-	fm->params = *params;
+	memcpy(fm->action, params->action, sizeof(params->action));
+	fm->stats_mask = params->stats_mask;
+
 	/* Alloc policer counters. */
 	for (i = 0; i < RTE_DIM(fm->policer_stats.cnt); i++) {
 		fm->policer_stats.cnt[i] = mlx5_counter_alloc(dev);
@@ -683,7 +686,7 @@ error:
 	for (i = 0; i < RTE_DIM(fm->policer_stats.cnt); i++)
 		if (fm->policer_stats.cnt[i])
 			mlx5_counter_free(dev, fm->policer_stats.cnt[i]);
-	rte_free(fm);
+	mlx5_ipool_free(priv->sh->ipool[MLX5_IPOOL_MTR], idx);
 	return -rte_mtr_error_set(error, -ret,
 				  RTE_MTR_ERROR_TYPE_UNSPECIFIED,
 				  NULL, "Failed to create devx meter.");
@@ -746,7 +749,7 @@ mlx5_flow_meter_destroy(struct rte_eth_dev *dev, uint32_t meter_id,
 	/* Free meter flow table */
 	mlx5_flow_destroy_policer_rules(dev, fm, &attr);
 	mlx5_flow_destroy_mtr_tbls(dev, fm->mfts);
-	rte_free(fm);
+	mlx5_ipool_free(priv->sh->ipool[MLX5_IPOOL_MTR], fm->idx);
 	return 0;
 }
 
@@ -1049,7 +1052,7 @@ mlx5_flow_meter_stats_read(struct rte_eth_dev *dev,
 						 &bytes);
 			if (ret)
 				goto error;
-			if (fm->params.action[i] == MTR_POLICER_ACTION_DROP) {
+			if (fm->action[i] == MTR_POLICER_ACTION_DROP) {
 				pkts_dropped += pkts;
 				bytes_dropped += bytes;
 			}
@@ -1180,7 +1183,9 @@ mlx5_flow_meter_attach(struct mlx5_priv *priv, uint32_t meter_id,
 	}
 	if (!fm->ref_cnt++) {
 		MLX5_ASSERT(!fm->mfts->meter_action);
-		fm->attr = *attr;
+		fm->ingress = attr->ingress;
+		fm->egress = attr->egress;
+		fm->transfer = attr->transfer;
 		/* This also creates the meter object. */
 		fm->mfts->meter_action = mlx5_flow_meter_action_create(priv,
 								       fm);
@@ -1188,9 +1193,9 @@ mlx5_flow_meter_attach(struct mlx5_priv *priv, uint32_t meter_id,
 			goto error_detach;
 	} else {
 		MLX5_ASSERT(fm->mfts->meter_action);
-		if (attr->transfer != fm->attr.transfer ||
-		    attr->ingress != fm->attr.ingress ||
-		    attr->egress != fm->attr.egress) {
+		if (attr->transfer != fm->transfer ||
+		    attr->ingress != fm->ingress ||
+		    attr->egress != fm->egress) {
 			DRV_LOG(ERR, "meter I/O attributes do not "
 				"match flow I/O attributes.");
 			goto error_detach;
@@ -1215,15 +1220,15 @@ error:
 void
 mlx5_flow_meter_detach(struct mlx5_flow_meter *fm)
 {
-	const struct rte_flow_attr attr = { 0 };
-
 	MLX5_ASSERT(fm->ref_cnt);
 	if (--fm->ref_cnt)
 		return;
 	if (fm->mfts->meter_action)
 		mlx5_glue->destroy_flow_action(fm->mfts->meter_action);
 	fm->mfts->meter_action = NULL;
-	fm->attr = attr;
+	fm->ingress = 0;
+	fm->egress = 0;
+	fm->transfer = 0;
 }
 
 /**
@@ -1274,7 +1279,7 @@ mlx5_flow_meter_flush(struct rte_eth_dev *dev, struct rte_mtr_error *error)
 		/* Free meter flow table. */
 		mlx5_flow_destroy_policer_rules(dev, fm, &attr);
 		mlx5_flow_destroy_mtr_tbls(dev, fm->mfts);
-		rte_free(fm);
+		mlx5_ipool_free(priv->sh->ipool[MLX5_IPOOL_MTR], fm->idx);
 	}
 	TAILQ_FOREACH_SAFE(fmp, fmps, next, tmp) {
 		/* Check unused. */

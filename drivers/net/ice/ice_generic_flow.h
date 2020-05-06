@@ -30,6 +30,11 @@
 #define ICE_PROT_VXLAN             (1ULL << 19)
 #define ICE_PROT_NVGRE             (1ULL << 20)
 #define ICE_PROT_GTPU              (1ULL << 21)
+#define ICE_PROT_PPPOE_S           (1ULL << 22)
+#define ICE_PROT_ESP               (1ULL << 23)
+#define ICE_PROT_AH                (1ULL << 24)
+#define ICE_PROT_L2TPV3OIP         (1ULL << 25)
+#define ICE_PROT_PFCP              (1ULL << 26)
 
 /* field */
 
@@ -49,6 +54,13 @@
 #define ICE_NVGRE_TNI              (1ULL << 50)
 #define ICE_GTPU_TEID              (1ULL << 49)
 #define ICE_GTPU_QFI               (1ULL << 48)
+#define ICE_PPPOE_SESSION          (1ULL << 47)
+#define ICE_PPPOE_PROTO            (1ULL << 46)
+#define ICE_ESP_SPI                (1ULL << 45)
+#define ICE_AH_SPI                 (1ULL << 44)
+#define ICE_L2TPV3OIP_SESSION_ID   (1ULL << 43)
+#define ICE_PFCP_SEID              (1ULL << 42)
+#define ICE_PFCP_S_FIELD           (1ULL << 41)
 
 /* input set */
 
@@ -177,6 +189,20 @@
 	(ICE_PROT_GTPU | ICE_GTPU_TEID)
 #define ICE_INSET_GTPU_QFI \
 	(ICE_PROT_GTPU | ICE_GTPU_QFI)
+#define ICE_INSET_PPPOE_SESSION \
+	(ICE_PROT_PPPOE_S | ICE_PPPOE_SESSION)
+#define ICE_INSET_PPPOE_PROTO \
+	(ICE_PROT_PPPOE_S | ICE_PPPOE_PROTO)
+#define ICE_INSET_ESP_SPI \
+	(ICE_PROT_ESP | ICE_ESP_SPI)
+#define ICE_INSET_AH_SPI \
+	(ICE_PROT_AH | ICE_AH_SPI)
+#define ICE_INSET_L2TPV3OIP_SESSION_ID \
+	(ICE_PROT_L2TPV3OIP | ICE_L2TPV3OIP_SESSION_ID)
+#define ICE_INSET_PFCP_S_FIELD \
+	(ICE_PROT_PFCP | ICE_PFCP_S_FIELD)
+#define ICE_INSET_PFCP_SEID \
+	(ICE_PROT_PFCP | ICE_PFCP_S_FIELD | ICE_PFCP_SEID)
 
 /* empty pattern */
 extern enum rte_flow_item_type pattern_empty[];
@@ -349,7 +375,9 @@ extern enum rte_flow_item_type pattern_eth_pppoed[];
 extern enum rte_flow_item_type pattern_eth_vlan_pppoed[];
 extern enum rte_flow_item_type pattern_eth_qinq_pppoed[];
 extern enum rte_flow_item_type pattern_eth_pppoes[];
+extern enum rte_flow_item_type pattern_eth_pppoes_proto[];
 extern enum rte_flow_item_type pattern_eth_vlan_pppoes[];
+extern enum rte_flow_item_type pattern_eth_vlan_pppoes_proto[];
 extern enum rte_flow_item_type pattern_eth_qinq_pppoes[];
 extern enum rte_flow_item_type pattern_eth_pppoes_ipv4[];
 extern enum rte_flow_item_type pattern_eth_vlan_pppoes_ipv4[];
@@ -381,6 +409,25 @@ extern enum rte_flow_item_type pattern_eth_qinq_pppoes_ipv6_sctp[];
 extern enum rte_flow_item_type pattern_eth_pppoes_ipv6_icmp6[];
 extern enum rte_flow_item_type pattern_eth_vlan_pppoes_ipv6_icmp6[];
 extern enum rte_flow_item_type pattern_eth_qinq_pppoes_ipv6_icmp6[];
+
+/* ESP */
+extern enum rte_flow_item_type pattern_eth_ipv4_esp[];
+extern enum rte_flow_item_type pattern_eth_ipv4_udp_esp[];
+extern enum rte_flow_item_type pattern_eth_ipv6_esp[];
+extern enum rte_flow_item_type pattern_eth_ipv6_udp_esp[];
+
+/* AH */
+extern enum rte_flow_item_type pattern_eth_ipv4_ah[];
+extern enum rte_flow_item_type pattern_eth_ipv6_ah[];
+extern enum rte_flow_item_type pattern_eth_ipv6_udp_ah[];
+
+/* L2TP */
+extern enum rte_flow_item_type pattern_eth_ipv4_l2tp[];
+extern enum rte_flow_item_type pattern_eth_ipv6_l2tp[];
+
+/* PFCP */
+extern enum rte_flow_item_type pattern_eth_ipv4_pfcp[];
+extern enum rte_flow_item_type pattern_eth_ipv6_pfcp[];
 
 struct ice_adapter;
 
@@ -417,6 +464,20 @@ struct ice_pattern_match_item {
 	void *meta;
 };
 
+enum ice_flow_redirect_type {
+	ICE_FLOW_REDIRECT_VSI,
+};
+
+struct ice_flow_redirect {
+	enum ice_flow_redirect_type type;
+	union {
+		struct {
+			uint16_t vsi_handle;
+			uint16_t new_vsi_num;
+		};
+	};
+};
+
 typedef int (*engine_init_t)(struct ice_adapter *ad);
 typedef void (*engine_uninit_t)(struct ice_adapter *ad);
 typedef int (*engine_create_t)(struct ice_adapter *ad,
@@ -430,6 +491,9 @@ typedef int (*engine_query_t)(struct ice_adapter *ad,
 		struct rte_flow *flow,
 		struct rte_flow_query_count *count,
 		struct rte_flow_error *error);
+typedef int(*engine_redirect_t)(struct ice_adapter *ad,
+				struct rte_flow *flow,
+				struct ice_flow_redirect *redirect);
 typedef void (*engine_free_t) (struct rte_flow *flow);
 typedef int (*parse_pattern_action_t)(struct ice_adapter *ad,
 		struct ice_pattern_match_item *array,
@@ -447,6 +511,7 @@ struct ice_flow_engine {
 	engine_create_t create;
 	engine_destroy_t destroy;
 	engine_query_t query_count;
+	engine_redirect_t redirect;
 	engine_free_t free;
 	enum ice_flow_engine_type type;
 };
@@ -485,4 +550,7 @@ ice_search_pattern_match_item(const struct rte_flow_item pattern[],
 		struct ice_pattern_match_item *array,
 		uint32_t array_len,
 		struct rte_flow_error *error);
+int
+ice_flow_redirect(struct ice_adapter *ad,
+		  struct ice_flow_redirect *rd);
 #endif

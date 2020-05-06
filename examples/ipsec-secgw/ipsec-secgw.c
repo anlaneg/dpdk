@@ -2,6 +2,7 @@
  * Copyright(c) 2016 Intel Corporation
  */
 
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
@@ -14,9 +15,11 @@
 #include <sys/queue.h>
 #include <stdarg.h>
 #include <errno.h>
+#include <signal.h>
 #include <getopt.h>
 
 #include <rte_common.h>
+#include <rte_bitmap.h>
 #include <rte_byteorder.h>
 #include <rte_log.h>
 #include <rte_eal.h>
@@ -41,20 +44,21 @@
 #include <rte_jhash.h>
 #include <rte_cryptodev.h>
 #include <rte_security.h>
+#include <rte_eventdev.h>
 #include <rte_ip.h>
 #include <rte_ip_frag.h>
 
+#include "event_helper.h"
 #include "ipsec.h"
+#include "ipsec_worker.h"
 #include "parser.h"
 #include "sad.h"
 
-#define RTE_LOGTYPE_IPSEC RTE_LOGTYPE_USER1
+volatile bool force_quit;
 
 #define MAX_JUMBO_PKT_LEN  9600
 
 #define MEMPOOL_CACHE_SIZE 256
-
-#define NB_MBUF	(32000)
 
 #define CDEV_QUEUE_DESC 2048
 #define CDEV_MAP_ENTRIES 16384
@@ -64,16 +68,12 @@
 
 #define BURST_TX_DRAIN_US 100 /* TX drain every ~100us */
 
-#define NB_SOCKETS 4
-
 /* Configure how many packets ahead to prefetch, when reading packets */
 #define PREFETCH_OFFSET	3
 
 #define MAX_RX_QUEUE_PER_LCORE 16
 
 #define MAX_LCORE_PARAMS 1024
-
-#define UNPROTECTED_PORT(port) (unprotected_port_mask & (1 << portid))
 
 /*
  * Configurable number of RX/TX ring descriptors
@@ -82,29 +82,6 @@
 #define IPSEC_SECGW_TX_DESC_DEFAULT 1024
 static uint16_t nb_rxd = IPSEC_SECGW_RX_DESC_DEFAULT;
 static uint16_t nb_txd = IPSEC_SECGW_TX_DESC_DEFAULT;
-
-#if RTE_BYTE_ORDER != RTE_LITTLE_ENDIAN
-#define __BYTES_TO_UINT64(a, b, c, d, e, f, g, h) \
-	(((uint64_t)((a) & 0xff) << 56) | \
-	((uint64_t)((b) & 0xff) << 48) | \
-	((uint64_t)((c) & 0xff) << 40) | \
-	((uint64_t)((d) & 0xff) << 32) | \
-	((uint64_t)((e) & 0xff) << 24) | \
-	((uint64_t)((f) & 0xff) << 16) | \
-	((uint64_t)((g) & 0xff) << 8)  | \
-	((uint64_t)(h) & 0xff))
-#else
-#define __BYTES_TO_UINT64(a, b, c, d, e, f, g, h) \
-	(((uint64_t)((h) & 0xff) << 56) | \
-	((uint64_t)((g) & 0xff) << 48) | \
-	((uint64_t)((f) & 0xff) << 40) | \
-	((uint64_t)((e) & 0xff) << 32) | \
-	((uint64_t)((d) & 0xff) << 24) | \
-	((uint64_t)((c) & 0xff) << 16) | \
-	((uint64_t)((b) & 0xff) << 8) | \
-	((uint64_t)(a) & 0xff))
-#endif
-#define ETHADDR(a, b, c, d, e, f) (__BYTES_TO_UINT64(a, b, c, d, e, f, 0, 0))
 
 #define ETHADDR_TO_UINT64(addr) __BYTES_TO_UINT64( \
 		(addr)->addr_bytes[0], (addr)->addr_bytes[1], \
@@ -117,11 +94,6 @@ static uint16_t nb_txd = IPSEC_SECGW_TX_DESC_DEFAULT;
 
 #define MTU_TO_FRAMELEN(x)	((x) + RTE_ETHER_HDR_LEN + RTE_ETHER_CRC_LEN)
 
-/* port/source ethernet addr and destination ethernet addr */
-struct ethaddr_info {
-	uint64_t src, dst;
-};
-
 struct ethaddr_info ethaddr_tbl[RTE_MAX_ETHPORTS] = {
 	{ 0, ETHADDR(0x00, 0x16, 0x3e, 0x7e, 0x94, 0x9a) },
 	{ 0, ETHADDR(0x00, 0x16, 0x3e, 0x22, 0xa1, 0xd9) },
@@ -129,14 +101,24 @@ struct ethaddr_info ethaddr_tbl[RTE_MAX_ETHPORTS] = {
 	{ 0, ETHADDR(0x00, 0x16, 0x3e, 0x49, 0x9e, 0xdd) }
 };
 
+struct flow_info flow_info_tbl[RTE_MAX_ETHPORTS];
+
 #define CMD_LINE_OPT_CONFIG		"config"
 #define CMD_LINE_OPT_SINGLE_SA		"single-sa"
 #define CMD_LINE_OPT_CRYPTODEV_MASK	"cryptodev_mask"
+#define CMD_LINE_OPT_TRANSFER_MODE	"transfer-mode"
+#define CMD_LINE_OPT_SCHEDULE_TYPE	"event-schedule-type"
 #define CMD_LINE_OPT_RX_OFFLOAD		"rxoffload"
 #define CMD_LINE_OPT_TX_OFFLOAD		"txoffload"
 #define CMD_LINE_OPT_REASSEMBLE		"reassemble"
 #define CMD_LINE_OPT_MTU		"mtu"
 #define CMD_LINE_OPT_FRAG_TTL		"frag-ttl"
+
+#define CMD_LINE_ARG_EVENT	"event"
+#define CMD_LINE_ARG_POLL	"poll"
+#define CMD_LINE_ARG_ORDERED	"ordered"
+#define CMD_LINE_ARG_ATOMIC	"atomic"
+#define CMD_LINE_ARG_PARALLEL	"parallel"
 
 enum {
 	/* long options mapped to a short option */
@@ -148,6 +130,8 @@ enum {
 	CMD_LINE_OPT_CONFIG_NUM,
 	CMD_LINE_OPT_SINGLE_SA_NUM,
 	CMD_LINE_OPT_CRYPTODEV_MASK_NUM,
+	CMD_LINE_OPT_TRANSFER_MODE_NUM,
+	CMD_LINE_OPT_SCHEDULE_TYPE_NUM,
 	CMD_LINE_OPT_RX_OFFLOAD_NUM,
 	CMD_LINE_OPT_TX_OFFLOAD_NUM,
 	CMD_LINE_OPT_REASSEMBLE_NUM,
@@ -159,6 +143,8 @@ static const struct option lgopts[] = {
 	{CMD_LINE_OPT_CONFIG, 1, 0, CMD_LINE_OPT_CONFIG_NUM},
 	{CMD_LINE_OPT_SINGLE_SA, 1, 0, CMD_LINE_OPT_SINGLE_SA_NUM},
 	{CMD_LINE_OPT_CRYPTODEV_MASK, 1, 0, CMD_LINE_OPT_CRYPTODEV_MASK_NUM},
+	{CMD_LINE_OPT_TRANSFER_MODE, 1, 0, CMD_LINE_OPT_TRANSFER_MODE_NUM},
+	{CMD_LINE_OPT_SCHEDULE_TYPE, 1, 0, CMD_LINE_OPT_SCHEDULE_TYPE_NUM},
 	{CMD_LINE_OPT_RX_OFFLOAD, 1, 0, CMD_LINE_OPT_RX_OFFLOAD_NUM},
 	{CMD_LINE_OPT_TX_OFFLOAD, 1, 0, CMD_LINE_OPT_TX_OFFLOAD_NUM},
 	{CMD_LINE_OPT_REASSEMBLE, 1, 0, CMD_LINE_OPT_REASSEMBLE_NUM},
@@ -167,15 +153,16 @@ static const struct option lgopts[] = {
 	{NULL, 0, 0, 0}
 };
 
+uint32_t unprotected_port_mask;
+uint32_t single_sa_idx;
 /* mask of enabled ports */
 static uint32_t enabled_port_mask;
 static uint64_t enabled_cryptodev_mask = UINT64_MAX;
-static uint32_t unprotected_port_mask;
 static int32_t promiscuous_on = 1;
 static int32_t numa_on = 1; /**< NUMA is enabled by default. */
 static uint32_t nb_lcores;
 static uint32_t single_sa;
-static uint32_t single_sa_idx;
+static uint32_t nb_bufs_in_pool;
 
 /*
  * RX/TX HW offload capabilities to enable/use on ethernet ports.
@@ -261,7 +248,7 @@ static struct rte_eth_conf port_conf = {
 	},
 };
 
-static struct socket_ctx socket_ctx[NB_SOCKETS];
+struct socket_ctx socket_ctx[NB_SOCKETS];
 
 /*
  * Determine is multi-segment support required:
@@ -982,12 +969,12 @@ process_pkts(struct lcore_conf *qconf, struct rte_mbuf **pkts,
 	prepare_traffic(pkts, &traffic, nb_pkts);
 
 	if (unlikely(single_sa)) {
-		if (UNPROTECTED_PORT(portid))
+		if (is_unprotected_port(portid))
 			process_pkts_inbound_nosp(&qconf->inbound, &traffic);
 		else
 			process_pkts_outbound_nosp(&qconf->outbound, &traffic);
 	} else {
-		if (UNPROTECTED_PORT(portid))
+		if (is_unprotected_port(portid))
 			process_pkts_inbound(&qconf->inbound, &traffic);
 		else
 			process_pkts_outbound(&qconf->outbound, &traffic);
@@ -1098,8 +1085,8 @@ drain_outbound_crypto_queues(const struct lcore_conf *qconf,
 }
 
 /* main processing loop */
-static int32_t
-main_loop(__attribute__((unused)) void *dummy)
+void
+ipsec_poll_mode_worker(void)
 {
 	struct rte_mbuf *pkts[MAX_PKT_BURST];
 	uint32_t lcore_id;
@@ -1143,13 +1130,13 @@ main_loop(__attribute__((unused)) void *dummy)
 		RTE_LOG(ERR, IPSEC,
 			"SAD cache init on lcore %u, failed with code: %d\n",
 			lcore_id, rc);
-		return rc;
+		return;
 	}
 
 	if (qconf->nb_rx_queue == 0) {
 		RTE_LOG(DEBUG, IPSEC, "lcore %u has nothing to do\n",
 			lcore_id);
-		return 0;
+		return;
 	}
 
 	RTE_LOG(INFO, IPSEC, "entering main loop on lcore %u\n", lcore_id);
@@ -1162,7 +1149,7 @@ main_loop(__attribute__((unused)) void *dummy)
 			lcore_id, portid, queueid);
 	}
 
-	while (1) {
+	while (!force_quit) {
 		cur_tsc = rte_rdtsc();
 
 		/* TX queue buffer drain */
@@ -1186,7 +1173,7 @@ main_loop(__attribute__((unused)) void *dummy)
 				process_pkts(qconf, pkts, nb_rx, portid);
 
 			/* dequeue and process completed crypto-ops */
-			if (UNPROTECTED_PORT(portid))
+			if (is_unprotected_port(portid))
 				drain_inbound_crypto_queues(qconf,
 					&qconf->inbound);
 			else
@@ -1196,13 +1183,41 @@ main_loop(__attribute__((unused)) void *dummy)
 	}
 }
 
+int
+check_flow_params(uint16_t fdir_portid, uint8_t fdir_qid)
+{
+	uint16_t i;
+	uint16_t portid;
+	uint8_t queueid;
+
+	for (i = 0; i < nb_lcore_params; ++i) {
+		portid = lcore_params_array[i].port_id;
+		if (portid == fdir_portid) {
+			queueid = lcore_params_array[i].queue_id;
+			if (queueid == fdir_qid)
+				break;
+		}
+
+		if (i == nb_lcore_params - 1)
+			return -1;
+	}
+
+	return 1;
+}
+
 static int32_t
-check_params(void)
+check_poll_mode_params(struct eh_conf *eh_conf)
 {
 	uint8_t lcore;
 	uint16_t portid;
 	uint16_t i;
 	int32_t socket_id;
+
+	if (!eh_conf)
+		return -EINVAL;
+
+	if (eh_conf->mode != EH_PKT_TRANSFER_MODE_POLL)
+		return 0;
 
 	if (lcore_params == NULL) {
 		printf("Error: No port/queue/core mappings\n");
@@ -1286,10 +1301,13 @@ print_usage(const char *prgname)
 		" [-e]"
 		" [-a]"
 		" [-c]"
+		" [-s NUMBER_OF_MBUFS_IN_PKT_POOL]"
 		" -f CONFIG_FILE"
 		" --config (port,queue,lcore)[,(port,queue,lcore)]"
 		" [--single-sa SAIDX]"
 		" [--cryptodev_mask MASK]"
+		" [--transfer-mode MODE]"
+		" [--event-schedule-type TYPE]"
 		" [--" CMD_LINE_OPT_RX_OFFLOAD " RX_OFFLOAD_MASK]"
 		" [--" CMD_LINE_OPT_TX_OFFLOAD " TX_OFFLOAD_MASK]"
 		" [--" CMD_LINE_OPT_REASSEMBLE " REASSEMBLE_TABLE_SIZE]"
@@ -1307,12 +1325,30 @@ print_usage(const char *prgname)
 		"  -a enables SA SQN atomic behaviour\n"
 		"  -c specifies inbound SAD cache size,\n"
 		"     zero value disables the cache (default value: 128)\n"
+		"  -s number of mbufs in packet pool, if not specified number\n"
+		"     of mbufs will be calculated based on number of cores,\n"
+		"     ports and crypto queues\n"
 		"  -f CONFIG_FILE: Configuration file\n"
-		"  --config (port,queue,lcore): Rx queue configuration\n"
-		"  --single-sa SAIDX: Use single SA index for outbound traffic,\n"
-		"                     bypassing the SP\n"
+		"  --config (port,queue,lcore): Rx queue configuration. In poll\n"
+		"                               mode determines which queues from\n"
+		"                               which ports are mapped to which cores.\n"
+		"                               In event mode this option is not used\n"
+		"                               as packets are dynamically scheduled\n"
+		"                               to cores by HW.\n"
+		"  --single-sa SAIDX: In poll mode use single SA index for\n"
+		"                     outbound traffic, bypassing the SP\n"
+		"                     In event mode selects driver submode,\n"
+		"                     SA index value is ignored\n"
 		"  --cryptodev_mask MASK: Hexadecimal bitmask of the crypto\n"
 		"                         devices to configure\n"
+		"  --transfer-mode MODE\n"
+		"               \"poll\"  : Packet transfer via polling (default)\n"
+		"               \"event\" : Packet transfer via event device\n"
+		"  --event-schedule-type TYPE queue schedule type, used only when\n"
+		"                             transfer mode is set to event\n"
+		"               \"ordered\"  : Ordered (default)\n"
+		"               \"atomic\"   : Atomic\n"
+		"               \"parallel\" : Parallel\n"
 		"  --" CMD_LINE_OPT_RX_OFFLOAD
 		": bitmask of the RX HW offload capabilities to enable/use\n"
 		"                         (DEV_RX_OFFLOAD_*)\n"
@@ -1447,8 +1483,45 @@ print_app_sa_prm(const struct app_sa_prm *prm)
 	printf("Frag TTL: %" PRIu64 " ns\n", frag_ttl_ns);
 }
 
+static int
+parse_transfer_mode(struct eh_conf *conf, const char *optarg)
+{
+	if (!strcmp(CMD_LINE_ARG_POLL, optarg))
+		conf->mode = EH_PKT_TRANSFER_MODE_POLL;
+	else if (!strcmp(CMD_LINE_ARG_EVENT, optarg))
+		conf->mode = EH_PKT_TRANSFER_MODE_EVENT;
+	else {
+		printf("Unsupported packet transfer mode\n");
+		return -EINVAL;
+	}
+
+	return 0;
+}
+
+static int
+parse_schedule_type(struct eh_conf *conf, const char *optarg)
+{
+	struct eventmode_conf *em_conf = NULL;
+
+	/* Get eventmode conf */
+	em_conf = conf->mode_params;
+
+	if (!strcmp(CMD_LINE_ARG_ORDERED, optarg))
+		em_conf->ext_params.sched_type = RTE_SCHED_TYPE_ORDERED;
+	else if (!strcmp(CMD_LINE_ARG_ATOMIC, optarg))
+		em_conf->ext_params.sched_type = RTE_SCHED_TYPE_ATOMIC;
+	else if (!strcmp(CMD_LINE_ARG_PARALLEL, optarg))
+		em_conf->ext_params.sched_type = RTE_SCHED_TYPE_PARALLEL;
+	else {
+		printf("Unsupported queue schedule type\n");
+		return -EINVAL;
+	}
+
+	return 0;
+}
+
 static int32_t
-parse_args(int32_t argc, char **argv)
+parse_args(int32_t argc, char **argv, struct eh_conf *eh_conf)
 {
 	int opt;
 	int64_t ret;
@@ -1459,7 +1532,7 @@ parse_args(int32_t argc, char **argv)
 
 	argvopt = argv;
 
-	while ((opt = getopt_long(argc, argvopt, "aelp:Pu:f:j:w:c:",
+	while ((opt = getopt_long(argc, argvopt, "aelp:Pu:f:j:w:c:s:",
 				lgopts, &option_index)) != EOF) {
 
 		switch (opt) {
@@ -1493,6 +1566,19 @@ parse_args(int32_t argc, char **argv)
 			cfgfile = optarg;
 			f_present = 1;
 			break;
+
+		case 's':
+			ret = parse_decimal(optarg);
+			if (ret < 0) {
+				printf("Invalid number of buffers in a pool: "
+					"%s\n", optarg);
+				print_usage(prgname);
+				return -1;
+			}
+
+			nb_bufs_in_pool = ret;
+			break;
+
 		case 'j':
 			ret = parse_decimal(optarg);
 			if (ret < RTE_MBUF_DEFAULT_BUF_SIZE ||
@@ -1546,6 +1632,7 @@ parse_args(int32_t argc, char **argv)
 			/* else */
 			single_sa = 1;
 			single_sa_idx = ret;
+			eh_conf->ipsec_mode = EH_IPSEC_MODE_TYPE_DRIVER;
 			printf("Configured with single SA index %u\n",
 					single_sa_idx);
 			break;
@@ -1560,6 +1647,25 @@ parse_args(int32_t argc, char **argv)
 			/* else */
 			enabled_cryptodev_mask = ret;
 			break;
+
+		case CMD_LINE_OPT_TRANSFER_MODE_NUM:
+			ret = parse_transfer_mode(eh_conf, optarg);
+			if (ret < 0) {
+				printf("Invalid packet transfer mode\n");
+				print_usage(prgname);
+				return -1;
+			}
+			break;
+
+		case CMD_LINE_OPT_SCHEDULE_TYPE_NUM:
+			ret = parse_schedule_type(eh_conf, optarg);
+			if (ret < 0) {
+				printf("Invalid queue schedule type\n");
+				print_usage(prgname);
+				return -1;
+			}
+			break;
+
 		case CMD_LINE_OPT_RX_OFFLOAD_NUM:
 			ret = parse_mask(optarg, &dev_rx_offload);
 			if (ret != 0) {
@@ -1845,12 +1951,12 @@ check_cryptodev_mask(uint8_t cdev_id)
 	return -1;
 }
 
-static int32_t
-cryptodevs_init(void)
+static uint16_t
+cryptodevs_init(uint16_t req_queue_num)
 {
 	struct rte_cryptodev_config dev_conf;
 	struct rte_cryptodev_qp_conf qp_conf;
-	uint16_t idx, max_nb_qps, qp, i;
+	uint16_t idx, max_nb_qps, qp, total_nb_qps, i;
 	int16_t cdev_id;
 	struct rte_hash_parameters params = { 0 };
 
@@ -1878,6 +1984,7 @@ cryptodevs_init(void)
 	printf("lcore/cryptodev/qp mappings:\n");
 
 	idx = 0;
+	total_nb_qps = 0;
 	for (cdev_id = 0; cdev_id < rte_cryptodev_count(); cdev_id++) {
 		struct rte_cryptodev_info cdev_info;
 
@@ -1908,9 +2015,11 @@ cryptodevs_init(void)
 			i++;
 		}
 
+		qp = RTE_MIN(max_nb_qps, RTE_MAX(req_queue_num, qp));
 		if (qp == 0)
 			continue;
 
+		total_nb_qps += qp;
 		dev_conf.socket_id = rte_cryptodev_socket_id(cdev_id);
 		dev_conf.nb_queue_pairs = qp;
 		dev_conf.ff_disable = RTE_CRYPTODEV_FF_ASYMMETRIC_CRYPTO;
@@ -1943,7 +2052,7 @@ cryptodevs_init(void)
 
 	printf("\n");
 
-	return 0;
+	return total_nb_qps;
 }
 
 static void
@@ -2432,16 +2541,200 @@ reassemble_init(void)
 	return rc;
 }
 
+static void
+create_default_ipsec_flow(uint16_t port_id, uint64_t rx_offloads)
+{
+	struct rte_flow_action action[2];
+	struct rte_flow_item pattern[2];
+	struct rte_flow_attr attr = {0};
+	struct rte_flow_error err;
+	struct rte_flow *flow;
+	int ret;
+
+	if (!(rx_offloads & DEV_RX_OFFLOAD_SECURITY))
+		return;
+
+	/* Add the default rte_flow to enable SECURITY for all ESP packets */
+
+	pattern[0].type = RTE_FLOW_ITEM_TYPE_ESP;
+	pattern[0].spec = NULL;
+	pattern[0].mask = NULL;
+	pattern[0].last = NULL;
+	pattern[1].type = RTE_FLOW_ITEM_TYPE_END;
+
+	action[0].type = RTE_FLOW_ACTION_TYPE_SECURITY;
+	action[0].conf = NULL;
+	action[1].type = RTE_FLOW_ACTION_TYPE_END;
+	action[1].conf = NULL;
+
+	attr.ingress = 1;
+
+	ret = rte_flow_validate(port_id, &attr, pattern, action, &err);
+	if (ret)
+		return;
+
+	flow = rte_flow_create(port_id, &attr, pattern, action, &err);
+	if (flow == NULL)
+		return;
+
+	flow_info_tbl[port_id].rx_def_flow = flow;
+	RTE_LOG(INFO, IPSEC,
+		"Created default flow enabling SECURITY for all ESP traffic on port %d\n",
+		port_id);
+}
+
+static void
+signal_handler(int signum)
+{
+	if (signum == SIGINT || signum == SIGTERM) {
+		printf("\n\nSignal %d received, preparing to exit...\n",
+				signum);
+		force_quit = true;
+	}
+}
+
+static void
+ev_mode_sess_verify(struct ipsec_sa *sa, int nb_sa)
+{
+	struct rte_ipsec_session *ips;
+	int32_t i;
+
+	if (!sa || !nb_sa)
+		return;
+
+	for (i = 0; i < nb_sa; i++) {
+		ips = ipsec_get_primary_session(&sa[i]);
+		if (ips->type != RTE_SECURITY_ACTION_TYPE_INLINE_PROTOCOL)
+			rte_exit(EXIT_FAILURE, "Event mode supports only "
+				 "inline protocol sessions\n");
+	}
+
+}
+
+static int32_t
+check_event_mode_params(struct eh_conf *eh_conf)
+{
+	struct eventmode_conf *em_conf = NULL;
+	struct lcore_params *params;
+	uint16_t portid;
+
+	if (!eh_conf || !eh_conf->mode_params)
+		return -EINVAL;
+
+	/* Get eventmode conf */
+	em_conf = eh_conf->mode_params;
+
+	if (eh_conf->mode == EH_PKT_TRANSFER_MODE_POLL &&
+	    em_conf->ext_params.sched_type != SCHED_TYPE_NOT_SET) {
+		printf("error: option --event-schedule-type applies only to "
+		       "event mode\n");
+		return -EINVAL;
+	}
+
+	if (eh_conf->mode != EH_PKT_TRANSFER_MODE_EVENT)
+		return 0;
+
+	/* Set schedule type to ORDERED if it wasn't explicitly set by user */
+	if (em_conf->ext_params.sched_type == SCHED_TYPE_NOT_SET)
+		em_conf->ext_params.sched_type = RTE_SCHED_TYPE_ORDERED;
+
+	/*
+	 * Event mode currently supports only inline protocol sessions.
+	 * If there are other types of sessions configured then exit with
+	 * error.
+	 */
+	ev_mode_sess_verify(sa_in, nb_sa_in);
+	ev_mode_sess_verify(sa_out, nb_sa_out);
+
+
+	/* Option --config does not apply to event mode */
+	if (nb_lcore_params > 0) {
+		printf("error: option --config applies only to poll mode\n");
+		return -EINVAL;
+	}
+
+	/*
+	 * In order to use the same port_init routine for both poll and event
+	 * modes initialize lcore_params with one queue for each eth port
+	 */
+	lcore_params = lcore_params_array;
+	RTE_ETH_FOREACH_DEV(portid) {
+		if ((enabled_port_mask & (1 << portid)) == 0)
+			continue;
+
+		params = &lcore_params[nb_lcore_params++];
+		params->port_id = portid;
+		params->queue_id = 0;
+		params->lcore_id = rte_get_next_lcore(0, 0, 1);
+	}
+
+	return 0;
+}
+
+static void
+inline_sessions_free(struct sa_ctx *sa_ctx)
+{
+	struct rte_ipsec_session *ips;
+	struct ipsec_sa *sa;
+	int32_t ret;
+	uint32_t i;
+
+	if (!sa_ctx)
+		return;
+
+	for (i = 0; i < sa_ctx->nb_sa; i++) {
+
+		sa = &sa_ctx->sa[i];
+		if (!sa->spi)
+			continue;
+
+		ips = ipsec_get_primary_session(sa);
+		if (ips->type != RTE_SECURITY_ACTION_TYPE_INLINE_PROTOCOL &&
+		    ips->type != RTE_SECURITY_ACTION_TYPE_INLINE_CRYPTO)
+			continue;
+
+		if (!rte_eth_dev_is_valid_port(sa->portid))
+			continue;
+
+		ret = rte_security_session_destroy(
+				rte_eth_dev_get_sec_ctx(sa->portid),
+				ips->security.ses);
+		if (ret)
+			RTE_LOG(ERR, IPSEC, "Failed to destroy security "
+					    "session type %d, spi %d\n",
+					    ips->type, sa->spi);
+	}
+}
+
+static uint32_t
+calculate_nb_mbufs(uint16_t nb_ports, uint16_t nb_crypto_qp, uint32_t nb_rxq,
+		uint32_t nb_txq)
+{
+	return RTE_MAX((nb_rxq * nb_rxd +
+			nb_ports * nb_lcores * MAX_PKT_BURST +
+			nb_ports * nb_txq * nb_txd +
+			nb_lcores * MEMPOOL_CACHE_SIZE +
+			nb_crypto_qp * CDEV_QUEUE_DESC +
+			nb_lcores * frag_tbl_sz *
+			FRAG_TBL_BUCKET_ENTRIES),
+		       8192U);
+}
+
 int32_t
 main(int32_t argc, char **argv)
 {
 	int32_t ret;
-	uint32_t lcore_id;
+	uint32_t lcore_id, nb_txq, nb_rxq = 0;
+	uint32_t cdev_id;
 	uint32_t i;
 	uint8_t socket_id;
-	uint16_t portid;
-	uint64_t req_rx_offloads, req_tx_offloads;
+	uint16_t portid, nb_crypto_qp, nb_ports = 0;
+	uint64_t req_rx_offloads[RTE_MAX_ETHPORTS];
+	uint64_t req_tx_offloads[RTE_MAX_ETHPORTS];
+	struct eh_conf *eh_conf = NULL;
 	size_t sess_sz;
+
+	nb_bufs_in_pool = 0;
 
 	/* init EAL */
 	ret = rte_eal_init(argc, argv);
@@ -2450,8 +2743,17 @@ main(int32_t argc, char **argv)
 	argc -= ret;
 	argv += ret;
 
+	force_quit = false;
+	signal(SIGINT, signal_handler);
+	signal(SIGTERM, signal_handler);
+
+	/* initialize event helper configuration */
+	eh_conf = eh_conf_init();
+	if (eh_conf == NULL)
+		rte_exit(EXIT_FAILURE, "Failed to init event helper config");
+
 	/* parse application arguments (after the EAL ones) */
-	ret = parse_args(argc, argv);
+	ret = parse_args(argc, argv, eh_conf);
 	if (ret < 0)
 		rte_exit(EXIT_FAILURE, "Invalid parameters\n");
 
@@ -2468,8 +2770,11 @@ main(int32_t argc, char **argv)
 		rte_exit(EXIT_FAILURE, "Invalid unprotected portmask 0x%x\n",
 				unprotected_port_mask);
 
-	if (check_params() < 0)
-		rte_exit(EXIT_FAILURE, "check_params failed\n");
+	if (check_poll_mode_params(eh_conf) < 0)
+		rte_exit(EXIT_FAILURE, "check_poll_mode_params failed\n");
+
+	if (check_event_mode_params(eh_conf) < 0)
+		rte_exit(EXIT_FAILURE, "check_event_mode_params failed\n");
 
 	ret = init_lcore_rx_queues();
 	if (ret < 0)
@@ -2478,6 +2783,31 @@ main(int32_t argc, char **argv)
 	nb_lcores = rte_lcore_count();
 
 	sess_sz = max_session_size();
+
+	/*
+	 * In event mode request minimum number of crypto queues
+	 * to be reserved equal to number of ports.
+	 */
+	if (eh_conf->mode == EH_PKT_TRANSFER_MODE_EVENT)
+		nb_crypto_qp = rte_eth_dev_count_avail();
+	else
+		nb_crypto_qp = 0;
+
+	nb_crypto_qp = cryptodevs_init(nb_crypto_qp);
+
+	if (nb_bufs_in_pool == 0) {
+		RTE_ETH_FOREACH_DEV(portid) {
+			if ((enabled_port_mask & (1 << portid)) == 0)
+				continue;
+			nb_ports++;
+			nb_rxq += get_port_nb_rx_queues(portid);
+		}
+
+		nb_txq = nb_lcores;
+
+		nb_bufs_in_pool = calculate_nb_mbufs(nb_ports, nb_crypto_qp,
+						nb_rxq, nb_txq);
+	}
 
 	for (lcore_id = 0; lcore_id < RTE_MAX_LCORE; lcore_id++) {
 		if (rte_lcore_is_enabled(lcore_id) == 0)
@@ -2492,32 +2822,43 @@ main(int32_t argc, char **argv)
 		if (socket_ctx[socket_id].mbuf_pool)
 			continue;
 
-		pool_init(&socket_ctx[socket_id], socket_id, NB_MBUF);
+		pool_init(&socket_ctx[socket_id], socket_id, nb_bufs_in_pool);
 		session_pool_init(&socket_ctx[socket_id], socket_id, sess_sz);
 		session_priv_pool_init(&socket_ctx[socket_id], socket_id,
 			sess_sz);
 	}
+	printf("Number of mbufs in packet pool %d\n", nb_bufs_in_pool);
 
 	RTE_ETH_FOREACH_DEV(portid) {
 		if ((enabled_port_mask & (1 << portid)) == 0)
 			continue;
 
-		sa_check_offloads(portid, &req_rx_offloads, &req_tx_offloads);
-		port_init(portid, req_rx_offloads, req_tx_offloads);
+		sa_check_offloads(portid, &req_rx_offloads[portid],
+				&req_tx_offloads[portid]);
+		port_init(portid, req_rx_offloads[portid],
+				req_tx_offloads[portid]);
 	}
 
-	cryptodevs_init();
+	/*
+	 * Set the enabled port mask in helper config for use by helper
+	 * sub-system. This will be used while initializing devices using
+	 * helper sub-system.
+	 */
+	eh_conf->eth_portmask = enabled_port_mask;
+
+	/* Initialize eventmode components */
+	ret = eh_devs_init(eh_conf);
+	if (ret < 0)
+		rte_exit(EXIT_FAILURE, "eh_devs_init failed, err=%d\n", ret);
 
 	/* start ports */
 	RTE_ETH_FOREACH_DEV(portid) {
 		if ((enabled_port_mask & (1 << portid)) == 0)
 			continue;
 
-		/*
-		 * Start device
-		 * note: device must be started before a flow rule
-		 * can be installed.
-		 */
+		/* Create flow before starting the device */
+		create_default_ipsec_flow(portid, req_rx_offloads[portid]);
+
 		ret = rte_eth_dev_start(portid);
 		if (ret < 0)
 			rte_exit(EXIT_FAILURE, "rte_eth_dev_start: "
@@ -2563,11 +2904,54 @@ main(int32_t argc, char **argv)
 	check_all_ports_link_status(enabled_port_mask);
 
 	/* launch per-lcore init on every lcore */
-	rte_eal_mp_remote_launch(main_loop, NULL, CALL_MASTER);
+	rte_eal_mp_remote_launch(ipsec_launch_one_lcore, eh_conf, CALL_MASTER);
 	RTE_LCORE_FOREACH_SLAVE(lcore_id) {
 		if (rte_eal_wait_lcore(lcore_id) < 0)
 			return -1;
 	}
+
+	/* Uninitialize eventmode components */
+	ret = eh_devs_uninit(eh_conf);
+	if (ret < 0)
+		rte_exit(EXIT_FAILURE, "eh_devs_uninit failed, err=%d\n", ret);
+
+	/* Free eventmode configuration memory */
+	eh_conf_uninit(eh_conf);
+
+	/* Destroy inline inbound and outbound sessions */
+	for (i = 0; i < NB_SOCKETS && i < rte_socket_count(); i++) {
+		socket_id = rte_socket_id_by_idx(i);
+		inline_sessions_free(socket_ctx[socket_id].sa_in);
+		inline_sessions_free(socket_ctx[socket_id].sa_out);
+	}
+
+	for (cdev_id = 0; cdev_id < rte_cryptodev_count(); cdev_id++) {
+		printf("Closing cryptodev %d...", cdev_id);
+		rte_cryptodev_stop(cdev_id);
+		rte_cryptodev_close(cdev_id);
+		printf(" Done\n");
+	}
+
+	RTE_ETH_FOREACH_DEV(portid) {
+		if ((enabled_port_mask & (1 << portid)) == 0)
+			continue;
+
+		printf("Closing port %d...", portid);
+		if (flow_info_tbl[portid].rx_def_flow) {
+			struct rte_flow_error err;
+
+			ret = rte_flow_destroy(portid,
+				flow_info_tbl[portid].rx_def_flow, &err);
+			if (ret)
+				RTE_LOG(ERR, IPSEC, "Failed to destroy flow "
+					" for port %u, err msg: %s\n", portid,
+					err.message);
+		}
+		rte_eth_dev_stop(portid);
+		rte_eth_dev_close(portid);
+		printf(" Done\n");
+	}
+	printf("Bye...\n");
 
 	return 0;
 }

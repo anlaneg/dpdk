@@ -1498,6 +1498,7 @@ memif_create(struct rte_vdev_device *vdev, enum memif_role_t role,
 	data->numa_node = numa_node;
 	data->dev_link = pmd_link;
 	data->mac_addrs = ether_addr;
+	data->promiscuous = 1;
 
 	eth_dev->dev_ops = &ops;
 	eth_dev->device = &vdev->device;
@@ -1510,7 +1511,7 @@ memif_create(struct rte_vdev_device *vdev, enum memif_role_t role,
 	}
 
 
-	eth_dev->data->dev_flags &= RTE_ETH_DEV_CLOSE_REMOVE;
+	eth_dev->data->dev_flags |= RTE_ETH_DEV_CLOSE_REMOVE;
 
 	rte_eth_dev_probing_finish(eth_dev);
 

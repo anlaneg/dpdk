@@ -134,8 +134,6 @@ eth_dev_vmbus_allocate(struct rte_vmbus_device *dev, size_t private_data_size)
 static void
 eth_dev_vmbus_release(struct rte_eth_dev *eth_dev)
 {
-	/* mac_addrs must not be freed alone because part of dev_private */
-	eth_dev->data->mac_addrs = NULL;
 	/* free ether device */
 	rte_eth_dev_release_port(eth_dev);
 
@@ -256,6 +254,9 @@ static int hn_dev_info_get(struct rte_eth_dev *dev,
 
 	dev_info->max_rx_queues = hv->max_queues;
 	dev_info->max_tx_queues = hv->max_queues;
+
+	dev_info->tx_desc_lim.nb_min = 1;
+	dev_info->tx_desc_lim.nb_max = 4096;
 
 	if (rte_eal_process_type() != RTE_PROC_PRIMARY)
 		return 0;
@@ -934,15 +935,21 @@ eth_hn_dev_init(struct rte_eth_dev *eth_dev)
 	eth_dev->tx_pkt_burst = &hn_xmit_pkts;
 	eth_dev->rx_pkt_burst = &hn_recv_pkts;
 
-	/* Since Hyper-V only supports one MAC address, just use local data */
-	eth_dev->data->mac_addrs = &hv->mac_addr;
-
 	/*
 	 * for secondary processes, we don't initialize any further as primary
 	 * has already done this work.
 	 */
 	if (rte_eal_process_type() != RTE_PROC_PRIMARY)
 		return 0;
+
+	/* Since Hyper-V only supports one MAC address */
+	eth_dev->data->mac_addrs = rte_calloc("hv_mac", HN_MAX_MAC_ADDRS,
+					      sizeof(struct rte_ether_addr), 0);
+	if (eth_dev->data->mac_addrs == NULL) {
+		PMD_INIT_LOG(ERR,
+			     "Failed to allocate memory store MAC addresses");
+		return -ENOMEM;
+	}
 
 	hv->vmbus = vmbus;
 	hv->rxbuf_res = &vmbus->resource[HV_RECV_BUF_MAP];
@@ -982,11 +989,11 @@ eth_hn_dev_init(struct rte_eth_dev *eth_dev)
 	if  (err)
 		goto failed;
 
-	err = hn_tx_pool_init(eth_dev);
+	err = hn_chim_init(eth_dev);
 	if (err)
 		goto failed;
 
-	err = hn_rndis_get_eaddr(hv, hv->mac_addr.addr_bytes);
+	err = hn_rndis_get_eaddr(hv, eth_dev->data->mac_addrs->addr_bytes);
 	if (err)
 		goto failed;
 
@@ -1018,7 +1025,7 @@ eth_hn_dev_init(struct rte_eth_dev *eth_dev)
 failed:
 	PMD_INIT_LOG(NOTICE, "device init failed");
 
-	hn_tx_pool_uninit(eth_dev);
+	hn_chim_uninit(eth_dev);
 	hn_detach(hv);
 	return err;
 }
@@ -1042,7 +1049,7 @@ eth_hn_dev_uninit(struct rte_eth_dev *eth_dev)
 	eth_dev->rx_pkt_burst = NULL;
 
 	hn_detach(hv);
-	hn_tx_pool_uninit(eth_dev);
+	hn_chim_uninit(eth_dev);
 	rte_vmbus_chan_close(hv->primary->chan);
 	rte_free(hv->primary);
 	ret = rte_eth_dev_owner_delete(hv->owner.id);

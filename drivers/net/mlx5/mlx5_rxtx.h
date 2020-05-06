@@ -34,11 +34,11 @@
 #include <mlx5_glue.h>
 #include <mlx5_prm.h>
 #include <mlx5_common.h>
+#include <mlx5_common_mr.h>
 
 #include "mlx5_defs.h"
 #include "mlx5_utils.h"
 #include "mlx5.h"
-#include "mlx5_mr.h"
 #include "mlx5_autoconf.h"
 
 /* Support tunnel matching. */
@@ -119,9 +119,9 @@ struct mlx5_rxq_data {
 	unsigned int strd_sz_n:4; /* Log 2 of stride size. */
 	unsigned int strd_shift_en:1; /* Enable 2bytes shift on a stride. */
 	unsigned int err_state:2; /* enum mlx5_rxq_err_state. */
-	unsigned int strd_headroom_en:1; /* Enable mbuf headroom in MPRQ. */
+	unsigned int strd_scatter_en:1; /* Scattered packets from a stride. */
 	unsigned int lro:1; /* Enable LRO. */
-	unsigned int :1; /* Remaining bits. */
+	unsigned int dynf_meta:1; /* Dynamic metadata is configured. */
 	volatile uint32_t *rq_db;
 	volatile uint32_t *cq_db;
 	uint16_t port_id;
@@ -159,6 +159,8 @@ struct mlx5_rxq_data {
 	/* CQ (UAR) access lock required for 32bit implementations */
 #endif
 	uint32_t tunnel; /* Tunnel information. */
+	uint64_t flow_meta_mask;
+	int32_t flow_meta_offset;
 } __rte_cache_aligned;
 
 enum mlx5_rxq_obj_type {
@@ -231,7 +233,7 @@ struct mlx5_ind_table_obj {
 
 /* Hash Rx queue. */
 struct mlx5_hrxq {
-	LIST_ENTRY(mlx5_hrxq) next; /* Pointer to the next element. */
+	ILIST_ENTRY(uint32_t)next; /* Index to the next element. */
 	rte_atomic32_t refcnt; /* Reference counter. */
 	struct mlx5_ind_table_obj *ind_table; /* Indirection table. */
 	RTE_STD_C11
@@ -407,16 +409,16 @@ int mlx5_rxq_release(struct rte_eth_dev *dev, uint16_t idx);
 int mlx5_rxq_verify(struct rte_eth_dev *dev);
 int rxq_alloc_elts(struct mlx5_rxq_ctrl *rxq_ctrl);
 int mlx5_ind_table_obj_verify(struct rte_eth_dev *dev);
-struct mlx5_hrxq *mlx5_hrxq_new(struct rte_eth_dev *dev,
-				const uint8_t *rss_key, uint32_t rss_key_len,
-				uint64_t hash_fields,
-				const uint16_t *queues, uint32_t queues_n,
-				int tunnel __rte_unused);
-struct mlx5_hrxq *mlx5_hrxq_get(struct rte_eth_dev *dev,
-				const uint8_t *rss_key, uint32_t rss_key_len,
-				uint64_t hash_fields,
-				const uint16_t *queues, uint32_t queues_n);
-int mlx5_hrxq_release(struct rte_eth_dev *dev, struct mlx5_hrxq *hxrq);
+uint32_t mlx5_hrxq_new(struct rte_eth_dev *dev,
+		       const uint8_t *rss_key, uint32_t rss_key_len,
+		       uint64_t hash_fields,
+		       const uint16_t *queues, uint32_t queues_n,
+		       int tunnel __rte_unused);
+uint32_t mlx5_hrxq_get(struct rte_eth_dev *dev,
+		       const uint8_t *rss_key, uint32_t rss_key_len,
+		       uint64_t hash_fields,
+		       const uint16_t *queues, uint32_t queues_n);
+int mlx5_hrxq_release(struct rte_eth_dev *dev, uint32_t hxrq_idx);
 int mlx5_hrxq_verify(struct rte_eth_dev *dev);
 enum mlx5_rxq_type mlx5_rxq_get_type(struct rte_eth_dev *dev, uint16_t idx);
 struct mlx5_hrxq *mlx5_hrxq_drop_new(struct rte_eth_dev *dev);
@@ -599,8 +601,8 @@ mlx5_rx_addr2mr(struct mlx5_rxq_data *rxq, uintptr_t addr)
 	uint32_t lkey;
 
 	/* Linear search on MR cache array. */
-	lkey = mlx5_mr_lookup_cache(mr_ctrl->cache, &mr_ctrl->mru,
-				    MLX5_MR_CACHE_N, addr);
+	lkey = mlx5_mr_lookup_lkey(mr_ctrl->cache, &mr_ctrl->mru,
+				   MLX5_MR_CACHE_N, addr);
 	if (likely(lkey != UINT32_MAX))
 		return lkey;
 	/* Take slower bottom-half (Binary Search) on miss. */
@@ -631,8 +633,8 @@ mlx5_tx_mb2mr(struct mlx5_txq_data *txq, struct rte_mbuf *mb)
 	if (unlikely(*mr_ctrl->dev_gen_ptr != mr_ctrl->cur_gen))
 		mlx5_mr_flush_local_cache(mr_ctrl);
 	/* Linear search on MR cache array. */
-	lkey = mlx5_mr_lookup_cache(mr_ctrl->cache, &mr_ctrl->mru,
-				    MLX5_MR_CACHE_N, addr);
+	lkey = mlx5_mr_lookup_lkey(mr_ctrl->cache, &mr_ctrl->mru,
+				   MLX5_MR_CACHE_N, addr);
 	if (likely(lkey != UINT32_MAX))
 		return lkey;
 	/* Take slower bottom-half on miss. */

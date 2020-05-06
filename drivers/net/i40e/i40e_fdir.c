@@ -1062,7 +1062,13 @@ i40e_flow_fdir_fill_eth_ip_head(struct i40e_pf *pf,
 		[I40E_FILTER_PCTYPE_NONF_IPV6_OTHER] = IPPROTO_NONE,
 	};
 
+	rte_memcpy(raw_pkt, &fdir_input->flow.l2_flow.dst,
+		sizeof(struct rte_ether_addr));
+	rte_memcpy(raw_pkt + sizeof(struct rte_ether_addr),
+		&fdir_input->flow.l2_flow.src,
+		sizeof(struct rte_ether_addr));
 	raw_pkt += 2 * sizeof(struct rte_ether_addr);
+
 	if (vlan && fdir_input->flow_ext.vlan_tci) {
 		rte_memcpy(raw_pkt, vlan_frame, sizeof(vlan_frame));
 		rte_memcpy(raw_pkt + sizeof(uint16_t),
@@ -1689,8 +1695,8 @@ i40e_flow_add_del_fdir_filter(struct rte_eth_dev *dev,
 	struct i40e_fdir_filter check_filter; /* Check if the filter exists */
 	int ret = 0;
 
-	if (dev->data->dev_conf.fdir_conf.mode != RTE_FDIR_MODE_PERFECT) {
-		PMD_DRV_LOG(ERR, "FDIR is not enabled, please check the mode in fdir_conf.");
+	if (pf->fdir.fdir_vsi == NULL) {
+		PMD_DRV_LOG(ERR, "FDIR is not enabled");
 		return -ENOTSUP;
 	}
 

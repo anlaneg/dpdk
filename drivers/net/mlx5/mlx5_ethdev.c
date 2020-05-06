@@ -235,6 +235,7 @@ mlx5_get_ifname(const struct rte_eth_dev *dev, char (*ifname)[IF_NAMESIZE])
 		rte_errno = ENXIO;
 		return -rte_errno;
 	}
+	/*取ifindex对应的名称*/
 	if (if_indextoname(ifindex, &(*ifname)[0]))
 		return 0;
 	rte_errno = errno;

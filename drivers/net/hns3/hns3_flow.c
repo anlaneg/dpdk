@@ -1333,6 +1333,7 @@ hns3_disable_rss(struct hns3_hw *hw)
 
 	/* Disable RSS */
 	hw->rss_info.conf.types = 0;
+	hw->rss_dis_flag = true;
 
 	return 0;
 }
@@ -1544,6 +1545,19 @@ hns3_clear_rss_filter(struct rte_eth_dev *dev)
 		return 0;
 
 	return hns3_config_rss_filter(dev, &hw->rss_info, false);
+}
+
+/* Restore the rss filter */
+int
+hns3_restore_rss_filter(struct rte_eth_dev *dev)
+{
+	struct hns3_adapter *hns = dev->data->dev_private;
+	struct hns3_hw *hw = &hns->hw;
+
+	if (hw->rss_info.conf.queue_num == 0)
+		return 0;
+
+	return hns3_config_rss_filter(dev, &hw->rss_info, true);
 }
 
 static int
@@ -1827,8 +1841,11 @@ hns3_flow_flush(struct rte_eth_dev *dev, struct rte_flow_error *error)
 	}
 
 	ret = hns3_clear_rss_filter(dev);
-	if (ret)
+	if (ret) {
+		rte_flow_error_set(error, ret, RTE_FLOW_ERROR_TYPE_HANDLE,
+				   NULL, "Failed to flush rss filter");
 		return ret;
+	}
 
 	hns3_filterlist_flush(dev);
 

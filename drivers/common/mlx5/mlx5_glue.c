@@ -1006,7 +1006,7 @@ mlx5_glue_devx_qp_query(struct ibv_qp *qp,
 			const void *in, size_t inlen,
 			void *out, size_t outlen)
 {
-#ifdef HAVE_IBV_DEVX_OBJ
+#ifdef HAVE_IBV_DEVX_QP
 	return mlx5dv_devx_qp_query(qp, in, inlen, out, outlen);
 #else
 	(void)qp;
@@ -1182,8 +1182,8 @@ mlx5_glue_dv_free_var(struct mlx5dv_var *var)
 #endif
 }
 
-alignas(RTE_CACHE_LINE_SIZE)
-const struct mlx5_glue *mlx5_glue = &(const struct mlx5_glue){
+__rte_cache_aligned
+const struct mlx5_glue *mlx5_glue = &(const struct mlx5_glue) {
 	.version = MLX5_GLUE_VERSION,
 	.fork_init = mlx5_glue_fork_init,
 	.alloc_pd = mlx5_glue_alloc_pd,

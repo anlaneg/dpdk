@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: BSD-3-Clause
  *
- * Copyright (c) 2016-2018 Solarflare Communications Inc.
- * All rights reserved.
+ * Copyright(c) 2019-2020 Xilinx, Inc.
+ * Copyright(c) 2016-2019 Solarflare Communications Inc.
  *
  * This software was jointly developed between OKTET Labs (under contract
  * for Solarflare) and Solarflare Communications, Inc.
@@ -720,7 +720,7 @@ retry:
 
 		port->promisc = B_FALSE;
 		sa->eth_dev->data->promiscuous = 0;
-		rc = sfc_set_rx_mode(sa);
+		rc = sfc_set_rx_mode_unchecked(sa);
 		if (rc != 0)
 			return rc;
 
@@ -734,7 +734,7 @@ retry:
 
 		port->allmulti = B_FALSE;
 		sa->eth_dev->data->all_multicast = 0;
-		rc = sfc_set_rx_mode(sa);
+		rc = sfc_set_rx_mode_unchecked(sa);
 		if (rc != 0)
 			return rc;
 

@@ -767,6 +767,15 @@ enum {
 
 #define MLX5_ADAPTER_PAGE_SHIFT 12
 #define MLX5_LOG_RQ_STRIDE_SHIFT 4
+/**
+ * The batch counter dcs id starts from 0x800000 and none batch counter
+ * starts from 0. As currently, the counter is changed to be indexed by
+ * pool index and the offset of the counter in the pool counters_raw array.
+ * It means now the counter index is same for batch and none batch counter.
+ * Add the 0x800000 batch counter offset to the batch counter index helps
+ * indicate the counter index is from batch or none batch container pool.
+ */
+#define MLX5_CNT_BATCH_OFFSET 0x800000
 
 /* Flow counters. */
 struct mlx5_ifc_alloc_flow_counter_out_bits {
@@ -882,7 +891,9 @@ struct mlx5_ifc_mkc_bits {
 
 	u8         translations_octword_size[0x20];
 
-	u8         reserved_at_1c0[0x1b];
+	u8         reserved_at_1c0[0x19];
+	u8		   relaxed_ordering_read[0x1];
+	u8		   reserved_at_1da[0x1];
 	u8         log_page_size[0x5];
 
 	u8         reserved_at_1e0[0x20];

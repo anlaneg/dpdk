@@ -155,8 +155,9 @@ rxq_cq_decompress_v(struct mlx5_rxq_data *rxq, volatile struct mlx5_cqe *cq,
 		const vector unsigned long shmax = {64, 64};
 #endif
 
-		if (!(pos & 0x7) && pos + 8 < mcqe_n)
-			rte_prefetch0((void *)(cq + pos + 8));
+		for (i = 0; i < MLX5_VPMD_DESCS_PER_LOOP; ++i)
+			if (likely(pos + i < mcqe_n))
+				rte_prefetch0((void *)(cq + pos + i));
 
 		/* A.1 load mCQEs into a 128bit register. */
 		mcqe1 = (vector unsigned char)vec_vsx_ld(0,
@@ -262,6 +263,24 @@ rxq_cq_decompress_v(struct mlx5_rxq_data *rxq, volatile struct mlx5_cqe *cq,
 			elts[pos + 1]->hash.fdir.hi = flow_tag;
 			elts[pos + 2]->hash.fdir.hi = flow_tag;
 			elts[pos + 3]->hash.fdir.hi = flow_tag;
+		}
+		if (!!rxq->flow_meta_mask) {
+			int32_t offs = rxq->flow_meta_offset;
+			const uint32_t meta =
+				*RTE_MBUF_DYNFIELD(t_pkt, offs, uint32_t *);
+
+			/* Check if title packet has valid metadata. */
+			if (meta) {
+				MLX5_ASSERT(t_pkt->ol_flags & offs);
+				*RTE_MBUF_DYNFIELD(elts[pos], offs,
+							uint32_t *) = meta;
+				*RTE_MBUF_DYNFIELD(elts[pos + 1], offs,
+							uint32_t *) = meta;
+				*RTE_MBUF_DYNFIELD(elts[pos + 2], offs,
+							uint32_t *) = meta;
+				*RTE_MBUF_DYNFIELD(elts[pos + 3], offs,
+							uint32_t *) = meta;
+			}
 		}
 
 		pos += MLX5_VPMD_DESCS_PER_LOOP;
@@ -732,13 +751,13 @@ rxq_burst_v(struct mlx5_rxq_data *rxq, struct rte_mbuf **pkts, uint16_t pkts_n,
 		/* A.1 load cqes. */
 		p3 = (unsigned int)((vector unsigned short)p)[3];
 		cqes[3] = (vector unsigned char)(vector unsigned long){
-			*(__attribute__((__aligned__(8))) unsigned long *)
+			*(__rte_aligned(8) unsigned long *)
 			&cq[pos + p3].sop_drop_qpn, 0LL};
 		rte_compiler_barrier();
 
 		p2 = (unsigned int)((vector unsigned short)p)[2];
 		cqes[2] = (vector unsigned char)(vector unsigned long){
-			*(__attribute__((__aligned__(8))) unsigned long *)
+			*(__rte_aligned(8) unsigned long *)
 			&cq[pos + p2].sop_drop_qpn, 0LL};
 		rte_compiler_barrier();
 
@@ -751,12 +770,12 @@ rxq_burst_v(struct mlx5_rxq_data *rxq, struct rte_mbuf **pkts, uint16_t pkts_n,
 		/* A.1 load a block having op_own. */
 		p1 = (unsigned int)((vector unsigned short)p)[1];
 		cqes[1] = (vector unsigned char)(vector unsigned long){
-			*(__attribute__((__aligned__(8))) unsigned long *)
+			*(__rte_aligned(8) unsigned long *)
 			&cq[pos + p1].sop_drop_qpn, 0LL};
 		rte_compiler_barrier();
 
 		cqes[0] = (vector unsigned char)(vector unsigned long){
-			*(__attribute__((__aligned__(8))) unsigned long *)
+			*(__rte_aligned(8) unsigned long *)
 			&cq[pos].sop_drop_qpn, 0LL};
 		rte_compiler_barrier();
 
@@ -783,10 +802,10 @@ rxq_burst_v(struct mlx5_rxq_data *rxq, struct rte_mbuf **pkts, uint16_t pkts_n,
 			vec_sel((vector unsigned short)cqes[2],
 			(vector unsigned short)cqe_tmp1, cqe_sel_mask1);
 		cqe_tmp2 = (vector unsigned char)(vector unsigned long){
-			*(__attribute__((__aligned__(8))) unsigned long *)
+			*(__rte_aligned(8) unsigned long *)
 			&cq[pos + p3].rsvd3[9], 0LL};
 		cqe_tmp1 = (vector unsigned char)(vector unsigned long){
-			*(__attribute__((__aligned__(8))) unsigned long *)
+			*(__rte_aligned(8) unsigned long *)
 			&cq[pos + p2].rsvd3[9], 0LL};
 		cqes[3] = (vector unsigned char)
 			vec_sel((vector unsigned short)cqes[3],
@@ -846,10 +865,10 @@ rxq_burst_v(struct mlx5_rxq_data *rxq, struct rte_mbuf **pkts, uint16_t pkts_n,
 			vec_sel((vector unsigned short)cqes[0],
 			(vector unsigned short)cqe_tmp1, cqe_sel_mask1);
 		cqe_tmp2 = (vector unsigned char)(vector unsigned long){
-			*(__attribute__((__aligned__(8))) unsigned long *)
+			*(__rte_aligned(8) unsigned long *)
 			&cq[pos + p1].rsvd3[9], 0LL};
 		cqe_tmp1 = (vector unsigned char)(vector unsigned long){
-			*(__attribute__((__aligned__(8))) unsigned long *)
+			*(__rte_aligned(8) unsigned long *)
 			&cq[pos].rsvd3[9], 0LL};
 		cqes[1] = (vector unsigned char)
 			vec_sel((vector unsigned short)cqes[1],
@@ -1009,9 +1028,9 @@ rxq_burst_v(struct mlx5_rxq_data *rxq, struct rte_mbuf **pkts, uint16_t pkts_n,
 			pkts[pos + 3]->timestamp =
 				rte_be_to_cpu_64(cq[pos + p3].timestamp);
 		}
-		if (rte_flow_dynf_metadata_avail()) {
-			uint64_t flag = rte_flow_dynf_metadata_mask;
-			int offs = rte_flow_dynf_metadata_offs;
+		if (!!rxq->flow_meta_mask) {
+			uint64_t flag = rxq->flow_meta_mask;
+			int32_t offs = rxq->flow_meta_offset;
 			uint32_t metadata;
 
 			/* This code is subject for futher optimization. */

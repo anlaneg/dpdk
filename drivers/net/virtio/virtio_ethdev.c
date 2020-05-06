@@ -45,6 +45,10 @@ static int virtio_dev_promiscuous_enable(struct rte_eth_dev *dev);
 static int virtio_dev_promiscuous_disable(struct rte_eth_dev *dev);
 static int virtio_dev_allmulticast_enable(struct rte_eth_dev *dev);
 static int virtio_dev_allmulticast_disable(struct rte_eth_dev *dev);
+static uint32_t virtio_dev_speed_capa_get(uint32_t speed);
+static int virtio_dev_devargs_parse(struct rte_devargs *devargs,
+	int *vdpa,
+	uint32_t *speed);
 static int virtio_dev_info_get(struct rte_eth_dev *dev,
 				struct rte_eth_dev_info *dev_info);
 static int virtio_dev_link_update(struct rte_eth_dev *dev,
@@ -467,7 +471,7 @@ virtio_init_queue(struct rte_eth_dev *dev, uint16_t vtpci_queue_idx)
 	}
 
 	if (!vtpci_packed_queue(hw) && !rte_is_power_of_2(vq_size)) {
-		PMD_INIT_LOG(ERR, "split virtqueue size is not powerof 2");
+		PMD_INIT_LOG(ERR, "split virtqueue size is not power of 2");
 		return -EINVAL;
 	}
 
@@ -589,8 +593,8 @@ virtio_init_queue(struct rte_eth_dev *dev, uint16_t vtpci_queue_idx)
 		hw->cvq = cvq;
 	}
 
-	/* For virtio_user case (that is when hw->dev is NULL), we use
-	 * virtual address. And we need properly set _offset_, please see
+	/* For virtio_user case (that is when hw->virtio_user_dev is not NULL),
+	 * we use virtual address. And we need properly set _offset_, please see
 	 * VIRTIO_MBUF_DATA_DMA_ADDR in virtqueue.h for more information.
 	 */
 	if (!hw->virtio_user_dev)
@@ -1661,7 +1665,8 @@ virtio_configure_intr(struct rte_eth_dev *dev)
 
 	return 0;
 }
-
+#define SPEED_UNKNOWN    0xffffffff
+#define DUPLEX_UNKNOWN   0xff
 /* reset device and renegotiate features if needed */
 static int
 virtio_init_device(struct rte_eth_dev *eth_dev, uint64_t req_features)
@@ -1717,6 +1722,25 @@ virtio_init_device(struct rte_eth_dev *eth_dev, uint64_t req_features)
 		     hw->mac_addr[0], hw->mac_addr[1], hw->mac_addr[2],
 		     hw->mac_addr[3], hw->mac_addr[4], hw->mac_addr[5]);
 
+	if (hw->speed == SPEED_UNKNOWN) {
+		if (vtpci_with_feature(hw, VIRTIO_NET_F_SPEED_DUPLEX)) {
+			config = &local_config;
+			vtpci_read_dev_config(hw,
+				offsetof(struct virtio_net_config, speed),
+				&config->speed, sizeof(config->speed));
+			vtpci_read_dev_config(hw,
+				offsetof(struct virtio_net_config, duplex),
+				&config->duplex, sizeof(config->duplex));
+			hw->speed = config->speed;
+			hw->duplex = config->duplex;
+		}
+	}
+	if (hw->speed == SPEED_UNKNOWN)
+		hw->speed = ETH_SPEED_NUM_10G;
+	if (hw->duplex == DUPLEX_UNKNOWN)
+		hw->duplex = ETH_LINK_FULL_DUPLEX;
+	PMD_INIT_LOG(DEBUG, "link speed = %d, duplex = %d",
+		hw->speed, hw->duplex);
 	if (vtpci_with_feature(hw, VIRTIO_NET_F_CTRL_VQ)) {
 		config = &local_config;
 
@@ -1871,6 +1895,7 @@ int
 eth_virtio_dev_init(struct rte_eth_dev *eth_dev)
 {
 	struct virtio_hw *hw = eth_dev->data->dev_private;
+	uint32_t speed = SPEED_UNKNOWN;
 	int ret;
 
 	if (sizeof(struct virtio_net_hdr_mrg_rxbuf) > RTE_PKTMBUF_HEADROOM) {
@@ -1896,7 +1921,11 @@ eth_virtio_dev_init(struct rte_eth_dev *eth_dev)
 
 		return 0;
 	}
-
+	ret = virtio_dev_devargs_parse(eth_dev->device->devargs,
+		 NULL, &speed);
+	if (ret < 0)
+		return ret;
+	hw->speed = speed;
 	/*
 	 * Pass the information to the rte_eth_dev_close() that it should also
 	 * release the private port resources.
@@ -1966,39 +1995,101 @@ eth_virtio_dev_uninit(struct rte_eth_dev *eth_dev)
 	return 0;
 }
 
+
 static int vdpa_check_handler(__rte_unused const char *key,
-		const char *value, __rte_unused void *opaque)
+		const char *value, void *ret_val)
 {
-	if (strcmp(value, "1"))
-		return -1;
+	if (strcmp(value, "1") == 0)
+		*(int *)ret_val = 1;
+	else
+		*(int *)ret_val = 0;
 
 	return 0;
 }
 
+
+static uint32_t
+virtio_dev_speed_capa_get(uint32_t speed)
+{
+	switch (speed) {
+	case ETH_SPEED_NUM_10G:
+		return ETH_LINK_SPEED_10G;
+	case ETH_SPEED_NUM_20G:
+		return ETH_LINK_SPEED_20G;
+	case ETH_SPEED_NUM_25G:
+		return ETH_LINK_SPEED_25G;
+	case ETH_SPEED_NUM_40G:
+		return ETH_LINK_SPEED_40G;
+	case ETH_SPEED_NUM_50G:
+		return ETH_LINK_SPEED_50G;
+	case ETH_SPEED_NUM_56G:
+		return ETH_LINK_SPEED_56G;
+	case ETH_SPEED_NUM_100G:
+		return ETH_LINK_SPEED_100G;
+	default:
+		return 0;
+	}
+}
+
+
+#define VIRTIO_ARG_SPEED      "speed"
+#define VIRTIO_ARG_VDPA       "vdpa"
+
+
 static int
-vdpa_mode_selected(struct rte_devargs *devargs)
+link_speed_handler(const char *key __rte_unused,
+		const char *value, void *ret_val)
+{
+	uint32_t val;
+	if (!value || !ret_val)
+		return -EINVAL;
+	val = strtoul(value, NULL, 0);
+	/* validate input */
+	if (virtio_dev_speed_capa_get(val) == 0)
+		return -EINVAL;
+	*(uint32_t *)ret_val = val;
+
+	return 0;
+}
+
+
+static int
+virtio_dev_devargs_parse(struct rte_devargs *devargs, int *vdpa,
+	uint32_t *speed)
 {
 	struct rte_kvargs *kvlist;
-	const char *key = "vdpa";
 	int ret = 0;
 
 	if (devargs == NULL)
 		return 0;
 
 	kvlist = rte_kvargs_parse(devargs->args, NULL);
-	if (kvlist == NULL)
+	if (kvlist == NULL) {
+		PMD_INIT_LOG(ERR, "error when parsing param");
 		return 0;
-
-	if (!rte_kvargs_count(kvlist, key))
-		goto exit;//无'vdpa'直接返回0
-
-	/* vdpa mode selected when there's a key-value pair: vdpa=1 */
-	if (rte_kvargs_process(kvlist, key,
-				vdpa_check_handler, NULL) < 0) {
-		//无vdpa=1,直接返回0
-		goto exit;
 	}
-	ret = 1;
+	if (vdpa && rte_kvargs_count(kvlist, VIRTIO_ARG_VDPA) == 1) {
+		/* vdpa mode selected when there's a key-value pair:
+		 * vdpa=1
+		 */
+		ret = rte_kvargs_process(kvlist, VIRTIO_ARG_VDPA,
+				vdpa_check_handler, vdpa);
+		if (ret < 0) {
+			PMD_INIT_LOG(ERR, "Failed to parse %s",
+				VIRTIO_ARG_VDPA);
+			goto exit;
+		}
+	}
+	if (speed && rte_kvargs_count(kvlist, VIRTIO_ARG_SPEED) == 1) {
+		ret = rte_kvargs_process(kvlist,
+					VIRTIO_ARG_SPEED,
+					link_speed_handler, speed);
+		if (ret < 0) {
+			PMD_INIT_LOG(ERR, "Failed to parse %s",
+					VIRTIO_ARG_SPEED);
+			goto exit;
+		}
+	}
 
 exit:
 	rte_kvargs_free(kvlist);
@@ -2008,8 +2099,16 @@ exit:
 static int eth_virtio_pci_probe(struct rte_pci_driver *pci_drv __rte_unused,
 	struct rte_pci_device *pci_dev)
 {
+	int vdpa = 0;
+	int ret = 0;
+
+	ret = virtio_dev_devargs_parse(pci_dev->device.devargs, &vdpa, NULL);
+	if (ret < 0) {
+		PMD_INIT_LOG(ERR, "devargs parsing is failed");
+		return ret;
+	}
 	/* virtio pmd skips probe if device needs to work in vdpa mode */
-	if (vdpa_mode_selected(pci_dev->device.devargs))
+	if (vdpa == 1)
 		return 1;
 
 	return rte_eth_dev_pci_generic_probe(pci_dev, sizeof(struct virtio_hw),
@@ -2382,9 +2481,9 @@ virtio_dev_link_update(struct rte_eth_dev *dev, __rte_unused int wait_to_complet
 	struct virtio_hw *hw = dev->data->dev_private;
 
 	memset(&link, 0, sizeof(link));
-	link.link_duplex = ETH_LINK_FULL_DUPLEX;
-	link.link_speed  = ETH_SPEED_NUM_10G;
-	link.link_autoneg = ETH_LINK_FIXED;
+	link.link_duplex = hw->duplex;
+	link.link_speed  = hw->speed;
+	link.link_autoneg = ETH_LINK_AUTONEG;
 
 	if (!hw->started) {
 		link.link_status = ETH_LINK_DOWN;
@@ -2438,8 +2537,7 @@ virtio_dev_info_get(struct rte_eth_dev *dev, struct rte_eth_dev_info *dev_info)
 {
 	uint64_t tso_mask, host_features;
 	struct virtio_hw *hw = dev->data->dev_private;
-
-	dev_info->speed_capa = ETH_LINK_SPEED_10G; /* fake value */
+	dev_info->speed_capa = virtio_dev_speed_capa_get(hw->speed);
 
 	dev_info->max_rx_queues =
 		RTE_MIN(hw->max_queue_pairs, VIRTIO_MAX_RX_QUEUES);

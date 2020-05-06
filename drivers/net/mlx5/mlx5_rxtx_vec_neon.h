@@ -145,9 +145,9 @@ rxq_cq_decompress_v(struct mlx5_rxq_data *rxq, volatile struct mlx5_cqe *cq,
 				    -1UL << ((mcqe_n - pos) *
 					     sizeof(uint16_t) * 8) : 0);
 #endif
-
-		if (!(pos & 0x7) && pos + 8 < mcqe_n)
-			rte_prefetch0((void *)(cq + pos + 8));
+		for (i = 0; i < MLX5_VPMD_DESCS_PER_LOOP; ++i)
+			if (likely(pos + i < mcqe_n))
+				rte_prefetch0((void *)(cq + pos + i));
 		__asm__ volatile (
 		/* A.1 load mCQEs into a 128bit register. */
 		"ld1 {v16.16b - v17.16b}, [%[mcq]] \n\t"
@@ -204,6 +204,24 @@ rxq_cq_decompress_v(struct mlx5_rxq_data *rxq, volatile struct mlx5_cqe *cq,
 			elts[pos + 1]->hash.fdir.hi = flow_tag;
 			elts[pos + 2]->hash.fdir.hi = flow_tag;
 			elts[pos + 3]->hash.fdir.hi = flow_tag;
+		}
+		if (!!rxq->flow_meta_mask) {
+			int32_t offs = rxq->flow_meta_offset;
+			const uint32_t meta =
+				*RTE_MBUF_DYNFIELD(t_pkt, offs, uint32_t *);
+
+			/* Check if title packet has valid metadata. */
+			if (meta) {
+				MLX5_ASSERT(t_pkt->ol_flags & offs);
+				*RTE_MBUF_DYNFIELD(elts[pos], offs,
+							uint32_t *) = meta;
+				*RTE_MBUF_DYNFIELD(elts[pos + 1], offs,
+							uint32_t *) = meta;
+				*RTE_MBUF_DYNFIELD(elts[pos + 2], offs,
+							uint32_t *) = meta;
+				*RTE_MBUF_DYNFIELD(elts[pos + 3], offs,
+							uint32_t *) = meta;
+			}
 		}
 		pos += MLX5_VPMD_DESCS_PER_LOOP;
 		/* Move to next CQE and invalidate consumed CQEs. */
@@ -688,28 +706,30 @@ rxq_burst_v(struct mlx5_rxq_data *rxq, struct rte_mbuf **pkts, uint16_t pkts_n,
 					container_of(p3, struct mlx5_cqe,
 						     pkt_info)->timestamp);
 		}
-		if (rte_flow_dynf_metadata_avail()) {
+		if (!!rxq->flow_meta_mask) {
 			/* This code is subject for futher optimization. */
-			*RTE_FLOW_DYNF_METADATA(elts[pos]) =
+			int32_t offs = rxq->flow_meta_offset;
+
+			*RTE_MBUF_DYNFIELD(pkts[pos], offs, uint32_t *) =
 				container_of(p0, struct mlx5_cqe,
 					     pkt_info)->flow_table_metadata;
-			*RTE_FLOW_DYNF_METADATA(elts[pos + 1]) =
+			*RTE_MBUF_DYNFIELD(pkts[pos], offs, uint32_t *) =
 				container_of(p1, struct mlx5_cqe,
 					     pkt_info)->flow_table_metadata;
-			*RTE_FLOW_DYNF_METADATA(elts[pos + 2]) =
+			*RTE_MBUF_DYNFIELD(pkts[pos], offs, uint32_t *) =
 				container_of(p2, struct mlx5_cqe,
 					     pkt_info)->flow_table_metadata;
-			*RTE_FLOW_DYNF_METADATA(elts[pos + 3]) =
+			*RTE_MBUF_DYNFIELD(pkts[pos], offs, uint32_t *) =
 				container_of(p3, struct mlx5_cqe,
 					     pkt_info)->flow_table_metadata;
-			if (*RTE_FLOW_DYNF_METADATA(elts[pos]))
-				elts[pos]->ol_flags |= PKT_RX_DYNF_METADATA;
-			if (*RTE_FLOW_DYNF_METADATA(elts[pos + 1]))
-				elts[pos + 1]->ol_flags |= PKT_RX_DYNF_METADATA;
-			if (*RTE_FLOW_DYNF_METADATA(elts[pos + 2]))
-				elts[pos + 2]->ol_flags |= PKT_RX_DYNF_METADATA;
-			if (*RTE_FLOW_DYNF_METADATA(elts[pos + 3]))
-				elts[pos + 3]->ol_flags |= PKT_RX_DYNF_METADATA;
+			if (*RTE_MBUF_DYNFIELD(pkts[pos], offs, uint32_t *))
+				elts[pos]->ol_flags |= rxq->flow_meta_mask;
+			if (*RTE_MBUF_DYNFIELD(pkts[pos + 1], offs, uint32_t *))
+				elts[pos + 1]->ol_flags |= rxq->flow_meta_mask;
+			if (*RTE_MBUF_DYNFIELD(pkts[pos + 2], offs, uint32_t *))
+				elts[pos + 2]->ol_flags |= rxq->flow_meta_mask;
+			if (*RTE_MBUF_DYNFIELD(pkts[pos + 3], offs, uint32_t *))
+				elts[pos + 3]->ol_flags |= rxq->flow_meta_mask;
 		}
 #ifdef MLX5_PMD_SOFT_COUNTERS
 		/* Add up received bytes count. */

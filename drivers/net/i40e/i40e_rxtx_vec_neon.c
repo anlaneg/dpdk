@@ -72,8 +72,9 @@ i40e_rxq_rearm(struct i40e_rx_queue *rxq)
 	rx_id = (uint16_t)((rxq->rxrearm_start == 0) ?
 			     (rxq->nb_rx_desc - 1) : (rxq->rxrearm_start - 1));
 
+	rte_cio_wmb();
 	/* Update the tail pointer on the NIC */
-	I40E_PCI_REG_WRITE(rxq->qrx_tail, rx_id);
+	I40E_PCI_REG_WRITE_RELAXED(rxq->qrx_tail, rx_id);
 }
 
 static inline void
@@ -171,8 +172,8 @@ desc_to_olflags_v(struct i40e_rx_queue *rxq, uint64x2_t descs[4],
 #define I40E_UINT16_BIT (CHAR_BIT * sizeof(uint16_t))
 
 static inline void
-desc_to_ptype_v(uint64x2_t descs[4], struct rte_mbuf **rx_pkts,
-		uint32_t *ptype_tbl)
+desc_to_ptype_v(uint64x2_t descs[4], struct rte_mbuf **__restrict rx_pkts,
+		uint32_t *__restrict ptype_tbl)
 {
 	int i;
 	uint8_t ptype;
@@ -193,8 +194,8 @@ desc_to_ptype_v(uint64x2_t descs[4], struct rte_mbuf **rx_pkts,
  *   numbers of DD bits
  */
 static inline uint16_t
-_recv_raw_pkts_vec(struct i40e_rx_queue *rxq, struct rte_mbuf **rx_pkts,
-		   uint16_t nb_pkts, uint8_t *split_packet)
+_recv_raw_pkts_vec(struct i40e_rx_queue *__restrict rxq, struct rte_mbuf
+	**__restrict rx_pkts, uint16_t nb_pkts, uint8_t *split_packet)
 {
 	volatile union i40e_rx_desc *rxdp;
 	struct i40e_rx_entry *sw_ring;
@@ -431,8 +432,8 @@ _recv_raw_pkts_vec(struct i40e_rx_queue *rxq, struct rte_mbuf **rx_pkts,
  *   numbers of DD bits
  */
 uint16_t
-i40e_recv_pkts_vec(void *rx_queue, struct rte_mbuf **rx_pkts,
-		   uint16_t nb_pkts)
+i40e_recv_pkts_vec(void *__restrict rx_queue,
+		struct rte_mbuf **__restrict rx_pkts, uint16_t nb_pkts)
 {
 	return _recv_raw_pkts_vec(rx_queue, rx_pkts, nb_pkts, NULL);
 }
@@ -493,8 +494,8 @@ vtx1(volatile struct i40e_tx_desc *txdp,
 }
 
 static inline void
-vtx(volatile struct i40e_tx_desc *txdp,
-		struct rte_mbuf **pkt, uint16_t nb_pkts,  uint64_t flags)
+vtx(volatile struct i40e_tx_desc *txdp, struct rte_mbuf **pkt,
+		uint16_t nb_pkts,  uint64_t flags)
 {
 	int i;
 
@@ -503,8 +504,8 @@ vtx(volatile struct i40e_tx_desc *txdp,
 }
 
 uint16_t
-i40e_xmit_fixed_burst_vec(void *tx_queue, struct rte_mbuf **tx_pkts,
-			  uint16_t nb_pkts)
+i40e_xmit_fixed_burst_vec(void *__restrict tx_queue,
+	struct rte_mbuf **__restrict tx_pkts, uint16_t nb_pkts)
 {
 	struct i40e_tx_queue *txq = (struct i40e_tx_queue *)tx_queue;
 	volatile struct i40e_tx_desc *txdp;
@@ -564,30 +565,31 @@ i40e_xmit_fixed_burst_vec(void *tx_queue, struct rte_mbuf **tx_pkts,
 
 	txq->tx_tail = tx_id;
 
-	I40E_PCI_REG_WRITE(txq->qtx_tail, txq->tx_tail);
+	rte_cio_wmb();
+	I40E_PCI_REG_WRITE_RELAXED(txq->qtx_tail, tx_id);
 
 	return nb_pkts;
 }
 
-void __attribute__((cold))
+void __rte_cold
 i40e_rx_queue_release_mbufs_vec(struct i40e_rx_queue *rxq)
 {
 	_i40e_rx_queue_release_mbufs_vec(rxq);
 }
 
-int __attribute__((cold))
+int __rte_cold
 i40e_rxq_vec_setup(struct i40e_rx_queue *rxq)
 {
 	return i40e_rxq_vec_setup_default(rxq);
 }
 
-int __attribute__((cold))
+int __rte_cold
 i40e_txq_vec_setup(struct i40e_tx_queue __rte_unused *txq)
 {
 	return 0;
 }
 
-int __attribute__((cold))
+int __rte_cold
 i40e_rx_vec_dev_conf_condition_check(struct rte_eth_dev *dev)
 {
 	return i40e_rx_vec_dev_conf_condition_check_default(dev);

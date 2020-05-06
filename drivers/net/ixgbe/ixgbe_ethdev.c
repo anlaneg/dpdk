@@ -230,7 +230,8 @@ static int ixgbe_dev_interrupt_action(struct rte_eth_dev *dev);
 static void ixgbe_dev_interrupt_handler(void *param);
 static void ixgbe_dev_interrupt_delayed_handler(void *param);
 static void *ixgbe_dev_setup_link_thread_handler(void *param);
-static void ixgbe_dev_cancel_link_thread(struct rte_eth_dev *dev);
+static int ixgbe_dev_wait_setup_link_complete(struct rte_eth_dev *dev,
+					      uint32_t timeout_ms);
 
 static int ixgbe_add_rar(struct rte_eth_dev *dev,
 			struct rte_ether_addr *mac_addr,
@@ -1196,7 +1197,6 @@ eth_ixgbe_dev_init(struct rte_eth_dev *eth_dev, void *init_params __rte_unused)
 	diag = ixgbe_bypass_init_hw(hw);
 #else
 	diag = ixgbe_init_hw(hw);
-	hw->mac.autotry_restart = false;
 #endif /* RTE_LIBRTE_IXGBE_BYPASS */
 
 	/*
@@ -1306,8 +1306,6 @@ eth_ixgbe_dev_init(struct rte_eth_dev *eth_dev, void *init_params __rte_unused)
 
 	/* enable support intr */
 	ixgbe_enable_intr(eth_dev);
-
-	ixgbe_dev_set_link_down(eth_dev);
 
 	/* initialize filter info */
 	memset(filter_info, 0,
@@ -2603,7 +2601,7 @@ ixgbe_dev_start(struct rte_eth_dev *dev)
 	PMD_INIT_FUNC_TRACE();
 
 	/* Stop the link setup handler before resetting the HW. */
-	ixgbe_dev_cancel_link_thread(dev);
+	ixgbe_dev_wait_setup_link_complete(dev, 0);
 
 	/* disable uio/vfio intr/eventfd mapping */
 	rte_intr_disable(intr_handle);
@@ -2890,7 +2888,7 @@ ixgbe_dev_stop(struct rte_eth_dev *dev)
 
 	PMD_INIT_FUNC_TRACE();
 
-	ixgbe_dev_cancel_link_thread(dev);
+	ixgbe_dev_wait_setup_link_complete(dev, 0);
 
 	/* disable interrupts */
 	ixgbe_disable_intr(hw);
@@ -4145,17 +4143,32 @@ out:
 	return ret_val;
 }
 
-static void
-ixgbe_dev_cancel_link_thread(struct rte_eth_dev *dev)
+/*
+ * If @timeout_ms was 0, it means that it will not return until link complete.
+ * It returns 1 on complete, return 0 on timeout.
+ */
+static int
+ixgbe_dev_wait_setup_link_complete(struct rte_eth_dev *dev, uint32_t timeout_ms)
 {
+#define WARNING_TIMEOUT    9000 /* 9s  in total */
 	struct ixgbe_adapter *ad = dev->data->dev_private;
-	void *retval;
+	uint32_t timeout = timeout_ms ? timeout_ms : WARNING_TIMEOUT;
 
-	if (rte_atomic32_read(&ad->link_thread_running)) {
-		pthread_cancel(ad->link_thread_tid);
-		pthread_join(ad->link_thread_tid, &retval);
-		rte_atomic32_clear(&ad->link_thread_running);
+	while (rte_atomic32_read(&ad->link_thread_running)) {
+		msec_delay(1);
+		timeout--;
+
+		if (timeout_ms) {
+			if (!timeout)
+				return 0;
+		} else if (!timeout) {
+			/* It will not return until link complete */
+			timeout = WARNING_TIMEOUT;
+			PMD_DRV_LOG(ERR, "IXGBE link thread not complete too long time!");
+		}
 	}
+
+	return 1;
 }
 
 static void *
@@ -4169,6 +4182,7 @@ ixgbe_dev_setup_link_thread_handler(void *param)
 	u32 speed;
 	bool autoneg = false;
 
+	pthread_detach(pthread_self());
 	speed = hw->phy.autoneg_advertised;
 	if (!speed)
 		ixgbe_get_link_capabilities(hw, &speed, &autoneg);
@@ -4265,6 +4279,7 @@ ixgbe_dev_link_update_share(struct rte_eth_dev *dev,
 	if (link_up == 0) {
 		if (ixgbe_get_media_type(hw) == ixgbe_media_type_fiber) {
 			intr->flags |= IXGBE_FLAG_NEED_LINK_CONFIG;
+			ixgbe_dev_wait_setup_link_complete(dev, 0);
 			if (rte_atomic32_test_and_set(&ad->link_thread_running)) {
 				if (rte_ctrl_thread_create(&ad->link_thread_tid,
 					"ixgbe-link-handler",
@@ -5305,7 +5320,7 @@ ixgbevf_dev_start(struct rte_eth_dev *dev)
 	PMD_INIT_FUNC_TRACE();
 
 	/* Stop the link setup handler before resetting the HW. */
-	ixgbe_dev_cancel_link_thread(dev);
+	ixgbe_dev_wait_setup_link_complete(dev, 0);
 
 	err = hw->mac.ops.reset_hw(hw);
 	if (err) {
@@ -5403,7 +5418,7 @@ ixgbevf_dev_stop(struct rte_eth_dev *dev)
 
 	PMD_INIT_FUNC_TRACE();
 
-	ixgbe_dev_cancel_link_thread(dev);
+	ixgbe_dev_wait_setup_link_complete(dev, 0);
 
 	ixgbevf_intr_disable(dev);
 
@@ -6265,8 +6280,8 @@ ixgbe_set_queue_rate_limit(struct rte_eth_dev *dev,
 
 static int
 ixgbevf_add_mac_addr(struct rte_eth_dev *dev, struct rte_ether_addr *mac_addr,
-		     __attribute__((unused)) uint32_t index,
-		     __attribute__((unused)) uint32_t pool)
+		     __rte_unused uint32_t index,
+		     __rte_unused uint32_t pool)
 {
 	struct ixgbe_hw *hw = IXGBE_DEV_PRIVATE_TO_HW(dev->data->dev_private);
 	int diag;
@@ -7068,7 +7083,7 @@ ixgbe_dev_filter_ctrl(struct rte_eth_dev *dev,
 }
 
 static u8 *
-ixgbe_dev_addr_list_itr(__attribute__((unused)) struct ixgbe_hw *hw,
+ixgbe_dev_addr_list_itr(__rte_unused struct ixgbe_hw *hw,
 			u8 **mc_addr_ptr, u32 *vmdq)
 {
 	u8 *mc_addr;

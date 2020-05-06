@@ -1,7 +1,6 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright(c) 2018 Intel Corporation
 
-allow_experimental_apis = true
 sources += files('virtio_ethdev.c',
 	'virtio_pci.c',
 	'virtio_rxtx.c',
@@ -11,7 +10,7 @@ deps += ['kvargs', 'bus_pci']
 
 if arch_subdir == 'x86'
 	sources += files('virtio_rxtx_simple_sse.c')
-elif arch_subdir == 'ppc_64'
+elif arch_subdir == 'ppc'
 	sources += files('virtio_rxtx_simple_altivec.c')
 elif arch_subdir == 'arm' and host_machine.cpu_family().startswith('aarch64')
 	sources += files('virtio_rxtx_simple_neon.c')

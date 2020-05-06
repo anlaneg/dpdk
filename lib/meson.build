@@ -11,7 +11,9 @@
 libraries = [
 	'kvargs', # eal depends on kvargs
 	'eal', # everything depends on eal
-	'ring', 'mempool', 'mbuf', 'net', 'meter', 'ethdev', 'pci', # core
+	'ring',
+	'rcu', # rcu depends on ring
+	'mempool', 'mbuf', 'net', 'meter', 'ethdev', 'pci', # core
 	'cmdline',
 	'metrics', # bitrate/latency stats depends on this
 	'hash',    # efd depends on this
@@ -22,7 +24,7 @@ libraries = [
 	'gro', 'gso', 'ip_frag', 'jobstats',
 	'kni', 'latencystats', 'lpm', 'member',
 	'power', 'pdump', 'rawdev',
-	'rcu', 'rib', 'reorder', 'sched', 'security', 'stack', 'vhost',
+	'rib', 'reorder', 'sched', 'security', 'stack', 'vhost',
 	# ipsec lib depends on net, crypto and security
 	'ipsec',
 	#fib lib depends on rib
@@ -30,13 +32,16 @@ libraries = [
 	# add pkt framework libs which use other libs from above
 	'port', 'table', 'pipeline',
 	# flow_classify lib depends on pkt framework table lib
-	'flow_classify', 'bpf', 'telemetry']
+	'flow_classify', 'bpf', 'graph', 'node', 'telemetry']
 
 if is_windows
 	libraries = ['kvargs','eal'] # only supported libraries for windows
 endif
 
 default_cflags = machine_args
+default_cflags += ['-DALLOW_EXPERIMENTAL_API']
+default_cflags += ['-DALLOW_INTERNAL_API']
+
 if cc.has_argument('-Wno-format-truncation')
 	default_cflags += '-Wno-format-truncation'
 endif
@@ -47,7 +52,6 @@ foreach l:libraries
 	build = true
 	reason = '<unknown reason>' # set if build == false to explain why
 	name = l
-	allow_experimental_apis = false
 	use_function_versioning = false
 	sources = []
 	headers = []
@@ -98,9 +102,6 @@ foreach l:libraries
 			static_dep = shared_dep
 		else
 
-			if allow_experimental_apis
-				cflags += '-DALLOW_EXPERIMENTAL_API'
-			endif
 			if use_function_versioning
 				cflags += '-DRTE_USE_FUNCTION_VERSIONING'
 			endif
@@ -108,15 +109,15 @@ foreach l:libraries
 			version_map = '@0@/@1@/rte_@2@_version.map'.format(
 					meson.current_source_dir(), dir_name, name)
 
-			is_experimental = run_command(is_experimental_cmd,
-					files(version_map)).returncode()
+			is_stable = run_command(is_stable_cmd,
+					files(version_map)).returncode() == 0
 
-			if is_experimental != 0
-				lib_version = experimental_abi_version
-				so_version = experimental_so_version
-			else
+			if is_stable
 				lib_version = abi_version
 				so_version = stable_so_version
+			else
+				lib_version = experimental_abi_version
+				so_version = experimental_so_version
 			endif
 
 			# first build static lib
@@ -159,14 +160,14 @@ foreach l:libraries
 			lk_deps = [version_map, def_file]
 			if not is_windows
 				# on unix systems check the output of the
-				# experimental syms script, using it as a
+				# check-symbols.sh script, using it as a
 				# dependency of the .so build
-				lk_deps += custom_target(name + '.exp_chk',
-					command: [check_experimental_syms,
+				lk_deps += custom_target(name + '.sym_chk',
+					command: [check_symbols,
 						version_map, '@INPUT@'],
 					capture: true,
 					input: static_lib,
-					output: name + '.exp_chk')
+					output: name + '.sym_chk')
 			endif
 
 			shared_lib = shared_library(libname,
@@ -186,6 +187,9 @@ foreach l:libraries
 
 			dpdk_libraries = [shared_lib] + dpdk_libraries
 			dpdk_static_libraries = [static_lib] + dpdk_static_libraries
+			if libname == 'rte_node'
+				dpdk_graph_nodes = [static_lib]
+			endif
 		endif # sources.length() > 0
 
 		set_variable('shared_rte_' + name, shared_dep)

@@ -196,6 +196,10 @@ mlx5_devx_cmd_mkey_create(struct ibv_context *ctx,
 	MLX5_SET(mkc, mkc, pd, attr->pd);
 	MLX5_SET(mkc, mkc, mkey_7_0, attr->umem_id & 0xFF);
 	MLX5_SET(mkc, mkc, translations_octword_size, translation_size);
+	if (attr->relaxed_ordering == 1) {
+		MLX5_SET(mkc, mkc, relaxed_ordering_write, 0x1);
+		MLX5_SET(mkc, mkc, relaxed_ordering_read, 0x1);
+	}
 	MLX5_SET64(mkc, mkc, start_addr, attr->addr);
 	MLX5_SET64(mkc, mkc, len, attr->size);
 	mkey->obj = mlx5_glue->devx_obj_create(ctx, in, in_size_dw * 4, out,
@@ -755,9 +759,8 @@ mlx5_devx_cmd_create_tir(struct ibv_context *ctx,
 {
 	uint32_t in[MLX5_ST_SZ_DW(create_tir_in)] = {0};
 	uint32_t out[MLX5_ST_SZ_DW(create_tir_out)] = {0};
-	void *tir_ctx, *outer, *inner;
+	void *tir_ctx, *outer, *inner, *rss_key;
 	struct mlx5_devx_obj *tir = NULL;
-	int i;
 
 	tir = rte_calloc(__func__, 1, sizeof(*tir), 0);
 	if (!tir) {
@@ -780,10 +783,8 @@ mlx5_devx_cmd_create_tir(struct ibv_context *ctx,
 	MLX5_SET(tirc, tir_ctx, rx_hash_fn, tir_attr->rx_hash_fn);
 	MLX5_SET(tirc, tir_ctx, self_lb_block, tir_attr->self_lb_block);
 	MLX5_SET(tirc, tir_ctx, transport_domain, tir_attr->transport_domain);
-	for (i = 0; i < 10; i++) {
-		MLX5_SET(tirc, tir_ctx, rx_hash_toeplitz_key[i],
-			 tir_attr->rx_hash_toeplitz_key[i]);
-	}
+	rss_key = MLX5_ADDR_OF(tirc, tir_ctx, rx_hash_toeplitz_key);
+	memcpy(rss_key, tir_attr->rx_hash_toeplitz_key, MLX5_RSS_HASH_KEY_LEN);
 	outer = MLX5_ADDR_OF(tirc, tir_ctx, rx_hash_field_selector_outer);
 	MLX5_SET(rx_hash_field_select, outer, l3_prot_type,
 		 tir_attr->rx_hash_field_selector_outer.l3_prot_type);

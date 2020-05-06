@@ -12,6 +12,7 @@ Programmer's Guide
     overview
     env_abstraction_layer
     service_cores
+    trace_lib
     rcu_lib
     ring_lib
     stack_lib
@@ -57,6 +58,7 @@ Programmer's Guide
     metrics_lib
     bpf_lib
     ipsec_lib
+    graph_lib
     source_org
     dev_kit_build_system
     dev_kit_root_make_help

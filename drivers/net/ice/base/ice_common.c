@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: BSD-3-Clause
- * Copyright(c) 2001-2019
+ * Copyright(c) 2001-2020
  */
 
 #include "ice_common.h"
@@ -20,24 +20,38 @@
  */
 static enum ice_status ice_set_mac_type(struct ice_hw *hw)
 {
-	enum ice_status status = ICE_SUCCESS;
-
 	ice_debug(hw, ICE_DBG_TRACE, "%s\n", __func__);
 
-	if (hw->vendor_id == ICE_INTEL_VENDOR_ID) {
-		switch (hw->device_id) {
-		default:
-			hw->mac_type = ICE_MAC_GENERIC;
-			break;
-		}
-	} else {
-		status = ICE_ERR_DEVICE_NOT_SUPPORTED;
+	if (hw->vendor_id != ICE_INTEL_VENDOR_ID)
+		return ICE_ERR_DEVICE_NOT_SUPPORTED;
+
+	switch (hw->device_id) {
+	case ICE_DEV_ID_E810C_BACKPLANE:
+	case ICE_DEV_ID_E810C_QSFP:
+	case ICE_DEV_ID_E810C_SFP:
+	case ICE_DEV_ID_E810_XXV_BACKPLANE:
+	case ICE_DEV_ID_E810_XXV_QSFP:
+	case ICE_DEV_ID_E810_XXV_SFP:
+		hw->mac_type = ICE_MAC_E810;
+		break;
+	case ICE_DEV_ID_E822C_10G_BASE_T:
+	case ICE_DEV_ID_E822C_BACKPLANE:
+	case ICE_DEV_ID_E822C_QSFP:
+	case ICE_DEV_ID_E822C_SFP:
+	case ICE_DEV_ID_E822C_SGMII:
+	case ICE_DEV_ID_E822L_10G_BASE_T:
+	case ICE_DEV_ID_E822L_BACKPLANE:
+	case ICE_DEV_ID_E822L_SFP:
+	case ICE_DEV_ID_E822L_SGMII:
+		hw->mac_type = ICE_MAC_GENERIC;
+		break;
+	default:
+		hw->mac_type = ICE_MAC_UNKNOWN;
+		break;
 	}
 
-	ice_debug(hw, ICE_DBG_INIT, "found mac_type: %d, status: %d\n",
-		  hw->mac_type, status);
-
-	return status;
+	ice_debug(hw, ICE_DBG_INIT, "mac_type: %d\n", hw->mac_type);
+	return ICE_SUCCESS;
 }
 
 /**
@@ -449,12 +463,13 @@ ice_aq_set_mac_cfg(struct ice_hw *hw, u16 max_frame_size, struct ice_sq_cd *cd)
  * ice_init_fltr_mgmt_struct - initializes filter management list and locks
  * @hw: pointer to the HW struct
  */
-static enum ice_status ice_init_fltr_mgmt_struct(struct ice_hw *hw)
+enum ice_status ice_init_fltr_mgmt_struct(struct ice_hw *hw)
 {
 	struct ice_switch_info *sw;
 
 	hw->switch_info = (struct ice_switch_info *)
 			  ice_malloc(hw, sizeof(*hw->switch_info));
+
 	sw = hw->switch_info;
 
 	if (!sw)
@@ -469,7 +484,7 @@ static enum ice_status ice_init_fltr_mgmt_struct(struct ice_hw *hw)
  * ice_cleanup_fltr_mgmt_struct - cleanup filter management list and locks
  * @hw: pointer to the HW struct
  */
-static void ice_cleanup_fltr_mgmt_struct(struct ice_hw *hw)
+void ice_cleanup_fltr_mgmt_struct(struct ice_hw *hw)
 {
 	struct ice_switch_info *sw = hw->switch_info;
 	struct ice_vsi_list_map_info *v_pos_map;
@@ -555,42 +570,20 @@ static void ice_get_itr_intrl_gran(struct ice_hw *hw)
 }
 
 /**
- * ice_get_nvm_version - get cached NVM version data
- * @hw: pointer to the hardware structure
- * @oem_ver: 8 bit NVM version
- * @oem_build: 16 bit NVM build number
- * @oem_patch: 8 NVM patch number
- * @ver_hi: high 16 bits of the NVM version
- * @ver_lo: low 16 bits of the NVM version
- */
-void
-ice_get_nvm_version(struct ice_hw *hw, u8 *oem_ver, u16 *oem_build,
-		    u8 *oem_patch, u8 *ver_hi, u8 *ver_lo)
-{
-	struct ice_nvm_info *nvm = &hw->nvm;
-
-	*oem_ver = (u8)((nvm->oem_ver & ICE_OEM_VER_MASK) >> ICE_OEM_VER_SHIFT);
-	*oem_patch = (u8)(nvm->oem_ver & ICE_OEM_VER_PATCH_MASK);
-	*oem_build = (u16)((nvm->oem_ver & ICE_OEM_VER_BUILD_MASK) >>
-			   ICE_OEM_VER_BUILD_SHIFT);
-	*ver_hi = (nvm->ver & ICE_NVM_VER_HI_MASK) >> ICE_NVM_VER_HI_SHIFT;
-	*ver_lo = (nvm->ver & ICE_NVM_VER_LO_MASK) >> ICE_NVM_VER_LO_SHIFT;
-}
-
-/**
  * ice_print_rollback_msg - print FW rollback message
  * @hw: pointer to the hardware structure
  */
 void ice_print_rollback_msg(struct ice_hw *hw)
 {
 	char nvm_str[ICE_NVM_VER_LEN] = { 0 };
-	u8 oem_ver, oem_patch, ver_hi, ver_lo;
-	u16 oem_build;
+	struct ice_nvm_info *nvm = &hw->nvm;
+	struct ice_orom_info *orom;
 
-	ice_get_nvm_version(hw, &oem_ver, &oem_build, &oem_patch, &ver_hi,
-			    &ver_lo);
-	SNPRINTF(nvm_str, sizeof(nvm_str), "%x.%02x 0x%x %d.%d.%d", ver_hi,
-		 ver_lo, hw->nvm.eetrack, oem_ver, oem_build, oem_patch);
+	orom = &nvm->orom;
+
+	SNPRINTF(nvm_str, sizeof(nvm_str), "%x.%02x 0x%x %d.%d.%d",
+		 nvm->major_ver, nvm->minor_ver, nvm->eetrack, orom->major,
+		 orom->build, orom->patch);
 	ice_warn(hw,
 		 "Firmware rollback mode detected. Current version is NVM: %s, FW: %d.%d. Device may exhibit limited functionality. Refer to the Intel(R) Ethernet Adapters and Devices User Guide for details on firmware rollback mode\n",
 		 nvm_str, hw->fw_maj_ver, hw->fw_min_ver);
@@ -672,6 +665,7 @@ enum ice_status ice_init_hw(struct ice_hw *hw)
 			  "Failed to get scheduler allocated resources\n");
 		goto err_unroll_alloc;
 	}
+	ice_sched_get_psm_clk_freq(hw);
 
 	/* Initialize port_info struct with scheduler data */
 	status = ice_sched_init_port(hw->port_info);
@@ -734,6 +728,7 @@ enum ice_status ice_init_hw(struct ice_hw *hw)
 	status = ice_init_hw_tbls(hw);
 	if (status)
 		goto err_unroll_fltr_mgmt_struct;
+	ice_init_lock(&hw->tnl_lock);
 	return ICE_SUCCESS;
 
 err_unroll_fltr_mgmt_struct:
@@ -765,6 +760,7 @@ void ice_deinit_hw(struct ice_hw *hw)
 	ice_sched_clear_agg(hw);
 	ice_free_seg(hw);
 	ice_free_hw_tbls(hw);
+	ice_destroy_lock(&hw->tnl_lock);
 
 	if (hw->port_info) {
 		ice_free(hw, hw->port_info);
@@ -920,72 +916,6 @@ enum ice_status ice_reset(struct ice_hw *hw, enum ice_reset_req req)
 
 	/* wait for the FW to be ready */
 	return ice_check_reset(hw);
-}
-
-/**
- * ice_get_pfa_module_tlv - Reads sub module TLV from NVM PFA
- * @hw: pointer to hardware structure
- * @module_tlv: pointer to module TLV to return
- * @module_tlv_len: pointer to module TLV length to return
- * @module_type: module type requested
- *
- * Finds the requested sub module TLV type from the Preserved Field
- * Area (PFA) and returns the TLV pointer and length. The caller can
- * use these to read the variable length TLV value.
- */
-enum ice_status
-ice_get_pfa_module_tlv(struct ice_hw *hw, u16 *module_tlv, u16 *module_tlv_len,
-		       u16 module_type)
-{
-	enum ice_status status;
-	u16 pfa_len, pfa_ptr;
-	u16 next_tlv;
-
-	status = ice_read_sr_word(hw, ICE_SR_PFA_PTR, &pfa_ptr);
-	if (status != ICE_SUCCESS) {
-		ice_debug(hw, ICE_DBG_INIT, "Preserved Field Array pointer.\n");
-		return status;
-	}
-	status = ice_read_sr_word(hw, pfa_ptr, &pfa_len);
-	if (status != ICE_SUCCESS) {
-		ice_debug(hw, ICE_DBG_INIT, "Failed to read PFA length.\n");
-		return status;
-	}
-	/* Starting with first TLV after PFA length, iterate through the list
-	 * of TLVs to find the requested one.
-	 */
-	next_tlv = pfa_ptr + 1;
-	while (next_tlv < pfa_ptr + pfa_len) {
-		u16 tlv_sub_module_type;
-		u16 tlv_len;
-
-		/* Read TLV type */
-		status = ice_read_sr_word(hw, next_tlv, &tlv_sub_module_type);
-		if (status != ICE_SUCCESS) {
-			ice_debug(hw, ICE_DBG_INIT, "Failed to read TLV type.\n");
-			break;
-		}
-		/* Read TLV length */
-		status = ice_read_sr_word(hw, next_tlv + 1, &tlv_len);
-		if (status != ICE_SUCCESS) {
-			ice_debug(hw, ICE_DBG_INIT, "Failed to read TLV length.\n");
-			break;
-		}
-		if (tlv_sub_module_type == module_type) {
-			if (tlv_len) {
-				*module_tlv = next_tlv;
-				*module_tlv_len = tlv_len;
-				return ICE_SUCCESS;
-			}
-			return ICE_ERR_INVAL_SIZE;
-		}
-		/* Check next TLV, i.e. current TLV pointer + length + 2 words
-		 * (for current TLV's type and length)
-		 */
-		next_tlv = next_tlv + tlv_len + 2;
-	}
-	/* Module does not exist */
-	return ICE_ERR_DOES_NOT_EXIST;
 }
 
 /**
@@ -1322,6 +1252,28 @@ enum ice_status
 ice_aq_send_cmd(struct ice_hw *hw, struct ice_aq_desc *desc, void *buf,
 		u16 buf_size, struct ice_sq_cd *cd)
 {
+	if (hw->aq_send_cmd_fn) {
+		enum ice_status status = ICE_ERR_NOT_READY;
+		u16 retval = ICE_AQ_RC_OK;
+
+		ice_acquire_lock(&hw->adminq.sq_lock);
+		if (!hw->aq_send_cmd_fn(hw->aq_send_cmd_param, desc,
+					buf, buf_size)) {
+			retval = LE16_TO_CPU(desc->retval);
+			/* strip off FW internal code */
+			if (retval)
+				retval &= 0xff;
+			if (retval == ICE_AQ_RC_OK)
+				status = ICE_SUCCESS;
+			else
+				status = ICE_ERR_AQ_ERROR;
+		}
+
+		hw->adminq.sq_last_status = (enum ice_aq_err)retval;
+		ice_release_lock(&hw->adminq.sq_lock);
+
+		return status;
+	}
 	return ice_sq_send_cmd(hw, &hw->adminq, desc, buf, buf_size, cd);
 }
 
@@ -1679,7 +1631,7 @@ ice_alloc_hw_res(struct ice_hw *hw, u16 type, u16 num, bool btm, u16 *res)
 	enum ice_status status;
 	u16 buf_len;
 
-	buf_len = sizeof(*buf) + sizeof(buf->elem) * (num - 1);
+	buf_len = ice_struct_size(buf, elem, num - 1);
 	buf = (struct ice_aqc_alloc_free_res_elem *)
 		ice_malloc(hw, buf_len);
 	if (!buf)
@@ -1719,7 +1671,7 @@ ice_free_hw_res(struct ice_hw *hw, u16 type, u16 num, u16 *res)
 	enum ice_status status;
 	u16 buf_len;
 
-	buf_len = sizeof(*buf) + sizeof(buf->elem) * (num - 1);
+	buf_len = ice_struct_size(buf, elem, num - 1);
 	buf = (struct ice_aqc_alloc_free_res_elem *)ice_malloc(hw, buf_len);
 	if (!buf)
 		return ICE_ERR_NO_MEMORY;
@@ -1888,9 +1840,6 @@ ice_parse_caps(struct ice_hw *hw, void *buf, u32 cap_count,
 				  caps->msix_vector_first_id);
 			break;
 		case ICE_AQC_CAPS_FD:
-		{
-			u32 reg_val, val;
-
 			if (dev_p) {
 				dev_p->num_flow_director_fltr = number;
 				ice_debug(hw, ICE_DBG_INIT,
@@ -1899,6 +1848,9 @@ ice_parse_caps(struct ice_hw *hw, void *buf, u32 cap_count,
 					  dev_p->num_flow_director_fltr);
 			}
 			if (func_p) {
+				u32 reg_val, val;
+				if (hw->dcf_enabled)
+					break;
 				reg_val = rd32(hw, GLQF_FD_SIZE);
 				val = (reg_val & GLQF_FD_SIZE_FD_GSIZE_M) >>
 				      GLQF_FD_SIZE_FD_GSIZE_S;
@@ -1915,7 +1867,6 @@ ice_parse_caps(struct ice_hw *hw, void *buf, u32 cap_count,
 					  prefix, func_p->fd_fltr_best_effort);
 			}
 			break;
-		}
 		case ICE_AQC_CAPS_MAX_MTU:
 			caps->max_mtu = number;
 			ice_debug(hw, ICE_DBG_INIT, "%s: max_mtu = %d\n",
@@ -2125,10 +2076,7 @@ ice_aq_manage_mac_write(struct ice_hw *hw, const u8 *mac_addr, u8 flags,
 	ice_fill_dflt_direct_cmd_desc(&desc, ice_aqc_opc_manage_mac_write);
 
 	cmd->flags = flags;
-
-	/* Prep values for flags, sah, sal */
-	cmd->sah = HTONS(*((const u16 *)mac_addr));
-	cmd->sal = HTONL(*((const u32 *)(mac_addr + 2)));
+	ice_memcpy(cmd->mac_addr, mac_addr, ETH_ALEN, ICE_NONDMA_TO_DMA);
 
 	return ice_aq_send_cmd(hw, &desc, NULL, 0, cd);
 }
@@ -2378,13 +2326,16 @@ ice_aq_set_phy_cfg(struct ice_hw *hw, struct ice_port_info *pi,
 	ice_debug(hw, ICE_DBG_LINK, "phy_type_high = 0x%llx\n",
 		  (unsigned long long)LE64_TO_CPU(cfg->phy_type_high));
 	ice_debug(hw, ICE_DBG_LINK, "caps = 0x%x\n", cfg->caps);
-	ice_debug(hw, ICE_DBG_LINK, "low_power_ctrl = 0x%x\n",
-		  cfg->low_power_ctrl);
+	ice_debug(hw, ICE_DBG_LINK, "low_power_ctrl_an = 0x%x\n",
+		  cfg->low_power_ctrl_an);
 	ice_debug(hw, ICE_DBG_LINK, "eee_cap = 0x%x\n", cfg->eee_cap);
 	ice_debug(hw, ICE_DBG_LINK, "eeer_value = 0x%x\n", cfg->eeer_value);
 	ice_debug(hw, ICE_DBG_LINK, "link_fec_opt = 0x%x\n", cfg->link_fec_opt);
 
 	status = ice_aq_send_cmd(hw, &desc, cfg, sizeof(*cfg), cd);
+
+	if (hw->adminq.sq_last_status == ICE_AQ_RC_EMODE)
+		status = ICE_SUCCESS;
 
 	if (!status)
 		pi->phy.curr_user_phy_cfg = *cfg;
@@ -2512,34 +2463,40 @@ enum ice_fec_mode ice_caps_to_fec_mode(u8 caps, u8 fec_options)
 	return ICE_FEC_NONE;
 }
 
-/**
- * ice_set_fc
- * @pi: port information structure
- * @aq_failures: pointer to status code, specific to ice_set_fc routine
- * @ena_auto_link_update: enable automatic link update
- *
- * Set the requested flow control mode.
- */
-enum ice_status
-ice_set_fc(struct ice_port_info *pi, u8 *aq_failures, bool ena_auto_link_update)
+static enum ice_status
+ice_cfg_phy_fc(struct ice_port_info *pi, struct ice_aqc_set_phy_cfg_data *cfg,
+	       enum ice_fc_mode req_mode)
 {
-	struct ice_aqc_set_phy_cfg_data cfg = { 0 };
+	struct ice_aqc_get_phy_caps_data *pcaps = NULL;
 	struct ice_phy_cache_mode_data cache_data;
-	struct ice_aqc_get_phy_caps_data *pcaps;
-	enum ice_status status;
+	enum ice_status status = ICE_SUCCESS;
 	u8 pause_mask = 0x0;
-	struct ice_hw *hw;
 
-	if (!pi)
-		return ICE_ERR_PARAM;
-	hw = pi->hw;
-	*aq_failures = ICE_SET_FC_AQ_FAIL_NONE;
+	if (!pi || !cfg)
+		return ICE_ERR_BAD_PTR;
+
+	pcaps = (struct ice_aqc_get_phy_caps_data *)
+		ice_malloc(pi->hw, sizeof(*pcaps));
+	if (!pcaps)
+		return ICE_ERR_NO_MEMORY;
 
 	/* Cache user FC request */
-	cache_data.data.curr_user_fc_req = pi->fc.req_mode;
+	cache_data.data.curr_user_fc_req = req_mode;
 	ice_cache_phy_user_req(pi, cache_data, ICE_FC_MODE);
 
-	switch (pi->fc.req_mode) {
+	switch (req_mode) {
+	case ICE_FC_AUTO:
+		/* Query the value of FC that both the NIC and attached media
+		 * can do.
+		 */
+		status = ice_aq_get_phy_caps(pi, false, ICE_AQC_REPORT_TOPO_CAP,
+					     pcaps, NULL);
+		if (status)
+			goto out;
+
+		pause_mask |= pcaps->caps & ICE_AQC_PHY_EN_TX_LINK_PAUSE;
+		pause_mask |= pcaps->caps & ICE_AQC_PHY_EN_RX_LINK_PAUSE;
+		break;
 	case ICE_FC_FULL:
 		pause_mask |= ICE_AQC_PHY_EN_TX_LINK_PAUSE;
 		pause_mask |= ICE_AQC_PHY_EN_RX_LINK_PAUSE;
@@ -2554,6 +2511,39 @@ ice_set_fc(struct ice_port_info *pi, u8 *aq_failures, bool ena_auto_link_update)
 		break;
 	}
 
+	/* clear the old pause settings */
+	cfg->caps &= ~(ICE_AQC_PHY_EN_TX_LINK_PAUSE |
+		ICE_AQC_PHY_EN_RX_LINK_PAUSE);
+
+	/* set the new capabilities */
+	cfg->caps |= pause_mask;
+
+out:
+	ice_free(pi->hw, pcaps);
+	return status;
+}
+
+/**
+ * ice_set_fc
+ * @pi: port information structure
+ * @aq_failures: pointer to status code, specific to ice_set_fc routine
+ * @ena_auto_link_update: enable automatic link update
+ *
+ * Set the requested flow control mode.
+ */
+enum ice_status
+ice_set_fc(struct ice_port_info *pi, u8 *aq_failures, bool ena_auto_link_update)
+{
+	struct ice_aqc_set_phy_cfg_data  cfg = { 0 };
+	struct ice_aqc_get_phy_caps_data *pcaps;
+	enum ice_status status;
+	struct ice_hw *hw;
+
+	if (!pi || !aq_failures)
+		return ICE_ERR_BAD_PTR;
+
+	hw = pi->hw;
+
 	pcaps = (struct ice_aqc_get_phy_caps_data *)
 		ice_malloc(hw, sizeof(*pcaps));
 	if (!pcaps)
@@ -2567,12 +2557,16 @@ ice_set_fc(struct ice_port_info *pi, u8 *aq_failures, bool ena_auto_link_update)
 		goto out;
 	}
 
-	/* clear the old pause settings */
-	cfg.caps = pcaps->caps & ~(ICE_AQC_PHY_EN_TX_LINK_PAUSE |
-				   ICE_AQC_PHY_EN_RX_LINK_PAUSE);
+	ice_copy_phy_caps_to_cfg(pi, pcaps, &cfg);
 
-	/* set the new capabilities */
-	cfg.caps |= pause_mask;
+	/* Configure the set phy data */
+	status = ice_cfg_phy_fc(pi, &cfg, pi->fc.req_mode);
+	if (status) {
+		if (status != ICE_ERR_BAD_PTR)
+			*aq_failures = ICE_SET_FC_AQ_FAIL_GET;
+
+		goto out;
+	}
 
 	/* If the capabilities have changed, then set the new config */
 	if (cfg.caps != pcaps->caps) {
@@ -2581,13 +2575,6 @@ ice_set_fc(struct ice_port_info *pi, u8 *aq_failures, bool ena_auto_link_update)
 		/* Auto restart link so settings take effect */
 		if (ena_auto_link_update)
 			cfg.caps |= ICE_AQ_PHY_ENA_AUTO_LINK_UPDT;
-		/* Copy over all the old settings */
-		cfg.phy_type_high = pcaps->phy_type_high;
-		cfg.phy_type_low = pcaps->phy_type_low;
-		cfg.low_power_ctrl = pcaps->low_power_ctrl;
-		cfg.eee_cap = pcaps->eee_cap;
-		cfg.eeer_value = pcaps->eeer_value;
-		cfg.link_fec_opt = pcaps->link_fec_options;
 
 		status = ice_aq_set_phy_cfg(hw, pi, &cfg, NULL);
 		if (status) {
@@ -2645,7 +2632,7 @@ ice_phy_caps_equals_cfg(struct ice_aqc_get_phy_caps_data *phy_caps,
 	if (phy_caps->phy_type_low != phy_cfg->phy_type_low ||
 	    phy_caps->phy_type_high != phy_cfg->phy_type_high ||
 	    ((phy_caps->caps & caps_mask) != (phy_cfg->caps & cfg_mask)) ||
-	    phy_caps->low_power_ctrl != phy_cfg->low_power_ctrl ||
+	    phy_caps->low_power_ctrl_an != phy_cfg->low_power_ctrl_an ||
 	    phy_caps->eee_cap != phy_cfg->eee_cap ||
 	    phy_caps->eeer_value != phy_cfg->eeer_value ||
 	    phy_caps->link_fec_options != phy_cfg->link_fec_opt)
@@ -2656,6 +2643,7 @@ ice_phy_caps_equals_cfg(struct ice_aqc_get_phy_caps_data *phy_caps,
 
 /**
  * ice_copy_phy_caps_to_cfg - Copy PHY ability data to configuration data
+ * @pi: port information structure
  * @caps: PHY ability structure to copy date from
  * @cfg: PHY configuration structure to copy data to
  *
@@ -2663,33 +2651,65 @@ ice_phy_caps_equals_cfg(struct ice_aqc_get_phy_caps_data *phy_caps,
  * data structure
  */
 void
-ice_copy_phy_caps_to_cfg(struct ice_aqc_get_phy_caps_data *caps,
+ice_copy_phy_caps_to_cfg(struct ice_port_info *pi,
+			 struct ice_aqc_get_phy_caps_data *caps,
 			 struct ice_aqc_set_phy_cfg_data *cfg)
 {
-	if (!caps || !cfg)
+	if (!pi || !caps || !cfg)
 		return;
 
+	ice_memset(cfg, 0, sizeof(*cfg), ICE_NONDMA_MEM);
 	cfg->phy_type_low = caps->phy_type_low;
 	cfg->phy_type_high = caps->phy_type_high;
 	cfg->caps = caps->caps;
-	cfg->low_power_ctrl = caps->low_power_ctrl;
+	cfg->low_power_ctrl_an = caps->low_power_ctrl_an;
 	cfg->eee_cap = caps->eee_cap;
 	cfg->eeer_value = caps->eeer_value;
 	cfg->link_fec_opt = caps->link_fec_options;
+	cfg->module_compliance_enforcement =
+		caps->module_compliance_enforcement;
+
+	if (ice_fw_supports_link_override(pi->hw)) {
+		struct ice_link_default_override_tlv tlv;
+
+		if (ice_get_link_default_override(&tlv, pi))
+			return;
+
+		if (tlv.options & ICE_LINK_OVERRIDE_STRICT_MODE)
+			cfg->module_compliance_enforcement |=
+				ICE_LINK_OVERRIDE_STRICT_MODE;
+	}
 }
 
 /**
  * ice_cfg_phy_fec - Configure PHY FEC data based on FEC mode
+ * @pi: port information structure
  * @cfg: PHY configuration data to set FEC mode
  * @fec: FEC mode to configure
- *
- * Caller should copy ice_aqc_get_phy_caps_data.caps ICE_AQC_PHY_EN_AUTO_FEC
- * (bit 7) and ice_aqc_get_phy_caps_data.link_fec_options to cfg.caps
- * ICE_AQ_PHY_ENA_AUTO_FEC (bit 7) and cfg.link_fec_options before calling.
  */
-void
-ice_cfg_phy_fec(struct ice_aqc_set_phy_cfg_data *cfg, enum ice_fec_mode fec)
+enum ice_status
+ice_cfg_phy_fec(struct ice_port_info *pi, struct ice_aqc_set_phy_cfg_data *cfg,
+		enum ice_fec_mode fec)
 {
+	struct ice_aqc_get_phy_caps_data *pcaps;
+	enum ice_status status = ICE_SUCCESS;
+	struct ice_hw *hw;
+
+	if (!pi || !cfg)
+		return ICE_ERR_BAD_PTR;
+
+	hw = pi->hw;
+
+	pcaps = (struct ice_aqc_get_phy_caps_data *)
+		ice_malloc(hw, sizeof(*pcaps));
+	if (!pcaps)
+		return ICE_ERR_NO_MEMORY;
+
+	status = ice_aq_get_phy_caps(pi, false, ICE_AQC_REPORT_TOPO_CAP, pcaps,
+				     NULL);
+	if (status)
+		goto out;
+
 	switch (fec) {
 	case ICE_FEC_BASER:
 		/* Clear RS bits, and AND BASE-R ability
@@ -2715,8 +2735,28 @@ ice_cfg_phy_fec(struct ice_aqc_set_phy_cfg_data *cfg, enum ice_fec_mode fec)
 	case ICE_FEC_AUTO:
 		/* AND auto FEC bit, and all caps bits. */
 		cfg->caps &= ICE_AQC_PHY_CAPS_MASK;
+		cfg->link_fec_opt |= pcaps->link_fec_options;
+		break;
+	default:
+		status = ICE_ERR_PARAM;
 		break;
 	}
+
+	if (fec == ICE_FEC_AUTO && ice_fw_supports_link_override(pi->hw)) {
+		struct ice_link_default_override_tlv tlv;
+
+		if (ice_get_link_default_override(&tlv, pi))
+			goto out;
+
+		if (!(tlv.options & ICE_LINK_OVERRIDE_STRICT_MODE) &&
+		    (tlv.options & ICE_LINK_OVERRIDE_EN))
+			cfg->link_fec_opt = tlv.fec_options;
+	}
+
+out:
+	ice_free(hw, pcaps);
+
+	return status;
 }
 
 /**
@@ -3977,7 +4017,7 @@ ice_dis_vsi_txq(struct ice_port_info *pi, u16 vsi_handle, u8 tc, u8 num_queues,
  * This function adds/updates the VSI queues per TC.
  */
 static enum ice_status
-ice_cfg_vsi_qs(struct ice_port_info *pi, u16 vsi_handle, u8 tc_bitmap,
+ice_cfg_vsi_qs(struct ice_port_info *pi, u16 vsi_handle, u16 tc_bitmap,
 	       u16 *maxqs, u8 owner)
 {
 	enum ice_status status = ICE_SUCCESS;
@@ -4016,7 +4056,7 @@ ice_cfg_vsi_qs(struct ice_port_info *pi, u16 vsi_handle, u8 tc_bitmap,
  * This function adds/updates the VSI LAN queues per TC.
  */
 enum ice_status
-ice_cfg_vsi_lan(struct ice_port_info *pi, u16 vsi_handle, u8 tc_bitmap,
+ice_cfg_vsi_lan(struct ice_port_info *pi, u16 vsi_handle, u16 tc_bitmap,
 		u16 *max_lanqs)
 {
 	return ice_cfg_vsi_qs(pi, vsi_handle, tc_bitmap, max_lanqs,
@@ -4267,4 +4307,103 @@ enum ice_fw_modes ice_get_fw_mode(struct ice_hw *hw)
 		return ICE_FW_MODE_ROLLBACK;
 	else
 		return ICE_FW_MODE_NORMAL;
+}
+
+/**
+ * ice_fw_supports_link_override
+ * @hw: pointer to the hardware structure
+ *
+ * Checks if the firmware supports link override
+ */
+bool ice_fw_supports_link_override(struct ice_hw *hw)
+{
+	if (hw->api_maj_ver == ICE_FW_API_LINK_OVERRIDE_MAJ) {
+		if (hw->api_min_ver > ICE_FW_API_LINK_OVERRIDE_MIN)
+			return true;
+		if (hw->api_min_ver == ICE_FW_API_LINK_OVERRIDE_MIN &&
+		    hw->api_patch >= ICE_FW_API_LINK_OVERRIDE_PATCH)
+			return true;
+	} else if (hw->api_maj_ver > ICE_FW_API_LINK_OVERRIDE_MAJ) {
+		return true;
+	}
+
+	return false;
+}
+
+/**
+ * ice_get_link_default_override
+ * @ldo: pointer to the link default override struct
+ * @pi: pointer to the port info struct
+ *
+ * Gets the link default override for a port
+ */
+enum ice_status
+ice_get_link_default_override(struct ice_link_default_override_tlv *ldo,
+			      struct ice_port_info *pi)
+{
+	u16 i, tlv, tlv_len, tlv_start, buf, offset;
+	struct ice_hw *hw = pi->hw;
+	enum ice_status status;
+
+	status = ice_get_pfa_module_tlv(hw, &tlv, &tlv_len,
+					ICE_SR_LINK_DEFAULT_OVERRIDE_PTR);
+	if (status) {
+		ice_debug(hw, ICE_DBG_INIT,
+			  "Failed to read link override TLV.\n");
+		return status;
+	}
+
+	/* Each port has its own config; calculate for our port */
+	tlv_start = tlv + pi->lport * ICE_SR_PFA_LINK_OVERRIDE_WORDS +
+		ICE_SR_PFA_LINK_OVERRIDE_OFFSET;
+
+	/* link options first */
+	status = ice_read_sr_word(hw, tlv_start, &buf);
+	if (status) {
+		ice_debug(hw, ICE_DBG_INIT,
+			  "Failed to read override link options.\n");
+		return status;
+	}
+	ldo->options = buf & ICE_LINK_OVERRIDE_OPT_M;
+	ldo->phy_config = (buf & ICE_LINK_OVERRIDE_PHY_CFG_M) >>
+		ICE_LINK_OVERRIDE_PHY_CFG_S;
+
+	/* link PHY config */
+	offset = tlv_start + ICE_SR_PFA_LINK_OVERRIDE_FEC_OFFSET;
+	status = ice_read_sr_word(hw, offset, &buf);
+	if (status) {
+		ice_debug(hw, ICE_DBG_INIT,
+			  "Failed to read override phy config.\n");
+		return status;
+	}
+	ldo->fec_options = buf & ICE_LINK_OVERRIDE_FEC_OPT_M;
+
+	/* PHY types low */
+	offset = tlv_start + ICE_SR_PFA_LINK_OVERRIDE_PHY_OFFSET;
+	for (i = 0; i < ICE_SR_PFA_LINK_OVERRIDE_PHY_WORDS; i++) {
+		status = ice_read_sr_word(hw, (offset + i), &buf);
+		if (status) {
+			ice_debug(hw, ICE_DBG_INIT,
+				  "Failed to read override link options.\n");
+			return status;
+		}
+		/* shift 16 bits at a time to fill 64 bits */
+		ldo->phy_type_low |= ((u64)buf << (i * 16));
+	}
+
+	/* PHY types high */
+	offset = tlv_start + ICE_SR_PFA_LINK_OVERRIDE_PHY_OFFSET +
+		ICE_SR_PFA_LINK_OVERRIDE_PHY_WORDS;
+	for (i = 0; i < ICE_SR_PFA_LINK_OVERRIDE_PHY_WORDS; i++) {
+		status = ice_read_sr_word(hw, (offset + i), &buf);
+		if (status) {
+			ice_debug(hw, ICE_DBG_INIT,
+				  "Failed to read override link options.\n");
+			return status;
+		}
+		/* shift 16 bits at a time to fill 64 bits */
+		ldo->phy_type_high |= ((u64)buf << (i * 16));
+	}
+
+	return status;
 }

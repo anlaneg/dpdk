@@ -408,8 +408,7 @@ Run-time configuration
 
   A nonzero value enables configuring Multi-Packet Rx queues. Rx queue is
   configured as Multi-Packet RQ if the total number of Rx queues is
-  ``rxqs_min_mprq`` or more and Rx scatter isn't configured. Disabled by
-  default.
+  ``rxqs_min_mprq`` or more. Disabled by default.
 
   Multi-Packet Rx Queue (MPRQ a.k.a Striding RQ) can further save PCIe bandwidth
   by posting a single large buffer for multiple packets. Instead of posting a
@@ -433,6 +432,20 @@ Run-time configuration
   if ``mprq_en`` is set.
 
   The size of Rx queue should be bigger than the number of strides.
+
+- ``mprq_log_stride_size`` parameter [int]
+
+  Log 2 of the size of a stride for Multi-Packet Rx queue. Configuring a smaller
+  stride size can save some memory and reduce probability of a depletion of all
+  available strides due to unreleased packets by an application. If configured
+  value is not in the range of device capability, the default value will be set
+  with a warning message. The default value is 11 which is 2048 bytes per a
+  stride, valid only if ``mprq_en`` is set. With ``mprq_log_stride_size`` set
+  it is possible for a pcaket to span across multiple strides. This mode allows
+  support of jumbo frames (9K) with MPRQ. The memcopy of some packets (or part
+  of a packet if Rx scatter is configured) may be required in case there is no
+  space left for a head room at the end of a stride which incurs some
+  performance penalty.
 
 - ``mprq_max_memcpy_len`` parameter [int]
 
@@ -822,6 +835,12 @@ Below are some firmware configurations listed.
     IP_OVER_VXLAN_EN=1
     IP_OVER_VXLAN_PORT=<udp dport>
 
+- enable VXLAN-GPE tunnel flow matching::
+
+    FLEX_PARSER_PROFILE_ENABLE=0
+    or
+    FLEX_PARSER_PROFILE_ENABLE=2
+
 - enable IP-in-IP tunnel flow matching::
 
     FLEX_PARSER_PROFILE_ENABLE=0
@@ -837,6 +856,8 @@ Below are some firmware configurations listed.
 - enable Geneve flow matching::
 
    FLEX_PARSER_PROFILE_ENABLE=0
+   or
+   FLEX_PARSER_PROFILE_ENABLE=1
 
 - enable GTP flow matching::
 
@@ -933,15 +954,15 @@ thanks to these environment variables:
 Mellanox OFED/EN
 ^^^^^^^^^^^^^^^^
 
-- Mellanox OFED version: ** 4.5, 4.6** /
-  Mellanox EN version: **4.5, 4.6**
+- Mellanox OFED version: **4.5** and above /
+  Mellanox EN version: **4.5** and above
 - firmware version:
 
   - ConnectX-4: **12.21.1000** and above.
   - ConnectX-4 Lx: **14.21.1000** and above.
   - ConnectX-5: **16.21.1000** and above.
   - ConnectX-5 Ex: **16.21.1000** and above.
-  - ConnectX-6: **20.99.5374** and above.
+  - ConnectX-6: **20.27.0090** and above.
   - ConnectX-6 Dx: **22.27.0090** and above.
   - BlueField: **18.25.1010** and above.
 
@@ -1266,6 +1287,19 @@ Supported hardware offloads
    |                       | |  rdma-core 26 | | rdma-core 26  |
    |                       | |  ConnectX-5   | | ConnectX-5    |
    +-----------------------+-----------------+-----------------+
+
+Notes for metadata
+------------------
+
+MARK and META items are interrelated with datapath - they might move from/to
+the applications in mbuf fields. Hence, zero value for these items has the
+special meaning - it means "no metadata are provided", not zero values are
+treated by applications and PMD as valid ones.
+
+Moreover in the flow engine domain the value zero is acceptable to match and
+set, and we should allow to specify zero values as rte_flow parameters for the
+META and MARK items and actions. In the same time zero mask has no meaning and
+should be rejected on validation stage.
 
 Notes for testpmd
 -----------------

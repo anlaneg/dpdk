@@ -196,7 +196,7 @@ int bnxt_alloc_rings(struct bnxt *bp, uint16_t qidx,
 	total_alloc_len += tpa_info_len;
 
 	snprintf(mz_name, RTE_MEMZONE_NAMESIZE,
-		 "bnxt_%04x:%02x:%02x:%02x-%04x_%s", pdev->addr.domain,
+		 "bnxt_" PCI_PRI_FMT "-%04x_%s", pdev->addr.domain,
 		 pdev->addr.bus, pdev->addr.devid, pdev->addr.function, qidx,
 		 suffix);
 	mz_name[RTE_MEMZONE_NAMESIZE - 1] = 0;
@@ -598,7 +598,7 @@ int bnxt_alloc_hwrm_rx_ring(struct bnxt *bp, int queue_index)
 
 	if (rxq->rx_started) {
 		if (bnxt_init_one_rx_ring(rxq)) {
-			RTE_LOG(ERR, PMD,
+			PMD_DRV_LOG(ERR,
 				"bnxt_init_one_rx_ring failed!\n");
 			bnxt_rx_queue_release_op(rxq);
 			rc = -ENOMEM;

@@ -173,6 +173,13 @@ if pcap_dep.found() and cc.has_header('pcap.h', dependencies: pcap_dep)
 	dpdk_extra_ldflags += '-lpcap'
 endif
 
+# for clang 32-bit compiles we need libatomic for 64-bit atomic ops
+if cc.get_id() == 'clang' and dpdk_conf.get('RTE_ARCH_64') == false
+	atomic_dep = cc.find_library('atomic', required: true)
+	add_project_link_arguments('-latomic', language: 'c')
+	dpdk_extra_ldflags += '-latomic'
+endif
+
 # add -include rte_config to cflags
 add_project_arguments('-include', 'rte_config.h', language: 'c')
 
@@ -222,6 +229,7 @@ dpdk_conf.set('RTE_MAX_LCORE', get_option('max_lcores'))
 dpdk_conf.set('RTE_MAX_NUMA_NODES', get_option('max_numa_nodes'))
 dpdk_conf.set('RTE_MAX_ETHPORTS', get_option('max_ethports'))
 dpdk_conf.set('RTE_LIBEAL_USE_HPET', get_option('use_hpet'))
+dpdk_conf.set('RTE_ENABLE_TRACE_FP', get_option('enable_trace_fp'))
 # values which have defaults which may be overridden
 dpdk_conf.set('RTE_MAX_VFIO_GROUPS', 64)
 dpdk_conf.set('RTE_DRIVER_MEMPOOL_BUCKET_SIZE_KB', 64)
@@ -234,7 +242,7 @@ if host_machine.cpu_family().startswith('x86')
 elif host_machine.cpu_family().startswith('arm') or host_machine.cpu_family().startswith('aarch')
 	arch_subdir = 'arm'
 elif host_machine.cpu_family().startswith('ppc')
-	arch_subdir = 'ppc_64'
+	arch_subdir = 'ppc'
 endif
 subdir(arch_subdir)
 dpdk_conf.set('RTE_COMPILE_TIME_CPUFLAGS', ','.join(compile_time_cpuflags))

@@ -21,6 +21,9 @@
 #include "bnxt_cpr.h"
 #include "bnxt_util.h"
 
+#include "tf_core.h"
+#include "bnxt_ulp.h"
+
 /* Vendor ID */
 #define PCI_VENDOR_ID_BROADCOM		0x14E4
 
@@ -188,13 +191,13 @@ enum bnxt_hw_context {
 struct bnxt_vlan_table_entry {
 	uint16_t		tpid;
 	uint16_t		vid;
-} __attribute__((packed));
+} __rte_packed;
 
 struct bnxt_vlan_antispoof_table_entry {
 	uint16_t		tpid;
 	uint16_t		vid;
 	uint16_t		mask;
-} __attribute__((packed));
+} __rte_packed;
 
 struct bnxt_child_vf_info {
 	void			*req_buf;
@@ -430,6 +433,13 @@ struct bnxt_ctx_mem_info {
 	struct bnxt_ctx_pg_info *tqm_mem[BNXT_MAX_TC_Q];
 };
 
+struct bnxt_ctx_mem_buf_info {
+	void		*va;
+	rte_iova_t	dma;
+	uint16_t	ctx_id;
+	size_t		size;
+};
+
 /* Maximum Firmware Reset bail out value in milliseconds */
 #define BNXT_MAX_FW_RESET_TIMEOUT	6000
 /* Minimum time required for the firmware readiness in milliseconds */
@@ -470,6 +480,11 @@ struct bnxt_error_recovery_info {
 	uint32_t        last_reset_counter;
 };
 
+/* Frequency for the FUNC_DRV_IF_CHANGE retry in milliseconds */
+#define BNXT_IF_CHANGE_RETRY_INTERVAL	50
+/* Maximum retry count for FUNC_DRV_IF_CHANGE */
+#define BNXT_IF_CHANGE_RETRY_COUNT	40
+
 struct bnxt_mark_info {
 	uint32_t	mark_id;
 	bool		valid;
@@ -492,6 +507,10 @@ struct bnxt_mark_info {
 #define BNXT_GRCP_WINDOW_2_BASE		0x2000
 #define BNXT_GRCP_WINDOW_3_BASE		0x3000
 
+#define BNXT_GRCP_BASE_MASK		0xfffff000
+#define BNXT_GRCP_OFFSET_MASK		0x00000ffc
+
+#define BNXT_FW_STATUS_HEALTHY		0x8000
 #define BNXT_FW_STATUS_SHUTDOWN		0x100000
 
 #define BNXT_HWRM_SHORT_REQ_LEN		sizeof(struct hwrm_short_input)
@@ -527,7 +546,7 @@ struct bnxt {
 #define BNXT_FLAG_NEW_RM			BIT(20)
 #define BNXT_FLAG_NPAR_PF			BIT(21)
 #define BNXT_FLAG_FW_CAP_ONE_STEP_TX_TS		BIT(22)
-#define BNXT_FLAG_ADV_FLOW_MGMT			BIT(23)
+#define BNXT_FLAG_FC_THREAD			BIT(23)
 #define BNXT_FLAG_RX_VECTOR_PKT_MODE		BIT(24)
 #define BNXT_PF(bp)		(!((bp)->flags & BNXT_FLAG_VF))
 #define BNXT_VF(bp)		((bp)->flags & BNXT_FLAG_VF)
@@ -547,6 +566,9 @@ struct bnxt {
 #define BNXT_FW_CAP_IF_CHANGE		BIT(1)
 #define BNXT_FW_CAP_ERROR_RECOVERY	BIT(2)
 #define BNXT_FW_CAP_ERR_RECOVER_RELOAD	BIT(3)
+#define BNXT_FW_CAP_ADV_FLOW_MGMT	BIT(5)
+#define BNXT_FW_CAP_ADV_FLOW_COUNTERS	BIT(6)
+#define BNXT_FW_CAP_HCOMM_FW_STATUS	BIT(7)
 
 	uint32_t		flow_flags;
 #define BNXT_FLOW_FLAG_L2_HDR_SRC_FILTER_EN	BIT(0)
@@ -594,7 +616,7 @@ struct bnxt {
 
 	uint8_t			mac_addr[RTE_ETHER_ADDR_LEN];
 
-	uint16_t			hwrm_cmd_seq;
+	uint16_t			chimp_cmd_seq;
 	uint16_t			kong_cmd_seq;
 	void				*hwrm_cmd_resp_addr;
 	rte_iova_t			hwrm_cmd_resp_dma_addr;
@@ -679,7 +701,24 @@ struct bnxt {
 /* TCAM and EM should be 16-bit only. Other modes not supported. */
 #define BNXT_FLOW_ID_MASK	0x0000ffff
 	struct bnxt_mark_info	*mark_table;
+
+#define	BNXT_SVIF_INVALID	0xFFFF
+	uint16_t		func_svif;
+	uint16_t		port_svif;
+
+	struct tf		tfp;
+	struct bnxt_ulp_context	ulp_ctx;
+	uint8_t			truflow;
+	uint16_t                max_fc;
+	struct bnxt_ctx_mem_buf_info rx_fc_in_tbl;
+	struct bnxt_ctx_mem_buf_info rx_fc_out_tbl;
+	struct bnxt_ctx_mem_buf_info tx_fc_in_tbl;
+	struct bnxt_ctx_mem_buf_info tx_fc_out_tbl;
+	uint16_t		flow_count;
+	uint8_t			flow_xstat;
 };
+
+#define BNXT_FC_TIMER	1 /* Timer freq in Sec Flow Counters */
 
 int bnxt_mtu_set_op(struct rte_eth_dev *eth_dev, uint16_t new_mtu);
 int bnxt_link_update(struct rte_eth_dev *eth_dev, int wait_to_complete,
@@ -719,4 +758,17 @@ extern int bnxt_logtype_driver;
 
 #define PMD_DRV_LOG(level, fmt, args...) \
 	  PMD_DRV_LOG_RAW(level, fmt, ## args)
+
+extern const struct rte_flow_ops bnxt_ulp_rte_flow_ops;
+int32_t bnxt_ulp_init(struct bnxt *bp);
+void bnxt_ulp_deinit(struct bnxt *bp);
+
+uint16_t bnxt_get_vnic_id(uint16_t port);
+uint16_t bnxt_get_svif(uint16_t port_id, bool func_svif);
+uint16_t bnxt_get_fw_func_id(uint16_t port);
+
+void bnxt_cancel_fc_thread(struct bnxt *bp);
+void bnxt_flow_cnt_alarm_cb(void *arg);
+int bnxt_flow_stats_req(struct bnxt *bp);
+int bnxt_flow_stats_cnt(struct bnxt *bp);
 #endif

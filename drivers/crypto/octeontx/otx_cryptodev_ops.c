@@ -358,7 +358,7 @@ otx_cpt_asym_session_clear(struct rte_cryptodev *dev,
 	rte_mempool_put(sess_mp, priv);
 }
 
-static __rte_always_inline int32_t __hot
+static __rte_always_inline int32_t __rte_hot
 otx_cpt_request_enqueue(struct cpt_instance *instance,
 			struct pending_queue *pqueue,
 			void *req)
@@ -391,7 +391,7 @@ otx_cpt_request_enqueue(struct cpt_instance *instance,
 	return 0;
 }
 
-static __rte_always_inline int __hot
+static __rte_always_inline int __rte_hot
 otx_cpt_enq_single_asym(struct cpt_instance *instance,
 			struct rte_crypto_op *op,
 			struct pending_queue *pqueue)
@@ -471,7 +471,7 @@ req_fail:
 	return ret;
 }
 
-static __rte_always_inline int __hot
+static __rte_always_inline int __rte_hot
 otx_cpt_enq_single_sym(struct cpt_instance *instance,
 		       struct rte_crypto_op *op,
 		       struct pending_queue *pqueue)
@@ -513,7 +513,7 @@ otx_cpt_enq_single_sym(struct cpt_instance *instance,
 	return 0;
 }
 
-static __rte_always_inline int __hot
+static __rte_always_inline int __rte_hot
 otx_cpt_enq_single_sym_sessless(struct cpt_instance *instance,
 				struct rte_crypto_op *op,
 				struct pending_queue *pqueue)
@@ -573,7 +573,7 @@ exit:
 #define OP_TYPE_SYM		0
 #define OP_TYPE_ASYM		1
 
-static __rte_always_inline int __hot
+static __rte_always_inline int __rte_hot
 otx_cpt_enq_single(struct cpt_instance *inst,
 		   struct rte_crypto_op *op,
 		   struct pending_queue *pqueue,
@@ -598,7 +598,7 @@ otx_cpt_enq_single(struct cpt_instance *inst,
 	return -ENOTSUP;
 }
 
-static  __rte_always_inline uint16_t __hot
+static  __rte_always_inline uint16_t __rte_hot
 otx_cpt_pkt_enqueue(void *qptr, struct rte_crypto_op **ops, uint16_t nb_ops,
 		    const uint8_t op_type)
 {
@@ -724,7 +724,7 @@ otx_cpt_asym_dequeue_ecpm_op(struct rte_crypto_ecpm_op_param *ecpm,
 	ecpm->r.y.length = prime_len;
 }
 
-static __rte_always_inline void __hot
+static __rte_always_inline void __rte_hot
 otx_cpt_asym_post_process(struct rte_crypto_op *cop,
 			  struct cpt_request_info *req)
 {
@@ -756,7 +756,7 @@ otx_cpt_asym_post_process(struct rte_crypto_op *cop,
 	}
 }
 
-static __rte_always_inline void __hot
+static __rte_always_inline void __rte_hot
 otx_cpt_dequeue_post_process(struct rte_crypto_op *cop, uintptr_t *rsp,
 			     const uint8_t op_type)
 {
@@ -782,7 +782,7 @@ otx_cpt_dequeue_post_process(struct rte_crypto_op *cop, uintptr_t *rsp,
 	return;
 }
 
-static __rte_always_inline uint16_t __hot
+static __rte_always_inline uint16_t __rte_hot
 otx_cpt_pkt_dequeue(void *qptr, struct rte_crypto_op **ops, uint16_t nb_ops,
 		    const uint8_t op_type)
 {
@@ -898,7 +898,6 @@ static struct rte_cryptodev_ops cptvf_ops = {
 	.stats_reset = otx_cpt_stats_reset,
 	.queue_pair_setup = otx_cpt_que_pair_setup,
 	.queue_pair_release = otx_cpt_que_pair_release,
-	.queue_pair_count = NULL,
 
 	/* Crypto related operations */
 	.sym_session_get_size = otx_cpt_get_session_size,
@@ -968,7 +967,8 @@ otx_cpt_dev_create(struct rte_cryptodev *c_dev)
 				RTE_CRYPTODEV_FF_SYM_OPERATION_CHAINING |
 				RTE_CRYPTODEV_FF_IN_PLACE_SGL |
 				RTE_CRYPTODEV_FF_OOP_SGL_IN_LB_OUT |
-				RTE_CRYPTODEV_FF_OOP_SGL_IN_SGL_OUT;
+				RTE_CRYPTODEV_FF_OOP_SGL_IN_SGL_OUT |
+				RTE_CRYPTODEV_FF_SYM_SESSIONLESS;
 		break;
 	default:
 		/* Feature not supported. Abort */

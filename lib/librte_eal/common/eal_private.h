@@ -57,7 +57,7 @@ struct rte_config {
 	 * DPDK instances
 	 */
 	struct rte_mem_config *mem_config;
-} __attribute__((__packed__));
+} __rte_packed;
 
 /**
  * Get the global configuration structure.
@@ -442,5 +442,10 @@ rte_option_usage(void);
  */
 uint64_t
 eal_get_baseaddr(void);
+
+void *
+eal_malloc_no_trace(const char *type, size_t size, unsigned int align);
+
+void eal_free_no_trace(void *addr);
 
 #endif /* _EAL_PRIVATE_H_ */

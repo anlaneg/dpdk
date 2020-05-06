@@ -117,11 +117,17 @@ DIRS-$(CONFIG_RTE_LIBRTE_BPF) += librte_bpf
 DEPDIRS-librte_bpf := librte_eal librte_mempool librte_mbuf librte_ethdev
 DIRS-$(CONFIG_RTE_LIBRTE_IPSEC) += librte_ipsec
 DEPDIRS-librte_ipsec := librte_eal librte_mbuf librte_cryptodev librte_security \
-			librte_net
+			librte_net librte_hash
 DIRS-$(CONFIG_RTE_LIBRTE_TELEMETRY) += librte_telemetry
 DEPDIRS-librte_telemetry := librte_eal librte_metrics librte_ethdev
 DIRS-$(CONFIG_RTE_LIBRTE_RCU) += librte_rcu
-DEPDIRS-librte_rcu := librte_eal
+DEPDIRS-librte_rcu := librte_eal librte_ring
+
+DIRS-$(CONFIG_RTE_LIBRTE_GRAPH) += librte_graph
+DEPDIRS-librte_graph := librte_eal
+
+DIRS-$(CONFIG_RTE_LIBRTE_NODE) += librte_node
+DEPDIRS-librte_node := librte_graph librte_lpm librte_ethdev librte_mbuf
 
 ifeq ($(CONFIG_RTE_EXEC_ENV_LINUX),y)
 DIRS-$(CONFIG_RTE_LIBRTE_KNI) += librte_kni

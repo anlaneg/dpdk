@@ -24,6 +24,8 @@ extern "C" {
 #include <rte_common.h>
 #include <rte_config.h>
 
+#include "rte_cryptodev_trace_fp.h"
+
 extern const char **rte_cyptodev_names;
 
 /* Logging Macros */
@@ -452,6 +454,8 @@ rte_cryptodev_asym_get_xform_enum(enum rte_crypto_asym_xform_type *xform_enum,
 /**< Support asymmetric session-less operations */
 #define	RTE_CRYPTODEV_FF_SYM_CPU_CRYPTO			(1ULL << 21)
 /**< Support symmetric cpu-crypto processing */
+#define RTE_CRYPTODEV_FF_SYM_SESSIONLESS		(1ULL << 22)
+/**< Support symmetric session-less operations */
 
 
 /**
@@ -924,6 +928,7 @@ rte_cryptodev_dequeue_burst(uint8_t dev_id, uint16_t qp_id,
 	nb_ops = (*dev->dequeue_burst)
 			(dev->data->queue_pairs[qp_id], ops, nb_ops);
 
+	rte_cryptodev_trace_dequeue_burst(dev_id, qp_id, (void **)ops, nb_ops);
 	return nb_ops;
 }
 
@@ -964,6 +969,7 @@ rte_cryptodev_enqueue_burst(uint8_t dev_id, uint16_t qp_id,
 {
 	struct rte_cryptodev *dev = &rte_cryptodevs[dev_id];
 
+	rte_cryptodev_trace_enqueue_burst(dev_id, qp_id, (void **)ops, nb_ops);
 	return (*dev->enqueue_burst)(
 			dev->data->queue_pairs[qp_id], ops, nb_ops);
 }

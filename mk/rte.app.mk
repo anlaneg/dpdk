@@ -98,6 +98,8 @@ _LDLIBS-$(CONFIG_RTE_LIBRTE_CMDLINE)        += -lrte_cmdline
 _LDLIBS-$(CONFIG_RTE_LIBRTE_REORDER)        += -lrte_reorder
 _LDLIBS-$(CONFIG_RTE_LIBRTE_SCHED)          += -lrte_sched
 _LDLIBS-$(CONFIG_RTE_LIBRTE_RCU)            += -lrte_rcu
+_LDLIBS-$(CONFIG_RTE_LIBRTE_GRAPH)          += -lrte_graph
+_LDLIBS-$(CONFIG_RTE_LIBRTE_NODE)           += -lrte_node
 
 ifeq ($(CONFIG_RTE_EXEC_ENV_LINUX),y)
 _LDLIBS-$(CONFIG_RTE_LIBRTE_KNI)            += -lrte_kni
@@ -185,9 +187,11 @@ _LDLIBS-$(CONFIG_RTE_LIBRTE_I40E_PMD)       += -lrte_pmd_i40e
 _LDLIBS-$(CONFIG_RTE_LIBRTE_IAVF_PMD)       += -lrte_pmd_iavf
 _LDLIBS-$(CONFIG_RTE_LIBRTE_ICE_PMD)        += -lrte_pmd_ice
 IAVF-y := $(CONFIG_RTE_LIBRTE_IAVF_PMD)
+IAVF-y += $(CONFIG_RTE_LIBRTE_ICE_PMD)
 ifeq ($(findstring y,$(IAVF-y)),y)
 _LDLIBS-y += -lrte_common_iavf
 endif
+_LDLIBS-$(CONFIG_RTE_LIBRTE_IGC_PMD)        += -lrte_pmd_igc
 _LDLIBS-$(CONFIG_RTE_LIBRTE_IONIC_PMD)      += -lrte_pmd_ionic
 _LDLIBS-$(CONFIG_RTE_LIBRTE_IXGBE_PMD)      += -lrte_pmd_ixgbe
 ifeq ($(CONFIG_RTE_LIBRTE_KNI),y)
@@ -246,6 +250,7 @@ _LDLIBS-$(CONFIG_RTE_LIBRTE_NETVSC_PMD)     += -lrte_pmd_netvsc
 ifeq ($(CONFIG_RTE_LIBRTE_BBDEV),y)
 _LDLIBS-$(CONFIG_RTE_LIBRTE_PMD_BBDEV_NULL)     += -lrte_pmd_bbdev_null
 _LDLIBS-$(CONFIG_RTE_LIBRTE_PMD_BBDEV_FPGA_LTE_FEC) += -lrte_pmd_bbdev_fpga_lte_fec
+_LDLIBS-$(CONFIG_RTE_LIBRTE_PMD_BBDEV_FPGA_5GNR_FEC) += -lrte_pmd_bbdev_fpga_5gnr_fec
 
 # TURBO SOFTWARE PMD is dependent on the FLEXRAN library
 _LDLIBS-$(CONFIG_RTE_LIBRTE_PMD_BBDEV_TURBO_SW) += -lrte_pmd_bbdev_turbo_sw

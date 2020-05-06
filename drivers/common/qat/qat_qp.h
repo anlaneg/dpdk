@@ -54,6 +54,7 @@ struct qat_queue {
 	uint32_t	modulo_mask;
 	uint32_t	msg_size;
 	uint32_t	queue_size;
+	uint8_t		trailz;
 	uint8_t		hw_bundle_number;
 	uint8_t		hw_queue_number;
 	/* HW queue aka ring offset on bundle */
@@ -89,6 +90,9 @@ uint16_t
 qat_enqueue_op_burst(void *qp, void **ops, uint16_t nb_ops);
 
 uint16_t
+qat_enqueue_comp_op_burst(void *qp, void **ops, uint16_t nb_ops);
+
+uint16_t
 qat_dequeue_op_burst(void *qp, void **ops, uint16_t nb_ops);
 
 int
@@ -102,6 +106,9 @@ qat_qp_setup(struct qat_pci_device *qat_dev,
 int
 qat_qps_per_service(const struct qat_qp_hw_data *qp_hw_data,
 			enum qat_service_type service);
+
+int
+qat_cq_get_fw_version(struct qat_qp *qp);
 
 /* Needed for weak function*/
 int

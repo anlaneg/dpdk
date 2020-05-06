@@ -51,6 +51,8 @@ test_sources = files('commands.c',
 	'test_fib6_perf.c',
 	'test_func_reentrancy.c',
 	'test_flow_classify.c',
+	'test_graph.c',
+	'test_graph_perf.c',
 	'test_hash.c',
 	'test_hash_functions.c',
 	'test_hash_multiwriter.c',
@@ -58,6 +60,7 @@ test_sources = files('commands.c',
 	'test_hash_perf.c',
 	'test_hash_readwrite_lf_perf.c',
 	'test_interrupts.c',
+        'test_ipfrag.c',
 	'test_ipsec.c',
 	'test_ipsec_sad.c',
 	'test_kni.c',
@@ -100,9 +103,15 @@ test_sources = files('commands.c',
 	'test_rib.c',
 	'test_rib6.c',
 	'test_ring.c',
+	'test_ring_mpmc_stress.c',
+	'test_ring_hts_stress.c',
+	'test_ring_peek_stress.c',
 	'test_ring_perf.c',
+	'test_ring_rts_stress.c',
+	'test_ring_stress.c',
 	'test_rwlock.c',
 	'test_sched.c',
+	'test_security.c',
 	'test_service_cores.c',
 	'test_spinlock.c',
 	'test_stack.c',
@@ -121,6 +130,9 @@ test_sources = files('commands.c',
 	'test_timer_racecond.c',
 	'test_timer_secondary.c',
 	'test_ticketlock.c',
+	'test_trace.c',
+	'test_trace_register.c',
+	'test_trace_perf.c',
 	'test_version.c',
 	'virtual_pmd.c'
 )
@@ -137,12 +149,14 @@ test_deps = ['acl',
 	'eventdev',
 	'fib',
 	'flow_classify',
+	'graph',
 	'hash',
 	'ipsec',
 	'latencystats',
 	'lpm',
 	'member',
 	'metrics',
+	'node',
 	'pipeline',
 	'port',
 	'rawdev',
@@ -150,6 +164,7 @@ test_deps = ['acl',
 	'reorder',
 	'rib',
 	'ring',
+	'security',
 	'stack',
 	'timer'
 ]
@@ -187,6 +202,7 @@ fast_tests = [
         ['flow_classify_autotest', false],
         ['hash_autotest', true],
         ['interrupt_autotest', true],
+        ['ipfrag_autotest', false],
         ['logs_autotest', true],
         ['lpm_autotest', true],
         ['lpm6_autotest', true],
@@ -211,6 +227,7 @@ fast_tests = [
         ['rwlock_rds_wrm_autotest', true],
         ['rwlock_rde_wro_autotest', true],
         ['sched_autotest', true],
+		['security_autotest', false],
         ['spinlock_autotest', true],
         ['stack_autotest', false],
         ['stack_lf_autotest', false],
@@ -237,6 +254,7 @@ fast_tests = [
         ['reorder_autotest', true],
         ['service_autotest', true],
         ['thash_autotest', true],
+        ['trace_autotest', true],
 ]
 
 perf_test_names = [
@@ -272,6 +290,7 @@ perf_test_names = [
         'rand_perf_autotest',
         'hash_readwrite_perf_autotest',
         'hash_readwrite_lf_perf_autotest',
+        'trace_perf_autotest',
 ]
 
 driver_test_names = [
@@ -355,13 +374,14 @@ if dpdk_conf.has('RTE_LIBRTE_PDUMP')
 	test_deps += 'pdump'
 endif
 
-cflags = machine_args
 if cc.has_argument('-Wno-format-truncation')
     cflags += '-Wno-format-truncation'
 endif
 
 # specify -D_GNU_SOURCE unconditionally
 cflags += '-D_GNU_SOURCE'
+# Strict-aliasing rules are violated by uint8_t[] to context size casts.
+cflags += '-fno-strict-aliasing'
 
 test_dep_objs = []
 if dpdk_conf.has('RTE_LIBRTE_COMPRESSDEV')
@@ -385,27 +405,21 @@ endforeach
 test_dep_objs += cc.find_library('execinfo', required: false)
 
 link_libs = []
+link_nodes = []
 if get_option('default_library') == 'static'
 	link_libs = dpdk_drivers
+	link_nodes = dpdk_graph_nodes
 endif
 
 dpdk_test = executable('dpdk-test',
 	test_sources,
-	link_whole: link_libs,
+	link_whole: link_libs + link_nodes,
 	dependencies: test_dep_objs,
-	c_args: [cflags, '-DALLOW_EXPERIMENTAL_API'],
+	c_args: cflags,
 	install_rpath: driver_install_path,
 	install: true)
 
-has_hugepage = true
-if is_linux
-	check_hugepage = run_command('cat',
-				     '/proc/sys/vm/nr_hugepages')
-	if (check_hugepage.returncode() != 0 or
-	    check_hugepage.stdout().strip() == '0')
-		has_hugepage = false
-	endif
-endif
+has_hugepage = run_command('has-hugepage.sh').stdout().strip() != '0'
 message('hugepage availability: @0@'.format(has_hugepage))
 
 # some perf tests (eg: memcpy perf autotest)take very long

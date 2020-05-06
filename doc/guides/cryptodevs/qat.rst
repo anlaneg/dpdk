@@ -23,7 +23,7 @@ poll mode crypto driver support for the following hardware accelerator devices:
 * ``Intel QuickAssist Technology C62x``
 * ``Intel QuickAssist Technology C3xxx``
 * ``Intel QuickAssist Technology D15xx``
-* ``Intel QuickAssist Technology C4xxx``
+* ``Intel QuickAssist Technology P5xxx``
 
 
 Features
@@ -52,10 +52,15 @@ Cipher algorithms:
 
 Hash algorithms:
 
+* ``RTE_CRYPTO_AUTH_SHA1``
 * ``RTE_CRYPTO_AUTH_SHA1_HMAC``
+* ``RTE_CRYPTO_AUTH_SHA224``
 * ``RTE_CRYPTO_AUTH_SHA224_HMAC``
+* ``RTE_CRYPTO_AUTH_SHA256``
 * ``RTE_CRYPTO_AUTH_SHA256_HMAC``
+* ``RTE_CRYPTO_AUTH_SHA384``
 * ``RTE_CRYPTO_AUTH_SHA384_HMAC``
+* ``RTE_CRYPTO_AUTH_SHA512``
 * ``RTE_CRYPTO_AUTH_SHA512_HMAC``
 * ``RTE_CRYPTO_AUTH_AES_XCBC_MAC``
 * ``RTE_CRYPTO_AUTH_SNOW3G_UIA2``
@@ -82,18 +87,17 @@ All the usual chains are supported and also some mixed chains:
    +------------------+-----------+-------------+----------+----------+
    | Cipher algorithm | NULL AUTH | SNOW3G UIA2 | ZUC EIA3 | AES CMAC |
    +==================+===========+=============+==========+==========+
-   | NULL CIPHER      | Y         | 3           | 3        | Y        |
+   | NULL CIPHER      | Y         | 2&3         | 2&3      | Y        |
    +------------------+-----------+-------------+----------+----------+
-   | SNOW3G UEA2      | 3         | Y           | 3        | 3        |
+   | SNOW3G UEA2      | 2&3       | Y           | 2&3      | 2&3      |
    +------------------+-----------+-------------+----------+----------+
-   | ZUC EEA3         | 3         | 3           | 2&3      | 3        |
+   | ZUC EEA3         | 2&3       | 2&3         | 2&3      | 2&3      |
    +------------------+-----------+-------------+----------+----------+
-   | AES CTR          | Y         | 3           | 3        | Y        |
+   | AES CTR          | Y         | 2&3         | 2&3      | Y        |
    +------------------+-----------+-------------+----------+----------+
 
 * The combinations marked as "Y" are supported on all QAT hardware versions.
 * The combinations marked as "2&3" are supported on GEN2/GEN3 QAT hardware only.
-* The combinations marked as "3" are supported on GEN3 QAT hardware only.
 
 
 Limitations
@@ -120,6 +124,8 @@ Limitations
   enqueued to the device and will be marked as failed. The simplest way to
   mitigate this is to use the bdf whitelist to avoid mixing devices of different
   generations in the same process if planning to use for GCM.
+* The mixed algo feature on GEN2 is not supported by all kernel drivers. Check
+  the notes under the Available Kernel Drivers table below for specific details.
 
 Extra notes on KASUMI F9
 ~~~~~~~~~~~~~~~~~~~~~~~~
@@ -149,7 +155,7 @@ poll mode crypto driver support for the following hardware accelerator devices:
 * ``Intel QuickAssist Technology C62x``
 * ``Intel QuickAssist Technology C3xxx``
 * ``Intel QuickAssist Technology D15xx``
-* ``Intel QuickAssist Technology C4xxx``
+* ``Intel QuickAssist Technology P5xxx``
 
 The QAT ASYM PMD has support for:
 
@@ -259,8 +265,11 @@ allocated while for GEN1 devices, 12 buffers are allocated, plus 1472 bytes over
 .. Note::
 
 	If the compressed output of a Deflate operation using Dynamic Huffman
-        Encoding is too big to fit in an intermediate buffer, then the
-	operation will fall back to fixed compression rather than failing the operation.
+	Encoding is too big to fit in an intermediate buffer, then the
+	operation will be split into smaller operations and their results will
+	be merged afterwards.
+	This is not possible if any checksum calculation was requested - in such
+	case the code falls back to fixed compression.
 	To avoid this less performant case, applications should configure
 	the intermediate buffer size to be larger than the expected input data size
 	(compressed output size is usually unknown, so the only option is to make
@@ -376,8 +385,10 @@ to see the full table)
    +-----+-----+-----+-----+----------+---------------+---------------+------------+--------+------+--------+--------+
    | Yes | No  | No  | 2   | D15xx    | p             | qat_d15xx     | d15xx      | 6f54   | 1    | 6f55   | 16     |
    +-----+-----+-----+-----+----------+---------------+---------------+------------+--------+------+--------+--------+
-   | Yes | No  | No  | 3   | C4xxx    | p             | qat_c4xxx     | c4xxx      | 18a0   | 1    | 18a1   | 128    |
+   | Yes | No  | No  | 3   | P5xxx    | p             | qat_p5xxx     | p5xxx      | 18a0   | 1    | 18a1   | 128    |
    +-----+-----+-----+-----+----------+---------------+---------------+------------+--------+------+--------+--------+
+
+* Note: Symmetric mixed crypto algorithms feature on Gen 2 works only with 01.org driver version 4.9.0+
 
 The first 3 columns indicate the service:
 

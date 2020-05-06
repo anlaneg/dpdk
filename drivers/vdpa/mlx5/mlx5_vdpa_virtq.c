@@ -46,7 +46,7 @@ mlx5_vdpa_virtq_unset(struct mlx5_vdpa_virtq *virtq)
 	int retries = MLX5_VDPA_INTR_RETRIES;
 	int ret = -EAGAIN;
 
-	if (virtq->intr_handle.fd) {
+	if (virtq->intr_handle.fd != -1) {
 		while (retries-- && ret == -EAGAIN) {
 			ret = rte_intr_callback_unregister(&virtq->intr_handle,
 							mlx5_vdpa_virtq_handler,
@@ -59,7 +59,7 @@ mlx5_vdpa_virtq_unset(struct mlx5_vdpa_virtq *virtq)
 				usleep(MLX5_VDPA_INTR_RETRIES_USEC);
 			}
 		}
-		memset(&virtq->intr_handle, 0, sizeof(virtq->intr_handle));
+		virtq->intr_handle.fd = -1;
 	}
 	if (virtq->virtq) {
 		claim_zero(mlx5_devx_cmd_destroy(virtq->virtq));
@@ -104,10 +104,6 @@ mlx5_vdpa_virtqs_release(struct mlx5_vdpa_priv *priv)
 	if (priv->virtq_db_addr) {
 		claim_zero(munmap(priv->virtq_db_addr, priv->var->length));
 		priv->virtq_db_addr = NULL;
-	}
-	if (priv->var) {
-		mlx5_glue->dv_free_var(priv->var);
-		priv->var = NULL;
 	}
 	priv->features = 0;
 }
@@ -236,10 +232,17 @@ mlx5_vdpa_virtq_setup(struct mlx5_vdpa_priv *priv,
 		}
 		attr.available_addr = gpa;
 	}
-	rte_vhost_get_vring_base(priv->vid, index, &last_avail_idx,
+	ret = rte_vhost_get_vring_base(priv->vid, index, &last_avail_idx,
 				 &last_used_idx);
-	DRV_LOG(INFO, "vid %d: Init last_avail_idx=%d, last_used_idx=%d for "
-		"virtq %d.", priv->vid, last_avail_idx, last_used_idx, index);
+	if (ret) {
+		last_avail_idx = 0;
+		last_used_idx = 0;
+		DRV_LOG(WARNING, "Couldn't get vring base, idx are set to 0");
+	} else {
+		DRV_LOG(INFO, "vid %d: Init last_avail_idx=%d, last_used_idx=%d for "
+				"virtq %d.", priv->vid, last_avail_idx,
+				last_used_idx, index);
+	}
 	attr.hw_available_index = last_avail_idx;
 	attr.hw_used_index = last_used_idx;
 	attr.q_size = vq.size;
@@ -259,15 +262,25 @@ mlx5_vdpa_virtq_setup(struct mlx5_vdpa_priv *priv,
 	rte_write32(virtq->index, priv->virtq_db_addr);
 	/* Setup doorbell mapping. */
 	virtq->intr_handle.fd = vq.kickfd;
-	virtq->intr_handle.type = RTE_INTR_HANDLE_EXT;
-	if (rte_intr_callback_register(&virtq->intr_handle,
-				       mlx5_vdpa_virtq_handler, virtq)) {
-		virtq->intr_handle.fd = 0;
-		DRV_LOG(ERR, "Failed to register virtq %d interrupt.", index);
-		goto error;
+	if (virtq->intr_handle.fd == -1) {
+		DRV_LOG(WARNING, "Virtq %d kickfd is invalid.", index);
+		if (!priv->direct_notifier) {
+			DRV_LOG(ERR, "Virtq %d cannot be notified.", index);
+			goto error;
+		}
 	} else {
-		DRV_LOG(DEBUG, "Register fd %d interrupt for virtq %d.",
-			virtq->intr_handle.fd, index);
+		virtq->intr_handle.type = RTE_INTR_HANDLE_EXT;
+		if (rte_intr_callback_register(&virtq->intr_handle,
+					       mlx5_vdpa_virtq_handler,
+					       virtq)) {
+			virtq->intr_handle.fd = -1;
+			DRV_LOG(ERR, "Failed to register virtq %d interrupt.",
+				index);
+			goto error;
+		} else {
+			DRV_LOG(DEBUG, "Register fd %d interrupt for virtq %d.",
+				virtq->intr_handle.fd, index);
+		}
 	}
 	return 0;
 error:
@@ -341,11 +354,6 @@ mlx5_vdpa_virtqs_prepare(struct mlx5_vdpa_priv *priv)
 
 	if (ret || mlx5_vdpa_features_validate(priv)) {
 		DRV_LOG(ERR, "Failed to configure negotiated features.");
-		return -1;
-	}
-	priv->var = mlx5_glue->dv_alloc_var(priv->ctx, 0);
-	if (!priv->var) {
-		DRV_LOG(ERR, "Failed to allocate VAR %u.\n", errno);
 		return -1;
 	}
 	/* Always map the entire page. */

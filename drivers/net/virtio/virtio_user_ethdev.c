@@ -465,6 +465,8 @@ static const char *valid_args[] = {
 	VIRTIO_USER_ARG_IN_ORDER,
 #define VIRTIO_USER_ARG_PACKED_VQ      "packed_vq"
 	VIRTIO_USER_ARG_PACKED_VQ,
+#define VIRTIO_USER_ARG_SPEED          "speed"
+	VIRTIO_USER_ARG_SPEED,
 	NULL
 };
 
@@ -492,12 +494,17 @@ static int
 get_integer_arg(const char *key __rte_unused,
 		const char *value, void *extra_args)
 {
+	uint64_t integer = 0;
 	if (!value || !extra_args)
 		return -EINVAL;
-
-	*(uint64_t *)extra_args = strtoull(value, NULL, 0);
-
-	return 0;
+	errno = 0;
+	integer = strtoull(value, NULL, 0);
+	/* extra_args keeps default value, it should be replaced
+	 * only in case of successful parsing of the 'value' arg
+	 */
+	if (errno == 0)
+		*(uint64_t *)extra_args = integer;
+	return -errno;
 }
 
 static struct rte_eth_dev *
@@ -578,7 +585,7 @@ virtio_user_pmd_probe(struct rte_vdev_device *dev)
 		const char *name = rte_vdev_device_name(dev);
 		eth_dev = rte_eth_dev_attach_secondary(name);
 		if (!eth_dev) {
-			RTE_LOG(ERR, PMD, "Failed to probe %s\n", name);
+			PMD_INIT_LOG(ERR, "Failed to probe %s", name);
 			return -1;
 		}
 
@@ -807,4 +814,5 @@ RTE_PMD_REGISTER_PARAM_STRING(net_virtio_user,
 	"server=<0|1> "
 	"mrg_rxbuf=<0|1> "
 	"in_order=<0|1> "
-	"packed_vq=<0|1>");
+	"packed_vq=<0|1> "
+	"speed=<int>");

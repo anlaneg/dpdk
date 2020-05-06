@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: BSD-3-Clause
- * Copyright(c) 2001-2019
+ * Copyright(c) 2001-2020
  */
 
 #include "ice_common.h"
@@ -1323,13 +1323,13 @@ enum ice_status ice_set_dcb_cfg(struct ice_port_info *pi)
 }
 
 /**
- * ice_aq_query_port_ets - query port ets configuration
+ * ice_aq_query_port_ets - query port ETS configuration
  * @pi: port information structure
  * @buf: pointer to buffer
  * @buf_size: buffer size in bytes
  * @cd: pointer to command details structure or NULL
  *
- * query current port ets configuration
+ * query current port ETS configuration
  */
 enum ice_status
 ice_aq_query_port_ets(struct ice_port_info *pi,
@@ -1416,13 +1416,13 @@ ice_update_port_tc_tree_cfg(struct ice_port_info *pi,
 }
 
 /**
- * ice_query_port_ets - query port ets configuration
+ * ice_query_port_ets - query port ETS configuration
  * @pi: port information structure
  * @buf: pointer to buffer
  * @buf_size: buffer size in bytes
  * @cd: pointer to command details structure or NULL
  *
- * query current port ets configuration and update the
+ * query current port ETS configuration and update the
  * SW DB with the TC changes
  */
 enum ice_status

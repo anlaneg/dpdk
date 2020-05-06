@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: BSD-3-Clause
- * Copyright(c) 2001-2019
+ * Copyright(c) 2001-2020
  */
 
 #ifndef _ICE_COMMON_H_
@@ -19,12 +19,10 @@ enum ice_fw_modes {
 };
 
 enum ice_status ice_nvm_validate_checksum(struct ice_hw *hw);
-
+enum ice_status ice_init_fltr_mgmt_struct(struct ice_hw *hw);
+void ice_cleanup_fltr_mgmt_struct(struct ice_hw *hw);
 enum ice_status ice_init_hw(struct ice_hw *hw);
 void ice_deinit_hw(struct ice_hw *hw);
-enum ice_status
-ice_get_pfa_module_tlv(struct ice_hw *hw, u16 *module_tlv, u16 *module_tlv_len,
-		       u16 module_type);
 enum ice_status ice_check_reset(struct ice_hw *hw);
 enum ice_status ice_reset(struct ice_hw *hw, enum ice_reset_req req);
 
@@ -140,6 +138,11 @@ enum ice_status ice_clear_pf_cfg(struct ice_hw *hw);
 enum ice_status
 ice_aq_set_phy_cfg(struct ice_hw *hw, struct ice_port_info *pi,
 		   struct ice_aqc_set_phy_cfg_data *cfg, struct ice_sq_cd *cd);
+bool ice_fw_supports_link_override(struct ice_hw *hw);
+enum ice_status
+ice_get_link_default_override(struct ice_link_default_override_tlv *ldo,
+			      struct ice_port_info *pi);
+
 enum ice_fc_mode ice_caps_to_fc_mode(u8 caps);
 enum ice_fec_mode ice_caps_to_fec_mode(u8 caps, u8 fec_options);
 enum ice_status
@@ -149,10 +152,12 @@ bool
 ice_phy_caps_equals_cfg(struct ice_aqc_get_phy_caps_data *caps,
 			struct ice_aqc_set_phy_cfg_data *cfg);
 void
-ice_copy_phy_caps_to_cfg(struct ice_aqc_get_phy_caps_data *caps,
+ice_copy_phy_caps_to_cfg(struct ice_port_info *pi,
+			 struct ice_aqc_get_phy_caps_data *caps,
 			 struct ice_aqc_set_phy_cfg_data *cfg);
-void
-ice_cfg_phy_fec(struct ice_aqc_set_phy_cfg_data *cfg, enum ice_fec_mode fec);
+enum ice_status
+ice_cfg_phy_fec(struct ice_port_info *pi, struct ice_aqc_set_phy_cfg_data *cfg,
+		enum ice_fec_mode fec);
 enum ice_status
 ice_aq_set_link_restart_an(struct ice_port_info *pi, bool ena_link,
 			   struct ice_sq_cd *cd);
@@ -183,7 +188,7 @@ ice_dis_vsi_txq(struct ice_port_info *pi, u16 vsi_handle, u8 tc, u8 num_queues,
 		enum ice_disq_rst_src rst_src, u16 vmvf_num,
 		struct ice_sq_cd *cd);
 enum ice_status
-ice_cfg_vsi_lan(struct ice_port_info *pi, u16 vsi_handle, u8 tc_bitmap,
+ice_cfg_vsi_lan(struct ice_port_info *pi, u16 vsi_handle, u16 tc_bitmap,
 		u16 *max_lanqs);
 enum ice_status
 ice_ena_vsi_txq(struct ice_port_info *pi, u16 vsi_handle, u8 tc, u16 q_handle,
@@ -208,9 +213,6 @@ ice_stat_update32(struct ice_hw *hw, u32 reg, bool prev_stat_loaded,
 void
 ice_stat_update_repc(struct ice_hw *hw, u16 vsi_handle, bool prev_stat_loaded,
 		     struct ice_eth_stats *cur_stats);
-void
-ice_get_nvm_version(struct ice_hw *hw, u8 *oem_ver, u16 *oem_build,
-		    u8 *oem_patch, u8 *ver_hi, u8 *ver_lo);
 enum ice_fw_modes ice_get_fw_mode(struct ice_hw *hw);
 void ice_print_rollback_msg(struct ice_hw *hw);
 enum ice_status

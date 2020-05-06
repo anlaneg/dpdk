@@ -91,7 +91,7 @@ ssows_release_event(struct ssows *ws)
 		ssows_swtag_untag(ws);
 }
 
-__rte_always_inline uint16_t __hot
+__rte_always_inline uint16_t __rte_hot
 ssows_deq(void *port, struct rte_event *ev, uint64_t timeout_ticks)
 {
 	struct ssows *ws = port;
@@ -107,7 +107,7 @@ ssows_deq(void *port, struct rte_event *ev, uint64_t timeout_ticks)
 	}
 }
 
-__rte_always_inline uint16_t __hot
+__rte_always_inline uint16_t __rte_hot
 ssows_deq_timeout(void *port, struct rte_event *ev, uint64_t timeout_ticks)
 {
 	struct ssows *ws = port;
@@ -125,7 +125,7 @@ ssows_deq_timeout(void *port, struct rte_event *ev, uint64_t timeout_ticks)
 	return ret;
 }
 
-uint16_t __hot
+uint16_t __rte_hot
 ssows_deq_burst(void *port, struct rte_event ev[], uint16_t nb_events,
 		uint64_t timeout_ticks)
 {
@@ -134,7 +134,7 @@ ssows_deq_burst(void *port, struct rte_event ev[], uint16_t nb_events,
 	return ssows_deq(port, ev, timeout_ticks);
 }
 
-uint16_t __hot
+uint16_t __rte_hot
 ssows_deq_timeout_burst(void *port, struct rte_event ev[], uint16_t nb_events,
 			uint64_t timeout_ticks)
 {
@@ -143,7 +143,7 @@ ssows_deq_timeout_burst(void *port, struct rte_event ev[], uint16_t nb_events,
 	return ssows_deq_timeout(port, ev, timeout_ticks);
 }
 
-__rte_always_inline uint16_t __hot
+__rte_always_inline uint16_t __rte_hot
 ssows_enq(void *port, const struct rte_event *ev)
 {
 	struct ssows *ws = port;
@@ -166,14 +166,14 @@ ssows_enq(void *port, const struct rte_event *ev)
 	return ret;
 }
 
-uint16_t __hot
+uint16_t __rte_hot
 ssows_enq_burst(void *port, const struct rte_event ev[], uint16_t nb_events)
 {
 	RTE_SET_USED(nb_events);
 	return ssows_enq(port, ev);
 }
 
-uint16_t __hot
+uint16_t __rte_hot
 ssows_enq_new_burst(void *port, const struct rte_event ev[], uint16_t nb_events)
 {
 	uint16_t i;
@@ -186,7 +186,7 @@ ssows_enq_new_burst(void *port, const struct rte_event ev[], uint16_t nb_events)
 	return nb_events;
 }
 
-uint16_t __hot
+uint16_t __rte_hot
 ssows_enq_fwd_burst(void *port, const struct rte_event ev[], uint16_t nb_events)
 {
 	struct ssows *ws = port;
@@ -272,7 +272,7 @@ sso_event_tx_adapter_enqueue(void *port,
 	struct rte_eth_dev *ethdev;
 	struct ssows *ws = port;
 	struct octeontx_txq *txq;
-	octeontx_dq_t *dq;
+	uint64_t cmd[4];
 
 	RTE_SET_USED(nb_events);
 	switch (ev->sched_type) {
@@ -297,11 +297,6 @@ sso_event_tx_adapter_enqueue(void *port,
 	queue_id = rte_event_eth_tx_adapter_txq_get(m);
 	ethdev = &rte_eth_devices[port_id];
 	txq = ethdev->data->tx_queues[queue_id];
-	dq = &txq->dq;
 
-	if (__octeontx_xmit_pkts(dq->lmtline_va, dq->ioreg_va, dq->fc_status_va,
-				m) < 0)
-		return 0;
-
-	return 1;
+	return __octeontx_xmit_pkts(txq, &m, 1, cmd, OCCTX_TX_OFFLOAD_NONE);
 }

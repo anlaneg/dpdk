@@ -870,46 +870,36 @@ enic_fm_append_action_op(struct enic_flowman *fm,
 	return 0;
 }
 
-/* Steer operations need to appear before other ops */
+/* NIC requires that 1st steer appear before decap.
+ * Correct example: steer, decap, steer, steer, ...
+ */
 static void
 enic_fm_reorder_action_op(struct enic_flowman *fm)
 {
-	struct fm_action_op *dst, *dst_head, *src, *src_head;
+	struct fm_action_op *op, *steer, *decap;
+	struct fm_action_op tmp_op;
 
 	ENICPMD_FUNC_TRACE();
-	/* Move steer ops to the front. */
-	src = fm->action.fma_action_ops;
-	src_head = src;
-	dst = fm->action_tmp.fma_action_ops;
-	dst_head = dst;
-	/* Copy steer ops to tmp */
-	while (src->fa_op != FMOP_END) {
-		if (src->fa_op == FMOP_RQ_STEER) {
-			ENICPMD_LOG(DEBUG, "move op: %ld -> dst %ld",
-				    (long)(src - src_head),
-				    (long)(dst - dst_head));
-			*dst = *src;
-			dst++;
-		}
-		src++;
+	/* Find 1st steer and decap */
+	op = fm->action.fma_action_ops;
+	steer = NULL;
+	decap = NULL;
+	while (op->fa_op != FMOP_END) {
+		if (!decap && op->fa_op == FMOP_DECAP_NOSTRIP)
+			decap = op;
+		else if (!steer && op->fa_op == FMOP_RQ_STEER)
+			steer = op;
+		op++;
 	}
-	/* Then append non-steer ops */
-	src = src_head;
-	while (src->fa_op != FMOP_END) {
-		if (src->fa_op != FMOP_RQ_STEER) {
-			ENICPMD_LOG(DEBUG, "move op: %ld -> dst %ld",
-				    (long)(src - src_head),
-				    (long)(dst - dst_head));
-			*dst = *src;
-			dst++;
-		}
-		src++;
+	/* If decap is before steer, swap */
+	if (steer && decap && decap < steer) {
+		op = fm->action.fma_action_ops;
+		ENICPMD_LOG(DEBUG, "swap decap %ld <-> steer %ld",
+			    (long)(decap - op), (long)(steer - op));
+		tmp_op = *decap;
+		*decap = *steer;
+		*steer = tmp_op;
 	}
-	/* Copy END */
-	*dst = *src;
-	/* Finally replace the original action with the reordered one */
-	memcpy(fm->action.fma_action_ops, fm->action_tmp.fma_action_ops,
-	       sizeof(fm->action.fma_action_ops));
 }
 
 /* VXLAN decap is done via flowman compound action */
@@ -1096,7 +1086,7 @@ enic_fm_copy_action(struct enic_flowman *fm,
 {
 	enum {
 		FATE = 1 << 0,
-		MARK = 1 << 1,
+		DECAP = 1 << 1,
 		PASSTHRU = 1 << 2,
 		COUNT = 1 << 3,
 		ENCAP = 1 << 4,
@@ -1150,9 +1140,6 @@ enic_fm_copy_action(struct enic_flowman *fm,
 			const struct rte_flow_action_mark *mark =
 				actions->conf;
 
-			if (overlap & MARK)
-				goto unsupported;
-			overlap |= MARK;
 			if (mark->id >= ENIC_MAGIC_FILTER_ID - 1)
 				return rte_flow_error_set(error, EINVAL,
 					RTE_FLOW_ERROR_TYPE_ACTION,
@@ -1166,9 +1153,6 @@ enic_fm_copy_action(struct enic_flowman *fm,
 			break;
 		}
 		case RTE_FLOW_ACTION_TYPE_FLAG: {
-			if (overlap & MARK)
-				goto unsupported;
-			overlap |= MARK;
 			/* ENIC_MAGIC_FILTER_ID is reserved for flagging */
 			memset(&fm_op, 0, sizeof(fm_op));
 			fm_op.fa_op = FMOP_MARK;
@@ -1183,8 +1167,8 @@ enic_fm_copy_action(struct enic_flowman *fm,
 				actions->conf;
 
 			/*
-			 * If other fate kind is set, fail.  Multiple
-			 * queue actions are ok.
+			 * If fate other than QUEUE or RSS, fail. Multiple
+			 * rss and queue actions are ok.
 			 */
 			if ((overlap & FATE) && first_rq)
 				goto unsupported;
@@ -1194,6 +1178,7 @@ enic_fm_copy_action(struct enic_flowman *fm,
 			fm_op.fa_op = FMOP_RQ_STEER;
 			fm_op.rq_steer.rq_index =
 				enic_rte_rq_idx_to_sop_idx(queue->index);
+			fm_op.rq_steer.rq_count = 1;
 			fm_op.rq_steer.vnic_handle = vnic_h;
 			ret = enic_fm_append_action_op(fm, &fm_op, error);
 			if (ret)
@@ -1228,27 +1213,44 @@ enic_fm_copy_action(struct enic_flowman *fm,
 			uint16_t i;
 
 			/*
-			 * Hardware does not support general RSS actions, but
-			 * we can still support the dummy one that is used to
-			 * "receive normally".
+			 * If fate other than QUEUE or RSS, fail. Multiple
+			 * rss and queue actions are ok.
+			 */
+			if ((overlap & FATE) && first_rq)
+				goto unsupported;
+			first_rq = false;
+			overlap |= FATE;
+
+			/*
+			 * Hardware only supports RSS actions on outer level
+			 * with default type and function. Queues must be
+			 * sequential.
 			 */
 			allow = rss->func == RTE_ETH_HASH_FUNCTION_DEFAULT &&
-				rss->level == 0 &&
-				(rss->types == 0 ||
-				 rss->types == enic->rss_hf) &&
-				rss->queue_num == enic->rq_count &&
-				rss->key_len == 0;
-			/* Identity queue map is ok */
-			for (i = 0; i < rss->queue_num; i++)
-				allow = allow && (i == rss->queue[i]);
+				rss->level == 0 && (rss->types == 0 ||
+				rss->types == enic->rss_hf) &&
+				rss->queue_num <= enic->rq_count &&
+				rss->queue[rss->queue_num - 1] < enic->rq_count;
+
+
+			/* Identity queue map needs to be sequential */
+			for (i = 1; i < rss->queue_num; i++)
+				allow = allow && (rss->queue[i] ==
+					rss->queue[i - 1] + 1);
 			if (!allow)
 				goto unsupported;
-			if (overlap & FATE)
-				goto unsupported;
-			/* Need MARK or FLAG */
-			if (!(overlap & MARK))
-				goto unsupported;
-			overlap |= FATE;
+
+			memset(&fm_op, 0, sizeof(fm_op));
+			fm_op.fa_op = FMOP_RQ_STEER;
+			fm_op.rq_steer.rq_index =
+				enic_rte_rq_idx_to_sop_idx(rss->queue[0]);
+			fm_op.rq_steer.rq_count = rss->queue_num;
+			fm_op.rq_steer.vnic_handle = vnic_h;
+			ret = enic_fm_append_action_op(fm, &fm_op, error);
+			if (ret)
+				return ret;
+			ENICPMD_LOG(DEBUG, "create QUEUE action rq: %u",
+				    fm_op.rq_steer.rq_index);
 			break;
 		}
 		case RTE_FLOW_ACTION_TYPE_PORT_ID: {
@@ -1282,6 +1284,10 @@ enic_fm_copy_action(struct enic_flowman *fm,
 			break;
 		}
 		case RTE_FLOW_ACTION_TYPE_VXLAN_DECAP: {
+			if (overlap & DECAP)
+				goto unsupported;
+			overlap |= DECAP;
+
 			ret = enic_fm_copy_vxlan_decap(fm, fmt, actions,
 				error);
 			if (ret != 0)
@@ -1504,7 +1510,7 @@ enic_fm_dump_tcam_entry(const struct fm_tcam_match_entry *fm_match,
 			const struct fm_action *fm_action,
 			uint8_t ingress)
 {
-	if (rte_log_get_level(enic_pmd_logtype) < (int)RTE_LOG_DEBUG)
+	if (!rte_log_can_log(enic_pmd_logtype, RTE_LOG_DEBUG))
 		return;
 	enic_fm_dump_tcam_match(fm_match, ingress);
 	enic_fm_dump_tcam_actions(fm_action);

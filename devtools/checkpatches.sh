@@ -61,6 +61,14 @@ check_forbidden_additions() { # <patch>
 		-f $(dirname $(readlink -f $0))/check-forbidden-tokens.awk \
 		"$1" || res=1
 
+	# refrain from using compiler attribute without defining a common macro
+	awk -v FOLDERS="lib drivers app examples" \
+		-v EXPRESSIONS="__attribute__" \
+		-v RET_ON_FAIL=1 \
+		-v MESSAGE='Using compiler attribute directly' \
+		-f $(dirname $(readlink -f $0))/check-forbidden-tokens.awk \
+		"$1" || res=1
+
 	# svg figures must be included with wildcard extension
 	# because of png conversion for pdf docs
 	awk -v FOLDERS='doc' \
@@ -93,6 +101,37 @@ check_experimental_tags() { # <patch>
 		if ($1 != "+__rte_experimental" || $2 != "") {
 			print "__rte_experimental must appear alone on the line" \
 				" immediately preceding the return type of a function."
+			ret = 1;
+		}
+	}
+	END {
+		exit ret;
+	}' || res=1
+
+	return $res
+}
+
+check_internal_tags() { # <patch>
+	res=0
+
+	cat "$1" |awk '
+	BEGIN {
+		current_file = "";
+		ret = 0;
+	}
+	/^+++ b\// {
+		current_file = $2;
+	}
+	/^+.*__rte_internal/ {
+		if (current_file ~ ".c$" ) {
+			print "Please only put __rte_internal tags in " \
+				"headers ("current_file")";
+			ret = 1;
+		}
+		if ($1 != "+__rte_internal" || $2 != "") {
+			print "__rte_internal must appear alone on the line" \
+				" immediately preceding the return type of" \
+				" a function."
 			ret = 1;
 		}
 	}
@@ -180,6 +219,14 @@ check () { # <patch> <commit> <title>
 
 	! $verbose || printf '\nChecking __rte_experimental tags:\n'
 	report=$(check_experimental_tags "$tmpinput")
+	if [ $? -ne 0 ] ; then
+		$headline_printed || print_headline "$3"
+		printf '%s\n' "$report"
+		ret=1
+	fi
+
+	! $verbose || printf '\nChecking __rte_internal tags:\n'
+	report=$(check_internal_tags "$tmpinput")
 	if [ $? -ne 0 ] ; then
 		$headline_printed || print_headline "$3"
 		printf '%s\n' "$report"

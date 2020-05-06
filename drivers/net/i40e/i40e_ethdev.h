@@ -124,7 +124,6 @@ enum i40e_flxpld_layer_idx {
 #define I40E_FLAG_FDIR                  (1ULL << 6)
 #define I40E_FLAG_VXLAN                 (1ULL << 7)
 #define I40E_FLAG_RSS_AQ_CAPABLE        (1ULL << 8)
-#define I40E_FLAG_VF_MAC_BY_PF          (1ULL << 9)
 #define I40E_FLAG_ALL (I40E_FLAG_RSS | \
 		       I40E_FLAG_DCB | \
 		       I40E_FLAG_VMDQ | \
@@ -133,8 +132,7 @@ enum i40e_flxpld_layer_idx {
 		       I40E_FLAG_HEADER_SPLIT_ENABLED | \
 		       I40E_FLAG_FDIR | \
 		       I40E_FLAG_VXLAN | \
-		       I40E_FLAG_RSS_AQ_CAPABLE | \
-		       I40E_FLAG_VF_MAC_BY_PF)
+		       I40E_FLAG_RSS_AQ_CAPABLE)
 
 #define I40E_RSS_OFFLOAD_ALL ( \
 	ETH_RSS_FRAG_IPV4 | \
@@ -193,6 +191,9 @@ enum i40e_flxpld_layer_idx {
 #define I40E_GL_SWT_L2TAGCTRL_ETHERTYPE_SHIFT 16
 #define I40E_GL_SWT_L2TAGCTRL_ETHERTYPE_MASK  \
 	I40E_MASK(0xFFFF, I40E_GL_SWT_L2TAGCTRL_ETHERTYPE_SHIFT)
+
+#define I40E_RSS_TYPE_NONE           0ULL
+#define I40E_RSS_TYPE_INVALID        1ULL
 
 #define I40E_INSET_NONE            0x00000000000000000ULL
 
@@ -544,12 +545,19 @@ struct i40e_ipv6_l2tpv3oip_flow {
 	uint32_t session_id; /* Session ID in big endian. */
 };
 
+/* A structure used to define the input for l2 dst type flow */
+struct i40e_l2_flow {
+	struct rte_ether_addr dst;
+	struct rte_ether_addr src;
+	uint16_t ether_type;          /**< Ether type in big endian */
+};
+
 /*
  * A union contains the inputs for all types of flow
  * items in flows need to be in big endian
  */
 union i40e_fdir_flow {
-	struct rte_eth_l2_flow          l2_flow;
+	struct i40e_l2_flow             l2_flow;
 	struct rte_eth_udpv4_flow       udp4_flow;
 	struct rte_eth_tcpv4_flow       tcp4_flow;
 	struct rte_eth_sctpv4_flow      sctp4_flow;
@@ -747,6 +755,11 @@ struct i40e_queue_regions {
 	/* the total number of queue region for this port */
 	uint16_t queue_region_number;
 	struct i40e_queue_region_info region[I40E_REGION_MAX_INDEX + 1];
+};
+
+struct i40e_rss_pattern_info {
+	uint8_t action_flag;
+	uint64_t types;
 };
 
 /* Tunnel filter number HW supports */
@@ -968,6 +981,15 @@ struct i40e_rte_flow_rss_conf {
 		     I40E_VFQF_HKEY_MAX_INDEX : I40E_PFQF_HKEY_MAX_INDEX + 1) *
 		    sizeof(uint32_t)]; /* Hash key. */
 	uint16_t queue[I40E_MAX_Q_PER_TC]; /**< Queues indices to use. */
+	bool valid; /* Check if it's valid */
+};
+
+TAILQ_HEAD(i40e_rss_conf_list, i40e_rss_filter);
+
+/* RSS filter list structure */
+struct i40e_rss_filter {
+	TAILQ_ENTRY(i40e_rss_filter) next;
+	struct i40e_rte_flow_rss_conf rss_filter_info;
 };
 
 struct i40e_vf_msg_cfg {
@@ -1038,7 +1060,8 @@ struct i40e_pf {
 	struct i40e_fdir_info fdir; /* flow director info */
 	struct i40e_ethertype_rule ethertype; /* Ethertype filter rule */
 	struct i40e_tunnel_rule tunnel; /* Tunnel filter rule */
-	struct i40e_rte_flow_rss_conf rss_info; /* rss info */
+	struct i40e_rte_flow_rss_conf rss_info; /* RSS info */
+	struct i40e_rss_conf_list rss_config_list; /* RSS rule list */
 	struct i40e_queue_regions queue_region; /* queue region info */
 	struct i40e_fc_conf fc_conf; /* Flow control conf */
 	struct i40e_mirror_rule_list mirror_list;
@@ -1338,8 +1361,6 @@ int i40e_set_rss_key(struct i40e_vsi *vsi, uint8_t *key, uint8_t key_len);
 int i40e_set_rss_lut(struct i40e_vsi *vsi, uint8_t *lut, uint16_t lut_size);
 int i40e_rss_conf_init(struct i40e_rte_flow_rss_conf *out,
 		       const struct rte_flow_action_rss *in);
-int i40e_action_rss_same(const struct rte_flow_action_rss *comp,
-			 const struct rte_flow_action_rss *with);
 int i40e_config_rss_filter(struct i40e_pf *pf,
 		struct i40e_rte_flow_rss_conf *conf, bool add);
 int i40e_vf_representor_init(struct rte_eth_dev *ethdev, void *init_params);
