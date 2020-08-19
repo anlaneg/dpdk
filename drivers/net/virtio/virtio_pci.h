@@ -215,6 +215,7 @@ struct virtio_pci_common_cfg {
 	uint16_t queue_msix_vector;	/* read-write */
 	uint16_t queue_enable;		/* read-write */
 	uint16_t queue_notify_off;	/* read-only */
+	//queue对应的desc表，avail表，used表地址
 	uint32_t queue_desc_lo;		/* read-write */
 	uint32_t queue_desc_hi;		/* read-write */
 	uint32_t queue_avail_lo;	/* read-write */

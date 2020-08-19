@@ -29,6 +29,7 @@ TAILQ_HEAD(rte_devargs_list, rte_devargs);
 static struct rte_devargs_list devargs_list =
 	TAILQ_HEAD_INITIALIZER(devargs_list);
 
+//获取层次数（采用‘/’划分层）
 static size_t
 devargs_layer_count(const char *s)
 {
@@ -41,6 +42,7 @@ devargs_layer_count(const char *s)
 	return i;
 }
 
+//通过devstr,确定bus,class,并填充devargs
 int
 rte_devargs_layers_parse(struct rte_devargs *devargs,
 			 const char *devstr)
@@ -65,6 +67,7 @@ rte_devargs_layers_parse(struct rte_devargs *devargs,
 	/* Split each sub-lists. */
 	nblayer = devargs_layer_count(devstr);
 	if (nblayer > RTE_DIM(layers)) {
+	    /*层次数过大*/
 		RTE_LOG(ERR, EAL, "Invalid format: too many layers (%zu)\n",
 			nblayer);
 		ret = -E2BIG;
@@ -75,6 +78,7 @@ rte_devargs_layers_parse(struct rte_devargs *devargs,
 	 * as source data, then it should not allocate
 	 * anything and keep referring only to it.
 	 */
+	/*使devargs->data 与devstr相等*/
 	if (devargs->data != devstr) {
 		devargs->data = strdup(devstr);
 		if (devargs->data == NULL) {
@@ -97,7 +101,9 @@ rte_devargs_layers_parse(struct rte_devargs *devargs,
 		 */
 		if (strncmp(layers[i].key, s, strlen(layers[i].key)) &&
 				i != RTE_DIM(layers) - 1)
+		    /*没遇到合适的层，尝试下一个匹配*/
 			goto next_layer;
+		/*与层匹配成功，设置层str,并解析kvlist*/
 		layers[i].str = s;
 		layers[i].kvlist = rte_kvargs_parse_delim(s, NULL, "/");
 		if (layers[i].kvlist == NULL) {
@@ -118,6 +124,7 @@ next_layer:
 			continue;
 		kv = &layers[i].kvlist->pairs[0];
 		if (strcmp(kv->key, "bus") == 0) {
+		    /*通过kv->value进行bus名称查找*/
 			bus = rte_bus_find_by_name(kv->value);
 			if (bus == NULL) {
 				RTE_LOG(ERR, EAL, "Could not find bus \"%s\"\n",
@@ -126,6 +133,7 @@ next_layer:
 				goto get_out;
 			}
 		} else if (strcmp(kv->key, "class") == 0) {
+		    /*通过name查找class*/
 			cls = rte_class_find_by_name(kv->value);
 			if (cls == NULL) {
 				RTE_LOG(ERR, EAL, "Could not find class \"%s\"\n",
@@ -135,6 +143,7 @@ next_layer:
 			}
 		} else if (strcmp(kv->key, "driver") == 0) {
 			/* Ignore */
+		    /*目前driver的查找忽略*/
 			continue;
 		}
 	}
@@ -143,8 +152,8 @@ next_layer:
 	devargs->bus_str = layers[0].str;
 	devargs->cls_str = layers[1].str;
 	devargs->drv_str = layers[2].str;
-	devargs->bus = bus;
-	devargs->cls = cls;
+	devargs->bus = bus;/*命中的bus*/
+	devargs->cls = cls;/*命中class*/
 
 	/* If we own the data, clean up a bit
 	 * the several layers string, to ease
@@ -263,6 +272,7 @@ rte_devargs_parsef(struct rte_devargs *da, const char *format, ...)
 	return ret;
 }
 
+//向devargs_list中添加rte_devargs
 int
 rte_devargs_insert(struct rte_devargs **da)
 {
@@ -300,6 +310,7 @@ rte_devargs_insert(struct rte_devargs **da)
 }
 
 /* store a whitelist parameter for later parsing */
+//添加指定类型的devtype及其配置，据此构造devargs
 int
 rte_devargs_add(enum rte_devtype devtype, const char *devargs_str)
 {
@@ -337,6 +348,7 @@ fail:
 	return -1;
 }
 
+//移除掉指定devargs
 int
 rte_devargs_remove(struct rte_devargs *devargs)
 {
@@ -375,12 +387,14 @@ rte_devargs_type_count(enum rte_devtype devtype)
 }
 
 /* dump the user devices on the console */
+/*显示设备args*/
 void
 rte_devargs_dump(FILE *f)
 {
 	struct rte_devargs *devargs;
 
 	fprintf(f, "User device list:\n");
+	//遍历所有devargs,显示其bus,设备名称及其对应参数
 	TAILQ_FOREACH(devargs, &devargs_list, next) {
 		fprintf(f, "  [%s]: %s %s\n",
 			(devargs->bus ? devargs->bus->name : "??"),
@@ -389,6 +403,7 @@ rte_devargs_dump(FILE *f)
 }
 
 /* bus-aware rte_devargs iterator. */
+//通过busname获取下一个devargs
 struct rte_devargs *
 rte_devargs_next(const char *busname, const struct rte_devargs *start)
 {

@@ -1680,14 +1680,17 @@ mlx5_args_check(const char *key, const char *val, void *opaque)
 
 	/* No-op, port representors are processed in mlx5_dev_spawn(). */
 	if (!strcmp(MLX5_REPRESENTOR, key))
-		return 0;
+		return 0;/*对representor不做处理*/
 	errno = 0;
 	tmp = strtoul(val, NULL, 0);
 	if (errno) {
+	    /*所有val均为整数*/
 		rte_errno = errno;
 		DRV_LOG(WARNING, "%s: \"%s\" is not a valid integer", key, val);
 		return -rte_errno;
 	}
+
+	/*完成配置设定*/
 	if (strcmp(MLX5_RXQ_CQE_COMP_EN, key) == 0) {
 		config->cqe_comp = !!tmp;
 	} else if (strcmp(MLX5_RXQ_CQE_PAD_EN, key) == 0) {
@@ -1831,6 +1834,7 @@ mlx5_args(struct mlx5_dev_config *config, struct rte_devargs *devargs)
 	if (devargs == NULL)
 		return 0;
 	/* Following UGLY cast is done to pass checkpatch. */
+	//解析网络设备配置，产生kvlist
 	kvlist = rte_kvargs_parse(devargs->args, params);
 	if (kvlist == NULL) {
 		rte_errno = EINVAL;
@@ -1838,9 +1842,10 @@ mlx5_args(struct mlx5_dev_config *config, struct rte_devargs *devargs)
 	}
 	/* Process parameters. */
 	for (i = 0; (params[i] != NULL); ++i) {
+	    //如果params[i]配置出现，则执行对params[i]配置
 		if (rte_kvargs_count(kvlist, params[i])) {
 			ret = rte_kvargs_process(kvlist, params[i],
-						 mlx5_args_check, config);
+						 mlx5_args_check/*配置函数*/, config);
 			if (ret) {
 				rte_errno = EINVAL;
 				rte_kvargs_free(kvlist);
@@ -2344,8 +2349,10 @@ mlx5_dev_spawn(struct rte_device *dpdk_dev,
 			return NULL;
 		}
 	}
+	//构造设备名称
 	/* Build device name. */
 	if (spawn->pf_bond <  0) {
+	    //单设备名称
 		/* Single device. */
 		if (!switch_info->representor)
 			strlcpy(name, dpdk_dev->name, sizeof(name));
@@ -2353,6 +2360,7 @@ mlx5_dev_spawn(struct rte_device *dpdk_dev,
 			snprintf(name, sizeof(name), "%s_representor_%u",
 				 dpdk_dev->name, switch_info->port_name);
 	} else {
+	    //bonding设备名称
 		/* Bonding device. */
 		if (!switch_info->representor)
 			snprintf(name, sizeof(name), "%s_%s",
@@ -2370,7 +2378,7 @@ mlx5_dev_spawn(struct rte_device *dpdk_dev,
 	DRV_LOG(DEBUG, "naming Ethernet device \"%s\"", name);
 	if (rte_eal_process_type() == RTE_PROC_SECONDARY) {
 		struct mlx5_mp_id mp_id;
-
+		//从进程附着操作
 		eth_dev = rte_eth_dev_attach_secondary(name);
 		if (eth_dev == NULL) {
 			DRV_LOG(ERR, "can not attach rte ethdev");
@@ -2407,6 +2415,7 @@ mlx5_dev_spawn(struct rte_device *dpdk_dev,
 	 * devargs here to get ones, and later proceed devargs again
 	 * to override some hardware settings.
 	 */
+	//解析dpdk_dev->devargs,完成config结构体填充
 	err = mlx5_args(&config, dpdk_dev->devargs);
 	if (err) {
 		err = rte_errno;
@@ -2827,6 +2836,7 @@ mlx5_dev_spawn(struct rte_device *dpdk_dev,
 	}
 	if (config.max_dump_files_num == 0)
 		config.max_dump_files_num = 128;
+	/*申请指定名称的eth_dev*/
 	eth_dev = rte_eth_dev_allocate(name);
 	if (eth_dev == NULL) {
 		DRV_LOG(ERR, "can not allocate rte ethdev");
@@ -2836,6 +2846,7 @@ mlx5_dev_spawn(struct rte_device *dpdk_dev,
 	/* Flag to call rte_eth_dev_release_port() in rte_eth_dev_close(). */
 	eth_dev->data->dev_flags |= RTE_ETH_DEV_CLOSE_REMOVE;
 	if (priv->representor) {
+	    /*标记此接口为representor类型接口*/
 		eth_dev->data->dev_flags |= RTE_ETH_DEV_REPRESENTOR;
 		eth_dev->data->representor_id = priv->representor_id;
 	}
@@ -3220,11 +3231,14 @@ mlx5_pci_probe(struct rte_pci_driver *pci_drv __rte_unused,
 	struct mlx5_dev_config dev_config;
 	int ret;
 
+	//如果class没有被配置为net,则跳过此驱动探测（负责net探测）
 	if (mlx5_class_get(pci_dev->device.devargs) != MLX5_CLASS_NET) {
 		DRV_LOG(DEBUG, "Skip probing - should be probed by other mlx5"
 			" driver.");
 		return 1;
 	}
+
+	/*创建socket server，响应flow dump请求*/
 	if (rte_eal_process_type() == RTE_PROC_PRIMARY)
 		mlx5_pmd_socket_init();
 	ret = mlx5_init_once();
@@ -3235,7 +3249,9 @@ mlx5_pci_probe(struct rte_pci_driver *pci_drv __rte_unused,
 	}
 	MLX5_ASSERT(pci_drv == &mlx5_driver);
 	errno = 0;
-	ibv_list = mlx5_glue->get_device_list(&ret);
+
+	//列出所有ib设备
+	ibv_list = mlx5_glue->get_device_list(&ret/*设备总数*/);
 	if (!ibv_list) {
 		rte_errno = errno ? errno : ENOSYS;
 		DRV_LOG(ERR, "cannot list devices, is ib_uverbs loaded?");
@@ -3245,7 +3261,9 @@ mlx5_pci_probe(struct rte_pci_driver *pci_drv __rte_unused,
 	 * First scan the list of all Infiniband devices to find
 	 * matching ones, gathering into the list.
 	 */
-	struct ibv_device *ibv_match[ret + 1];
+	struct ibv_device *ibv_match[ret + 1];/*记录匹配到的设备*/
+
+	/*创建两个netlink socket*/
 	int nl_route = mlx5_nl_init(NETLINK_ROUTE);
 	int nl_rdma = mlx5_nl_init(NETLINK_RDMA);
 	unsigned int i;
@@ -3278,20 +3296,26 @@ mlx5_pci_probe(struct rte_pci_driver *pci_drv __rte_unused,
 			ibv_match[nd++] = ibv_list[ret];
 			break;
 		}
+		/*取给定设备的pci地址*/
 		if (mlx5_dev_to_pci_addr
 			(ibv_list[ret]->ibdev_path, &pci_addr))
 			continue;
+		/*如果获取的pci设备与待probe的设备不是同一个，则continue*/
 		if (pci_dev->addr.domain != pci_addr.domain ||
 		    pci_dev->addr.bus != pci_addr.bus ||
 		    pci_dev->addr.devid != pci_addr.devid ||
 		    pci_dev->addr.function != pci_addr.function)
 			continue;
+
+		/*匹配成功，记录匹配到的设备*/
 		DRV_LOG(INFO, "PCI information matches for device \"%s\"",
 			ibv_list[ret]->name);
 		ibv_match[nd++] = ibv_list[ret];
 	}
+	//设置最后一个match为NULL
 	ibv_match[nd] = NULL;
 	if (!nd) {
+	    /*nd值为0，故没有发现能与pci_dev匹配的设备，告警*/
 		/* No device matches, just complain and bail out. */
 		DRV_LOG(WARNING,
 			"no Verbs device matches PCI device " PCI_PRI_FMT ","
@@ -3303,6 +3327,7 @@ mlx5_pci_probe(struct rte_pci_driver *pci_drv __rte_unused,
 		goto exit;
 	}
 	if (nd == 1) {
+	    //匹配到一个设备
 		/*
 		 * Found single matching device may have multiple ports.
 		 * Each port may be representor, we have to check the port
@@ -3473,6 +3498,7 @@ mlx5_pci_probe(struct rte_pci_driver *pci_drv __rte_unused,
 					 */
 					continue;
 				}
+				/*取接口名称及ifindex*/
 				ret = mlx5_get_master_ifname
 					(ibv_match[i]->ibdev_path, &ifname);
 				if (!ret)
@@ -3570,11 +3596,14 @@ mlx5_pci_probe(struct rte_pci_driver *pci_drv __rte_unused,
 	case PCI_DEVICE_ID_MELLANOX_CONNECTX5BFVF:
 	case PCI_DEVICE_ID_MELLANOX_CONNECTX6VF:
 	case PCI_DEVICE_ID_MELLANOX_CONNECTX6DXVF:
+	    /*被配置设备为VF*/
 		dev_config.vf = 1;
 		break;
 	default:
 		break;
 	}
+
+	/*创建创建多个eth_dev*/
 	for (i = 0; i != ns; ++i) {
 		uint32_t restore;
 
@@ -3761,7 +3790,7 @@ static struct rte_pci_driver mlx5_driver = {
 		.name = MLX5_DRIVER_NAME
 	},
 	.id_table = mlx5_pci_id_map,
-	.probe = mlx5_pci_probe,
+	.probe = mlx5_pci_probe,/*执行驱动探测*/
 	.remove = mlx5_pci_remove,
 	.dma_map = mlx5_dma_map,
 	.dma_unmap = mlx5_dma_unmap,

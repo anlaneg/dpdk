@@ -898,6 +898,7 @@ mlx5_nl_cmdget_cb(struct nlmsghdr *nh, void *arg)
 	};
 	size_t off = NLMSG_HDRLEN;
 
+	/*仅处理所有dev获取及所有port获取的消息*/
 	if (nh->nlmsg_type !=
 	    RDMA_NL_GET_TYPE(RDMA_NL_NLDEV, RDMA_NLDEV_CMD_GET) &&
 	    nh->nlmsg_type !=
@@ -969,6 +970,7 @@ error:
 unsigned int
 mlx5_nl_ifindex(int nl, const char *name, uint32_t pindex)
 {
+    //取设备关联的ifindex
 	struct mlx5_nl_ifindex_data data = {
 		.name = name,
 		.flags = 0,
@@ -983,6 +985,7 @@ mlx5_nl_ifindex(int nl, const char *name, uint32_t pindex)
 	} req = {
 		.nh = {
 			.nlmsg_len = NLMSG_LENGTH(0),
+			/*指明ib设备get信息*/
 			.nlmsg_type = RDMA_NL_GET_TYPE(RDMA_NL_NLDEV,
 						       RDMA_NLDEV_CMD_GET),
 			.nlmsg_flags = NLM_F_REQUEST | NLM_F_ACK | NLM_F_DUMP,
@@ -1241,6 +1244,7 @@ mlx5_nl_switch_info(int nl, unsigned int ifindex,
 	if (ret >= 0)
 		ret = mlx5_nl_recv(nl, sn, mlx5_nl_switch_info_cb, info);
 	if (info->master && info->representor) {
+	    /*接口被识别为即是master又是representor,报错*/
 		DRV_LOG(ERR, "ifindex %u device is recognized as master"
 			     " and as representor", ifindex);
 		rte_errno = ENODEV;

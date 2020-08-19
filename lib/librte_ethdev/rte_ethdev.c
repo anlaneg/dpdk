@@ -4287,12 +4287,13 @@ rte_eth_dma_zone_reserve(const struct rte_eth_dev *dev, const char *ring_name,
 			RTE_MEMZONE_IOVA_CONTIG, align);
 }
 
+/*rte_eth_dev设备创建*/
 int
 rte_eth_dev_create(struct rte_device *device, const char *name,
 	size_t priv_data_size,
 	ethdev_bus_specific_init ethdev_bus_specific_init,
 	void *bus_init_params,
-	ethdev_init_t ethdev_init, void *init_params)
+	ethdev_init_t ethdev_init/*网络设备初始化函数*/, void *init_params/*设备初始化对应参数*/)
 {
 	struct rte_eth_dev *ethdev;
 	int retval;
@@ -4304,6 +4305,7 @@ rte_eth_dev_create(struct rte_device *device, const char *name,
 		if (!ethdev)
 			return -ENODEV;
 
+		//创建ethdev设备的私有数据
 		if (priv_data_size) {
 			ethdev->data->dev_private = rte_zmalloc_socket(
 				name, priv_data_size, RTE_CACHE_LINE_SIZE,
@@ -4326,6 +4328,7 @@ rte_eth_dev_create(struct rte_device *device, const char *name,
 
 	ethdev->device = device;
 
+	/*如果有specific init回调，则调用并初始化*/
 	if (ethdev_bus_specific_init) {
 		retval = ethdev_bus_specific_init(ethdev, bus_init_params);
 		if (retval) {
@@ -5272,6 +5275,7 @@ rte_eth_devargs_parse(const char *dargs, struct rte_eth_devargs *eth_da)
 	for (i = 0; i < args.count; i++) {
 		pair = &args.pairs[i];
 		if (strcmp("representor", pair->key) == 0) {
+		    /*遇到关于representor口的配置*/
 			result = rte_eth_devargs_parse_list(pair->value,
 				rte_eth_devargs_parse_representor_ports,
 				eth_da);

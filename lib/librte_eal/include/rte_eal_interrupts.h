@@ -32,6 +32,7 @@ enum rte_intr_handle_type {
 	RTE_INTR_HANDLE_VFIO_MSI,     /**< vfio device handle (MSI) */
 	RTE_INTR_HANDLE_VFIO_MSIX,    /**< vfio device handle (MSIX) */
 	RTE_INTR_HANDLE_ALARM,        /**< alarm handle */
+	/*外部处理*/
 	RTE_INTR_HANDLE_EXT,          /**< external handler */
 	RTE_INTR_HANDLE_VDEV,         /**< virtual device */
 	RTE_INTR_HANDLE_DEV_EVENT,    /**< device event handle */
@@ -75,7 +76,7 @@ struct rte_intr_handle {
 	};
 	//用于处理中断的fd(读取中断事件）
 	int fd;	 /**< interrupt event file descriptor */
-	//采用哪种中断处理类型，例如uio
+	//采用哪种中断处理类型，例如uio（通过此值确定中断结构体大小）
 	enum rte_intr_handle_type type;  /**< handle type */
 	uint32_t max_intr;             /**< max interrupt requested */
 	uint32_t nb_efd;               /**< number of available efd(event fd) */

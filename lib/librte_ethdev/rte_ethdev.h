@@ -1522,6 +1522,7 @@ struct rte_eth_dev_owner {
 /** Device supports device removal interrupt */
 #define RTE_ETH_DEV_INTR_RMV     0x0008
 /** Device is port representor */
+/*标记设备为representor类型端口*/
 #define RTE_ETH_DEV_REPRESENTOR  0x0010
 /** Device does not support MAC change after started */
 #define RTE_ETH_DEV_NOLIVE_MAC_ADDR  0x0020

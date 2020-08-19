@@ -447,6 +447,7 @@ tx_queue_infos_display(portid_t port_id, uint16_t queue_id)
 	printf("\n");
 }
 
+/*匹配所有bus*/
 static int bus_match_all(const struct rte_bus *bus, const void *data)
 {
 	RTE_SET_USED(bus);
@@ -479,16 +480,20 @@ device_infos_display(const char *identifier)
 	}
 
 skip_parse:
+    //遍历所有bus
 	while ((next = rte_bus_find(start, bus_match_all, NULL)) != NULL) {
 
 		start = next;
+		/*跳过与da不同bus的bus*/
 		if (identifier && da.bus != next)
 			continue;
 
 		/* Skip buses that don't have iterate method */
+		//跳过不支持设备枚举的bus
 		if (!next->dev_iterate)
 			continue;
 
+		/*指明设备为bus,并指明bus名称，遍历其上所有设务*/
 		snprintf(devstr, sizeof(devstr), "bus=%s", next->name);
 		RTE_DEV_FOREACH(dev, devstr, &dev_iter) {
 

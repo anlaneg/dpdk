@@ -256,6 +256,7 @@ struct rte_bus {
 	rte_dev_dma_unmap_t dma_unmap; /**< DMA unmap for device in the bus */
 	struct rte_bus_conf conf;    /**< Bus configuration */
 	rte_bus_get_iommu_class_t get_iommu_class; /**< Get iommu class */
+	/*支持枚举bus上所有设备*/
 	rte_dev_iterate_t dev_iterate; /**< Device iterator. */
 	rte_bus_hot_unplug_handler_t hot_unplug_handler;
 				/**< handle hot-unplug failure on the bus */

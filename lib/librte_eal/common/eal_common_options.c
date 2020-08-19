@@ -145,6 +145,7 @@ static int core_parsed;
 static int
 eal_option_device_add(enum rte_devtype type, const char *optarg)
 {
+    //构造devopt,并添加至链表devopt_list
 	struct device_option *devopt;
 	size_t optlen;
 	int ret;
@@ -175,6 +176,7 @@ eal_option_device_parse(void)
 	void *tmp;
 	int ret = 0;
 
+	//遍历devopt_list上所有devopt
 	TAILQ_FOREACH_SAFE(devopt, &devopt_list, next, tmp) {\
 		//如果rte_devargs_add添加失败，则后面所有的devopt将被直接移除
 		if (ret == 0) {
@@ -1242,6 +1244,7 @@ available_cores(void)
 	return str;
 }
 
+//公共参数解析
 int
 eal_parse_common_option(int opt, const char *optarg,
 			struct internal_config *conf)

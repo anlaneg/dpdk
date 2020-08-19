@@ -48,9 +48,9 @@ struct rte_devargs {
 	/** Next in list. */
 	TAILQ_ENTRY(rte_devargs) next;
 	/** Type of device. */
-	enum rte_devtype type;
+	enum rte_devtype type;/*设备类型*/
 	/** Device policy. */
-	enum rte_dev_policy policy;
+	enum rte_dev_policy policy;/*策略类型（黑/白名单）*/
 	/** Name of the device. */
 	char name[RTE_DEV_NAME_MAX_LEN];
 	RTE_STD_C11

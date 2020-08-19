@@ -142,6 +142,7 @@ struct mlx5_dev_config {
 	unsigned int hw_vlan_insert:1; /* VLAN insertion in WQE is supported. */
 	unsigned int hw_fcs_strip:1; /* FCS stripping is supported. */
 	unsigned int hw_padding:1; /* End alignment padding is supported. */
+	//指明被配置设备是否为VF
 	unsigned int vf:1; /* This is a VF. */
 	unsigned int tunnel_en:1;
 	/* Whether tunnel stateless offloads are supported. */

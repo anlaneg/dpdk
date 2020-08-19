@@ -335,6 +335,7 @@ __rte_experimental
 struct rte_device *
 rte_dev_iterator_next(struct rte_dev_iterator *it);
 
+//遍历devstr指定的相关设备
 #define RTE_DEV_FOREACH(dev, devstr, it) \
 	for (rte_dev_iterator_init(it, devstr), \
 	     dev = rte_dev_iterator_next(it); \

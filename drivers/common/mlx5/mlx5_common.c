@@ -37,6 +37,7 @@ int
 mlx5_dev_to_pci_addr(const char *dev_path,
 		     struct rte_pci_addr *pci_addr)
 {
+    //读取uevent文件，获知设备的pci_addr
 	FILE *file;
 	char line[32];
 	MKSTR(path, "%s/device/uevent", dev_path);
@@ -74,17 +75,20 @@ mlx5_dev_to_pci_addr(const char *dev_path,
 	return 0;
 }
 
+//依据class配置，确定opaque
 static int
 mlx5_class_check_handler(__rte_unused const char *key, const char *value,
 			 void *opaque)
 {
 	enum mlx5_class *ret = opaque;
 
+	//如果class的value为vdpa,net则返回不同的值
 	if (strcmp(value, "vdpa") == 0) {
 		*ret = MLX5_CLASS_VDPA;
 	} else if (strcmp(value, "net") == 0) {
 		*ret = MLX5_CLASS_NET;
 	} else {
+	    /*不支持其它类型的class*/
 		DRV_LOG(ERR, "Invalid mlx5 class %s. Maybe typo in device"
 			" class argument setting?", value);
 		*ret = MLX5_CLASS_INVALID;
@@ -92,6 +96,7 @@ mlx5_class_check_handler(__rte_unused const char *key, const char *value,
 	return 0;
 }
 
+//确定class配置
 enum mlx5_class
 mlx5_class_get(struct rte_devargs *devargs)
 {
@@ -101,9 +106,11 @@ mlx5_class_get(struct rte_devargs *devargs)
 
 	if (devargs == NULL)
 		return ret;
+	/*解析pair对*/
 	kvlist = rte_kvargs_parse(devargs->args, NULL);
 	if (kvlist == NULL)
 		return ret;
+	//如果class出现次数大于0，则处理class检查
 	if (rte_kvargs_count(kvlist, key))
 		rte_kvargs_process(kvlist, key, mlx5_class_check_handler, &ret);
 	rte_kvargs_free(kvlist);

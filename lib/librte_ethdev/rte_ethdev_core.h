@@ -796,6 +796,7 @@ struct rte_eth_dev {
 	void *process_private; /**< Pointer to per-process device data. */
 	//设备操作函数集
 	const struct eth_dev_ops *dev_ops; /**< Functions exported by PMD */
+	/*对应的后端设备*/
 	struct rte_device *device; /**< Backing device */
 	struct rte_intr_handle *intr_handle; /**< Device interrupt handle */
 	/** User application callbacks for NIC interrupts */

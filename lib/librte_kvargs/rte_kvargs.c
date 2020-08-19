@@ -136,10 +136,10 @@ rte_kvargs_count(const struct rte_kvargs *kvlist, const char *key_match)
 //查找参数key-match,取其对应的值，并执行handler
 //如果key-match为NULL，则kvlist中所有参数需要挨个执行
 int
-rte_kvargs_process(const struct rte_kvargs *kvlist,
-		const char *key_match,
-		arg_handler_t handler,
-		void *opaque_arg)
+rte_kvargs_process(const struct rte_kvargs *kvlist/*要查找的kvlist*/,
+		const char *key_match/*待匹配的key*/,
+		arg_handler_t handler/*命中后要执行的回调*/,
+		void *opaque_arg/*回调对应的参数*/)
 {
 	const struct rte_kvargs_pair *pair;
 	unsigned i;
@@ -176,7 +176,7 @@ rte_kvargs_free(struct rte_kvargs *kvlist)
  */
 //解析参数，检查是否为有效参数，有效时返回kvlist,否则为NULL
 struct rte_kvargs *
-rte_kvargs_parse(const char *args, const char * const valid_keys[])
+rte_kvargs_parse(const char *args, const char * const valid_keys[]/*容许的有效key*/)
 {
 	struct rte_kvargs *kvlist;
 

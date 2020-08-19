@@ -43,14 +43,17 @@ static int8_t get_xdigit(char ch)
 }
 
 /* Convert 00:11:22:33:44:55 to ethernet address */
+//mac字符串形式转以太地址
 static bool get_ether_addr6(const char *s0, struct rte_ether_addr *ea)
 {
 	const char *s = s0;
 	int i;
 
+	//遍历mac配置
 	for (i = 0; i < RTE_ETHER_ADDR_LEN; i++) {
 		int8_t x;
 
+		//转为数字
 		x = get_xdigit(*s++);
 		if (x < 0)
 			return false;

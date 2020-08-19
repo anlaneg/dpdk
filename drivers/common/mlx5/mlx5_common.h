@@ -161,6 +161,7 @@ enum mlx5_nl_phys_port_name_type {
 /** Switch information returned by mlx5_nl_switch_info(). */
 struct mlx5_switch_info {
 	uint32_t master:1; /**< Master device. */
+	//标明是一个representor设备
 	uint32_t representor:1; /**< Representor device. */
 	enum mlx5_nl_phys_port_name_type name_type; /** < Port name type. */
 	int32_t pf_num; /**< PF number (valid for pfxvfx format only). */
@@ -211,9 +212,9 @@ int mlx5_dev_to_pci_addr(const char *dev_path, struct rte_pci_addr *pci_addr);
 #define MLX5_CLASS_ARG_NAME "class"
 
 enum mlx5_class {
-	MLX5_CLASS_NET,
-	MLX5_CLASS_VDPA,
-	MLX5_CLASS_INVALID,
+	MLX5_CLASS_NET,//net类型
+	MLX5_CLASS_VDPA,//vdp类型
+	MLX5_CLASS_INVALID,//其它类型
 };
 
 enum mlx5_class mlx5_class_get(struct rte_devargs *devargs);

@@ -53,8 +53,8 @@ union intr_pipefds{
 		int pipefd[2];//创建用
 	};
 	struct {
-		int readfd;//读fd
-		int writefd;//写fd
+		int readfd;//读fd （中断线程通过此fd获知中断配置发生变更）
+		int writefd;//写fd（非中断线程通过此fd知会中断线程配置发生变更）
 	};
 };
 
@@ -77,15 +77,18 @@ struct rte_intr_callback {
 	TAILQ_ENTRY(rte_intr_callback) next;
 	rte_intr_callback_fn cb_fn;  /**< callback address */
 	void *cb_arg;                /**< parameter for callback */
+	/*是否删除未绝？*/
 	uint8_t pending_delete;      /**< delete after callback is called */
+	/*cb被移除时需要调用的回调*/
 	rte_intr_unregister_callback_fn ucb_fn; /**< fn to call before cb is deleted */
 };
 
 struct rte_intr_source {
 	TAILQ_ENTRY(rte_intr_source) next;
 	struct rte_intr_handle intr_handle; /**< interrupt handle */
+	/*用户定义的回调链*/
 	struct rte_intr_cb_list callbacks;  /**< user callbacks */
-	uint32_t active;
+	uint32_t active;/*标记此中断源是否被触发*/
 };
 
 /* global spinlock for interrupt data operation */
@@ -95,6 +98,7 @@ static rte_spinlock_t intr_lock = RTE_SPINLOCK_INITIALIZER;
 static union intr_pipefds intr_pipe;
 
 /* interrupt sources list */
+//中断源链表
 static struct rte_intr_source_list intr_sources;
 
 /* interrupt handling thread */
@@ -473,15 +477,16 @@ uio_intr_enable(const struct rte_intr_handle *intr_handle)
 	return 0;
 }
 
+//注册中断回调
 int
 rte_intr_callback_register(const struct rte_intr_handle *intr_handle,
-			rte_intr_callback_fn cb, void *cb_arg)
+			rte_intr_callback_fn cb/*回调函数*/, void *cb_arg/*回调参数*/)
 {
 	int ret, wake_thread;
 	struct rte_intr_source *src;
 	struct rte_intr_callback *callback;
 
-	wake_thread = 0;
+	wake_thread = 0;/*标记是否需要知会中断线程，如果中断回调发生变换，则知会中断线程*/
 
 	/* first do parameter checking */
 	if (intr_handle == NULL || intr_handle->fd < 0 || cb == NULL) {
@@ -506,13 +511,14 @@ rte_intr_callback_register(const struct rte_intr_handle *intr_handle,
 	rte_spinlock_lock(&intr_lock);
 
 	/* check if there is at least one callback registered for the fd */
+	//遍历中断源链表，针对已存在的中断fd将其加入中断回调链表中
 	TAILQ_FOREACH(src, &intr_sources, next) {
 		if (src->intr_handle.fd == intr_handle->fd) {
 			/* we had no interrupts for this */
 			if (TAILQ_EMPTY(&src->callbacks))
 				wake_thread = 1;
 
-			//将callback加入到尾部
+			//将callback加入到回调链尾部
 			TAILQ_INSERT_TAIL(&(src->callbacks), callback, next);
 			ret = 0;
 			break;
@@ -520,6 +526,7 @@ rte_intr_callback_register(const struct rte_intr_handle *intr_handle,
 	}
 
 	/* no existing callbacks for this - add new source */
+	//不存在此中断源，添加一个新源
 	if (src == NULL) {
 		src = calloc(1, sizeof(*src));
 		if (src == NULL) {
@@ -529,6 +536,7 @@ rte_intr_callback_register(const struct rte_intr_handle *intr_handle,
 		} else {
 			src->intr_handle = *intr_handle;
 			TAILQ_INIT(&src->callbacks);
+			//将要加入的中断回调加入回调链表尾部
 			TAILQ_INSERT_TAIL(&(src->callbacks), callback, next);
 			TAILQ_INSERT_TAIL(&intr_sources, src, next);
 			wake_thread = 1;
@@ -543,6 +551,7 @@ rte_intr_callback_register(const struct rte_intr_handle *intr_handle,
 	 * rebuild the wait list.
 	 */
 	if (wake_thread)
+	    /*通过pipe知会中断线程，中断配置发生变更*/
 		if (write(intr_pipe.writefd, "1", 1) < 0)
 			ret = -EPIPE;
 
@@ -658,6 +667,7 @@ rte_intr_callback_unregister(const struct rte_intr_handle *intr_handle,
 	rte_spinlock_unlock(&intr_lock);
 
 	/* notify the pipe fd waited by epoll_wait to rebuild the wait list */
+	//中断配置发生变更，知会中断线程
 	if (ret >= 0 && write(intr_pipe.writefd, "1", 1) < 0) {
 		ret = -EPIPE;
 	}
@@ -865,7 +875,7 @@ static int
 eal_intr_process_interrupts(struct epoll_event *events, int nfds)
 {
 	bool call = false;
-	int n, bytes_read, rv;
+	int n, bytes_read/*具体中断数据结构大小*/, rv;
 	struct rte_intr_source *src;
 	struct rte_intr_callback *cb, *next;
 	union rte_intr_read_buffer buf;
@@ -878,17 +888,23 @@ eal_intr_process_interrupts(struct epoll_event *events, int nfds)
 		 * rebuild the wait list.
 		 */
 		if (events[n].data.fd == intr_pipe.readfd){
+		    /*intr_pipe.readfd收到in事件，通过read消费写入的值，此时
+		     * 其它线程通过此fd知会中断线程需要重建wait list，故返回-1用于重建*/
 			int r = read(intr_pipe.readfd, buf.charbuf,
 					sizeof(buf.charbuf));
 			RTE_SET_USED(r);
 			return -1;
+			/*如果readfd发生事件变更，则其它已有中断就不再处理，是否合理？*/
 		}
 		rte_spinlock_lock(&intr_lock);
+
+		//找到当前待处理中断对应的fd是哪个事件源的fd
 		TAILQ_FOREACH(src, &intr_sources, next)
 			if (src->intr_handle.fd ==
 					events[n].data.fd)
 				break;
 		if (src == NULL){
+		    /*没有找到对应事件源，忽略*/
 			rte_spinlock_unlock(&intr_lock);
 			continue;
 		}
@@ -898,6 +914,7 @@ eal_intr_process_interrupts(struct epoll_event *events, int nfds)
 		rte_spinlock_unlock(&intr_lock);
 
 		/* set the length to be read dor different handle type */
+		//按不同中断类型，确定其对应的中断数据类型大小
 		switch (src->intr_handle.type) {
 		case RTE_INTR_HANDLE_UIO:
 		case RTE_INTR_HANDLE_UIO_INTX:
@@ -910,6 +927,7 @@ eal_intr_process_interrupts(struct epoll_event *events, int nfds)
 		case RTE_INTR_HANDLE_VFIO_MSIX:
 		case RTE_INTR_HANDLE_VFIO_MSI:
 		case RTE_INTR_HANDLE_VFIO_LEGACY:
+		    /*vfio相关中断需读取数据结构大小*/
 			bytes_read = sizeof(buf.vfio_intr_count);
 			break;
 #ifdef HAVE_VFIO_DEV_REQ_INTERFACE
@@ -921,6 +939,7 @@ eal_intr_process_interrupts(struct epoll_event *events, int nfds)
 #endif
 		case RTE_INTR_HANDLE_VDEV:
 		case RTE_INTR_HANDLE_EXT:
+		    /*这种不读取，仅调用回调*/
 			bytes_read = 0;
 			call = true;
 			break;
@@ -933,13 +952,15 @@ eal_intr_process_interrupts(struct epoll_event *events, int nfds)
 			break;
 		}
 
+		//需要自fd中读取中断数据bytes_read字节
 		if (bytes_read > 0) {
 			/**
 			 * read out to clear the ready-to-be-read flag
 			 * for epoll_wait.
 			 */
-			bytes_read = read(events[n].data.fd, &buf, bytes_read);
+			bytes_read = read(events[n].data.fd, &buf/*存放中断关联的数据*/, bytes_read);
 			if (bytes_read < 0) {
+			    /*读取关联数据时出错，除中断及非阻塞原因外，进行错误处理*/
 				if (errno == EINTR || errno == EWOULDBLOCK)
 					continue;
 
@@ -965,9 +986,11 @@ eal_intr_process_interrupts(struct epoll_event *events, int nfds)
 				free(src);
 				return -1;
 			} else if (bytes_read == 0)
+			    /*读取内容为0，告警*/
 				RTE_LOG(ERR, EAL, "Read nothing from file "
 					"descriptor %d\n", events[n].data.fd);
 			else
+			    /*读取成功，执行中断回调*/
 				call = true;
 		}
 
@@ -997,6 +1020,7 @@ eal_intr_process_interrupts(struct epoll_event *events, int nfds)
 		rv = 0;
 
 		/* check if any callback are supposed to be removed */
+		//回调已执行完成，如果有cb需要移除，则将其移除，并调用ucb_fn回调
 		for (cb = TAILQ_FIRST(&src->callbacks); cb != NULL; cb = next) {
 			next = TAILQ_NEXT(cb, next);
 			if (cb->pending_delete) {
@@ -1004,17 +1028,19 @@ eal_intr_process_interrupts(struct epoll_event *events, int nfds)
 				if (cb->ucb_fn)
 					cb->ucb_fn(&src->intr_handle, cb->cb_arg);
 				free(cb);
-				rv++;
+				rv++;/*有回调移除，需要重建wait list*/
 			}
 		}
 
 		/* all callbacks for that source are removed. */
+		//如有必要移除中断源
 		if (TAILQ_EMPTY(&src->callbacks)) {
 			TAILQ_REMOVE(&intr_sources, src, next);
 			free(src);
 		}
 
 		/* notify the pipe fd waited by epoll_wait to rebuild the wait list */
+		/*中断配置发生变更，知会中断线程*/
 		if (rv >= 0 && write(intr_pipe.writefd, "1", 1) < 0) {
 			rte_spinlock_unlock(&intr_lock);
 			return -EPIPE;
@@ -1058,6 +1084,7 @@ eal_intr_handle_interrupts(int pfd, unsigned totalfds)
 		/* epoll_wait timeout, will never happens here */
 		else if (nfds == 0)
 			continue;
+		//有nfds个中断发生，处理中断
 		/* epoll_wait has at least one fd ready to read */
 		if (eal_intr_process_interrupts(events, nfds) < 0)
 			return;
@@ -1094,6 +1121,7 @@ eal_intr_thread_main(__rte_unused void *arg)
 		if (pfd < 0)
 			rte_panic("Cannot create epoll instance\n");
 
+		/*将readfd加入到epoll,其收到in事件，用于表示外部线程变更了中断回调配置，需要重建wait链*/
 		pipe_event.data.fd = intr_pipe.readfd;
 		/**
 		 * add pipe fd into wait list, this pipe is used to
@@ -1108,6 +1136,7 @@ eal_intr_thread_main(__rte_unused void *arg)
 
 		rte_spinlock_lock(&intr_lock);
 
+		//依据中断源，添加对应fd到epoll中，监听事件
 		TAILQ_FOREACH(src, &intr_sources, next) {
 			struct epoll_event ev;
 

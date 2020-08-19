@@ -289,8 +289,10 @@ struct rte_eth_devargs {
 	/** port/s number to enable on a multi-port single function */
 	uint16_t nb_ports;
 	/** number of ports in ports field */
+	//接口范围配置
 	uint16_t representor_ports[RTE_MAX_ETHPORTS];
 	/** representor port/s identifier to enable on device */
+	//representor_ports数组长度
 	uint16_t nb_representor_ports;
 	/** number of ports in representor port field */
 };

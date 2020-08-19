@@ -594,17 +594,20 @@ rte_dev_iterator_init(struct rte_dev_iterator *it,
 	 * one layer specified.
 	 */
 	if (bus == NULL && cls == NULL) {
+	    /*bus/class均没有命中，报错*/
 		RTE_LOG(ERR, EAL,
 			"Either bus or class must be specified.\n");
 		rte_errno = EINVAL;
 		goto get_out;
 	}
 	if (bus != NULL && bus->dev_iterate == NULL) {
+	    /*bus必须支持设备枚举*/
 		RTE_LOG(ERR, EAL, "Bus %s not supported\n", bus->name);
 		rte_errno = ENOTSUP;
 		goto get_out;
 	}
 	if (cls != NULL && cls->dev_iterate == NULL) {
+	    /*class必须支持设备枚举*/
 		RTE_LOG(ERR, EAL, "Class %s not supported\n", cls->name);
 		rte_errno = ENOTSUP;
 		goto get_out;

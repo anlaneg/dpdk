@@ -36,6 +36,7 @@ mlx5_pmd_make_path(struct sockaddr_un *addr, int pid)
 static void
 mlx5_pmd_socket_handle(void *cb __rte_unused)
 {
+    //完成client端响应，并dump流到指定文件
 	int conn_sock;
 	int ret = -1;
 	struct cmsghdr *cmsg = NULL;
@@ -75,6 +76,7 @@ mlx5_pmd_socket_handle(void *cb __rte_unused)
 		DRV_LOG(WARNING, "invalid file descriptor message");
 		goto error;
 	}
+	/*取unix传递过来的fd,并将所有流信息dump到文件中*/
 	memcpy(&fd, CMSG_DATA(cmsg), sizeof(fd));
 	file = fdopen(fd, "w");
 	if (!file) {
@@ -93,6 +95,7 @@ mlx5_pmd_socket_handle(void *cb __rte_unused)
 	}
 	/* Dump flow. */
 	dev = &rte_eth_devices[port_id];
+	/*dump所有流到文件*/
 	ret = mlx5_flow_dev_dump(dev, file, NULL);
 	/* Set-up the ancillary data and reply. */
 	msg.msg_controllen = 0;
@@ -127,6 +130,7 @@ static int
 mlx5_pmd_interrupt_handler_install(void)
 {
 	MLX5_ASSERT(server_socket);
+	/*server_socket收到报文将触发mlx5_pmd_socket_handle处理，执行flow dump操作*/
 	server_intr_handle.fd = server_socket;
 	server_intr_handle.type = RTE_INTR_HANDLE_EXT;
 	return rte_intr_callback_register(&server_intr_handle,
@@ -168,6 +172,7 @@ mlx5_pmd_socket_init(void)
 
 	MLX5_ASSERT(rte_eal_process_type() == RTE_PROC_PRIMARY);
 	if (server_socket)
+	    /*如server_socket已创建，则返回*/
 		return 0;
 	/*
 	 * Initialize the socket to communicate with the secondary
@@ -183,9 +188,12 @@ mlx5_pmd_socket_init(void)
 	flags = fcntl(server_socket, F_GETFL, 0);
 	if (flags == -1)
 		goto error;
+	/*置非阻塞*/
 	ret = fcntl(server_socket, F_SETFL, flags | O_NONBLOCK);
 	if (ret < 0)
 		goto error;
+
+	//完成server_socket 地址绑定及监听
 	mlx5_pmd_make_path(&sun, getpid());
 	remove(sun.sun_path);
 	ret = bind(server_socket, (const struct sockaddr *)&sun, sizeof(sun));
@@ -200,6 +208,8 @@ mlx5_pmd_socket_init(void)
 			strerror(errno));
 		goto close;
 	}
+
+	/*注册中断的处理回调*/
 	if (mlx5_pmd_interrupt_handler_install()) {
 		DRV_LOG(WARNING, "cannot register interrupt handler for mlx5 socket: %s",
 			strerror(errno));

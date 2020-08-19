@@ -131,8 +131,10 @@ rte_bus_find(const struct rte_bus *start, rte_bus_cmp_t cmp,
 	struct rte_bus *bus;
 
 	if (start != NULL)
+	    /*不为空时，返回下一个*/
 		bus = TAILQ_NEXT(start, next);
 	else
+	    /*为空时，使用第一个*/
 		bus = TAILQ_FIRST(&rte_bus_list);
 	while (bus != NULL) {
 		if (cmp(bus, data) == 0)

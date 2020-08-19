@@ -35,6 +35,7 @@ TAILQ_HEAD(rte_class_list, rte_class);
 struct rte_class {
 	TAILQ_ENTRY(rte_class) next; /**< Next device class in linked list */
 	const char *name; /**< Name of the class */
+	//class支持的设备枚举回调
 	rte_dev_iterate_t dev_iterate; /**< Device iterator. */
 };
 
@@ -117,7 +118,7 @@ void rte_class_unregister(struct rte_class *cls);
 #define RTE_REGISTER_CLASS(nm, cls) \
 RTE_INIT_PRIO(classinitfn_ ##nm, CLASS) \
 {\
-	(cls).name = RTE_STR(nm); \
+	(cls).name = RTE_STR(nm); /*class名称*/\
 	rte_class_register(&cls); \
 }
 
