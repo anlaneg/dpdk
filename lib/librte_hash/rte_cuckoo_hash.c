@@ -32,6 +32,14 @@
 #include "rte_hash.h"
 #include "rte_cuckoo_hash.h"
 
+/* Mask of all flags supported by this version */
+#define RTE_HASH_EXTRA_FLAGS_MASK (RTE_HASH_EXTRA_FLAGS_TRANS_MEM_SUPPORT | \
+				   RTE_HASH_EXTRA_FLAGS_MULTI_WRITER_ADD | \
+				   RTE_HASH_EXTRA_FLAGS_RW_CONCURRENCY | \
+				   RTE_HASH_EXTRA_FLAGS_EXT_TABLE |	\
+				   RTE_HASH_EXTRA_FLAGS_NO_FREE_ON_DEL | \
+				   RTE_HASH_EXTRA_FLAGS_RW_CONCURRENCY_LF)
+
 #define FOR_EACH_BUCKET(CURRENT_BKT, START_BUCKET)                            \
 	for (CURRENT_BKT = START_BUCKET;                                      \
 		CURRENT_BKT != NULL;                                          \
@@ -144,6 +152,7 @@ rte_hash_create(const struct rte_hash_parameters *params)
 	unsigned int no_free_on_del = 0;
 	uint32_t *ext_bkt_to_free = NULL;
 	uint32_t *tbl_chng_cnt = NULL;
+	struct lcore_cache *local_free_slots = NULL;
 	unsigned int readwrite_concur_lf_support = 0;
 	uint32_t i;
 
@@ -162,6 +171,12 @@ rte_hash_create(const struct rte_hash_parameters *params)
 			(params->key_len == 0)) {
 		rte_errno = EINVAL;
 		RTE_LOG(ERR, HASH, "rte_hash_create has invalid parameters\n");
+		return NULL;
+	}
+
+	if (params->extra_flag & ~RTE_HASH_EXTRA_FLAGS_MASK) {
+		rte_errno = EINVAL;
+		RTE_LOG(ERR, HASH, "rte_hash_create: unsupported extra flags\n");
 		return NULL;
 	}
 
@@ -370,9 +385,13 @@ rte_hash_create(const struct rte_hash_parameters *params)
 #endif
 
 	if (use_local_cache) {
-		h->local_free_slots = rte_zmalloc_socket(NULL,
+		local_free_slots = rte_zmalloc_socket(NULL,
 				sizeof(struct lcore_cache) * RTE_MAX_LCORE,
 				RTE_CACHE_LINE_SIZE, params->socket_id);
+		if (local_free_slots == NULL) {
+			RTE_LOG(ERR, HASH, "local free slots memory allocation failed\n");
+			goto err_unlock;
+		}
 	}
 
 	/* Default hash function */
@@ -403,6 +422,7 @@ rte_hash_create(const struct rte_hash_parameters *params)
 	*h->tbl_chng_cnt = 0;
 	h->hw_trans_mem_support = hw_trans_mem_support;
 	h->use_local_cache = use_local_cache;
+	h->local_free_slots = local_free_slots;
 	h->readwrite_concur_support = readwrite_concur_support;
 	h->ext_table_support = ext_table_support;
 	h->writer_takes_lock = writer_takes_lock;
@@ -448,6 +468,7 @@ err:
 	rte_ring_free(r);
 	rte_ring_free(r_ext);
 	rte_free(te);
+	rte_free(local_free_slots);
 	rte_free(h);
 	rte_free(buckets);
 	rte_free(buckets_ext);
@@ -951,8 +972,8 @@ __rte_hash_add_key_with_hash(const struct rte_hash *h, const void *key,
 	uint32_t prim_bucket_idx, sec_bucket_idx;
 	struct rte_hash_bucket *prim_bkt, *sec_bkt, *cur_bkt;
 	struct rte_hash_key *new_k, *keys = h->key_store;
+	uint32_t ext_bkt_id = 0;
 	uint32_t slot_id;
-	uint32_t ext_bkt_id;
 	int ret;
 	unsigned n_slots;
 	unsigned lcore_id;
@@ -1126,7 +1147,8 @@ __rte_hash_add_key_with_hash(const struct rte_hash *h, const void *key,
 	 */
 	//终于可以从ext buckets中出一个，并将其加入
 	if (rte_ring_sc_dequeue_elem(h->free_ext_bkts, &ext_bkt_id,
-						sizeof(uint32_t)) != 0) {
+						sizeof(uint32_t)) != 0 ||
+					ext_bkt_id == 0) {
 		ret = -ENOSPC;
 		goto failure;
 	}

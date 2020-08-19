@@ -7,7 +7,7 @@
 #define _ULP_UTILS_H_
 
 #include "bnxt.h"
-#include "ulp_template_db.h"
+#include "ulp_template_db_enum.h"
 
 /*
  * Macros for bitmap sets and gets
@@ -51,10 +51,10 @@
 #define ULP_BITS_2_BYTE_NR(bits_x)	((bits_x) / 8)
 
 /* Macros to read the computed fields */
-#define ULP_UTIL_CHF_IDX_RD(params, idx) \
+#define ULP_COMP_FLD_IDX_RD(params, idx) \
 	rte_be_to_cpu_32((params)->comp_fld[(idx)])
 
-#define ULP_UTIL_CHF_IDX_WR(params, idx, val)	\
+#define ULP_COMP_FLD_IDX_WR(params, idx, val)	\
 	((params)->comp_fld[(idx)] = rte_cpu_to_be_32((val)))
 /*
  * Making the blob statically sized to 128 bytes for now.
@@ -179,6 +179,24 @@ ulp_blob_push_64(struct ulp_blob *blob,
 		 uint32_t datalen);
 
 /*
+ * Add data to the binary blob at the current offset.
+ *
+ * blob [in] The blob that data is added to.  The blob must
+ * be initialized prior to pushing data.
+ *
+ * data [in] 32-bit value to be added to the blob.
+ *
+ * datalen [in] The number of bits to be added ot the blob.
+ *
+ * The offset of the data is updated after each push of data.
+ * NULL returned on error, pointer pushed value otherwise.
+ */
+uint8_t *
+ulp_blob_push_32(struct ulp_blob *blob,
+		 uint32_t *data,
+		 uint32_t datalen);
+
+/*
  * Add encap data to the binary blob at the current offset.
  *
  * blob [in] The blob that data is added to.  The blob must
@@ -211,6 +229,23 @@ ulp_blob_data_get(struct ulp_blob *blob,
 		  uint16_t *datalen);
 
 /*
+ * Extract data from the binary blob using given offset.
+ *
+ * blob [in] The blob that data is extracted from. The blob must
+ * be initialized prior to pulling data.
+ *
+ * data [in] A pointer to put the data.
+ * data_size [in] size of the data buffer in bytes.
+ *offset [in] - Offset in the blob to extract the data in bits format.
+ * len [in] The number of bits to be pulled from the blob.
+ *
+ * Output: zero on success, -1 on failure
+ */
+int32_t
+ulp_blob_pull(struct ulp_blob *blob, uint8_t *data, uint32_t data_size,
+	      uint16_t offset, uint16_t len);
+
+/*
  * Adds pad to an initialized blob at the current offset
  *
  * blob [in] The blob that data is added to.  The blob must
@@ -218,9 +253,9 @@ ulp_blob_data_get(struct ulp_blob *blob,
  *
  * datalen [in] The number of bits of pad to add
  *
- * returns the number of pad bits added, zero on failure
+ * returns the number of pad bits added, -1 on failure
  */
-uint32_t
+int32_t
 ulp_blob_pad_push(struct ulp_blob *blob,
 		  uint32_t datalen);
 
@@ -244,6 +279,18 @@ ulp_blob_encap_swap_idx_set(struct ulp_blob *blob);
  */
 void
 ulp_blob_perform_encap_swap(struct ulp_blob *blob);
+
+/*
+ * Perform the blob buffer reversal byte wise.
+ * This api makes the first byte the last and
+ * vice-versa.
+ *
+ * blob [in] The blob's data to be used for swap.
+ *
+ * returns void.
+ */
+void
+ulp_blob_perform_byte_reverse(struct ulp_blob *blob);
 
 /*
  * Read data from the operand

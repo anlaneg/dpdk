@@ -26,6 +26,7 @@ Programmer's Guide
     bbdev
     cryptodev_lib
     compressdev
+    regexdev
     rte_security
     rawdev
     link_bonding_poll_mode_drv_lib
@@ -56,6 +57,7 @@ Programmer's Guide
     packet_framework
     vhost_lib
     metrics_lib
+    telemetry_lib
     bpf_lib
     ipsec_lib
     graph_lib
@@ -64,7 +66,6 @@ Programmer's Guide
     dev_kit_root_make_help
     build-sdk-meson
     meson_ut
-    extend_dpdk
     build_app
     ext_app_lib_make_help
     perf_opt_guidelines

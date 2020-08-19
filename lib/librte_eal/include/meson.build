@@ -6,6 +6,7 @@ includes += include_directories('.')
 headers += files(
 	'rte_alarm.h',
 	'rte_bitmap.h',
+	'rte_bitops.h',
 	'rte_branch_prediction.h',
 	'rte_bus.h',
 	'rte_class.h',
@@ -30,7 +31,6 @@ headers += files(
 	'rte_malloc.h',
 	'rte_memory.h',
 	'rte_memzone.h',
-	'rte_option.h',
 	'rte_pci_dev_feature_defs.h',
 	'rte_pci_dev_features.h',
 	'rte_per_lcore.h',
@@ -43,7 +43,6 @@ headers += files(
 	'rte_time.h',
 	'rte_trace.h',
 	'rte_trace_point.h',
-	'rte_trace_point_provider.h',
 	'rte_trace_point_register.h',
 	'rte_uuid.h',
 	'rte_version.h',

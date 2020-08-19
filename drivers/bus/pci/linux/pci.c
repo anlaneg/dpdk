@@ -353,9 +353,10 @@ pci_scan_one(const char *dirname, const struct rte_pci_addr *addr)
 			dev->kdrv = RTE_KDRV_UIO_GENERIC;
 		else
 			dev->kdrv = RTE_KDRV_UNKNOWN;
-	} else
+	} else {
 		dev->kdrv = RTE_KDRV_NONE;
-
+		return 0;
+	}
 	/* device is valid, add in list (sorted) */
 	if (TAILQ_EMPTY(&rte_pci_bus.device_list)) {
 		rte_pci_add_device(dev);//链为空，直接加入
@@ -522,6 +523,9 @@ rte_pci_scan(void)
 		//0000:00:14.0  0000:00:17.0  0000:00:1f.3  0000:01:00.0
 		//解析pci地址,domain,bus,driver-id,function　得到一个具体的pci设备
 		if (parse_pci_addr_format(e->d_name, sizeof(e->d_name), &addr) != 0)
+			continue;
+
+		if (rte_pci_ignore_device(&addr))
 			continue;
 
 		snprintf(dirname, sizeof(dirname), "%s/%s",
@@ -812,11 +816,6 @@ rte_pci_ioport_map(struct rte_pci_device *dev, int bar,
 		ret = pci_uio_ioport_map(dev, bar, p);
 #endif
 		break;
-	case RTE_KDRV_NONE:
-#if defined(RTE_ARCH_X86)
-		ret = pci_ioport_map(dev, bar, p);
-#endif
-		break;
 	default:
 		break;
 	}
@@ -843,11 +842,6 @@ rte_pci_ioport_read(struct rte_pci_ioport *p,
 	case RTE_KDRV_UIO_GENERIC:
 		pci_uio_ioport_read(p, data, len, offset);
 		break;
-	case RTE_KDRV_NONE:
-#if defined(RTE_ARCH_X86)
-		pci_uio_ioport_read(p, data, len, offset);
-#endif
-		break;
 	default:
 		break;
 	}
@@ -868,11 +862,6 @@ rte_pci_ioport_write(struct rte_pci_ioport *p,
 		break;
 	case RTE_KDRV_UIO_GENERIC:
 		pci_uio_ioport_write(p, data, len, offset);
-		break;
-	case RTE_KDRV_NONE:
-#if defined(RTE_ARCH_X86)
-		pci_uio_ioport_write(p, data, len, offset);
-#endif
 		break;
 	default:
 		break;
@@ -899,11 +888,6 @@ rte_pci_ioport_unmap(struct rte_pci_ioport *p)
 		ret = 0;
 #else
 		ret = pci_uio_ioport_unmap(p);
-#endif
-		break;
-	case RTE_KDRV_NONE:
-#if defined(RTE_ARCH_X86)
-		ret = 0;
 #endif
 		break;
 	default:

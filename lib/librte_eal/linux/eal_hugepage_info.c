@@ -30,6 +30,8 @@
 #include <rte_log.h>
 #include <rte_common.h>
 #include "rte_string_fns.h"
+
+#include "eal_private.h"
 #include "eal_internal_cfg.h"
 #include "eal_hugepages.h"
 #include "eal_filesystem.h"
@@ -219,6 +221,8 @@ get_hugepage_dir(uint64_t hugepage_sz, char *hugedir, int len)
 	char *splitstr[_FIELDNAME_MAX];
 	char buf[BUFSIZ];
 	int retval = -1;
+	const struct internal_config *internal_conf =
+		eal_get_internal_configuration();
 
 	//打开kernel挂载文件
 	FILE *fd = fopen(proc_mounts, "r");
@@ -238,8 +242,8 @@ get_hugepage_dir(uint64_t hugepage_sz, char *hugedir, int len)
 
 		/* we have a specified --huge-dir option, only examine that dir */
 		//如果通过参数指定了大页的目录，则仅检查参数指定的目录，其它目录将被忽略
-		if (internal_config.hugepage_dir != NULL &&
-				strcmp(splitstr[MOUNTPT], internal_config.hugepage_dir) != 0)
+		if (internal_conf->hugepage_dir != NULL &&
+				strcmp(splitstr[MOUNTPT], internal_conf->hugepage_dir) != 0)
 			continue;
 
 		//仅要求文件类型为hugetlbfs类型
@@ -359,6 +363,8 @@ calc_num_pages(struct hugepage_info *hpi, struct dirent *dirent)
 {
 	uint64_t total_pages = 0;
 	unsigned int i;
+	const struct internal_config *internal_conf =
+		eal_get_internal_configuration();
 
 	/*
 	 * first, try to put all hugepages into relevant sockets, but
@@ -367,7 +373,7 @@ calc_num_pages(struct hugepage_info *hpi, struct dirent *dirent)
 	 */
 	total_pages = 0;
 	/* we also don't want to do this for legacy init */
-	if (!internal_config.legacy_mem)
+	if (!internal_conf->legacy_mem)
 		for (i = 0; i < rte_socket_count(); i++) {
 			int socket = rte_socket_id_by_idx(i);
 			unsigned int num_pages =
@@ -399,6 +405,8 @@ hugepage_info_init(void)
 	unsigned int i, num_sizes = 0;
 	DIR *dir;
 	struct dirent *dirent;
+	struct internal_config *internal_conf =
+		eal_get_internal_configuration();
 
 	//打开大页目录
 	/*
@@ -430,7 +438,7 @@ drwxr-xr-x 2 root root 0 1月  16 15:15 hugepages-2048kB
 			break;
 
 		//获取大页类型
-		hpi = &internal_config.hugepage_info[num_sizes];
+		hpi = &internal_conf->hugepage_info[num_sizes];
 		hpi->hugepage_sz =
 			rte_str_to_size(&dirent->d_name[dirent_start_len]);//页大小
 
@@ -455,7 +463,7 @@ drwxr-xr-x 2 root root 0 1月  16 15:15 hugepages-2048kB
 			 * init process.
 			 */
 #ifdef MAP_HUGE_SHIFT
-			if (internal_config.in_memory) {
+			if (internal_conf->in_memory) {
 				RTE_LOG(DEBUG, EAL, "In-memory mode enabled, "
 					"hugepages of size %" PRIu64 " bytes "
 					"will be allocated anonymously\n",
@@ -492,19 +500,19 @@ drwxr-xr-x 2 root root 0 1月  16 15:15 hugepages-2048kB
 	if (dirent != NULL)
 		return -1;
 
-	internal_config.num_hugepage_sizes = num_sizes;
+	internal_conf->num_hugepage_sizes = num_sizes;
 
 	/* sort the page directory entries by size, largest to smallest */
 	//按页大小进行排序（从最大size到最小size)
-	qsort(&internal_config.hugepage_info[0], num_sizes,
-	      sizeof(internal_config.hugepage_info[0]), compare_hpi);
+	qsort(&internal_conf->hugepage_info[0], num_sizes,
+	      sizeof(internal_conf->hugepage_info[0]), compare_hpi);
 
 	/* now we have all info, check we have at least one valid size */
 	//至少要有一个有效的hugepage_info
 	for (i = 0; i < num_sizes; i++) {
 		/* pages may no longer all be on socket 0, so check all */
 		unsigned int j, num_pages = 0;
-		struct hugepage_info *hpi = &internal_config.hugepage_info[i];
+		struct hugepage_info *hpi = &internal_conf->hugepage_info[i];
 
 		for (j = 0; j < RTE_MAX_NUMA_NODES; j++)
 			num_pages += hpi->num_pages[j];
@@ -526,34 +534,36 @@ eal_hugepage_info_init(void)
 {
 	struct hugepage_info *hpi, *tmp_hpi;
 	unsigned int i;
+	struct internal_config *internal_conf =
+		eal_get_internal_configuration();
 
 	if (hugepage_info_init() < 0)
 		return -1;
 
 	/* for no shared files mode, we're done */
-	if (internal_config.no_shconf)
+	if (internal_conf->no_shconf)
 		return 0;
 
-	hpi = &internal_config.hugepage_info[0];
+	hpi = &internal_conf->hugepage_info[0];
 
 	tmp_hpi = create_shared_memory(eal_hugepage_info_path(),
-			sizeof(internal_config.hugepage_info));
+			sizeof(internal_conf->hugepage_info));
 	if (tmp_hpi == NULL) {
 		RTE_LOG(ERR, EAL, "Failed to create shared memory!\n");
 		return -1;
 	}
 
-	memcpy(tmp_hpi, hpi, sizeof(internal_config.hugepage_info));
+	memcpy(tmp_hpi, hpi, sizeof(internal_conf->hugepage_info));
 
 	/* we've copied file descriptors along with everything else, but they
 	 * will be invalid in secondary process, so overwrite them
 	 */
-	for (i = 0; i < RTE_DIM(internal_config.hugepage_info); i++) {
+	for (i = 0; i < RTE_DIM(internal_conf->hugepage_info); i++) {
 		struct hugepage_info *tmp = &tmp_hpi[i];
 		tmp->lock_descriptor = -1;
 	}
 
-	if (munmap(tmp_hpi, sizeof(internal_config.hugepage_info)) < 0) {
+	if (munmap(tmp_hpi, sizeof(internal_conf->hugepage_info)) < 0) {
 		RTE_LOG(ERR, EAL, "Failed to unmap shared memory!\n");
 		return -1;
 	}
@@ -562,19 +572,21 @@ eal_hugepage_info_init(void)
 
 int eal_hugepage_info_read(void)
 {
-	struct hugepage_info *hpi = &internal_config.hugepage_info[0];
+	struct internal_config *internal_conf =
+		eal_get_internal_configuration();
+	struct hugepage_info *hpi = &internal_conf->hugepage_info[0];
 	struct hugepage_info *tmp_hpi;
 
 	tmp_hpi = open_shared_memory(eal_hugepage_info_path(),
-				  sizeof(internal_config.hugepage_info));
+				  sizeof(internal_conf->hugepage_info));
 	if (tmp_hpi == NULL) {
 		RTE_LOG(ERR, EAL, "Failed to open shared memory!\n");
 		return -1;
 	}
 
-	memcpy(hpi, tmp_hpi, sizeof(internal_config.hugepage_info));
+	memcpy(hpi, tmp_hpi, sizeof(internal_conf->hugepage_info));
 
-	if (munmap(tmp_hpi, sizeof(internal_config.hugepage_info)) < 0) {
+	if (munmap(tmp_hpi, sizeof(internal_conf->hugepage_info)) < 0) {
 		RTE_LOG(ERR, EAL, "Failed to unmap shared memory!\n");
 		return -1;
 	}

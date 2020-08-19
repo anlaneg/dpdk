@@ -6,6 +6,11 @@
 #ifndef _BNXT_TF_COMMON_H_
 #define _BNXT_TF_COMMON_H_
 
+#include <inttypes.h>
+
+#include "bnxt_ulp.h"
+#include "ulp_template_db_enum.h"
+
 #define BNXT_TF_DBG(lvl, fmt, args...)	PMD_DRV_LOG(lvl, fmt, ## args)
 
 #define BNXT_ULP_EM_FLOWS			8192
@@ -39,9 +44,22 @@ enum bnxt_ulp_eth_ip_type {
 };
 
 /* ulp direction Type */
-enum ulp_direction_type {
-	ULP_DIR_INGRESS,
-	ULP_DIR_EGRESS,
+enum bnxt_ulp_direction_type {
+	BNXT_ULP_DIR_INVALID,
+	BNXT_ULP_DIR_INGRESS,
+	BNXT_ULP_DIR_EGRESS,
+};
+
+/* enumeration of the interface types */
+enum bnxt_ulp_intf_type {
+	BNXT_ULP_INTF_TYPE_INVALID = 0,
+	BNXT_ULP_INTF_TYPE_PF,
+	BNXT_ULP_INTF_TYPE_TRUSTED_VF,
+	BNXT_ULP_INTF_TYPE_VF,
+	BNXT_ULP_INTF_TYPE_PF_REP,
+	BNXT_ULP_INTF_TYPE_VF_REP,
+	BNXT_ULP_INTF_TYPE_PHY_PORT,
+	BNXT_ULP_INTF_TYPE_LAST
 };
 
 struct bnxt_ulp_mark_tbl *

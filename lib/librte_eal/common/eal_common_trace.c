@@ -21,7 +21,7 @@ static RTE_DEFINE_PER_LCORE(char, ctf_field[TRACE_CTF_FIELD_SIZE]);
 static RTE_DEFINE_PER_LCORE(int, ctf_count);
 
 static struct trace_point_head tp_list = STAILQ_HEAD_INITIALIZER(tp_list);
-static struct trace trace;
+static struct trace trace = { .args = STAILQ_HEAD_INITIALIZER(trace.args), };
 
 struct trace *
 trace_obj_get(void)
@@ -38,7 +38,7 @@ trace_list_head_get(void)
 int
 eal_trace_init(void)
 {
-	uint8_t i;
+	struct trace_arg *arg;
 
 	/* Trace memory should start with 8B aligned for natural alignment */
 	RTE_BUILD_BUG_ON((offsetof(struct __rte_trace_header, mem) % 8) != 0);
@@ -49,7 +49,7 @@ eal_trace_init(void)
 		goto fail;
 	}
 
-	if (trace.args.nb_args)
+	if (!STAILQ_EMPTY(&trace.args))
 		trace.status = true;
 
 	if (!rte_trace_is_enabled())
@@ -82,8 +82,8 @@ eal_trace_init(void)
 		goto fail;
 
 	/* Apply global configurations */
-	for (i = 0; i < trace.args.nb_args; i++)
-		trace_args_apply(trace.args.args[i]);
+	STAILQ_FOREACH(arg, &trace.args, next)
+		trace_args_apply(arg->val);
 
 	rte_trace_mode_set(trace.mode);
 
@@ -101,7 +101,7 @@ eal_trace_fini(void)
 {
 	if (!rte_trace_is_enabled())
 		return;
-	trace_mem_per_thread_free();
+	trace_mem_free();
 	trace_metadata_destroy();
 	eal_trace_args_free();
 }
@@ -370,24 +370,59 @@ fail:
 	rte_spinlock_unlock(&trace->lock);
 }
 
+static void
+trace_mem_per_thread_free_unlocked(struct thread_mem_meta *meta)
+{
+	if (meta->area == TRACE_AREA_HUGEPAGE)
+		eal_free_no_trace(meta->mem);
+	else if (meta->area == TRACE_AREA_HEAP)
+		free(meta->mem);
+}
+
 void
 trace_mem_per_thread_free(void)
 {
 	struct trace *trace = trace_obj_get();
+	struct __rte_trace_header *header;
 	uint32_t count;
-	void *mem;
+
+	header = RTE_PER_LCORE(trace_mem);
+	if (header == NULL)
+		return;
+
+	rte_spinlock_lock(&trace->lock);
+	for (count = 0; count < trace->nb_trace_mem_list; count++) {
+		if (trace->lcore_meta[count].mem == header)
+			break;
+	}
+	if (count != trace->nb_trace_mem_list) {
+		struct thread_mem_meta *meta = &trace->lcore_meta[count];
+
+		trace_mem_per_thread_free_unlocked(meta);
+		if (count != trace->nb_trace_mem_list - 1) {
+			memmove(meta, meta + 1,
+				sizeof(*meta) *
+				 (trace->nb_trace_mem_list - count - 1));
+		}
+		trace->nb_trace_mem_list--;
+	}
+	rte_spinlock_unlock(&trace->lock);
+}
+
+void
+trace_mem_free(void)
+{
+	struct trace *trace = trace_obj_get();
+	uint32_t count;
 
 	if (!rte_trace_is_enabled())
 		return;
 
 	rte_spinlock_lock(&trace->lock);
 	for (count = 0; count < trace->nb_trace_mem_list; count++) {
-		mem = trace->lcore_meta[count].mem;
-		if (trace->lcore_meta[count].area == TRACE_AREA_HUGEPAGE)
-			eal_free_no_trace(mem);
-		else if (trace->lcore_meta[count].area == TRACE_AREA_HEAP)
-			free(mem);
+		trace_mem_per_thread_free_unlocked(&trace->lcore_meta[count]);
 	}
+	trace->nb_trace_mem_list = 0;
 	rte_spinlock_unlock(&trace->lock);
 }
 

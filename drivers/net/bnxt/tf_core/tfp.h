@@ -3,14 +3,23 @@
  * All rights reserved.
  */
 
-/* This header file defines the Portability structures and APIs for
+/*
+ * This header file defines the Portability structures and APIs for
  * TruFlow.
  */
 
 #ifndef _TFP_H_
 #define _TFP_H_
 
+#include <rte_config.h>
 #include <rte_spinlock.h>
+#include <rte_log.h>
+#include <rte_byteorder.h>
+
+/**
+ * DPDK/Driver specific log level for the BNXT Eth driver.
+ */
+extern int bnxt_logtype_driver;
 
 /** Spinlock
  */
@@ -18,13 +27,21 @@ struct tfp_spinlock_parms {
 	rte_spinlock_t slock;
 };
 
+#define TFP_DRV_LOG_RAW(level, fmt, args...) \
+	rte_log(RTE_LOG_ ## level, bnxt_logtype_driver, "%s(): " fmt, \
+		__func__, ## args)
+
+#define TFP_DRV_LOG(level, fmt, args...) \
+	TFP_DRV_LOG_RAW(level, fmt, ## args)
+
 /**
  * @file
  *
  * TrueFlow Portability API Header File
  */
 
-/** send message parameter definition
+/**
+ * send message parameter definition
  */
 struct tfp_send_msg_parms {
 	/**
@@ -62,7 +79,8 @@ struct tfp_send_msg_parms {
 	uint32_t *resp_data;
 };
 
-/** calloc parameter definition
+/**
+ * calloc parameter definition
  */
 struct tfp_calloc_parms {
 	/**
@@ -96,13 +114,115 @@ struct tfp_calloc_parms {
  * @ref tfp_send_msg_tunneled
  *
  * @ref tfp_calloc
- * @ref tfp_free
  * @ref tfp_memcpy
+ * @ref tfp_free
  *
  * @ref tfp_spinlock_init
  * @ref tfp_spinlock_lock
  * @ref tfp_spinlock_unlock
  *
+ */
+
+/**
+ * Provides communication capability from the TrueFlow API layer to
+ * the TrueFlow firmware. The portability layer internally provides
+ * the transport to the firmware.
+ *
+ * [in] session, pointer to session handle
+ * [in] parms, parameter structure
+ *
+ * Returns:
+ *   0              - Success
+ *   -1             - Global error like not supported
+ *   -EINVAL        - Parameter Error
+ */
+int tfp_send_msg_direct(struct tf *tfp,
+			struct tfp_send_msg_parms *parms);
+
+/**
+ * Provides communication capability from the TrueFlow API layer to
+ * the TrueFlow firmware. The portability layer internally provides
+ * the transport to the firmware.
+ *
+ * [in] session, pointer to session handle
+ * [in] parms, parameter structure
+ *
+ * Returns:
+ *   0              - Success
+ *   -1             - Global error like not supported
+ *   -EINVAL        - Parameter Error
+ */
+int tfp_send_msg_tunneled(struct tf *tfp,
+			  struct tfp_send_msg_parms *parms);
+
+/**
+ * Sends OEM command message to Chimp
+ *
+ * [in] session, pointer to session handle
+ * [in] max_flows, max number of flows requested
+ *
+ * Returns:
+ *   0              - Success
+ *   -1             - Global error like not supported
+ *   -EINVAL        - Parameter Error
+ */
+int
+tfp_msg_hwrm_oem_cmd(struct tf *tfp,
+		     uint32_t max_flows);
+
+/**
+ * Sends OEM command message to Chimp
+ *
+ * [in] session, pointer to session handle
+ * [in] max_flows, max number of flows requested
+ *
+ * Returns:
+ *   0              - Success
+ *   -1             - Global error like not supported
+ *   -EINVAL        - Parameter Error
+ */
+int
+tfp_msg_hwrm_oem_cmd(struct tf *tfp,
+		     uint32_t max_flows);
+
+/**
+ * Allocates zero'ed memory from the heap.
+ *
+ * NOTE: Also performs virt2phy address conversion by default thus is
+ * can be expensive to invoke.
+ *
+ * [in] parms, parameter structure
+ *
+ * Returns:
+ *   0              - Success
+ *   -ENOMEM        - No memory available
+ *   -EINVAL        - Parameter error
+ */
+int tfp_calloc(struct tfp_calloc_parms *parms);
+void tfp_memcpy(void *dest, void *src, size_t n);
+void tfp_free(void *addr);
+
+void tfp_spinlock_init(struct tfp_spinlock_parms *slock);
+void tfp_spinlock_lock(struct tfp_spinlock_parms *slock);
+void tfp_spinlock_unlock(struct tfp_spinlock_parms *slock);
+
+/**
+ * Lookup of the FID in the platform specific structure.
+ *
+ * [in] session
+ *   Pointer to session handle
+ *
+ * [out] fw_fid
+ *   Pointer to the fw_fid
+ *
+ * Returns:
+ *   0       - Success
+ *   -EINVAL - Parameter error
+ */
+int tfp_get_fid(struct tf *tfp, uint16_t *fw_fid);
+
+
+/*
  * @ref tfp_cpu_to_le_16
  * @ref tfp_le_to_cpu_16
  * @ref tfp_cpu_to_le_32
@@ -134,55 +254,18 @@ struct tfp_calloc_parms {
 #define tfp_bswap_64(val) rte_bswap64(val)
 
 /**
- * Provides communication capability from the TrueFlow API layer to
- * the TrueFlow firmware. The portability layer internally provides
- * the transport to the firmware.
+ * Lookup of the FID in the platform specific structure.
  *
- * [in] session, pointer to session handle
- * [in] parms, parameter structure
+ * [in] session
+ *   Pointer to session handle
  *
- * Returns:
- *   0              - Success
- *   -1             - Global error like not supported
- *   -EINVAL        - Parameter Error
- */
-int tfp_send_msg_direct(struct tf *tfp,
-			struct tfp_send_msg_parms *parms);
-
-/**
- * Provides communication capability from the TrueFlow API layer to
- * the TrueFlow firmware. The portability layer internally provides
- * the transport to the firmware.
- *
- * [in] session, pointer to session handle
- * [in] parms, parameter structure
+ * [out] fw_fid
+ *   Pointer to the fw_fid
  *
  * Returns:
- *   0              - Success
- *   -1             - Global error like not supported
- *   -EINVAL        - Parameter Error
+ *   0       - Success
+ *   -EINVAL - Parameter error
  */
-int tfp_send_msg_tunneled(struct tf                 *tfp,
-			  struct tfp_send_msg_parms *parms);
+int tfp_get_fid(struct tf *tfp, uint16_t *fw_fid);
 
-/**
- * Allocates zero'ed memory from the heap.
- *
- * NOTE: Also performs virt2phy address conversion by default thus is
- * can be expensive to invoke.
- *
- * [in] parms, parameter structure
- *
- * Returns:
- *   0              - Success
- *   -ENOMEM        - No memory available
- *   -EINVAL        - Parameter error
- */
-int tfp_calloc(struct tfp_calloc_parms *parms);
-
-void tfp_free(void *addr);
-void tfp_memcpy(void *dest, void *src, size_t n);
-void tfp_spinlock_init(struct tfp_spinlock_parms *slock);
-void tfp_spinlock_lock(struct tfp_spinlock_parms *slock);
-void tfp_spinlock_unlock(struct tfp_spinlock_parms *slock);
 #endif /* _TFP_H_ */

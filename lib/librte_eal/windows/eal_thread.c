@@ -16,10 +16,6 @@
 #include "eal_private.h"
 #include "eal_windows.h"
 
-RTE_DEFINE_PER_LCORE(unsigned int, _lcore_id) = LCORE_ID_ANY;
-RTE_DEFINE_PER_LCORE(unsigned int, _socket_id) = (unsigned int)SOCKET_ID_ANY;
-RTE_DEFINE_PER_LCORE(rte_cpuset_t, _cpuset);
-
 /*
  * Send a message to a slave lcore identified by slave_id to call a
  * function f with argument arg. Once the execution is done, the
@@ -57,19 +53,6 @@ rte_eal_remote_launch(lcore_function_t *f, void *arg, unsigned int slave_id)
 	return 0;
 }
 
-void
-eal_thread_init_master(unsigned int lcore_id)
-{
-	/* set the lcore ID in per-lcore memory area */
-	RTE_PER_LCORE(_lcore_id) = lcore_id;
-}
-
-static inline pthread_t
-eal_thread_self(void)
-{
-	return GetCurrentThreadId();
-}
-
 /* main loop of threads */
 void *
 eal_thread_loop(void *arg __rte_unused)
@@ -81,7 +64,7 @@ eal_thread_loop(void *arg __rte_unused)
 	int m2s, s2m;
 	char cpuset[RTE_CPU_AFFINITY_STR_LEN];
 
-	thread_id = eal_thread_self();
+	thread_id = pthread_self();
 
 	/* retrieve our lcore_id from the configuration structure */
 	RTE_LCORE_FOREACH_SLAVE(lcore_id) {
@@ -94,8 +77,7 @@ eal_thread_loop(void *arg __rte_unused)
 	m2s = lcore_config[lcore_id].pipe_master2slave[0];
 	s2m = lcore_config[lcore_id].pipe_slave2master[1];
 
-	/* set the lcore ID in per-lcore memory area */
-	RTE_PER_LCORE(_lcore_id) = lcore_id;
+	__rte_thread_init(lcore_id, &lcore_config[lcore_id].cpuset);
 
 	RTE_LOG(DEBUG, EAL, "lcore %u is ready (tid=%zx;cpuset=[%s])\n",
 		lcore_id, (uintptr_t)thread_id, cpuset);
@@ -146,7 +128,8 @@ eal_thread_create(pthread_t *thread)
 {
 	HANDLE th;
 
-	th = CreateThread(NULL, 0, (LPTHREAD_START_ROUTINE)eal_thread_loop,
+	th = CreateThread(NULL, 0,
+		(LPTHREAD_START_ROUTINE)(ULONG_PTR)eal_thread_loop,
 						NULL, 0, (LPDWORD)thread);
 	if (!th)
 		return -1;
@@ -155,6 +138,13 @@ eal_thread_create(pthread_t *thread)
 	SetThreadPriority(th, THREAD_PRIORITY_TIME_CRITICAL);
 
 	return 0;
+}
+
+/* get current thread ID */
+int
+rte_sys_gettid(void)
+{
+	return GetCurrentThreadId();
 }
 
 int

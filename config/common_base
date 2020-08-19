@@ -374,6 +374,11 @@ CONFIG_RTE_LIBRTE_MLX5_PMD=n
 CONFIG_RTE_LIBRTE_MLX5_DEBUG=n
 
 #
+# Compile regex-oriented Mellanox PMD
+#
+CONFIG_RTE_LIBRTE_MLX5_REGEX_PMD=n
+
+#
 # Compile vdpa-oriented Mellanox ConnectX-6 & BlueField (MLX5) PMD
 #
 CONFIG_RTE_LIBRTE_MLX5_VDPA_PMD=n
@@ -599,7 +604,6 @@ CONFIG_RTE_CRYPTO_MAX_DEVS=64
 # Compile PMD for ARMv8 Crypto device
 #
 CONFIG_RTE_LIBRTE_PMD_ARMV8_CRYPTO=n
-CONFIG_RTE_LIBRTE_PMD_ARMV8_CRYPTO_DEBUG=n
 
 #
 # Compile NXP CAAM JR crypto Driver
@@ -734,6 +738,13 @@ CONFIG_RTE_LIBRTE_PMD_ISAL=n
 # Compile PMD for ZLIB compression device
 #
 CONFIG_RTE_LIBRTE_PMD_ZLIB=n
+
+#
+# Compile RegEx device support
+#
+CONFIG_RTE_LIBRTE_REGEXDEV=y
+CONFIG_RTE_LIBRTE_REGEXDEV_DEBUG=n
+CONFIG_RTE_MAX_REGEXDEV_DEVS=32
 
 #
 # Compile generic event device library
@@ -929,7 +940,7 @@ CONFIG_RTE_LIBRTE_BITRATE=y
 CONFIG_RTE_LIBRTE_LATENCY_STATS=y
 
 #
-# Compile librte_telemetry
+# Compile librte_telemetry legacy support
 #
 CONFIG_RTE_LIBRTE_TELEMETRY=n
 
@@ -1116,6 +1127,11 @@ CONFIG_RTE_PROC_INFO=n
 CONFIG_RTE_TEST_PMD=y
 CONFIG_RTE_TEST_PMD_RECORD_CORE_CYCLES=n
 CONFIG_RTE_TEST_PMD_RECORD_BURST_STATS=n
+
+#
+# Compile the rte flow perf application
+#
+CONFIG_RTE_TEST_FLOW_PERF=y
 
 #
 # Compile the bbdev test application

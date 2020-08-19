@@ -135,7 +135,6 @@ rxq_cq_decompress_v(struct mlx5_rxq_data *rxq, volatile struct mlx5_cqe *cq,
 		for (i = 0; i < MLX5_VPMD_DESCS_PER_LOOP; ++i)
 			if (likely(pos + i < mcqe_n))
 				rte_prefetch0((void *)(cq + pos + i));
-
 		/* A.1 load mCQEs into a 128bit register. */
 		mcqe1 = _mm_loadu_si128((__m128i *)&mcq[pos % 8]);
 		mcqe2 = _mm_loadu_si128((__m128i *)&mcq[pos % 8 + 2]);
@@ -199,7 +198,8 @@ rxq_cq_decompress_v(struct mlx5_rxq_data *rxq, volatile struct mlx5_cqe *cq,
 
 			/* Check if title packet has valid metadata. */
 			if (meta) {
-				MLX5_ASSERT(t_pkt->ol_flags & offs);
+				MLX5_ASSERT(t_pkt->ol_flags &
+					    rxq->flow_meta_mask);
 				*RTE_MBUF_DYNFIELD(elts[pos], offs,
 							uint32_t *) = meta;
 				*RTE_MBUF_DYNFIELD(elts[pos + 1], offs,
@@ -213,6 +213,8 @@ rxq_cq_decompress_v(struct mlx5_rxq_data *rxq, volatile struct mlx5_cqe *cq,
 		pos += MLX5_VPMD_DESCS_PER_LOOP;
 		/* Move to next CQE and invalidate consumed CQEs. */
 		if (!(pos & 0x7) && pos < mcqe_n) {
+			if (pos + 8 < mcqe_n)
+				rte_prefetch0((void *)(cq + pos + 8));
 			mcq = (void *)(cq + pos);
 			for (i = 0; i < 8; ++i)
 				cq[inv++].op_own = MLX5_CQE_INVALIDATE;
@@ -384,13 +386,15 @@ rxq_cq_to_ptype_oflags_v(struct mlx5_rxq_data *rxq, __m128i cqes[4],
  * @param[out] err
  *   Pointer to a flag. Set non-zero value if pkts array has at least one error
  *   packet to handle.
+ * @param[out] no_cq
+ *   Pointer to a boolean. Set true if no new CQE seen.
  *
  * @return
  *   Number of packets received including errors (<= pkts_n).
  */
 static inline uint16_t
 rxq_burst_v(struct mlx5_rxq_data *rxq, struct rte_mbuf **pkts, uint16_t pkts_n,
-	    uint64_t *err)
+	    uint64_t *err, bool *no_cq)
 {
 	const uint16_t q_n = 1 << rxq->cqe_n;
 	const uint16_t q_mask = q_n - 1;
@@ -472,8 +476,10 @@ rxq_burst_v(struct mlx5_rxq_data *rxq, struct rte_mbuf **pkts, uint16_t pkts_n,
 	/* Not to cross queue end. */
 	pkts_n = RTE_MIN(pkts_n, q_n - elts_idx);
 	pkts_n = RTE_MIN(pkts_n, q_n - cq_idx);
-	if (!pkts_n)
+	if (!pkts_n) {
+		*no_cq = !rcvd_pkt;
 		return rcvd_pkt;
+	}
 	/* At this point, there shouldn't be any remained packets. */
 	MLX5_ASSERT(rxq->decompressed == 0);
 	/*
@@ -650,14 +656,32 @@ rxq_burst_v(struct mlx5_rxq_data *rxq, struct rte_mbuf **pkts, uint16_t pkts_n,
 		/* D.5 fill in mbuf - rearm_data and packet_type. */
 		rxq_cq_to_ptype_oflags_v(rxq, cqes, opcode, &pkts[pos]);
 		if (rxq->hw_timestamp) {
-			pkts[pos]->timestamp =
-				rte_be_to_cpu_64(cq[pos].timestamp);
-			pkts[pos + 1]->timestamp =
-				rte_be_to_cpu_64(cq[pos + p1].timestamp);
-			pkts[pos + 2]->timestamp =
-				rte_be_to_cpu_64(cq[pos + p2].timestamp);
-			pkts[pos + 3]->timestamp =
-				rte_be_to_cpu_64(cq[pos + p3].timestamp);
+			if (rxq->rt_timestamp) {
+				struct mlx5_dev_ctx_shared *sh = rxq->sh;
+				uint64_t ts;
+
+				ts = rte_be_to_cpu_64(cq[pos].timestamp);
+				pkts[pos]->timestamp =
+					mlx5_txpp_convert_rx_ts(sh, ts);
+				ts = rte_be_to_cpu_64(cq[pos + p1].timestamp);
+				pkts[pos + 1]->timestamp =
+					mlx5_txpp_convert_rx_ts(sh, ts);
+				ts = rte_be_to_cpu_64(cq[pos + p2].timestamp);
+				pkts[pos + 2]->timestamp =
+					mlx5_txpp_convert_rx_ts(sh, ts);
+				ts = rte_be_to_cpu_64(cq[pos + p3].timestamp);
+				pkts[pos + 3]->timestamp =
+					mlx5_txpp_convert_rx_ts(sh, ts);
+			} else {
+				pkts[pos]->timestamp = rte_be_to_cpu_64
+						(cq[pos].timestamp);
+				pkts[pos + 1]->timestamp = rte_be_to_cpu_64
+						(cq[pos + p1].timestamp);
+				pkts[pos + 2]->timestamp = rte_be_to_cpu_64
+						(cq[pos + p2].timestamp);
+				pkts[pos + 3]->timestamp = rte_be_to_cpu_64
+						(cq[pos + p3].timestamp);
+			}
 		}
 		if (rxq->dynf_meta) {
 			/* This code is subject for futher optimization. */
@@ -695,8 +719,10 @@ rxq_burst_v(struct mlx5_rxq_data *rxq, struct rte_mbuf **pkts, uint16_t pkts_n,
 			break;
 	}
 	/* If no new CQE seen, return without updating cq_db. */
-	if (unlikely(!nocmp_n && comp_idx == MLX5_VPMD_DESCS_PER_LOOP))
+	if (unlikely(!nocmp_n && comp_idx == MLX5_VPMD_DESCS_PER_LOOP)) {
+		*no_cq = true;
 		return rcvd_pkt;
+	}
 	/* Update the consumer indexes for non-compressed CQEs. */
 	MLX5_ASSERT(nocmp_n <= pkts_n);
 	rxq->cq_ci += nocmp_n;
@@ -724,6 +750,7 @@ rxq_burst_v(struct mlx5_rxq_data *rxq, struct rte_mbuf **pkts, uint16_t pkts_n,
 	}
 	rte_compiler_barrier();
 	*rxq->cq_db = rte_cpu_to_be_32(rxq->cq_ci);
+	*no_cq = !rcvd_pkt;
 	return rcvd_pkt;
 }
 

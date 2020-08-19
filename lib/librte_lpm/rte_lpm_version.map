@@ -1,4 +1,4 @@
-DPDK_20.0 {
+DPDK_21 {
 	global:
 
 	rte_lpm6_add;
@@ -20,4 +20,10 @@ DPDK_20.0 {
 	rte_lpm_is_rule_present;
 
 	local: *;
+};
+
+EXPERIMENTAL {
+	global:
+
+	rte_lpm_rcu_qsbr_add;
 };

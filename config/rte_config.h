@@ -38,7 +38,6 @@
 #define RTE_MAX_MEM_MB_PER_LIST 32768
 #define RTE_MAX_MEMSEG_PER_TYPE 32768
 #define RTE_MAX_MEM_MB_PER_TYPE 65536
-#define RTE_MAX_MEM_MB 524288
 #define RTE_MAX_MEMZONE 2560
 #define RTE_MAX_TAILQ 32
 #define RTE_LOG_DP_LEVEL RTE_LOG_INFO
@@ -69,6 +68,9 @@
 
 /* compressdev defines */
 #define RTE_COMPRESS_MAX_DEVS 64
+
+/* regexdev defines */
+#define RTE_MAX_REGEXDEV_DEVS 32
 
 /* eventdev defines */
 #define RTE_EVENT_MAX_DEVS 16

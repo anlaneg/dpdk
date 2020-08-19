@@ -97,7 +97,7 @@ static struct rte_eth_link pmd_link = {
 	.link_autoneg = ETH_LINK_FIXED,
 };
 
-static int af_packet_logtype;
+RTE_LOG_REGISTER(af_packet_logtype, pmd.net.packet, NOTICE);
 
 #define PMD_LOG(level, fmt, args...) \
 	rte_log(RTE_LOG_ ## level, af_packet_logtype, \
@@ -637,14 +637,14 @@ rte_pmd_init_internals(struct rte_vdev_device *dev,
 						sizeof(struct pkt_tx_queue),
 						0, numa_node);
 	if (!(*internals)->rx_queue || !(*internals)->tx_queue) {
-		rte_free((*internals)->rx_queue);
-		rte_free((*internals)->tx_queue);
-		return -1;
+		goto free_internals;
 	}
 
 	for (q = 0; q < nb_queues; q++) {
 		(*internals)->rx_queue[q].map = MAP_FAILED;
 		(*internals)->tx_queue[q].map = MAP_FAILED;
+		(*internals)->rx_queue[q].sockfd = -1;
+		(*internals)->tx_queue[q].sockfd = -1;
 	}
 
 	req = &((*internals)->req);
@@ -662,20 +662,20 @@ rte_pmd_init_internals(struct rte_vdev_device *dev,
 		PMD_LOG(ERR,
 			"%s: I/F name too long (%s)",
 			name, pair->value);
-		return -1;
+		goto free_internals;
 	}
 	if (ioctl(sockfd, SIOCGIFINDEX, &ifr) == -1) {
 		PMD_LOG_ERRNO(ERR, "%s: ioctl failed (SIOCGIFINDEX)", name);
-		return -1;
+		goto free_internals;
 	}
 	(*internals)->if_name = strdup(pair->value);
 	if ((*internals)->if_name == NULL)
-		return -1;
+		goto free_internals;
 	(*internals)->if_index = ifr.ifr_ifindex;
 
 	if (ioctl(sockfd, SIOCGIFHWADDR, &ifr) == -1) {
 		PMD_LOG_ERRNO(ERR, "%s: ioctl failed (SIOCGIFHWADDR)", name);
-		return -1;
+		goto free_internals;
 	}
 	memcpy(&(*internals)->eth_addr, ifr.ifr_hwaddr.sa_data, ETH_ALEN);
 
@@ -699,7 +699,7 @@ rte_pmd_init_internals(struct rte_vdev_device *dev,
 			PMD_LOG_ERRNO(ERR,
 				"%s: could not open AF_PACKET socket",
 				name);
-			return -1;
+			goto error;
 		}
 
 		tpver = TPACKET_V2;
@@ -843,15 +843,19 @@ error:
 	if (qsockfd != -1)
 		close(qsockfd);
 	for (q = 0; q < nb_queues; q++) {
-		munmap((*internals)->rx_queue[q].map,
-		       2 * req->tp_block_size * req->tp_block_nr);
+		if ((*internals)->rx_queue[q].map != MAP_FAILED)
+			munmap((*internals)->rx_queue[q].map,
+			       2 * req->tp_block_size * req->tp_block_nr);
 
 		rte_free((*internals)->rx_queue[q].rd);
 		rte_free((*internals)->tx_queue[q].rd);
-		if (((*internals)->rx_queue[q].sockfd != 0) &&
+		if (((*internals)->rx_queue[q].sockfd >= 0) &&
 			((*internals)->rx_queue[q].sockfd != qsockfd))
 			close((*internals)->rx_queue[q].sockfd);
 	}
+free_internals:
+	rte_free((*internals)->rx_queue);
+	rte_free((*internals)->tx_queue);
 	free((*internals)->if_name);
 	rte_free(*internals);
 	return -1;
@@ -1081,10 +1085,3 @@ RTE_PMD_REGISTER_PARAM_STRING(net_af_packet,
 	"framesz=<int> "
 	"framecnt=<int> "
 	"qdisc_bypass=<0|1>");
-
-RTE_INIT(af_packet_init_log)
-{
-	af_packet_logtype = rte_log_register("pmd.net.packet");
-	if (af_packet_logtype >= 0)
-		rte_log_set_level(af_packet_logtype, RTE_LOG_NOTICE);
-}

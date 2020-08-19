@@ -25,18 +25,11 @@ major_version = '@0@.@1@'.format(pver.get(0), pver.get(1))
 abi_version = run_command(find_program('cat', 'more'),
 	abi_version_file).stdout().strip()
 
-# Regular libraries have the abi_version as the filename extension
+# Libraries have the abi_version as the filename extension
 # and have the soname be all but the final part of the abi_version.
-# Experimental libraries have soname with '0.major'
-# and the filename suffix as 0.majorminor versions,
-# e.g. v20.1 => librte_stable.so.20.1, librte_experimental.so.0.201
-#    sonames => librte_stable.so.20, librte_experimental.so.0.20
-# e.g. v20.0.1 => librte_stable.so.20.0.1, librte_experimental.so.0.2001
-#      sonames => librte_stable.so.20.0, librte_experimental.so.0.200
-abi_va = abi_version.split('.')
-stable_so_version = abi_va.length() == 2 ? abi_va[0] : abi_va[0] + '.' + abi_va[1]
-experimental_abi_version = '0.' + abi_va[0] + abi_va[1] + '.' + abi_va[2]
-experimental_so_version = experimental_abi_version
+# e.g. v20.1 => librte_foo.so.20.1
+#    sonames => librte_foo.so.20
+so_version = abi_version.split('.')[0]
 
 # extract all version information into the build configuration
 dpdk_conf.set('RTE_VER_YEAR', pver.get(0).to_int())
@@ -117,7 +110,7 @@ if not is_windows
 endif
 
 # use pthreads if available for the platform
-if not is_ms_linker
+if not is_windows
 	add_project_link_arguments('-pthread', language: 'c')
 	dpdk_extra_ldflags += '-pthread'
 endif
@@ -208,6 +201,10 @@ warning_flags = [
 	'-Wno-packed-not-aligned',
 	'-Wno-missing-field-initializers'
 ]
+if cc.get_id() == 'gcc' and cc.version().version_compare('>=10.0')
+# FIXME: Bugzilla 396
+	warning_flags += '-Wno-zero-length-bounds'
+endif
 if not dpdk_conf.get('RTE_ARCH_64')
 # for 32-bit, don't warn about casting a 32-bit pointer to 64-bit int - it's fine!!
 	warning_flags += '-Wno-pointer-to-int-cast'
@@ -234,16 +231,14 @@ dpdk_conf.set('RTE_ENABLE_TRACE_FP', get_option('enable_trace_fp'))
 dpdk_conf.set('RTE_MAX_VFIO_GROUPS', 64)
 dpdk_conf.set('RTE_DRIVER_MEMPOOL_BUCKET_SIZE_KB', 64)
 dpdk_conf.set('RTE_LIBRTE_DPAA2_USE_PHYS_IOVA', true)
+if dpdk_conf.get('RTE_ARCH_64')
+	dpdk_conf.set('RTE_MAX_MEM_MB', 524288)
+else # for 32-bit we need smaller reserved memory areas
+	dpdk_conf.set('RTE_MAX_MEM_MB', 2048)
+endif
 
 
 compile_time_cpuflags = []
-if host_machine.cpu_family().startswith('x86')
-	arch_subdir = 'x86'
-elif host_machine.cpu_family().startswith('arm') or host_machine.cpu_family().startswith('aarch')
-	arch_subdir = 'arm'
-elif host_machine.cpu_family().startswith('ppc')
-	arch_subdir = 'ppc'
-endif
 subdir(arch_subdir)
 dpdk_conf.set('RTE_COMPILE_TIME_CPUFLAGS', ','.join(compile_time_cpuflags))
 
@@ -264,13 +259,22 @@ if is_freebsd
 endif
 
 if is_windows
-	# Minimum supported API is Windows 7.
-	add_project_arguments('-D_WIN32_WINNT=0x0601', language: 'c')
+	# VirtualAlloc2() is available since Windows 10 / Server 2016.
+	add_project_arguments('-D_WIN32_WINNT=0x0A00', language: 'c')
 
 	# Use MinGW-w64 stdio, because DPDK assumes ANSI-compliant formatting.
 	if cc.get_id() == 'gcc'
 		add_project_arguments('-D__USE_MINGW_ANSI_STDIO', language: 'c')
 	endif
+
+	# Contrary to docs, VirtualAlloc2() is exported by mincore.lib
+	# in Windows SDK, while MinGW exports it by advapi32.a.
+	if is_ms_linker
+		add_project_link_arguments('-lmincore', language: 'c')
+	endif
+
+	add_project_link_arguments('-ladvapi32', '-lsetupapi', language: 'c')
+	add_project_link_arguments('-ldbghelp', language: 'c')
 endif
 
 if get_option('b_lto')

@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: BSD-3-Clause
- * Copyright(c) 2001-2020
+ * Copyright(c) 2001-2020 Intel Corporation
  */
 
 #ifndef _ICE_ADMINQ_CMD_H_
@@ -533,7 +533,7 @@ struct ice_aqc_vsi_props {
 	u8 q_opt_reserved[3];
 	/* outer up section */
 	__le32 outer_up_table; /* same structure and defines as ingress tbl */
-	/* acl section */
+	/* ACL section */
 	__le16 acl_def_act;
 #define ICE_AQ_VSI_ACL_DEF_RX_PROF_S	0
 #define ICE_AQ_VSI_ACL_DEF_RX_PROF_M	(0xF << ICE_AQ_VSI_ACL_DEF_RX_PROF_S)
@@ -675,7 +675,7 @@ struct ice_aqc_storm_cfg {
 
 #define ICE_MAX_NUM_RECIPES 64
 
-/* Add/Get Recipe (indirect 0x0290/0x0292)*/
+/* Add/Get Recipe (indirect 0x0290/0x0292) */
 struct ice_aqc_add_get_recipe {
 	__le16 num_sub_recipes;	/* Input in Add cmd, Output in Get cmd */
 	__le16 return_index;	/* Input, used for Get cmd only */
@@ -1331,7 +1331,7 @@ struct ice_aqc_get_phy_caps {
 #define ICE_PHY_TYPE_HIGH_100G_CAUI2		BIT_ULL(2)
 #define ICE_PHY_TYPE_HIGH_100G_AUI2_AOC_ACC	BIT_ULL(3)
 #define ICE_PHY_TYPE_HIGH_100G_AUI2		BIT_ULL(4)
-#define ICE_PHY_TYPE_HIGH_MAX_INDEX		19
+#define ICE_PHY_TYPE_HIGH_MAX_INDEX		5
 
 struct ice_aqc_get_phy_caps_data {
 	__le64 phy_type_low; /* Use values from ICE_PHY_TYPE_LOW_* */
@@ -1382,6 +1382,7 @@ struct ice_aqc_get_phy_caps_data {
 	u8 module_type[ICE_MODULE_TYPE_TOTAL_BYTE];
 #define ICE_AQC_MOD_TYPE_BYTE0_SFP_PLUS			0xA0
 #define ICE_AQC_MOD_TYPE_BYTE0_QSFP_PLUS		0x80
+#define ICE_AQC_MOD_TYPE_IDENT				1
 #define ICE_AQC_MOD_TYPE_BYTE1_SFP_PLUS_CU_PASSIVE	BIT(0)
 #define ICE_AQC_MOD_TYPE_BYTE1_SFP_PLUS_CU_ACTIVE	BIT(1)
 #define ICE_AQC_MOD_TYPE_BYTE1_10G_BASE_SR		BIT(4)
@@ -1943,6 +1944,18 @@ struct ice_aqc_lldp_stop_start_specific_agent {
 	u8 reserved[15];
 };
 
+/* LLDP Filter Control (direct 0x0A0A) */
+struct ice_aqc_lldp_filter_ctrl {
+	u8 cmd_flags;
+#define ICE_AQC_LLDP_FILTER_ACTION_M		MAKEMASK(3, 0)
+#define ICE_AQC_LLDP_FILTER_ACTION_ADD		0x0
+#define ICE_AQC_LLDP_FILTER_ACTION_DELETE	0x1
+#define ICE_AQC_LLDP_FILTER_ACTION_UPDATE	0x2
+	u8 reserved1;
+	__le16 vsi_num;
+	u8 reserved2[12];
+};
+
 /* Get/Set RSS key (indirect 0x0B04/0x0B02) */
 struct ice_aqc_get_set_rss_key {
 #define ICE_AQC_GSET_RSS_KEY_VSI_VALID	BIT(15)
@@ -1979,7 +1992,7 @@ struct ice_aqc_get_set_rss_keys {
 struct ice_aqc_get_set_rss_lut {
 #define ICE_AQC_GSET_RSS_LUT_VSI_VALID	BIT(15)
 #define ICE_AQC_GSET_RSS_LUT_VSI_ID_S	0
-#define ICE_AQC_GSET_RSS_LUT_VSI_ID_M	(0x1FF << ICE_AQC_GSET_RSS_LUT_VSI_ID_S)
+#define ICE_AQC_GSET_RSS_LUT_VSI_ID_M	(0x3FF << ICE_AQC_GSET_RSS_LUT_VSI_ID_S)
 	__le16 vsi_id;
 #define ICE_AQC_GSET_RSS_LUT_TABLE_TYPE_S	0
 #define ICE_AQC_GSET_RSS_LUT_TABLE_TYPE_M	\
@@ -2020,7 +2033,7 @@ struct ice_aqc_clear_fd_table {
 	u8 reserved[12];
 };
 
-/* ACL - allocate (indirect 0x0C10) table */
+/* Allocate ACL table (indirect 0x0C10) */
 #define ICE_AQC_ACL_KEY_WIDTH		40
 #define ICE_AQC_ACL_KEY_WIDTH_BYTES	5
 #define ICE_AQC_ACL_TCAM_DEPTH		512
@@ -2065,9 +2078,9 @@ struct ice_aqc_acl_alloc_table_data {
 	__le16 alloc_ids[ICE_AQC_MAX_CONCURRENT_ACL_TBL];
 };
 
-/* ACL - deallocate (indirect 0x0C11) table
- * ACL - allocate (indirect 0x0C12) action-pair
- * ACL - deallocate (indirect 0x0C13) action-pair
+/* Deallocate ACL table (indirect 0x0C11)
+ * Allocate ACL action-pair (indirect 0x0C12)
+ * Deallocate ACL action-pair (indirect 0x0C13)
  */
 
 /* Following structure is common and used in case of deallocation
@@ -2126,7 +2139,7 @@ struct ice_aqc_acl_generic {
 	u8 act_mem[ICE_AQC_MAX_ACTION_MEMORIES];
 };
 
-/* ACL - allocate (indirect 0x0C14) scenario. This command doesn't have separate
+/* Allocate ACL scenario (indirect 0x0C14). This command doesn't have separate
  * response buffer since original command buffer gets updated with
  * 'scen_id' in case of success
  */
@@ -2144,7 +2157,7 @@ struct ice_aqc_acl_alloc_scen {
 	__le32 addr_low;
 };
 
-/* ACL - de-allocate (direct 0x0C15) scenario. This command doesn't need
+/* De-allocate ACL scenario (direct 0x0C15). This command doesn't need
  * separate response buffer since nothing to be returned as a response
  * except status.
  */
@@ -2153,8 +2166,9 @@ struct ice_aqc_acl_dealloc_scen {
 	u8 reserved[14];
 };
 
-/* ACL - update (direct 0x0C1B) scenario */
-/* ACL - query (direct 0x0C23) scenario */
+/* Update ACL scenario (direct 0x0C1B)
+ * Query ACL scenario (direct 0x0C23)
+ */
 struct ice_aqc_acl_update_query_scen {
 	__le16 scen_id;
 	u8 reserved[6];
@@ -2202,7 +2216,7 @@ struct ice_aqc_acl_scen {
 	u8 act_mem_cfg[ICE_AQC_MAX_ACTION_MEMORIES];
 };
 
-/* ACL - allocate (indirect 0x0C16) counters */
+/* Allocate ACL counters (indirect 0x0C16) */
 struct ice_aqc_acl_alloc_counters {
 	/* Amount of contiguous counters requested. Min value is 1 and
 	 * max value is 255
@@ -2253,7 +2267,7 @@ struct ice_aqc_acl_alloc_counters {
 	} ops;
 };
 
-/* ACL - de-allocate (direct 0x0C17) counters */
+/* De-allocate ACL counters (direct 0x0C17) */
 struct ice_aqc_acl_dealloc_counters {
 	/* first counter being released */
 	__le16 first_counter;
@@ -2266,15 +2280,16 @@ struct ice_aqc_acl_dealloc_counters {
 	u8 reserved[10];
 };
 
-/* ACL - de-allocate (direct 0x0C1A) resources. Used by SW to release all the
+/* De-allocate ACL resources (direct 0x0C1A). Used by SW to release all the
  * resources allocated for it using a single command
  */
 struct ice_aqc_acl_dealloc_res {
 	u8 reserved[16];
 };
 
-/* ACL - program actionpair (indirect 0x0C1C) */
-/* ACL - query actionpair (indirect 0x0C25) */
+/* Program ACL actionpair (indirect 0x0C1C)
+ * Query ACL actionpair (indirect 0x0C25)
+ */
 struct ice_aqc_acl_actpair {
 	/* action mem index to program/update */
 	u8 act_mem_index;
@@ -2349,10 +2364,11 @@ struct ice_aqc_acl_prof_generic_frmt {
 	u8 pf_scenario_num[ICE_AQC_ACL_PROF_PF_SCEN_NUM_ELEMS];
 };
 
-/* ACL - program ACL profile extraction (indirect 0x0C1D) */
-/* ACL - program ACL profile ranges (indirect 0x0C1E) */
-/* ACL - query ACL profile (indirect 0x0C21) */
-/* ACL - query ACL profile ranges (indirect 0x0C22) */
+/* Program ACL profile extraction (indirect 0x0C1D)
+ * Program ACL profile ranges (indirect 0x0C1E)
+ * Query ACL profile (indirect 0x0C21)
+ * Query ACL profile ranges (indirect 0x0C22)
+ */
 struct ice_aqc_acl_profile {
 	u8 profile_id; /* Programmed/Updated profile ID */
 	u8 reserved[7];
@@ -2389,8 +2405,9 @@ struct ice_aqc_acl_profile_ranges {
 	struct ice_acl_rng_data checker_cfg[ICE_AQC_ACL_PROF_RANGES_NUM_CFG];
 };
 
-/* ACL - program ACL entry (indirect 0x0C20) */
-/* ACL - query ACL entry (indirect 0x0C24) */
+/* Program ACL entry (indirect 0x0C20)
+ * Query ACL entry (indirect 0x0C24)
+ */
 struct ice_aqc_acl_entry {
 	u8 tcam_index; /* Updated TCAM block index */
 	u8 reserved;
@@ -2414,7 +2431,7 @@ struct ice_aqc_acl_data {
 	} entry_key, entry_key_invert;
 };
 
-/* ACL - query ACL counter (direct 0x0C27) */
+/* Query ACL counter (direct 0x0C27) */
 struct ice_aqc_acl_query_counter {
 	/* Queried counter index */
 	__le16 counter_index;
@@ -2556,7 +2573,7 @@ struct ice_aqc_move_txqs_data {
 };
 
 /* Download Package (indirect 0x0C40) */
-/* Also used for Update Package (indirect 0x0C42) */
+/* Also used for Update Package (indirect 0x0C42 and 0x0C41) */
 struct ice_aqc_download_pkg {
 	u8 flags;
 #define ICE_AQC_DOWNLOAD_PKG_LAST_BUF	0x01
@@ -2629,6 +2646,50 @@ struct ice_aqc_event_lan_overflow {
 	u8 reserved[8];
 };
 
+/* Set Health Status (direct 0xFF20) */
+struct ice_aqc_set_health_status_config {
+	u8 event_source;
+#define ICE_AQC_HEALTH_STATUS_SET_PF_SPECIFIC_MASK	BIT(0)
+#define ICE_AQC_HEALTH_STATUS_SET_ALL_PF_MASK		BIT(1)
+#define ICE_AQC_HEALTH_STATUS_SET_GLOBAL_MASK		BIT(2)
+	u8 reserved[15];
+};
+
+/* Get Health Status codes (indirect 0xFF21) */
+struct ice_aqc_get_supported_health_status_codes {
+	__le16 health_code_count;
+	u8 reserved[6];
+	__le32 addr_high;
+	__le32 addr_low;
+};
+
+/* Get Health Status (indirect 0xFF22) */
+struct ice_aqc_get_health_status {
+	__le16 health_status_count;
+	u8 reserved[6];
+	__le32 addr_high;
+	__le32 addr_low;
+};
+
+/* Get Health Status event buffer entry, (0xFF22)
+ * repeated per reported health status
+ */
+struct ice_aqc_health_status_elem {
+	__le16 health_status_code;
+	__le16 event_source;
+#define ICE_AQC_HEALTH_STATUS_PF			(0x1)
+#define ICE_AQC_HEALTH_STATUS_PORT			(0x2)
+#define ICE_AQC_HEALTH_STATUS_GLOBAL			(0x3)
+	__le32 internal_data1;
+#define ICE_AQC_HEALTH_STATUS_UNDEFINED_DATA	(0xDEADBEEF)
+	__le32 internal_data2;
+};
+
+/* Clear Health Status (direct 0xFF23) */
+struct ice_aqc_clear_health_status {
+	__le32 reserved[4];
+};
+
 /**
  * struct ice_aq_desc - Admin Queue (AQ) descriptor
  * @flags: ICE_AQ_FLAG_* flags
@@ -2698,6 +2759,7 @@ struct ice_aq_desc {
 		struct ice_aqc_lldp_start lldp_start;
 		struct ice_aqc_lldp_set_local_mib lldp_set_mib;
 		struct ice_aqc_lldp_stop_start_specific_agent lldp_agent_ctrl;
+		struct ice_aqc_lldp_filter_ctrl lldp_filter_ctrl;
 		struct ice_aqc_get_set_rss_lut get_set_rss_lut;
 		struct ice_aqc_get_set_rss_key get_set_rss_key;
 		struct ice_aqc_clear_fd_table clear_fd_table;
@@ -2732,6 +2794,12 @@ struct ice_aq_desc {
 		struct ice_aqc_get_link_status get_link_status;
 		struct ice_aqc_event_lan_overflow lan_overflow;
 		struct ice_aqc_get_link_topo get_link_topo;
+		struct ice_aqc_set_health_status_config
+			set_health_status_config;
+		struct ice_aqc_get_supported_health_status_codes
+			get_supported_health_status_codes;
+		struct ice_aqc_get_health_status get_health_status;
+		struct ice_aqc_clear_health_status clear_health_status;
 	} params;
 };
 
@@ -2925,6 +2993,7 @@ enum ice_adminq_opc {
 	ice_aqc_opc_get_cee_dcb_cfg			= 0x0A07,
 	ice_aqc_opc_lldp_set_local_mib			= 0x0A08,
 	ice_aqc_opc_lldp_stop_start_specific_agent	= 0x0A09,
+	ice_aqc_opc_lldp_filter_ctrl			= 0x0A0A,
 
 	/* RSS commands */
 	ice_aqc_opc_set_rss_key				= 0x0B02,
@@ -2970,6 +3039,12 @@ enum ice_adminq_opc {
 
 	/* Standalone Commands/Events */
 	ice_aqc_opc_event_lan_overflow			= 0x1001,
+
+	/* SystemDiagnostic commands */
+	ice_aqc_opc_set_health_status_config		= 0xFF20,
+	ice_aqc_opc_get_supported_health_status_codes	= 0xFF21,
+	ice_aqc_opc_get_health_status			= 0xFF22,
+	ice_aqc_opc_clear_health_status			= 0xFF23
 };
 
 #endif /* _ICE_ADMINQ_CMD_H_ */

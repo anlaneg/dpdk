@@ -348,7 +348,7 @@ Configurations
 --------------
 
 The following sections provide the syntax of configurations to initialize
-your SP, SA, Routing and Neighbour tables.
+your SP, SA, Routing, Flow and Neighbour tables.
 Configurations shall be specified in the configuration file to be passed to
 the application. The file is then parsed by the application. The successful
 parsing will result in the appropriate rules being applied to the tables
@@ -369,7 +369,7 @@ General rule syntax
 
 The parse treats one line in the configuration file as one configuration
 item (unless the line concatenation symbol exists). Every configuration
-item shall follow the syntax of either SP, SA, Routing or Neighbour
+item shall follow the syntax of either SP, SA, Routing, Flow or Neighbour
 rules specified below.
 
 The configuration parser supports the following special symbols:
@@ -808,6 +808,80 @@ Example SP rules:
 
     rt ipv6 dst 1111:1111:1111:1111:1111:1111:1111:5555/116 port 0
 
+Flow rule syntax
+^^^^^^^^^^^^^^^^
+
+Flow rule enables the usage of hardware classification capabilities to match specific
+ingress traffic and redirect the packets to the specified queue. This feature is
+optional and relies on hardware ``rte_flow`` support.
+
+The flow rule syntax is shown as follows:
+
+.. code-block:: console
+
+    flow <ip_ver> <src_ip> <dst_ip> <port> <queue>
+
+
+where each options means:
+
+``<ip_ver>``
+
+ * IP protocol version
+
+ * Optional: No
+
+ * Available options:
+
+   * *ipv4*: IP protocol version 4
+   * *ipv6*: IP protocol version 6
+
+``<src_ip>``
+
+ * The source IP address and mask
+
+ * Optional: Yes, default address 0.0.0.0 and mask of 0 will be used
+
+ * Syntax:
+
+   * *src X.X.X.X/Y* for IPv4
+   * *src XXXX:XXXX:XXXX:XXXX:XXXX:XXXX:XXXX:XXXX/Y* for IPv6
+
+``<dst_ip>``
+
+ * The destination IP address and mask
+
+ * Optional: Yes, default address 0.0.0.0 and mask of 0 will be used
+
+ * Syntax:
+
+   * *dst X.X.X.X/Y* for IPv4
+   * *dst XXXX:XXXX:XXXX:XXXX:XXXX:XXXX:XXXX:XXXX/Y* for IPv6
+
+``<port>``
+
+ * The traffic input port id
+
+ * Optional: yes, default input port 0 will be used
+
+ * Syntax: *port X*
+
+``<queue>``
+
+ * The traffic input queue id
+
+ * Optional: yes, default input queue 0 will be used
+
+ * Syntax: *queue X*
+
+Example flow rules:
+
+.. code-block:: console
+
+    flow ipv4 dst 172.16.1.5/32 port 0 queue 0
+
+    flow ipv6 dst 1111:1111:1111:1111:1111:1111:1111:5555/116 port 1 queue 0
+
+
 Neighbour rule syntax
 ^^^^^^^^^^^^^^^^^^^^^
 
@@ -870,10 +944,12 @@ Also the user can optionally setup:
 *   ``CRYPTO_DEV``: crypto device to be used ('-w <pci-id>'). If none specified
     appropriate vdevs will be created by the script
 
-*   ``MULTI_SEG_TEST``: ipsec-secgw option to enable reassembly support and
-    specify size of reassembly table (e.g.
-    ``MULTI_SEG_TEST='--reassemble 128'``). This option must be set for
-    fallback session tests.
+Scripts can be used for multiple test scenarios. To check all available
+options run:
+
+.. code-block:: console
+
+    /bin/bash run_test.sh -h
 
 Note that most of the tests require the appropriate crypto PMD/device to be
 available.
@@ -917,17 +993,40 @@ SUT OS(TAP)--(plain)-->(TAP)psec-secgw(NIC1)--(IPsec)-->(NIC1)DUT OS
 
 It then tries to perform some data transfer using the scheme described above.
 
-usage
+Usage
 ~~~~~
 
-In the ipsec-secgw/test directory
+In the ipsec-secgw/test directory run
 
-to run one test for IPv4 or IPv6
+/bin/bash run_test.sh <options> <ipsec_mode>
 
-/bin/bash linux_test(4|6).sh <ipsec_mode>
+Available options:
 
-to run all tests for IPv4 or IPv6
+*   ``-4`` Perform tests with use of IPv4. One or both [-46] options needs to be
+    selected.
 
-/bin/bash run_test.sh -4|-6
+*   ``-6`` Perform tests with use of IPv6. One or both [-46] options needs to be
+    selected.
 
-For the list of available modes please refer to run_test.sh.
+*   ``-m`` Add IPSec tunnel mixed IP version tests - outer IP version different
+    than inner. Inner IP version will match selected option [-46].
+
+*   ``-i`` Run tests in inline mode. Regular tests will not be invoked.
+
+*   ``-f`` Run tests for fallback mechanism. Regular tests will not be invoked.
+
+*   ``-l`` Run tests in legacy mode only. It cannot be used with options [-fsc].
+    On default library mode is used.
+
+*   ``-s`` Run all tests with reassembly support. On default only tests for
+    fallback mechanism use reassembly support.
+
+*   ``-c`` Run tests with use of cpu-crypto. For inline tests it will not be
+    applied. On default lookaside-none is used.
+
+*   ``-p`` Perform packet validation tests. Option [-46] is not required.
+
+*   ``-h`` Show usage.
+
+If <ipsec_mode> is specified, only tests for that mode will be invoked. For the
+list of available modes please refer to run_test.sh.

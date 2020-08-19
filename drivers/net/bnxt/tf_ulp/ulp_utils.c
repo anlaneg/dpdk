@@ -310,6 +310,40 @@ ulp_blob_push_64(struct ulp_blob *blob,
 }
 
 /*
+ * Add data to the binary blob at the current offset.
+ *
+ * blob [in] The blob that data is added to.  The blob must
+ * be initialized prior to pushing data.
+ *
+ * data [in] 32-bit value to be added to the blob.
+ *
+ * datalen [in] The number of bits to be added ot the blob.
+ *
+ * The offset of the data is updated after each push of data.
+ * NULL returned on error, pointer pushed value otherwise.
+ */
+uint8_t *
+ulp_blob_push_32(struct ulp_blob *blob,
+		 uint32_t *data,
+		 uint32_t datalen)
+{
+	uint8_t *val = (uint8_t *)data;
+	uint32_t rc;
+	uint32_t size = ULP_BITS_2_BYTE(datalen);
+
+	if (!data || size > sizeof(uint32_t)) {
+		BNXT_TF_DBG(ERR, "invalid argument\n");
+		return 0;
+	}
+
+	rc = ulp_blob_push(blob, &val[sizeof(uint32_t) - size], datalen);
+	if (!rc)
+		return 0;
+
+	return &val[sizeof(uint32_t) - size];
+}
+
+/*
  * Add encap data to the binary blob at the current offset.
  *
  * blob [in] The blob that data is added to.  The blob must
@@ -369,9 +403,9 @@ ulp_blob_push_encap(struct ulp_blob *blob,
  *
  * datalen [in] The number of bits of pad to add
  *
- * returns the number of pad bits added, zero on failure
+ * returns the number of pad bits added, -1 on failure
  */
-uint32_t
+int32_t
 ulp_blob_pad_push(struct ulp_blob *blob,
 		  uint32_t datalen)
 {
@@ -382,6 +416,82 @@ ulp_blob_pad_push(struct ulp_blob *blob,
 
 	blob->write_idx += datalen;
 	return datalen;
+}
+
+/* Get data from src and put into dst using little-endian format */
+static void
+ulp_bs_get_lsb(uint8_t *src, uint16_t bitpos, uint8_t bitlen, uint8_t *dst)
+{
+	uint8_t bitoffs = bitpos % ULP_BLOB_BYTE;
+	uint16_t index  = ULP_BITS_2_BYTE_NR(bitpos);
+	uint8_t mask, partial, shift;
+
+	shift = bitoffs;
+	partial = ULP_BLOB_BYTE - bitoffs;
+	if (bitoffs + bitlen <= ULP_BLOB_BYTE) {
+		mask = ((1 << bitlen) - 1) << shift;
+		*dst = (src[index] & mask) >> shift;
+	} else {
+		mask = ((1 << partial) - 1) << shift;
+		*dst = (src[index] & mask) >> shift;
+		index++;
+		partial = bitlen - partial;
+		mask = ((1 << partial) - 1);
+		*dst |= (src[index] & mask) << (ULP_BLOB_BYTE - bitoffs);
+	}
+}
+
+/* Assuming that src is in little-Endian Format */
+static void
+ulp_bs_pull_lsb(uint8_t *src, uint8_t *dst, uint32_t size,
+		uint32_t offset, uint32_t len)
+{
+	uint32_t idx;
+	uint32_t cnt = ULP_BITS_2_BYTE_NR(len);
+
+	/* iterate bytewise to get data */
+	for (idx = 0; idx < cnt; idx++) {
+		ulp_bs_get_lsb(src, offset, ULP_BLOB_BYTE,
+			       &dst[size - 1 - idx]);
+		offset += ULP_BLOB_BYTE;
+		len -= ULP_BLOB_BYTE;
+	}
+
+	/* Extract the last reminder data that is not 8 byte boundary */
+	if (len)
+		ulp_bs_get_lsb(src, offset, len, &dst[size - 1 - idx]);
+}
+
+/*
+ * Extract data from the binary blob using given offset.
+ *
+ * blob [in] The blob that data is extracted from. The blob must
+ * be initialized prior to pulling data.
+ *
+ * data [in] A pointer to put the data.
+ * data_size [in] size of the data buffer in bytes.
+ *offset [in] - Offset in the blob to extract the data in bits format.
+ * len [in] The number of bits to be pulled from the blob.
+ *
+ * Output: zero on success, -1 on failure
+ */
+int32_t
+ulp_blob_pull(struct ulp_blob *blob, uint8_t *data, uint32_t data_size,
+	      uint16_t offset, uint16_t len)
+{
+	/* validate the arguments */
+	if (!blob || (offset + len) > blob->bitlen ||
+	    ULP_BYTE_2_BITS(data_size) < len) {
+		BNXT_TF_DBG(ERR, "invalid argument\n");
+		return -1; /* failure */
+	}
+
+	if (blob->byte_order == BNXT_ULP_BYTE_ORDER_BE) {
+		BNXT_TF_DBG(ERR, "Big endian pull not implemented\n");
+		return -1; /* failure */
+	}
+	ulp_bs_pull_lsb(blob->data, data, data_size, offset, len);
+	return 0;
 }
 
 /*
@@ -444,7 +554,7 @@ ulp_blob_perform_encap_swap(struct ulp_blob *blob)
 		BNXT_TF_DBG(ERR, "invalid argument\n");
 		return; /* failure */
 	}
-	idx = ULP_BITS_2_BYTE_NR(blob->encap_swap_idx + 1);
+	idx = ULP_BITS_2_BYTE_NR(blob->encap_swap_idx);
 	end_idx = ULP_BITS_2_BYTE(blob->write_idx);
 
 	while (idx <= end_idx) {
@@ -457,6 +567,35 @@ ulp_blob_perform_encap_swap(struct ulp_blob *blob)
 			blob->data[idx + 6 - i] = temp_val_1;
 		}
 		idx += 8;
+	}
+}
+
+/*
+ * Perform the blob buffer reversal byte wise.
+ * This api makes the first byte the last and
+ * vice-versa.
+ *
+ * blob [in] The blob's data to be used for swap.
+ *
+ * returns void.
+ */
+void
+ulp_blob_perform_byte_reverse(struct ulp_blob *blob)
+{
+	uint32_t idx = 0, num = 0;
+	uint8_t xchar;
+
+	/* validate the arguments */
+	if (!blob) {
+		BNXT_TF_DBG(ERR, "invalid argument\n");
+		return; /* failure */
+	}
+
+	num = ULP_BITS_2_BYTE_NR(blob->write_idx);
+	for (idx = 0; idx < (num / 2); idx++) {
+		xchar = blob->data[idx];
+		blob->data[idx] = blob->data[(num - 1) - idx];
+		blob->data[(num - 1) - idx] = xchar;
 	}
 }
 

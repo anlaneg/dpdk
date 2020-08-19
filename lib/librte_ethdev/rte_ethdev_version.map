@@ -1,4 +1,4 @@
-DPDK_20.0 {
+DPDK_21 {
 	global:
 
 	_rte_eth_dev_callback_process;
@@ -241,4 +241,10 @@ EXPERIMENTAL {
 	__rte_ethdev_trace_rx_burst;
 	__rte_ethdev_trace_tx_burst;
 	rte_flow_get_aged_flows;
+};
+
+INTERNAL {
+	global:
+
+	rte_eth_dma_zone_free;
 };

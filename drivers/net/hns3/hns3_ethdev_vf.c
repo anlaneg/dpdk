@@ -713,7 +713,8 @@ hns3vf_init_ring_with_vector(struct hns3_hw *hw)
 	 * Rx interrupt.
 	 */
 	vec = hw->num_msi - 1; /* vector 0 for misc interrupt, not for queue */
-	hw->intr_tqps_num = vec - 1; /* the last interrupt is reserved */
+	/* vec - 1: the last interrupt is reserved */
+	hw->intr_tqps_num = vec > hw->tqps_num ? hw->tqps_num : vec - 1;
 	for (i = 0; i < hw->intr_tqps_num; i++) {
 		/*
 		 * Set gap limiter and rate limiter configuration of queue's
@@ -756,6 +757,7 @@ hns3vf_dev_configure(struct rte_eth_dev *dev)
 	uint16_t nb_tx_q = dev->data->nb_tx_queues;
 	struct rte_eth_rss_conf rss_conf;
 	uint16_t mtu;
+	bool gro_en;
 	int ret;
 
 	/*
@@ -783,6 +785,7 @@ hns3vf_dev_configure(struct rte_eth_dev *dev)
 
 	/* When RSS is not configured, redirect the packet queue 0 */
 	if ((uint32_t)mq_mode & ETH_MQ_RX_RSS_FLAG) {
+		conf->rxmode.offloads |= DEV_RX_OFFLOAD_RSS_HASH;
 		rss_conf = conf->rx_adv_conf.rss_conf;
 		if (rss_conf.rss_key == NULL) {
 			rss_conf.rss_key = rss_cfg->key;
@@ -812,6 +815,12 @@ hns3vf_dev_configure(struct rte_eth_dev *dev)
 	}
 
 	ret = hns3vf_dev_configure_vlan(dev);
+	if (ret)
+		goto cfg_err;
+
+	/* config hardware GRO */
+	gro_en = conf->rxmode.offloads & DEV_RX_OFFLOAD_TCP_LRO ? true : false;
+	ret = hns3_config_gro(hw, gro_en);
 	if (ret)
 		goto cfg_err;
 
@@ -893,9 +902,10 @@ hns3vf_dev_infos_get(struct rte_eth_dev *eth_dev, struct rte_eth_dev_info *info)
 	info->max_rx_queues = q_num;
 	info->max_tx_queues = hw->tqps_num;
 	info->max_rx_pktlen = HNS3_MAX_FRAME_LEN; /* CRC included */
-	info->min_rx_bufsize = hw->rx_buf_len;
+	info->min_rx_bufsize = HNS3_MIN_BD_BUF_SIZE;
 	info->max_mac_addrs = HNS3_VF_UC_MACADDR_NUM;
 	info->max_mtu = info->max_rx_pktlen - HNS3_ETH_OVERHEAD;
+	info->max_lro_pkt_size = HNS3_MAX_LRO_SIZE;
 
 	info->rx_offload_capa = (DEV_RX_OFFLOAD_IPV4_CKSUM |
 				 DEV_RX_OFFLOAD_UDP_CKSUM |
@@ -903,27 +913,25 @@ hns3vf_dev_infos_get(struct rte_eth_dev *eth_dev, struct rte_eth_dev_info *info)
 				 DEV_RX_OFFLOAD_SCTP_CKSUM |
 				 DEV_RX_OFFLOAD_OUTER_IPV4_CKSUM |
 				 DEV_RX_OFFLOAD_OUTER_UDP_CKSUM |
-				 DEV_RX_OFFLOAD_KEEP_CRC |
 				 DEV_RX_OFFLOAD_SCATTER |
 				 DEV_RX_OFFLOAD_VLAN_STRIP |
-				 DEV_RX_OFFLOAD_QINQ_STRIP |
 				 DEV_RX_OFFLOAD_VLAN_FILTER |
 				 DEV_RX_OFFLOAD_JUMBO_FRAME |
-				 DEV_RX_OFFLOAD_RSS_HASH);
+				 DEV_RX_OFFLOAD_RSS_HASH |
+				 DEV_RX_OFFLOAD_TCP_LRO);
 	info->tx_queue_offload_capa = DEV_TX_OFFLOAD_MBUF_FAST_FREE;
 	info->tx_offload_capa = (DEV_TX_OFFLOAD_OUTER_IPV4_CKSUM |
 				 DEV_TX_OFFLOAD_IPV4_CKSUM |
 				 DEV_TX_OFFLOAD_TCP_CKSUM |
 				 DEV_TX_OFFLOAD_UDP_CKSUM |
 				 DEV_TX_OFFLOAD_SCTP_CKSUM |
-				 DEV_TX_OFFLOAD_VLAN_INSERT |
-				 DEV_TX_OFFLOAD_QINQ_INSERT |
 				 DEV_TX_OFFLOAD_MULTI_SEGS |
 				 DEV_TX_OFFLOAD_TCP_TSO |
 				 DEV_TX_OFFLOAD_VXLAN_TNL_TSO |
 				 DEV_TX_OFFLOAD_GRE_TNL_TSO |
 				 DEV_TX_OFFLOAD_GENEVE_TNL_TSO |
-				 info->tx_queue_offload_capa);
+				 info->tx_queue_offload_capa |
+				 hns3_txvlan_cap_get(hw));
 
 	info->rx_desc_lim = (struct rte_eth_desc_lim) {
 		.nb_max = HNS3_MAX_RING_DESC,
@@ -935,6 +943,8 @@ hns3vf_dev_infos_get(struct rte_eth_dev *eth_dev, struct rte_eth_dev_info *info)
 		.nb_max = HNS3_MAX_RING_DESC,
 		.nb_min = HNS3_MIN_RING_DESC,
 		.nb_align = HNS3_ALIGN_RING_DESC,
+		.nb_seg_max = HNS3_MAX_TSO_BD_PER_PKT,
+		.nb_mtu_seg_max = HNS3_MAX_NON_TSO_BD_PER_PKT,
 	};
 
 	info->vmdq_queue_num = 0;
@@ -1050,6 +1060,29 @@ hns3vf_interrupt_handler(void *param)
 }
 
 static int
+hns3vf_get_capability(struct hns3_hw *hw)
+{
+	struct rte_pci_device *pci_dev;
+	struct rte_eth_dev *eth_dev;
+	uint8_t revision;
+	int ret;
+
+	eth_dev = &rte_eth_devices[hw->data->port_id];
+	pci_dev = RTE_ETH_DEV_TO_PCI(eth_dev);
+
+	/* Get PCI revision id */
+	ret = rte_pci_read_config(pci_dev, &revision, HNS3_PCI_REVISION_ID_LEN,
+				  HNS3_PCI_REVISION_ID);
+	if (ret != HNS3_PCI_REVISION_ID_LEN) {
+		PMD_INIT_LOG(ERR, "failed to read pci revision id: %d", ret);
+		return -EIO;
+	}
+	hw->revision = revision;
+
+	return 0;
+}
+
+static int
 hns3vf_check_tqp_info(struct hns3_hw *hw)
 {
 	uint16_t tqps_num;
@@ -1062,10 +1095,51 @@ hns3vf_check_tqp_info(struct hns3_hw *hw)
 		return -EINVAL;
 	}
 
-	if (hw->rx_buf_len == 0)
-		hw->rx_buf_len = HNS3_DEFAULT_RX_BUF_LEN;
 	hw->alloc_rss_size = RTE_MIN(hw->rss_size_max, hw->tqps_num);
 
+	return 0;
+}
+static int
+hns3vf_get_port_base_vlan_filter_state(struct hns3_hw *hw)
+{
+	uint8_t resp_msg;
+	int ret;
+
+	ret = hns3_send_mbx_msg(hw, HNS3_MBX_SET_VLAN,
+				HNS3_MBX_GET_PORT_BASE_VLAN_STATE, NULL, 0,
+				true, &resp_msg, sizeof(resp_msg));
+	if (ret) {
+		if (ret == -ETIME) {
+			/*
+			 * Getting current port based VLAN state from PF driver
+			 * will not affect VF driver's basic function. Because
+			 * the VF driver relies on hns3 PF kernel ether driver,
+			 * to avoid introducing compatibility issues with older
+			 * version of PF driver, no failure will be returned
+			 * when the return value is ETIME. This return value has
+			 * the following scenarios:
+			 * 1) Firmware didn't return the results in time
+			 * 2) the result return by firmware is timeout
+			 * 3) the older version of kernel side PF driver does
+			 *    not support this mailbox message.
+			 * For scenarios 1 and 2, it is most likely that a
+			 * hardware error has occurred, or a hardware reset has
+			 * occurred. In this case, these errors will be caught
+			 * by other functions.
+			 */
+			PMD_INIT_LOG(WARNING,
+				"failed to get PVID state for timeout, maybe "
+				"kernel side PF driver doesn't support this "
+				"mailbox message, or firmware didn't respond.");
+			resp_msg = HNS3_PORT_BASE_VLAN_DISABLE;
+		} else {
+			PMD_INIT_LOG(ERR, "failed to get port based VLAN state,"
+				" ret = %d", ret);
+			return ret;
+		}
+	}
+	hw->port_base_vlan_cfg.state = resp_msg ?
+		HNS3_PORT_BASE_VLAN_ENABLE : HNS3_PORT_BASE_VLAN_DISABLE;
 	return 0;
 }
 
@@ -1085,7 +1159,6 @@ hns3vf_get_queue_info(struct hns3_hw *hw)
 
 	memcpy(&hw->tqps_num, &resp_msg[0], sizeof(uint16_t));
 	memcpy(&hw->rss_size_max, &resp_msg[2], sizeof(uint16_t));
-	memcpy(&hw->rx_buf_len, &resp_msg[4], sizeof(uint16_t));
 
 	return hns3vf_check_tqp_info(hw);
 }
@@ -1156,6 +1229,13 @@ hns3vf_get_configuration(struct hns3_hw *hw)
 	hw->mac.media_type = HNS3_MEDIA_TYPE_NONE;
 	hw->rss_dis_flag = false;
 
+	/* Get device capability */
+	ret = hns3vf_get_capability(hw);
+	if (ret) {
+		PMD_INIT_LOG(ERR, "failed to get device capability: %d.", ret);
+		return ret;
+	}
+
 	/* Get queue configuration from PF */
 	ret = hns3vf_get_queue_info(hw);
 	if (ret)
@@ -1168,6 +1248,10 @@ hns3vf_get_configuration(struct hns3_hw *hw)
 
 	/* Get user defined VF MAC addr from PF */
 	ret = hns3vf_get_host_mac_addr(hw);
+	if (ret)
+		return ret;
+
+	ret = hns3vf_get_port_base_vlan_filter_state(hw);
 	if (ret)
 		return ret;
 
@@ -1473,7 +1557,7 @@ hns3_query_vf_resource(struct hns3_hw *hw)
 		return -EINVAL;
 	}
 
-	hw->num_msi = (num_msi > hw->tqps_num + 1) ? hw->tqps_num + 1 : num_msi;
+	hw->num_msi = num_msi;
 
 	return 0;
 }
@@ -1647,6 +1731,7 @@ hns3vf_uninit_vf(struct rte_eth_dev *eth_dev)
 	PMD_INIT_FUNC_TRACE();
 
 	hns3_rss_uninit(hns);
+	(void)hns3_config_gro(hw, false);
 	(void)hns3vf_set_alive(hw, false);
 	(void)hns3vf_set_promisc_mode(hw, false, false, false);
 	hns3vf_disable_irq0(hw);
@@ -1807,6 +1892,7 @@ hns3vf_dev_link_update(struct rte_eth_dev *eth_dev,
 	case ETH_SPEED_NUM_40G:
 	case ETH_SPEED_NUM_50G:
 	case ETH_SPEED_NUM_100G:
+	case ETH_SPEED_NUM_200G:
 		new_link.link_speed = mac->link_speed;
 		break;
 	default:
@@ -2214,7 +2300,15 @@ hns3vf_restore_conf(struct hns3_adapter *hns)
 	if (ret)
 		goto err_vlan_table;
 
+	ret = hns3vf_get_port_base_vlan_filter_state(hw);
+	if (ret)
+		goto err_vlan_table;
+
 	ret = hns3vf_restore_rx_interrupt(hw);
+	if (ret)
+		goto err_vlan_table;
+
+	ret = hns3_restore_gro_conf(hw);
 	if (ret)
 		goto err_vlan_table;
 
@@ -2430,12 +2524,24 @@ hns3vf_dev_init(struct rte_eth_dev *eth_dev)
 	hns3_set_rxtx_function(eth_dev);
 	eth_dev->dev_ops = &hns3vf_eth_dev_ops;
 	if (rte_eal_process_type() != RTE_PROC_PRIMARY) {
-		hns3_mp_init_secondary();
+		ret = hns3_mp_init_secondary();
+		if (ret) {
+			PMD_INIT_LOG(ERR, "Failed to init for secondary "
+					  "process, ret = %d", ret);
+			goto err_mp_init_secondary;
+		}
+
 		hw->secondary_cnt++;
 		return 0;
 	}
 
-	hns3_mp_init_primary();
+	ret = hns3_mp_init_primary();
+	if (ret) {
+		PMD_INIT_LOG(ERR,
+			     "Failed to init for primary process, ret = %d",
+			     ret);
+		goto err_mp_init_primary;
+	}
 
 	hw->adapter_state = HNS3_NIC_UNINITIALIZED;
 	hns->is_vf = true;
@@ -2492,6 +2598,10 @@ err_init_vf:
 	rte_free(hw->reset.wait_data);
 
 err_init_reset:
+	hns3_mp_uninit_primary();
+
+err_mp_init_primary:
+err_mp_init_secondary:
 	eth_dev->dev_ops = NULL;
 	eth_dev->rx_pkt_burst = NULL;
 	eth_dev->tx_pkt_burst = NULL;

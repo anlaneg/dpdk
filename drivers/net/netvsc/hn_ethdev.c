@@ -45,9 +45,6 @@
 			    DEV_RX_OFFLOAD_VLAN_STRIP | \
 			    DEV_RX_OFFLOAD_RSS_HASH)
 
-int hn_logtype_init;
-int hn_logtype_driver;
-
 struct hn_xstats_name_off {
 	char name[RTE_ETH_XSTATS_NAME_SIZE];
 	unsigned int offset;
@@ -58,6 +55,7 @@ static const struct hn_xstats_name_off hn_stat_strings[] = {
 	{ "good_bytes",             offsetof(struct hn_stats, bytes) },
 	{ "errors",                 offsetof(struct hn_stats, errors) },
 	{ "ring full",              offsetof(struct hn_stats, ring_full) },
+	{ "channel full",           offsetof(struct hn_stats, channel_full) },
 	{ "multicast_packets",      offsetof(struct hn_stats, multicast) },
 	{ "broadcast_packets",      offsetof(struct hn_stats, broadcast) },
 	{ "undersize_packets",      offsetof(struct hn_stats, size_bins[0]) },
@@ -72,7 +70,7 @@ static const struct hn_xstats_name_off hn_stat_strings[] = {
 
 /* The default RSS key.
  * This value is the same as MLX5 so that flows will be
- * received on same path for both VF ans synthetic NIC.
+ * received on same path for both VF and synthetic NIC.
  */
 static const uint8_t rss_default_key[NDIS_HASH_KEYSIZE_TOEPLITZ] = {
 	0x2c, 0xc6, 0x81, 0xd1,	0x5b, 0xdb, 0xf4, 0xf7,
@@ -201,7 +199,7 @@ static int hn_parse_args(const struct rte_eth_dev *dev)
  */
 int
 hn_dev_link_update(struct rte_eth_dev *dev,
-		   int wait_to_complete)
+		   int wait_to_complete __rte_unused)
 {
 	struct hn_data *hv = dev->data->dev_private;
 	struct rte_eth_link link, old;
@@ -214,8 +212,6 @@ hn_dev_link_update(struct rte_eth_dev *dev,
 		return error;
 
 	hn_rndis_get_linkspeed(hv);
-
-	hn_vf_link_update(dev, wait_to_complete);
 
 	link = (struct rte_eth_link) {
 		.link_duplex = ETH_LINK_FULL_DUPLEX,
@@ -376,13 +372,14 @@ static int hn_rss_hash_update(struct rte_eth_dev *dev,
 
 	hn_rss_hash_init(hv, rss_conf);
 
-	err = hn_rndis_conf_rss(hv, 0);
-	if (err) {
-		PMD_DRV_LOG(NOTICE,
-			    "rss reconfig failed (RSS disabled)");
-		return err;
+	if (rss_conf->rss_hf != 0) {
+		err = hn_rndis_conf_rss(hv, 0);
+		if (err) {
+			PMD_DRV_LOG(NOTICE,
+				    "rss reconfig failed (RSS disabled)");
+			return err;
+		}
 	}
-
 
 	return hn_vf_rss_hash_update(dev, rss_conf);
 }
@@ -575,7 +572,7 @@ static int hn_dev_configure(struct rte_eth_dev *dev)
 				 dev->data->nb_tx_queues);
 
 	for (i = 0; i < NDIS_HASH_INDCNT; i++)
-		hv->rss_ind[i] = i % hv->num_queues;
+		hv->rss_ind[i] = i % dev->data->nb_rx_queues;
 
 	hn_rss_hash_init(hv, rss_conf);
 
@@ -595,11 +592,13 @@ static int hn_dev_configure(struct rte_eth_dev *dev)
 			return err;
 		}
 
-		err = hn_rndis_conf_rss(hv, 0);
-		if (err) {
-			PMD_DRV_LOG(NOTICE,
-				    "initial RSS config failed");
-			return err;
+		if (rss_conf->rss_hf != 0) {
+			err = hn_rndis_conf_rss(hv, 0);
+			if (err) {
+				PMD_DRV_LOG(NOTICE,
+					    "initial RSS config failed");
+				return err;
+			}
 		}
 	}
 
@@ -857,6 +856,8 @@ static const struct eth_dev_ops hn_eth_dev_ops = {
 	.dev_stop		= hn_dev_stop,
 	.dev_close		= hn_dev_close,
 	.dev_infos_get		= hn_dev_info_get,
+	.txq_info_get		= hn_dev_tx_queue_info,
+	.rxq_info_get		= hn_dev_rx_queue_info,
 	.dev_supported_ptypes_get = hn_vf_supported_ptypes,
 	.promiscuous_enable     = hn_dev_promiscuous_enable,
 	.promiscuous_disable    = hn_dev_promiscuous_disable,
@@ -870,8 +871,11 @@ static const struct eth_dev_ops hn_eth_dev_ops = {
 	.tx_queue_setup		= hn_dev_tx_queue_setup,
 	.tx_queue_release	= hn_dev_tx_queue_release,
 	.tx_done_cleanup        = hn_dev_tx_done_cleanup,
+	.tx_descriptor_status	= hn_dev_tx_descriptor_status,
 	.rx_queue_setup		= hn_dev_rx_queue_setup,
 	.rx_queue_release	= hn_dev_rx_queue_release,
+	.rx_queue_count		= hn_dev_rx_queue_count,
+	.rx_descriptor_status   = hn_dev_rx_queue_status,
 	.link_update		= hn_dev_link_update,
 	.stats_get		= hn_dev_stats_get,
 	.stats_reset            = hn_dev_stats_reset,
@@ -957,7 +961,7 @@ eth_hn_dev_init(struct rte_eth_dev *eth_dev)
 	hv->port_id = eth_dev->data->port_id;
 	hv->latency = HN_CHAN_LATENCY_NS;
 	hv->max_queues = 1;
-	rte_spinlock_init(&hv->vf_lock);
+	rte_rwlock_init(&hv->vf_lock);
 	hv->vf_port = HN_INVALID_PORT;
 
 	err = hn_parse_args(eth_dev);
@@ -1114,13 +1118,5 @@ static struct rte_vmbus_driver rte_netvsc_pmd = {
 
 RTE_PMD_REGISTER_VMBUS(net_netvsc, rte_netvsc_pmd);
 RTE_PMD_REGISTER_KMOD_DEP(net_netvsc, "* uio_hv_generic");
-
-RTE_INIT(hn_init_log)
-{
-	hn_logtype_init = rte_log_register("pmd.net.netvsc.init");
-	if (hn_logtype_init >= 0)
-		rte_log_set_level(hn_logtype_init, RTE_LOG_NOTICE);
-	hn_logtype_driver = rte_log_register("pmd.net.netvsc.driver");
-	if (hn_logtype_driver >= 0)
-		rte_log_set_level(hn_logtype_driver, RTE_LOG_NOTICE);
-}
+RTE_LOG_REGISTER(hn_logtype_init, pmd.net.netvsc.init, NOTICE);
+RTE_LOG_REGISTER(hn_logtype_driver, pmd.net.netvsc.driver, NOTICE);

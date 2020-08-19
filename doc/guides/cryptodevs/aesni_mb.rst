@@ -55,10 +55,18 @@ AEAD algorithms:
 * RTE_CRYPTO_AEAD_AES_CCM
 * RTE_CRYPTO_AEAD_AES_GCM
 
+Protocol offloads:
+
+* RTE_SECURITY_PROTOCOL_DOCSIS
+
 Limitations
 -----------
 
 * Chained mbufs are not supported.
+* Out-of-place is not supported for combined Crypto-CRC DOCSIS security
+  protocol.
+* RTE_CRYPTO_CIPHER_DES_DOCSISBPI is not supported for combined Crypto-CRC
+  DOCSIS security protocol.
 
 
 Installation
@@ -72,6 +80,20 @@ can be downloaded from `<https://github.com/01org/intel-ipsec-mb/archive/v0.54.z
 
 .. code-block:: console
 
+    make
+    make install
+
+The library requires NASM to be built. Depending on the library version, it might
+require a minimum NASM version (e.g. v0.54 requires at least NASM 2.14).
+
+NASM is packaged for different OS. However, on some OS the version is too old,
+so a manual installation is required. In that case, NASM can be downloaded from
+`NASM website <https://www.nasm.us/pub/nasm/releasebuilds/?C=M;O=D>`_.
+Once it is downloaded, extract it and follow these steps:
+
+.. code-block:: console
+
+    ./configure
     make
     make install
 

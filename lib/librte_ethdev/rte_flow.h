@@ -28,6 +28,7 @@
 #include <rte_byteorder.h>
 #include <rte_esp.h>
 #include <rte_higig.h>
+#include <rte_ecpri.h>
 #include <rte_mbuf.h>
 #include <rte_mbuf_dyn.h>
 
@@ -530,6 +531,15 @@ enum rte_flow_item_type {
 	 */
 	RTE_FLOW_ITEM_TYPE_PFCP,
 
+	/**
+	 * Matches eCPRI Header.
+	 *
+	 * Configure flow for eCPRI over ETH or UDP packets.
+	 *
+	 * See struct rte_flow_item_ecpri.
+	 */
+	RTE_FLOW_ITEM_TYPE_ECPRI,
+
 };
 
 /**
@@ -714,6 +724,12 @@ static const struct rte_flow_item_raw rte_flow_item_raw_mask = {
  * the latter case, @p type refers to that of the outer header, with the
  * inner EtherType/TPID provided by the subsequent pattern item. This is the
  * same order as on the wire.
+ * If the @p type field contains a TPID value, then only tagged packets with the
+ * specified TPID will match the pattern.
+ * Otherwise, only untagged packets will match the pattern.
+ * If the @p ETH item is the only item in the pattern, and the @p type field
+ * is not specified, then both tagged and untagged packets will match the
+ * pattern.
  */
 //以太头匹配参数
 struct rte_flow_item_eth {
@@ -739,6 +755,8 @@ static const struct rte_flow_item_eth rte_flow_item_eth_mask = {
  * The corresponding standard outer EtherType (TPID) values are
  * RTE_ETHER_TYPE_VLAN or RTE_ETHER_TYPE_QINQ. It can be overridden by
  * the preceding pattern item.
+ * If a @p VLAN item is present in the pattern, then only tagged packets will
+ * match the pattern.
  */
 struct rte_flow_item_vlan {
 	rte_be16_t tci; /**< Tag control information. */
@@ -1540,6 +1558,29 @@ struct rte_flow_item_pfcp {
 static const struct rte_flow_item_pfcp rte_flow_item_pfcp_mask = {
 	.s_field = 0x01,
 	.seid = RTE_BE64(UINT64_C(0xffffffffffffffff)),
+};
+#endif
+
+/**
+ * @warning
+ * @b EXPERIMENTAL: this structure may change without prior notice
+ *
+ * RTE_FLOW_ITEM_TYPE_ECPRI
+ *
+ * Match eCPRI Header
+ */
+struct rte_flow_item_ecpri {
+	struct rte_ecpri_combined_msg_hdr hdr;
+};
+
+/** Default mask for RTE_FLOW_ITEM_TYPE_ECPRI. */
+#ifndef __cplusplus
+static const struct rte_flow_item_ecpri rte_flow_item_ecpri_mask = {
+	.hdr = {
+		.common = {
+			.u32 = 0x0,
+		},
+	},
 };
 #endif
 

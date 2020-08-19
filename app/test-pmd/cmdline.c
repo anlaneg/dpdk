@@ -294,6 +294,10 @@ static void cmd_help_long_parsed(void *parsed_result,
 			" Right now only applicable for CSUM and TXONLY"
 			" modes\n\n"
 
+			"set txtimes (x, y)\n"
+			"    Set the scheduling on timestamps"
+			" timings for the TXONLY mode\n\n"
+
 			"set corelist (x[,y]*)\n"
 			"    Set the list of forwarding cores.\n\n"
 
@@ -769,7 +773,7 @@ static void cmd_help_long_parsed(void *parsed_result,
 			"    Detach physical or virtual dev by port_id\n\n"
 
 			"port config (port_id|all)"
-			" speed (10|100|1000|10000|25000|40000|50000|100000|auto)"
+			" speed (10|100|1000|10000|25000|40000|50000|100000|200000|auto)"
 			" duplex (half|full|auto)\n"
 			"    Set speed and duplex for all ports or port_id\n\n"
 
@@ -1125,6 +1129,10 @@ static void cmd_help_long_parsed(void *parsed_result,
 			"    Restrict ingress traffic to the defined"
 			" flow rules\n\n"
 
+			"flow aged {port_id} [destroy]\n"
+			"    List and destroy aged flows"
+			" flow rules\n\n"
+
 			"set vxlan ip-version (ipv4|ipv6) vni (vni) udp-src"
 			" (udp-src) udp-dst (udp-dst) ip-src (ip-src) ip-dst"
 			" (ip-dst) eth-src (eth-src) eth-dst (eth-dst)\n"
@@ -1181,11 +1189,6 @@ static void cmd_help_long_parsed(void *parsed_result,
 
 			"show port tm node stats (port_id) (node_id) (clear)\n"
 			"       Display the port TM node stats.\n\n"
-
-#if defined RTE_LIBRTE_PMD_SOFTNIC && defined RTE_LIBRTE_SCHED
-			"set port tm hierarchy default (port_id)\n"
-			"       Set default traffic Management hierarchy on a port\n\n"
-#endif
 
 			"add port tm node shaper profile (port_id) (shaper_profile_id)"
 			" (cmit_tb_rate) (cmit_tb_size) (peak_tb_rate) (peak_tb_size)"
@@ -1619,6 +1622,8 @@ parse_and_check_speed_duplex(char *speedstr, char *duplexstr, uint32_t *speed)
 			*speed = ETH_LINK_SPEED_50G;
 		} else if (!strcmp(speedstr, "100000")) {
 			*speed = ETH_LINK_SPEED_100G;
+		} else if (!strcmp(speedstr, "200000")) {
+			*speed = ETH_LINK_SPEED_200G;
 		} else if (!strcmp(speedstr, "auto")) {
 			*speed = ETH_LINK_SPEED_AUTONEG;
 		} else {
@@ -1666,7 +1671,7 @@ cmdline_parse_token_string_t cmd_config_speed_all_item1 =
 	TOKEN_STRING_INITIALIZER(struct cmd_config_speed_all, item1, "speed");
 cmdline_parse_token_string_t cmd_config_speed_all_value1 =
 	TOKEN_STRING_INITIALIZER(struct cmd_config_speed_all, value1,
-				"10#100#1000#10000#25000#40000#50000#100000#auto");
+				"10#100#1000#10000#25000#40000#50000#100000#200000#auto");
 cmdline_parse_token_string_t cmd_config_speed_all_item2 =
 	TOKEN_STRING_INITIALIZER(struct cmd_config_speed_all, item2, "duplex");
 cmdline_parse_token_string_t cmd_config_speed_all_value2 =
@@ -1677,7 +1682,7 @@ cmdline_parse_inst_t cmd_config_speed_all = {
 	.f = cmd_config_speed_all_parsed,
 	.data = NULL,
 	.help_str = "port config all speed "
-		"10|100|1000|10000|25000|40000|50000|100000|auto duplex "
+		"10|100|1000|10000|25000|40000|50000|100000|200000|auto duplex "
 							"half|full|auto",
 	.tokens = {
 		(void *)&cmd_config_speed_all_port,
@@ -1741,7 +1746,7 @@ cmdline_parse_token_string_t cmd_config_speed_specific_item1 =
 								"speed");
 cmdline_parse_token_string_t cmd_config_speed_specific_value1 =
 	TOKEN_STRING_INITIALIZER(struct cmd_config_speed_specific, value1,
-				"10#100#1000#10000#25000#40000#50000#100000#auto");
+				"10#100#1000#10000#25000#40000#50000#100000#200000#auto");
 cmdline_parse_token_string_t cmd_config_speed_specific_item2 =
 	TOKEN_STRING_INITIALIZER(struct cmd_config_speed_specific, item2,
 								"duplex");
@@ -1753,7 +1758,7 @@ cmdline_parse_inst_t cmd_config_speed_specific = {
 	.f = cmd_config_speed_specific_parsed,
 	.data = NULL,
 	.help_str = "port config <port_id> speed "
-		"10|100|1000|10000|25000|40000|50000|100000|auto duplex "
+		"10|100|1000|10000|25000|40000|50000|100000|200000|auto duplex "
 							"half|full|auto",
 	.tokens = {
 		(void *)&cmd_config_speed_specific_port,
@@ -2268,7 +2273,7 @@ cmd_config_rss_parsed(void *parsed_result,
 		rss_conf.rss_hf = ETH_RSS_ETH | ETH_RSS_VLAN | ETH_RSS_IP |
 			ETH_RSS_TCP | ETH_RSS_UDP | ETH_RSS_SCTP |
 			ETH_RSS_L2_PAYLOAD | ETH_RSS_L2TPV3 | ETH_RSS_ESP |
-			ETH_RSS_AH | ETH_RSS_PFCP;
+			ETH_RSS_AH | ETH_RSS_PFCP | ETH_RSS_GTPU;
 	else if (!strcmp(res->value, "eth"))
 		rss_conf.rss_hf = ETH_RSS_ETH;
 	else if (!strcmp(res->value, "vlan"))
@@ -2291,6 +2296,18 @@ cmd_config_rss_parsed(void *parsed_result,
 		rss_conf.rss_hf = ETH_RSS_GENEVE;
 	else if (!strcmp(res->value, "nvgre"))
 		rss_conf.rss_hf = ETH_RSS_NVGRE;
+	else if (!strcmp(res->value, "l3-pre32"))
+		rss_conf.rss_hf = RTE_ETH_RSS_L3_PRE32;
+	else if (!strcmp(res->value, "l3-pre40"))
+		rss_conf.rss_hf = RTE_ETH_RSS_L3_PRE40;
+	else if (!strcmp(res->value, "l3-pre48"))
+		rss_conf.rss_hf = RTE_ETH_RSS_L3_PRE48;
+	else if (!strcmp(res->value, "l3-pre56"))
+		rss_conf.rss_hf = RTE_ETH_RSS_L3_PRE56;
+	else if (!strcmp(res->value, "l3-pre64"))
+		rss_conf.rss_hf = RTE_ETH_RSS_L3_PRE64;
+	else if (!strcmp(res->value, "l3-pre96"))
+		rss_conf.rss_hf = RTE_ETH_RSS_L3_PRE96;
 	else if (!strcmp(res->value, "l3-src-only"))
 		rss_conf.rss_hf = ETH_RSS_L3_SRC_ONLY;
 	else if (!strcmp(res->value, "l3-dst-only"))
@@ -2311,6 +2328,10 @@ cmd_config_rss_parsed(void *parsed_result,
 		rss_conf.rss_hf = ETH_RSS_AH;
 	else if (!strcmp(res->value, "pfcp"))
 		rss_conf.rss_hf = ETH_RSS_PFCP;
+	else if (!strcmp(res->value, "pppoe"))
+		rss_conf.rss_hf = ETH_RSS_PPPOE;
+	else if (!strcmp(res->value, "gtpu"))
+		rss_conf.rss_hf = ETH_RSS_GTPU;
 	else if (!strcmp(res->value, "none"))
 		rss_conf.rss_hf = 0;
 	else if (!strcmp(res->value, "default"))
@@ -2484,7 +2505,7 @@ cmdline_parse_token_string_t cmd_config_rss_hash_key_rss_type =
 				 "ipv6-tcp-ex#ipv6-udp-ex#"
 				 "l3-src-only#l3-dst-only#l4-src-only#l4-dst-only#"
 				 "l2-src-only#l2-dst-only#s-vlan#c-vlan#"
-				 "l2tpv3#esp#ah#pfcp");
+				 "l2tpv3#esp#ah#pfcp#pppoe#gtpu");
 cmdline_parse_token_string_t cmd_config_rss_hash_key_value =
 	TOKEN_STRING_INITIALIZER(struct cmd_config_rss_hash_key, key, NULL);
 
@@ -2497,7 +2518,7 @@ cmdline_parse_inst_t cmd_config_rss_hash_key = {
 		"l2-payload|ipv6-ex|ipv6-tcp-ex|ipv6-udp-ex|"
 		"l3-src-only|l3-dst-only|l4-src-only|l4-dst-only|"
 		"l2-src-only|l2-dst-only|s-vlan|c-vlan|"
-		"l2tpv3|esp|ah|pfcp "
+		"l2tpv3|esp|ah|pfcp|pppoe|gtpu "
 		"<string of hex digits (variable length, NIC dependent)>",
 	.tokens = {
 		(void *)&cmd_config_rss_hash_key_port,
@@ -3916,6 +3937,52 @@ cmdline_parse_inst_t cmd_set_txsplit = {
 		(void *)&cmd_set_txsplit_keyword,
 		(void *)&cmd_set_txsplit_name,
 		(void *)&cmd_set_txsplit_mode,
+		NULL,
+	},
+};
+
+/* *** SET TIMES FOR TXONLY PACKETS SCHEDULING ON TIMESTAMPS *** */
+
+struct cmd_set_txtimes_result {
+	cmdline_fixed_string_t cmd_keyword;
+	cmdline_fixed_string_t txtimes;
+	cmdline_fixed_string_t tx_times;
+};
+
+static void
+cmd_set_txtimes_parsed(void *parsed_result,
+		       __rte_unused struct cmdline *cl,
+		       __rte_unused void *data)
+{
+	struct cmd_set_txtimes_result *res;
+	unsigned int tx_times[2] = {0, 0};
+	unsigned int n_times;
+
+	res = parsed_result;
+	n_times = parse_item_list(res->tx_times, "tx times",
+				  2, tx_times, 0);
+	if (n_times == 2)
+		set_tx_pkt_times(tx_times);
+}
+
+cmdline_parse_token_string_t cmd_set_txtimes_keyword =
+	TOKEN_STRING_INITIALIZER(struct cmd_set_txtimes_result,
+				 cmd_keyword, "set");
+cmdline_parse_token_string_t cmd_set_txtimes_name =
+	TOKEN_STRING_INITIALIZER(struct cmd_set_txtimes_result,
+				 txtimes, "txtimes");
+cmdline_parse_token_string_t cmd_set_txtimes_value =
+	TOKEN_STRING_INITIALIZER(struct cmd_set_txtimes_result,
+				 tx_times, NULL);
+
+cmdline_parse_inst_t cmd_set_txtimes = {
+	.f = cmd_set_txtimes_parsed,
+	.data = NULL,
+	.help_str = "set txtimes <inter_burst>,<intra_burst>",
+	.tokens = {
+		(void *)&cmd_set_txtimes_keyword,
+		(void *)&cmd_set_txtimes_name,
+		(void *)&cmd_set_txtimes_value,
 		NULL,
 	},
 };
@@ -7408,6 +7475,8 @@ static void cmd_showcfg_parsed(void *parsed_result,
 		pkt_fwd_config_display(&cur_fwd_config);
 	else if (!strcmp(res->what, "txpkts"))
 		show_tx_pkt_segments();
+	else if (!strcmp(res->what, "txtimes"))
+		show_tx_pkt_times();
 }
 
 cmdline_parse_token_string_t cmd_showcfg_show =
@@ -7416,12 +7485,12 @@ cmdline_parse_token_string_t cmd_showcfg_port =
 	TOKEN_STRING_INITIALIZER(struct cmd_showcfg_result, cfg, "config");
 cmdline_parse_token_string_t cmd_showcfg_what =
 	TOKEN_STRING_INITIALIZER(struct cmd_showcfg_result, what,
-				 "rxtx#cores#fwd#txpkts");
+				 "rxtx#cores#fwd#txpkts#txtimes");
 
 cmdline_parse_inst_t cmd_showcfg = {
 	.f = cmd_showcfg_parsed,
 	.data = NULL,
-	.help_str = "show config rxtx|cores|fwd|txpkts",
+	.help_str = "show config rxtx|cores|fwd|txpkts|txtimes",
 	.tokens = {
 		(void *)&cmd_showcfg_show,
 		(void *)&cmd_showcfg_port,
@@ -9281,6 +9350,10 @@ cmd_global_config_parsed(void *parsed_result,
 	conf.cfg.gre_key_len = res->len;
 	ret = rte_eth_dev_filter_ctrl(res->port_id, RTE_ETH_FILTER_NONE,
 				      RTE_ETH_FILTER_SET, &conf);
+#ifdef RTE_LIBRTE_I40E_PMD
+	if (ret == -ENOTSUP)
+		ret = rte_pmd_i40e_set_gre_key_len(res->port_id, res->len);
+#endif
 	if (ret != 0)
 		printf("Global config error\n");
 }
@@ -15343,80 +15416,6 @@ cmdline_parse_inst_t cmd_vf_tc_max_bw = {
 	},
 };
 
-
-#if defined RTE_LIBRTE_PMD_SOFTNIC && defined RTE_LIBRTE_SCHED
-
-/* *** Set Port default Traffic Management Hierarchy *** */
-struct cmd_set_port_tm_hierarchy_default_result {
-	cmdline_fixed_string_t set;
-	cmdline_fixed_string_t port;
-	cmdline_fixed_string_t tm;
-	cmdline_fixed_string_t hierarchy;
-	cmdline_fixed_string_t def;
-	portid_t port_id;
-};
-
-cmdline_parse_token_string_t cmd_set_port_tm_hierarchy_default_set =
-	TOKEN_STRING_INITIALIZER(
-		struct cmd_set_port_tm_hierarchy_default_result, set, "set");
-cmdline_parse_token_string_t cmd_set_port_tm_hierarchy_default_port =
-	TOKEN_STRING_INITIALIZER(
-		struct cmd_set_port_tm_hierarchy_default_result, port, "port");
-cmdline_parse_token_string_t cmd_set_port_tm_hierarchy_default_tm =
-	TOKEN_STRING_INITIALIZER(
-		struct cmd_set_port_tm_hierarchy_default_result, tm, "tm");
-cmdline_parse_token_string_t cmd_set_port_tm_hierarchy_default_hierarchy =
-	TOKEN_STRING_INITIALIZER(
-		struct cmd_set_port_tm_hierarchy_default_result,
-			hierarchy, "hierarchy");
-cmdline_parse_token_string_t cmd_set_port_tm_hierarchy_default_default =
-	TOKEN_STRING_INITIALIZER(
-		struct cmd_set_port_tm_hierarchy_default_result,
-			def, "default");
-cmdline_parse_token_num_t cmd_set_port_tm_hierarchy_default_port_id =
-	TOKEN_NUM_INITIALIZER(
-		struct cmd_set_port_tm_hierarchy_default_result,
-			port_id, UINT16);
-
-static void cmd_set_port_tm_hierarchy_default_parsed(void *parsed_result,
-	__rte_unused struct cmdline *cl,
-	__rte_unused void *data)
-{
-	struct cmd_set_port_tm_hierarchy_default_result *res = parsed_result;
-	struct rte_port *p;
-	portid_t port_id = res->port_id;
-
-	if (port_id_is_invalid(port_id, ENABLED_WARN))
-		return;
-
-	p = &ports[port_id];
-
-	/* Forward mode: tm */
-	if (strcmp(cur_fwd_config.fwd_eng->fwd_mode_name, "softnic")) {
-		printf("  softnicfwd mode not enabled(error)\n");
-		return;
-	}
-
-	/* Set the default tm hierarchy */
-	p->softport.default_tm_hierarchy_enable = 1;
-}
-
-cmdline_parse_inst_t cmd_set_port_tm_hierarchy_default = {
-	.f = cmd_set_port_tm_hierarchy_default_parsed,
-	.data = NULL,
-	.help_str = "set port tm hierarchy default <port_id>",
-	.tokens = {
-		(void *)&cmd_set_port_tm_hierarchy_default_set,
-		(void *)&cmd_set_port_tm_hierarchy_default_port,
-		(void *)&cmd_set_port_tm_hierarchy_default_tm,
-		(void *)&cmd_set_port_tm_hierarchy_default_hierarchy,
-		(void *)&cmd_set_port_tm_hierarchy_default_default,
-		(void *)&cmd_set_port_tm_hierarchy_default_port_id,
-		NULL,
-	},
-};
-#endif
-
 /** Set VXLAN encapsulation details */
 struct cmd_set_vxlan_result {
 	cmdline_fixed_string_t set;
@@ -16885,8 +16884,10 @@ cmd_ddp_get_list_parsed(
 #ifdef RTE_LIBRTE_I40E_PMD
 	size = PROFILE_INFO_SIZE * MAX_PROFILE_NUM + 4;
 	p_list = (struct rte_pmd_i40e_profile_list *)malloc(size);
-	if (!p_list)
+	if (!p_list) {
 		printf("%s: Failed to malloc buffer\n", __func__);
+		return;
+	}
 
 	if (ret == -ENOTSUP)
 		ret = rte_pmd_i40e_get_ddp_list(res->port_id,
@@ -18654,7 +18655,8 @@ cmdline_parse_token_string_t cmd_config_per_port_tx_offload_result_offload =
 			  "sctp_cksum#tcp_tso#udp_tso#outer_ipv4_cksum#"
 			  "qinq_insert#vxlan_tnl_tso#gre_tnl_tso#"
 			  "ipip_tnl_tso#geneve_tnl_tso#macsec_insert#"
-			  "mt_lockfree#multi_segs#mbuf_fast_free#security");
+			  "mt_lockfree#multi_segs#mbuf_fast_free#security#"
+			  "send_on_timestamp");
 cmdline_parse_token_string_t cmd_config_per_port_tx_offload_result_on_off =
 	TOKEN_STRING_INITIALIZER
 		(struct cmd_config_per_port_tx_offload_result,
@@ -18739,7 +18741,8 @@ cmdline_parse_inst_t cmd_config_per_port_tx_offload = {
 		    "sctp_cksum|tcp_tso|udp_tso|outer_ipv4_cksum|"
 		    "qinq_insert|vxlan_tnl_tso|gre_tnl_tso|"
 		    "ipip_tnl_tso|geneve_tnl_tso|macsec_insert|"
-		    "mt_lockfree|multi_segs|mbuf_fast_free|security on|off",
+		    "mt_lockfree|multi_segs|mbuf_fast_free|security|"
+		    "send_on_timestamp on|off",
 	.tokens = {
 		(void *)&cmd_config_per_port_tx_offload_result_port,
 		(void *)&cmd_config_per_port_tx_offload_result_config,
@@ -19412,6 +19415,7 @@ cmdline_parse_ctx_t main_ctx[] = {
 	(cmdline_parse_inst_t *)&cmd_set_log,
 	(cmdline_parse_inst_t *)&cmd_set_txpkts,
 	(cmdline_parse_inst_t *)&cmd_set_txsplit,
+	(cmdline_parse_inst_t *)&cmd_set_txtimes,
 	(cmdline_parse_inst_t *)&cmd_set_fwd_list,
 	(cmdline_parse_inst_t *)&cmd_set_fwd_mask,
 	(cmdline_parse_inst_t *)&cmd_set_fwd_mode,
@@ -19600,9 +19604,6 @@ cmdline_parse_ctx_t main_ctx[] = {
 	(cmdline_parse_inst_t *)&cmd_vf_tc_max_bw,
 	(cmdline_parse_inst_t *)&cmd_strict_link_prio,
 	(cmdline_parse_inst_t *)&cmd_tc_min_bw,
-#if defined RTE_LIBRTE_PMD_SOFTNIC && defined RTE_LIBRTE_SCHED
-	(cmdline_parse_inst_t *)&cmd_set_port_tm_hierarchy_default,
-#endif
 	(cmdline_parse_inst_t *)&cmd_set_vxlan,
 	(cmdline_parse_inst_t *)&cmd_set_vxlan_tos_ttl,
 	(cmdline_parse_inst_t *)&cmd_set_vxlan_with_vlan,

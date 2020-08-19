@@ -10,12 +10,16 @@
 #include "ulp_utils.h"
 #include "ulp_template_struct.h"
 #include "ulp_mapper.h"
+#include "ulp_fc_mgr.h"
 
 #define ULP_FLOW_DB_RES_DIR_BIT		31
 #define ULP_FLOW_DB_RES_DIR_MASK	0x80000000
 #define ULP_FLOW_DB_RES_FUNC_BITS	28
 #define ULP_FLOW_DB_RES_FUNC_MASK	0x70000000
 #define ULP_FLOW_DB_RES_NXT_MASK	0x0FFFFFFF
+#define ULP_FLOW_DB_RES_FUNC_UPPER	5
+#define ULP_FLOW_DB_RES_FUNC_NEED_LOWER	0x80
+#define ULP_FLOW_DB_RES_FUNC_LOWER_MASK	0x1F
 
 /* Macro to copy the nxt_resource_idx */
 #define ULP_FLOW_DB_RES_NXT_SET(dst, src)	{(dst) |= ((src) &\
@@ -50,7 +54,7 @@ ulp_flow_db_active_flow_set(struct bnxt_ulp_flow_tbl	*flow_tbl,
 
 /*
  * Helper function to allocate the flow table and initialize
- *  is set.No validation being done in this function.
+ * is set.No validation being done in this function.
  *
  * flow_tbl [in] Ptr to flow table
  * idx [in] The index to bit to be set or reset.
@@ -68,6 +72,19 @@ ulp_flow_db_active_flow_is_set(struct bnxt_ulp_flow_tbl	*flow_tbl,
 				    idx);
 }
 
+static uint8_t
+ulp_flow_db_resource_func_get(struct ulp_fdb_resource_info *res_info)
+{
+	uint8_t func;
+
+	func = (((res_info->nxt_resource_idx & ULP_FLOW_DB_RES_FUNC_MASK) >>
+		 ULP_FLOW_DB_RES_FUNC_BITS) << ULP_FLOW_DB_RES_FUNC_UPPER);
+	/* The reource func is split into upper and lower */
+	if (func & ULP_FLOW_DB_RES_FUNC_NEED_LOWER)
+		return (func | res_info->resource_func_lower);
+	return func;
+}
+
 /*
  * Helper function to copy the resource params to resource info
  *  No validation being done in this function.
@@ -77,20 +94,33 @@ ulp_flow_db_active_flow_is_set(struct bnxt_ulp_flow_tbl	*flow_tbl,
  * returns none
  */
 static void
-ulp_flow_db_res_params_to_info(struct ulp_fdb_resource_info   *resource_info,
-			       struct ulp_flow_db_res_params  *params)
+ulp_flow_db_res_params_to_info(struct ulp_fdb_resource_info *resource_info,
+			       struct ulp_flow_db_res_params *params)
 {
+	uint32_t resource_func;
+
 	resource_info->nxt_resource_idx |= ((params->direction <<
 				      ULP_FLOW_DB_RES_DIR_BIT) &
 				     ULP_FLOW_DB_RES_DIR_MASK);
-	resource_info->nxt_resource_idx |= ((params->resource_func <<
+	resource_func = (params->resource_func >> ULP_FLOW_DB_RES_FUNC_UPPER);
+	resource_info->nxt_resource_idx |= ((resource_func <<
 					     ULP_FLOW_DB_RES_FUNC_BITS) &
 					    ULP_FLOW_DB_RES_FUNC_MASK);
 
-	if (params->resource_func != BNXT_ULP_RESOURCE_FUNC_EM_TABLE) {
+	if (params->resource_func & ULP_FLOW_DB_RES_FUNC_NEED_LOWER) {
+		/* Break the resource func into two parts */
+		resource_func = (params->resource_func &
+				 ULP_FLOW_DB_RES_FUNC_LOWER_MASK);
+		resource_info->resource_func_lower = resource_func;
+	}
+
+	/* Store the handle as 64bit only for EM table entries */
+	if (params->resource_func != BNXT_ULP_RESOURCE_FUNC_EXT_EM_TABLE &&
+	    params->resource_func != BNXT_ULP_RESOURCE_FUNC_INT_EM_TABLE) {
 		resource_info->resource_hndl = (uint32_t)params->resource_hndl;
 		resource_info->resource_type = params->resource_type;
-
+		resource_info->resource_sub_type = params->resource_sub_type;
+		resource_info->reserved = params->reserved;
 	} else {
 		resource_info->resource_em_handle = params->resource_hndl;
 	}
@@ -106,22 +136,25 @@ ulp_flow_db_res_params_to_info(struct ulp_fdb_resource_info   *resource_info,
  * returns none
  */
 static void
-ulp_flow_db_res_info_to_params(struct ulp_fdb_resource_info   *resource_info,
-			       struct ulp_flow_db_res_params  *params)
+ulp_flow_db_res_info_to_params(struct ulp_fdb_resource_info *resource_info,
+			       struct ulp_flow_db_res_params *params)
 {
 	memset(params, 0, sizeof(struct ulp_flow_db_res_params));
 	params->direction = ((resource_info->nxt_resource_idx &
 				 ULP_FLOW_DB_RES_DIR_MASK) >>
 				 ULP_FLOW_DB_RES_DIR_BIT);
-	params->resource_func = ((resource_info->nxt_resource_idx &
-				 ULP_FLOW_DB_RES_FUNC_MASK) >>
-				 ULP_FLOW_DB_RES_FUNC_BITS);
 
-	if (params->resource_func != BNXT_ULP_RESOURCE_FUNC_EM_TABLE) {
+	/* use the helper function to get the resource func */
+	params->resource_func = ulp_flow_db_resource_func_get(resource_info);
+
+	if (params->resource_func == BNXT_ULP_RESOURCE_FUNC_EXT_EM_TABLE ||
+	    params->resource_func == BNXT_ULP_RESOURCE_FUNC_INT_EM_TABLE) {
+		params->resource_hndl = resource_info->resource_em_handle;
+	} else if (params->resource_func & ULP_FLOW_DB_RES_FUNC_NEED_LOWER) {
 		params->resource_hndl = resource_info->resource_hndl;
 		params->resource_type = resource_info->resource_type;
-	} else {
-		params->resource_hndl = resource_info->resource_em_handle;
+		params->resource_sub_type = resource_info->resource_sub_type;
+		params->reserved = resource_info->reserved;
 	}
 }
 
@@ -270,7 +303,7 @@ int32_t	ulp_flow_db_init(struct bnxt_ulp_context *ulp_ctxt)
 
 	/* Populate the regular flow table limits. */
 	flow_tbl = &flow_db->flow_tbl[BNXT_ULP_REGULAR_FLOW_TABLE];
-	flow_tbl->num_flows = dparms->num_flows + 1;
+	flow_tbl->num_flows = dparms->flow_db_num_entries + 1;
 	flow_tbl->num_resources = (flow_tbl->num_flows *
 				   dparms->num_resources_per_flow);
 
@@ -287,7 +320,7 @@ int32_t	ulp_flow_db_init(struct bnxt_ulp_context *ulp_ctxt)
 		goto error_free;
 
 	/* add 1 since we are not using index 0 for flow id */
-	flow_db->func_id_tbl_size = dparms->num_flows + 1;
+	flow_db->func_id_tbl_size = dparms->flow_db_num_entries + 1;
 	/* Allocate the function Id table */
 	flow_db->func_id_tbl = rte_zmalloc("bnxt_ulp_flow_db_func_id_table",
 					   flow_db->func_id_tbl_size *
@@ -452,6 +485,21 @@ int32_t	ulp_flow_db_resource_add(struct bnxt_ulp_context	*ulp_ctxt,
 		ulp_flow_db_res_params_to_info(fid_resource, params);
 	}
 
+	if (params->resource_type == TF_TBL_TYPE_ACT_STATS_64 &&
+	    params->resource_sub_type ==
+	    BNXT_ULP_RESOURCE_SUB_TYPE_INDEX_TYPE_INT_COUNT) {
+		/* Store the first HW counter ID for this table */
+		if (!ulp_fc_mgr_start_idx_isset(ulp_ctxt, params->direction))
+			ulp_fc_mgr_start_idx_set(ulp_ctxt, params->direction,
+						 params->resource_hndl);
+
+		ulp_fc_mgr_cntr_set(ulp_ctxt, params->direction,
+				    params->resource_hndl);
+
+		if (!ulp_fc_mgr_thread_isstarted(ulp_ctxt))
+			ulp_fc_mgr_thread_start(ulp_ctxt);
+	}
+
 	/* all good, return success */
 	return 0;
 }
@@ -540,6 +588,17 @@ int32_t	ulp_flow_db_resource_del(struct bnxt_ulp_context	*ulp_ctxt,
 		memset(fid_resource, 0, sizeof(struct ulp_fdb_resource_info));
 		ULP_FLOW_DB_RES_NXT_SET(fid_resource->nxt_resource_idx,
 					nxt_idx);
+	}
+
+	/* Now that the HW Flow counter resource is deleted, reset it's
+	 * corresponding slot in the SW accumulation table in the Flow Counter
+	 * manager
+	 */
+	if (params->resource_type == TF_TBL_TYPE_ACT_STATS_64 &&
+	    params->resource_sub_type ==
+	    BNXT_ULP_RESOURCE_SUB_TYPE_INDEX_TYPE_INT_COUNT) {
+		ulp_fc_mgr_cntr_reset(ulp_ctxt, params->direction,
+				      params->resource_hndl);
 	}
 
 	/* all good, return success */
@@ -825,3 +884,177 @@ ulp_flow_db_validate_flow_func(struct bnxt_ulp_context *ulp_ctx,
 
 	return false;
 }
+
+/*
+ * Internal api to traverse the resource list within a flow
+ * and match a resource based on resource func and resource
+ * sub type. This api should be used only for resources that
+ * are unique and do not have multiple instances of resource
+ * func and sub type combination since it will return only
+ * the first match.
+ */
+static int32_t
+ulp_flow_db_resource_hndl_get(struct bnxt_ulp_context *ulp_ctx,
+			      enum bnxt_ulp_flow_db_tables tbl_idx,
+			      uint32_t flow_id,
+			      uint32_t resource_func,
+			      uint32_t res_subtype,
+			      uint64_t *res_hndl)
+{
+	struct bnxt_ulp_flow_db *flow_db;
+	struct bnxt_ulp_flow_tbl *flow_tbl;
+	struct ulp_fdb_resource_info *fid_res;
+	uint32_t res_id;
+
+	flow_db = bnxt_ulp_cntxt_ptr2_flow_db_get(ulp_ctx);
+	if (!flow_db) {
+		BNXT_TF_DBG(ERR, "Flow database not found\n");
+		return -EINVAL;
+	}
+
+	flow_tbl = &flow_db->flow_tbl[tbl_idx];
+
+	/* check for limits of fid */
+	if (flow_id >= flow_tbl->num_flows || !flow_id) {
+		BNXT_TF_DBG(ERR, "Invalid flow index\n");
+		return -EINVAL;
+	}
+
+	/* check if the flow is active or not */
+	if (!ulp_flow_db_active_flow_is_set(flow_tbl, flow_id)) {
+		BNXT_TF_DBG(ERR, "flow does not exist\n");
+		return -EINVAL;
+	}
+	/* Iterate the resource to get the resource handle */
+	res_id =  flow_id;
+	while (res_id) {
+		fid_res = &flow_tbl->flow_resources[res_id];
+		if (ulp_flow_db_resource_func_get(fid_res) == resource_func) {
+			if (resource_func & ULP_FLOW_DB_RES_FUNC_NEED_LOWER) {
+				if (res_subtype == fid_res->resource_sub_type) {
+					*res_hndl = fid_res->resource_hndl;
+					return 0;
+				}
+
+			} else if (resource_func ==
+				   BNXT_ULP_RESOURCE_FUNC_EXT_EM_TABLE ||
+				   resource_func ==
+				   BNXT_ULP_RESOURCE_FUNC_INT_EM_TABLE) {
+				*res_hndl = fid_res->resource_em_handle;
+				return 0;
+			}
+		}
+		res_id = 0;
+		ULP_FLOW_DB_RES_NXT_SET(res_id, fid_res->nxt_resource_idx);
+	}
+	return -ENOENT;
+}
+
+/*
+ * Api to get the cfa action pointer from a flow.
+ *
+ * ulp_ctxt [in] Ptr to ulp context
+ * flow_id [in] flow id
+ * cfa_action [out] The resource handle stored in the flow database
+ *
+ * returns 0 on success
+ */
+int32_t
+ulp_default_flow_db_cfa_action_get(struct bnxt_ulp_context *ulp_ctx,
+				   uint32_t flow_id,
+				   uint16_t *cfa_action)
+{
+	uint8_t sub_type = BNXT_ULP_RESOURCE_SUB_TYPE_INDEX_TYPE_VFR_CFA_ACTION;
+	uint64_t hndl;
+	int32_t rc;
+
+	rc = ulp_flow_db_resource_hndl_get(ulp_ctx,
+					   BNXT_ULP_DEFAULT_FLOW_TABLE,
+					   flow_id,
+					   BNXT_ULP_RESOURCE_FUNC_INDEX_TABLE,
+					   sub_type, &hndl);
+	if (rc) {
+		BNXT_TF_DBG(ERR, "CFA Action ptr not found for flow id %u\n",
+			    flow_id);
+		return -ENOENT;
+	}
+	*cfa_action = hndl;
+	return 0;
+}
+
+#ifdef RTE_LIBRTE_BNXT_TRUFLOW_DEBUG
+/*
+ * Dump the entry details
+ *
+ * ulp_ctxt [in] Ptr to ulp_context
+ *
+ * returns none
+ */
+static void ulp_flow_db_res_dump(struct ulp_fdb_resource_info	*r,
+				 uint32_t	*nxt_res)
+{
+	uint8_t res_func = ulp_flow_db_resource_func_get(r);
+
+	BNXT_TF_DBG(DEBUG, "Resource func = %x, nxt_resource_idx = %x\n",
+		    res_func, (ULP_FLOW_DB_RES_NXT_MASK & r->nxt_resource_idx));
+	if (res_func == BNXT_ULP_RESOURCE_FUNC_EXT_EM_TABLE ||
+	    res_func == BNXT_ULP_RESOURCE_FUNC_INT_EM_TABLE)
+		BNXT_TF_DBG(DEBUG, "EM Handle = 0x%016" PRIX64 "\n",
+			    r->resource_em_handle);
+	else
+		BNXT_TF_DBG(DEBUG, "Handle = 0x%08x\n", r->resource_hndl);
+
+	*nxt_res = 0;
+	ULP_FLOW_DB_RES_NXT_SET(*nxt_res,
+				r->nxt_resource_idx);
+}
+
+/*
+ * Dump the flow database entry details
+ *
+ * ulp_ctxt [in] Ptr to ulp_context
+ *
+ * returns none
+ */
+int32_t	ulp_flow_db_debug_dump(struct bnxt_ulp_context	*ulp_ctxt)
+{
+	struct bnxt_ulp_flow_db		*flow_db;
+	struct bnxt_ulp_flow_tbl	*flow_tbl;
+	struct ulp_fdb_resource_info	*r;
+	uint32_t			nxt_res = 0;
+	enum bnxt_ulp_flow_db_tables	tbl_idx;
+	uint32_t			fid;
+
+	if (!ulp_ctxt || !ulp_ctxt->cfg_data) {
+		BNXT_TF_DBG(ERR, "Invalid Arguments\n");
+		return -EINVAL;
+	}
+	flow_db = bnxt_ulp_cntxt_ptr2_flow_db_get(ulp_ctxt);
+	if (!flow_db) {
+		BNXT_TF_DBG(ERR, "Invalid Arguments\n");
+		return -EINVAL;
+	}
+
+	for (tbl_idx = 0; tbl_idx < BNXT_ULP_FLOW_TABLE_MAX; tbl_idx++) {
+		flow_tbl = &flow_db->flow_tbl[tbl_idx];
+		BNXT_TF_DBG(DEBUG, "Dump Tbl index = %u, flows = %u:%u\n",
+			    tbl_idx, flow_tbl->num_flows,
+			    flow_tbl->num_resources);
+		BNXT_TF_DBG(DEBUG, "Head_index = %u, Tail_index = %u\n",
+			    flow_tbl->head_index, flow_tbl->tail_index);
+		for (fid = 0; fid < flow_tbl->num_flows; fid++) {
+			if (ulp_flow_db_active_flow_is_set(flow_tbl, fid)) {
+				BNXT_TF_DBG(DEBUG, "fid = %u\n", fid);
+				/* iterate the resource */
+				nxt_res = fid;
+				do {
+					r = &flow_tbl->flow_resources[nxt_res];
+					ulp_flow_db_res_dump(r, &nxt_res);
+				} while (nxt_res);
+			}
+		}
+		BNXT_TF_DBG(DEBUG, "Done.\n");
+	}
+	return 0;
+}
+#endif

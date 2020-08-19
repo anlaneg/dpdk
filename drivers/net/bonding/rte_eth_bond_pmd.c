@@ -1522,6 +1522,7 @@ int
 mac_address_slaves_update(struct rte_eth_dev *bonded_eth_dev)
 {
 	struct bond_dev_private *internals = bonded_eth_dev->data->dev_private;
+	bool set;
 	int i;
 
 	/* Update slave devices MAC addresses */
@@ -1550,15 +1551,16 @@ mac_address_slaves_update(struct rte_eth_dev *bonded_eth_dev)
 	case BONDING_MODE_TLB:
 	case BONDING_MODE_ALB:
 	default:
+		set = true;
 		for (i = 0; i < internals->slave_count; i++) {
 			if (internals->slaves[i].port_id ==
 					internals->current_primary_port) {
 				if (rte_eth_dev_default_mac_addr_set(
-						internals->primary_port,
+						internals->current_primary_port,
 						bonded_eth_dev->data->mac_addrs)) {
 					RTE_BOND_LOG(ERR, "Failed to update port Id %d MAC address",
 							internals->current_primary_port);
-					return -1;
+					set = false;
 				}
 			} else {
 				if (rte_eth_dev_default_mac_addr_set(
@@ -1566,10 +1568,11 @@ mac_address_slaves_update(struct rte_eth_dev *bonded_eth_dev)
 						&internals->slaves[i].persisted_mac_addr)) {
 					RTE_BOND_LOG(ERR, "Failed to update port Id %d MAC address",
 							internals->slaves[i].port_id);
-					return -1;
 				}
 			}
 		}
+		if (!set)
+			return -1;
 	}
 
 	return 0;
@@ -2902,6 +2905,7 @@ bond_ethdev_lsc_event_callback(uint16_t port_id, enum rte_eth_event_type type,
 						internals->active_slaves[0]);
 			else
 				internals->current_primary_port = internals->primary_port;
+			mac_address_slaves_update(bonded_eth_dev);
 		}
 	}
 
@@ -2960,7 +2964,8 @@ bond_ethdev_rss_reta_update(struct rte_eth_dev *dev,
 		return -EINVAL;
 
 	 /* Copy RETA table */
-	reta_count = reta_size / RTE_RETA_GROUP_SIZE;
+	reta_count = (reta_size + RTE_RETA_GROUP_SIZE - 1) /
+			RTE_RETA_GROUP_SIZE;
 
 	for (i = 0; i < reta_count; i++) {
 		internals->reta_conf[i].mask = reta_conf[i].mask;
@@ -3789,11 +3794,4 @@ RTE_PMD_REGISTER_PARAM_STRING(net_bonding,
 	"up_delay=<int> "
 	"down_delay=<int>");
 
-int bond_logtype;
-
-RTE_INIT(bond_init_log)
-{
-	bond_logtype = rte_log_register("pmd.net.bond");
-	if (bond_logtype >= 0)
-		rte_log_set_level(bond_logtype, RTE_LOG_NOTICE);
-}
+RTE_LOG_REGISTER(bond_logtype, pmd.net.bond, NOTICE);

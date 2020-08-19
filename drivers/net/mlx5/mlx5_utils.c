@@ -5,6 +5,8 @@
 #include <rte_malloc.h>
 #include <rte_hash_crc.h>
 
+#include <mlx5_malloc.h>
+
 #include "mlx5_utils.h"
 
 struct mlx5_hlist *
@@ -20,16 +22,17 @@ mlx5_hlist_create(const char *name, uint32_t size)
 	if (!rte_is_power_of_2(size)) {
 		act_size = rte_align32pow2(size);
 		DRV_LOG(WARNING, "Size 0x%" PRIX32 " is not power of 2, will "
-			"be aligned to 0x%" PRIX32 ".\n", size, act_size);
+			"be aligned to 0x%" PRIX32 ".", size, act_size);
 	} else {
 		act_size = size;
 	}
 	alloc_size = sizeof(struct mlx5_hlist) +
 		     sizeof(struct mlx5_hlist_head) * act_size;
 	/* Using zmalloc, then no need to initialize the heads. */
-	h = rte_zmalloc(name, alloc_size, RTE_CACHE_LINE_SIZE);
+	h = mlx5_malloc(MLX5_MEM_ZERO, alloc_size, RTE_CACHE_LINE_SIZE,
+			SOCKET_ID_ANY);
 	if (!h) {
-		DRV_LOG(ERR, "No memory for hash list %s creation\n",
+		DRV_LOG(ERR, "No memory for hash list %s creation",
 			name ? name : "None");
 		return NULL;
 	}
@@ -37,7 +40,7 @@ mlx5_hlist_create(const char *name, uint32_t size)
 		snprintf(h->name, MLX5_HLIST_NAMESIZE, "%s", name);
 	h->table_sz = act_size;
 	h->mask = act_size - 1;
-	DRV_LOG(DEBUG, "Hash list with %s size 0x%" PRIX32 " is created.\n",
+	DRV_LOG(DEBUG, "Hash list with %s size 0x%" PRIX32 " is created.",
 		h->name, act_size);
 	return h;
 }
@@ -112,10 +115,10 @@ mlx5_hlist_destroy(struct mlx5_hlist *h,
 			if (cb)
 				cb(entry, ctx);
 			else
-				rte_free(entry);
+				mlx5_free(entry);
 		}
 	}
-	rte_free(h);
+	mlx5_free(h);
 }
 
 static inline void
@@ -193,16 +196,17 @@ mlx5_ipool_create(struct mlx5_indexed_pool_config *cfg)
 	    (cfg->trunk_size && ((cfg->trunk_size & (cfg->trunk_size - 1)) ||
 	    ((__builtin_ffs(cfg->trunk_size) + TRUNK_IDX_BITS) > 32))))
 		return NULL;
-	pool = rte_zmalloc("mlx5_ipool", sizeof(*pool) + cfg->grow_trunk *
-				sizeof(pool->grow_tbl[0]), RTE_CACHE_LINE_SIZE);
+	pool = mlx5_malloc(MLX5_MEM_ZERO, sizeof(*pool) + cfg->grow_trunk *
+			   sizeof(pool->grow_tbl[0]), RTE_CACHE_LINE_SIZE,
+			   SOCKET_ID_ANY);
 	if (!pool)
 		return NULL;
 	pool->cfg = *cfg;
 	if (!pool->cfg.trunk_size)
 		pool->cfg.trunk_size = MLX5_IPOOL_DEFAULT_TRUNK_SIZE;
 	if (!cfg->malloc && !cfg->free) {
-		pool->cfg.malloc = rte_malloc_socket;
-		pool->cfg.free = rte_free;
+		pool->cfg.malloc = mlx5_malloc;
+		pool->cfg.free = mlx5_free;
 	}
 	pool->free_list = TRUNK_INVALID;
 	if (pool->cfg.need_lock)
@@ -237,10 +241,9 @@ mlx5_ipool_grow(struct mlx5_indexed_pool *pool)
 		int n_grow = pool->n_trunk_valid ? pool->n_trunk :
 			     RTE_CACHE_LINE_SIZE / sizeof(void *);
 
-		p = pool->cfg.malloc(pool->cfg.type,
-				 (pool->n_trunk_valid + n_grow) *
-				 sizeof(struct mlx5_indexed_trunk *),
-				 RTE_CACHE_LINE_SIZE, rte_socket_id());
+		p = pool->cfg.malloc(0, (pool->n_trunk_valid + n_grow) *
+				     sizeof(struct mlx5_indexed_trunk *),
+				     RTE_CACHE_LINE_SIZE, rte_socket_id());
 		if (!p)
 			return -ENOMEM;
 		if (pool->trunks)
@@ -265,8 +268,10 @@ mlx5_ipool_grow(struct mlx5_indexed_pool *pool)
 	trunk_size += sizeof(*trunk);
 	data_size = mlx5_trunk_size_get(pool, idx);
 	bmp_size = rte_bitmap_get_memory_footprint(data_size);
-	trunk_size += data_size * pool->cfg.size + bmp_size;
-	trunk = pool->cfg.malloc(pool->cfg.type, trunk_size,
+	/* rte_bitmap requires memory cacheline aligned. */
+	trunk_size += RTE_CACHE_LINE_ROUNDUP(data_size * pool->cfg.size);
+	trunk_size += bmp_size;
+	trunk = pool->cfg.malloc(0, trunk_size,
 				 RTE_CACHE_LINE_SIZE, rte_socket_id());
 	if (!trunk)
 		return -ENOMEM;
@@ -278,8 +283,10 @@ mlx5_ipool_grow(struct mlx5_indexed_pool *pool)
 	MLX5_ASSERT(pool->free_list == TRUNK_INVALID);
 	pool->free_list = idx;
 	/* Mark all entries as available. */
-	trunk->bmp = rte_bitmap_init_with_all_set(data_size,
-		     &trunk->data[data_size * pool->cfg.size], bmp_size);
+	trunk->bmp = rte_bitmap_init_with_all_set(data_size, &trunk->data
+		     [RTE_CACHE_LINE_ROUNDUP(data_size * pool->cfg.size)],
+		     bmp_size);
+	MLX5_ASSERT(trunk->bmp);
 	pool->n_trunk_valid++;
 #ifdef POOL_DEBUG
 	pool->trunk_new++;
@@ -460,7 +467,7 @@ mlx5_ipool_destroy(struct mlx5_indexed_pool *pool)
 	if (!pool->trunks)
 		pool->cfg.free(pool->trunks);
 	mlx5_ipool_unlock(pool);
-	rte_free(pool);
+	mlx5_free(pool);
 	return 0;
 }
 
@@ -477,4 +484,285 @@ mlx5_ipool_dump(struct mlx5_indexed_pool *pool)
 	       pool->cfg.type, pool->n_entry, pool->trunk_new,
 	       pool->trunk_empty, pool->trunk_avail, pool->trunk_free);
 #endif
+}
+
+struct mlx5_l3t_tbl *
+mlx5_l3t_create(enum mlx5_l3t_type type)
+{
+	struct mlx5_l3t_tbl *tbl;
+	struct mlx5_indexed_pool_config l3t_ip_cfg = {
+		.trunk_size = 16,
+		.grow_trunk = 6,
+		.grow_shift = 1,
+		.need_lock = 0,
+		.release_mem_en = 1,
+		.malloc = mlx5_malloc,
+		.free = mlx5_free,
+	};
+
+	if (type >= MLX5_L3T_TYPE_MAX) {
+		rte_errno = EINVAL;
+		return NULL;
+	}
+	tbl = mlx5_malloc(MLX5_MEM_ZERO, sizeof(struct mlx5_l3t_tbl), 1,
+			  SOCKET_ID_ANY);
+	if (!tbl) {
+		rte_errno = ENOMEM;
+		return NULL;
+	}
+	tbl->type = type;
+	switch (type) {
+	case MLX5_L3T_TYPE_WORD:
+		l3t_ip_cfg.size = sizeof(struct mlx5_l3t_entry_word) +
+				  sizeof(uint16_t) * MLX5_L3T_ET_SIZE;
+		l3t_ip_cfg.type = "mlx5_l3t_e_tbl_w";
+		break;
+	case MLX5_L3T_TYPE_DWORD:
+		l3t_ip_cfg.size = sizeof(struct mlx5_l3t_entry_dword) +
+				  sizeof(uint32_t) * MLX5_L3T_ET_SIZE;
+		l3t_ip_cfg.type = "mlx5_l3t_e_tbl_dw";
+		break;
+	case MLX5_L3T_TYPE_QWORD:
+		l3t_ip_cfg.size = sizeof(struct mlx5_l3t_entry_qword) +
+				  sizeof(uint64_t) * MLX5_L3T_ET_SIZE;
+		l3t_ip_cfg.type = "mlx5_l3t_e_tbl_qw";
+		break;
+	default:
+		l3t_ip_cfg.size = sizeof(struct mlx5_l3t_entry_ptr) +
+				  sizeof(void *) * MLX5_L3T_ET_SIZE;
+		l3t_ip_cfg.type = "mlx5_l3t_e_tbl_tpr";
+		break;
+	}
+	tbl->eip = mlx5_ipool_create(&l3t_ip_cfg);
+	if (!tbl->eip) {
+		rte_errno = ENOMEM;
+		mlx5_free(tbl);
+		tbl = NULL;
+	}
+	return tbl;
+}
+
+void
+mlx5_l3t_destroy(struct mlx5_l3t_tbl *tbl)
+{
+	struct mlx5_l3t_level_tbl *g_tbl, *m_tbl;
+	uint32_t i, j;
+
+	if (!tbl)
+		return;
+	g_tbl = tbl->tbl;
+	if (g_tbl) {
+		for (i = 0; i < MLX5_L3T_GT_SIZE; i++) {
+			m_tbl = g_tbl->tbl[i];
+			if (!m_tbl)
+				continue;
+			for (j = 0; j < MLX5_L3T_MT_SIZE; j++) {
+				if (!m_tbl->tbl[j])
+					continue;
+				MLX5_ASSERT(!((struct mlx5_l3t_entry_word *)
+					    m_tbl->tbl[j])->ref_cnt);
+				mlx5_ipool_free(tbl->eip,
+						((struct mlx5_l3t_entry_word *)
+						m_tbl->tbl[j])->idx);
+				m_tbl->tbl[j] = 0;
+				if (!(--m_tbl->ref_cnt))
+					break;
+			}
+			MLX5_ASSERT(!m_tbl->ref_cnt);
+			mlx5_free(g_tbl->tbl[i]);
+			g_tbl->tbl[i] = 0;
+			if (!(--g_tbl->ref_cnt))
+				break;
+		}
+		MLX5_ASSERT(!g_tbl->ref_cnt);
+		mlx5_free(tbl->tbl);
+		tbl->tbl = 0;
+	}
+	mlx5_ipool_destroy(tbl->eip);
+	mlx5_free(tbl);
+}
+
+uint32_t
+mlx5_l3t_get_entry(struct mlx5_l3t_tbl *tbl, uint32_t idx,
+		   union mlx5_l3t_data *data)
+{
+	struct mlx5_l3t_level_tbl *g_tbl, *m_tbl;
+	void *e_tbl;
+	uint32_t entry_idx;
+
+	g_tbl = tbl->tbl;
+	if (!g_tbl)
+		return -1;
+	m_tbl = g_tbl->tbl[(idx >> MLX5_L3T_GT_OFFSET) & MLX5_L3T_GT_MASK];
+	if (!m_tbl)
+		return -1;
+	e_tbl = m_tbl->tbl[(idx >> MLX5_L3T_MT_OFFSET) & MLX5_L3T_MT_MASK];
+	if (!e_tbl)
+		return -1;
+	entry_idx = idx & MLX5_L3T_ET_MASK;
+	switch (tbl->type) {
+	case MLX5_L3T_TYPE_WORD:
+		data->word = ((struct mlx5_l3t_entry_word *)e_tbl)->entry
+			     [entry_idx];
+		break;
+	case MLX5_L3T_TYPE_DWORD:
+		data->dword = ((struct mlx5_l3t_entry_dword *)e_tbl)->entry
+			     [entry_idx];
+		break;
+	case MLX5_L3T_TYPE_QWORD:
+		data->qword = ((struct mlx5_l3t_entry_qword *)e_tbl)->entry
+			      [entry_idx];
+		break;
+	default:
+		data->ptr = ((struct mlx5_l3t_entry_ptr *)e_tbl)->entry
+			    [entry_idx];
+		break;
+	}
+	return 0;
+}
+
+void
+mlx5_l3t_clear_entry(struct mlx5_l3t_tbl *tbl, uint32_t idx)
+{
+	struct mlx5_l3t_level_tbl *g_tbl, *m_tbl;
+	struct mlx5_l3t_entry_word *w_e_tbl;
+	struct mlx5_l3t_entry_dword *dw_e_tbl;
+	struct mlx5_l3t_entry_qword *qw_e_tbl;
+	struct mlx5_l3t_entry_ptr *ptr_e_tbl;
+	void *e_tbl;
+	uint32_t entry_idx;
+	uint64_t ref_cnt;
+
+	g_tbl = tbl->tbl;
+	if (!g_tbl)
+		return;
+	m_tbl = g_tbl->tbl[(idx >> MLX5_L3T_GT_OFFSET) & MLX5_L3T_GT_MASK];
+	if (!m_tbl)
+		return;
+	e_tbl = m_tbl->tbl[(idx >> MLX5_L3T_MT_OFFSET) & MLX5_L3T_MT_MASK];
+	if (!e_tbl)
+		return;
+	entry_idx = idx & MLX5_L3T_ET_MASK;
+	switch (tbl->type) {
+	case MLX5_L3T_TYPE_WORD:
+		w_e_tbl = (struct mlx5_l3t_entry_word *)e_tbl;
+		w_e_tbl->entry[entry_idx] = 0;
+		ref_cnt = --w_e_tbl->ref_cnt;
+		break;
+	case MLX5_L3T_TYPE_DWORD:
+		dw_e_tbl = (struct mlx5_l3t_entry_dword *)e_tbl;
+		dw_e_tbl->entry[entry_idx] = 0;
+		ref_cnt = --dw_e_tbl->ref_cnt;
+		break;
+	case MLX5_L3T_TYPE_QWORD:
+		qw_e_tbl = (struct mlx5_l3t_entry_qword *)e_tbl;
+		qw_e_tbl->entry[entry_idx] = 0;
+		ref_cnt = --qw_e_tbl->ref_cnt;
+		break;
+	default:
+		ptr_e_tbl = (struct mlx5_l3t_entry_ptr *)e_tbl;
+		ptr_e_tbl->entry[entry_idx] = NULL;
+		ref_cnt = --ptr_e_tbl->ref_cnt;
+		break;
+	}
+	if (!ref_cnt) {
+		mlx5_ipool_free(tbl->eip,
+				((struct mlx5_l3t_entry_word *)e_tbl)->idx);
+		m_tbl->tbl[(idx >> MLX5_L3T_MT_OFFSET) & MLX5_L3T_MT_MASK] =
+									NULL;
+		if (!(--m_tbl->ref_cnt)) {
+			mlx5_free(m_tbl);
+			g_tbl->tbl
+			[(idx >> MLX5_L3T_GT_OFFSET) & MLX5_L3T_GT_MASK] = NULL;
+			if (!(--g_tbl->ref_cnt)) {
+				mlx5_free(g_tbl);
+				tbl->tbl = 0;
+			}
+		}
+	}
+}
+
+uint32_t
+mlx5_l3t_set_entry(struct mlx5_l3t_tbl *tbl, uint32_t idx,
+		   union mlx5_l3t_data *data)
+{
+	struct mlx5_l3t_level_tbl *g_tbl, *m_tbl;
+	struct mlx5_l3t_entry_word *w_e_tbl;
+	struct mlx5_l3t_entry_dword *dw_e_tbl;
+	struct mlx5_l3t_entry_qword *qw_e_tbl;
+	struct mlx5_l3t_entry_ptr *ptr_e_tbl;
+	void *e_tbl;
+	uint32_t entry_idx, tbl_idx = 0;
+
+	/* Check the global table, create it if empty. */
+	g_tbl = tbl->tbl;
+	if (!g_tbl) {
+		g_tbl = mlx5_malloc(MLX5_MEM_ZERO,
+				    sizeof(struct mlx5_l3t_level_tbl) +
+				    sizeof(void *) * MLX5_L3T_GT_SIZE, 1,
+				    SOCKET_ID_ANY);
+		if (!g_tbl) {
+			rte_errno = ENOMEM;
+			return -1;
+		}
+		tbl->tbl = g_tbl;
+	}
+	/*
+	 * Check the middle table, create it if empty. Ref_cnt will be
+	 * increased if new sub table created.
+	 */
+	m_tbl = g_tbl->tbl[(idx >> MLX5_L3T_GT_OFFSET) & MLX5_L3T_GT_MASK];
+	if (!m_tbl) {
+		m_tbl = mlx5_malloc(MLX5_MEM_ZERO,
+				    sizeof(struct mlx5_l3t_level_tbl) +
+				    sizeof(void *) * MLX5_L3T_MT_SIZE, 1,
+				    SOCKET_ID_ANY);
+		if (!m_tbl) {
+			rte_errno = ENOMEM;
+			return -1;
+		}
+		g_tbl->tbl[(idx >> MLX5_L3T_GT_OFFSET) & MLX5_L3T_GT_MASK] =
+									m_tbl;
+		g_tbl->ref_cnt++;
+	}
+	/*
+	 * Check the entry table, create it if empty. Ref_cnt will be
+	 * increased if new sub entry table created.
+	 */
+	e_tbl = m_tbl->tbl[(idx >> MLX5_L3T_MT_OFFSET) & MLX5_L3T_MT_MASK];
+	if (!e_tbl) {
+		e_tbl = mlx5_ipool_zmalloc(tbl->eip, &tbl_idx);
+		if (!e_tbl) {
+			rte_errno = ENOMEM;
+			return -1;
+		}
+		((struct mlx5_l3t_entry_word *)e_tbl)->idx = tbl_idx;
+		m_tbl->tbl[(idx >> MLX5_L3T_MT_OFFSET) & MLX5_L3T_MT_MASK] =
+									e_tbl;
+		m_tbl->ref_cnt++;
+	}
+	entry_idx = idx & MLX5_L3T_ET_MASK;
+	switch (tbl->type) {
+	case MLX5_L3T_TYPE_WORD:
+		w_e_tbl = (struct mlx5_l3t_entry_word *)e_tbl;
+		w_e_tbl->entry[entry_idx] = data->word;
+		w_e_tbl->ref_cnt++;
+		break;
+	case MLX5_L3T_TYPE_DWORD:
+		dw_e_tbl = (struct mlx5_l3t_entry_dword *)e_tbl;
+		dw_e_tbl->entry[entry_idx] = data->dword;
+		dw_e_tbl->ref_cnt++;
+		break;
+	case MLX5_L3T_TYPE_QWORD:
+		qw_e_tbl = (struct mlx5_l3t_entry_qword *)e_tbl;
+		qw_e_tbl->entry[entry_idx] = data->qword;
+		qw_e_tbl->ref_cnt++;
+		break;
+	default:
+		ptr_e_tbl = (struct mlx5_l3t_entry_ptr *)e_tbl;
+		ptr_e_tbl->entry[entry_idx] = data->ptr;
+		ptr_e_tbl->ref_cnt++;
+		break;
+	}
+	return 0;
 }

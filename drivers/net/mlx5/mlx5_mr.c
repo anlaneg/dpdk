@@ -3,21 +3,12 @@
  * Copyright 2016 Mellanox Technologies, Ltd
  */
 
-#ifdef PEDANTIC
-#pragma GCC diagnostic ignored "-Wpedantic"
-#endif
-#include <infiniband/verbs.h>
-#ifdef PEDANTIC
-#pragma GCC diagnostic error "-Wpedantic"
-#endif
-
 #include <rte_eal_memconfig.h>
 #include <rte_mempool.h>
 #include <rte_malloc.h>
 #include <rte_rwlock.h>
 #include <rte_bus_pci.h>
 
-#include <mlx5_glue.h>
 #include <mlx5_common_mp.h>
 #include <mlx5_common_mr.h>
 
@@ -57,7 +48,7 @@ struct mr_update_mp_data {
  *   Size of freed memory.
  */
 static void
-mlx5_mr_mem_event_free_cb(struct mlx5_ibv_shared *sh,
+mlx5_mr_mem_event_free_cb(struct mlx5_dev_ctx_shared *sh,
 			  const void *addr, size_t len)
 {
 	const struct rte_memseg_list *msl;
@@ -145,7 +136,7 @@ void
 mlx5_mr_mem_event_cb(enum rte_mem_event event_type, const void *addr,
 		     size_t len, void *arg __rte_unused)
 {
-	struct mlx5_ibv_shared *sh;
+	struct mlx5_dev_ctx_shared *sh;
 	struct mlx5_dev_list *dev_list = &mlx5_shared_data->mem_event_cb_list;
 
 	/* Must be called from the primary process. */
@@ -259,7 +250,7 @@ mlx5_mr_update_ext_mp_cb(struct rte_mempool *mp, void *opaque,
 	struct mr_update_mp_data *data = opaque;
 	struct rte_eth_dev *dev = data->dev;
 	struct mlx5_priv *priv = dev->data->dev_private;
-	struct mlx5_ibv_shared *sh = priv->sh;
+	struct mlx5_dev_ctx_shared *sh = priv->sh;
 	struct mlx5_mr_ctrl *mr_ctrl = data->mr_ctrl;
 	struct mlx5_mr *mr = NULL;
 	uintptr_t addr = (uintptr_t)memhdr->addr;
@@ -276,7 +267,8 @@ mlx5_mr_update_ext_mp_cb(struct rte_mempool *mp, void *opaque,
 		return;
 	DRV_LOG(DEBUG, "port %u register MR for chunk #%d of mempool (%s)",
 		dev->data->port_id, mem_idx, mp->name);
-	mr = mlx5_create_mr_ext(sh->pd, addr, len, mp->socket_id);
+	mr = mlx5_create_mr_ext(sh->pd, addr, len, mp->socket_id,
+				sh->share_cache.reg_mr_cb);
 	if (!mr) {
 		DRV_LOG(WARNING,
 			"port %u unable to allocate a new MR of"
@@ -312,9 +304,10 @@ pci_dev_to_eth_dev(struct rte_pci_device *pdev)
 {
 	uint16_t port_id;
 
-	RTE_ETH_FOREACH_DEV_OF(port_id, &pdev->device)
-		return &rte_eth_devices[port_id];
-	return NULL;
+	port_id = rte_eth_find_next_of(0, &pdev->device);
+	if (port_id == RTE_MAX_ETHPORTS)
+		return NULL;
+	return &rte_eth_devices[port_id];
 }
 
 /**
@@ -339,7 +332,7 @@ mlx5_dma_map(struct rte_pci_device *pdev, void *addr,
 	struct rte_eth_dev *dev;
 	struct mlx5_mr *mr;
 	struct mlx5_priv *priv;
-	struct mlx5_ibv_shared *sh;
+	struct mlx5_dev_ctx_shared *sh;
 
 	dev = pci_dev_to_eth_dev(pdev);
 	if (!dev) {
@@ -350,7 +343,8 @@ mlx5_dma_map(struct rte_pci_device *pdev, void *addr,
 	}
 	priv = dev->data->dev_private;
 	sh = priv->sh;
-	mr = mlx5_create_mr_ext(sh->pd, (uintptr_t)addr, len, SOCKET_ID_ANY);
+	mr = mlx5_create_mr_ext(sh->pd, (uintptr_t)addr, len, SOCKET_ID_ANY,
+				sh->share_cache.reg_mr_cb);
 	if (!mr) {
 		DRV_LOG(WARNING,
 			"port %u unable to dma map", dev->data->port_id);
@@ -386,7 +380,7 @@ mlx5_dma_unmap(struct rte_pci_device *pdev, void *addr,
 {
 	struct rte_eth_dev *dev;
 	struct mlx5_priv *priv;
-	struct mlx5_ibv_shared *sh;
+	struct mlx5_dev_ctx_shared *sh;
 	struct mlx5_mr *mr;
 	struct mr_cache_entry entry;
 

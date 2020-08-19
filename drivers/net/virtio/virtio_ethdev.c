@@ -48,7 +48,8 @@ static int virtio_dev_allmulticast_disable(struct rte_eth_dev *dev);
 static uint32_t virtio_dev_speed_capa_get(uint32_t speed);
 static int virtio_dev_devargs_parse(struct rte_devargs *devargs,
 	int *vdpa,
-	uint32_t *speed);
+	uint32_t *speed,
+	int *vectorized);
 static int virtio_dev_info_get(struct rte_eth_dev *dev,
 				struct rte_eth_dev_info *dev_info);
 static int virtio_dev_link_update(struct rte_eth_dev *dev,
@@ -83,9 +84,6 @@ static int virtio_dev_queue_stats_mapping_set(
 	uint16_t queue_id,
 	uint8_t stat_idx,
 	uint8_t is_rx);
-
-int virtio_logtype_init;
-int virtio_logtype_driver;
 
 static void virtio_notify_peers(struct rte_eth_dev *dev);
 static void virtio_ack_link_announce(struct rte_eth_dev *dev);
@@ -289,13 +287,10 @@ virtio_send_command_split(struct virtnet_ctl *cvq,
 
 	virtqueue_notify(vq);
 
-	rte_rmb();
-	while (VIRTQUEUE_NUSED(vq) == 0) {
-		rte_rmb();
+	while (virtqueue_nused(vq) == 0)
 		usleep(100);
-	}
 
-	while (VIRTQUEUE_NUSED(vq)) {
+	while (virtqueue_nused(vq)) {
 		uint32_t idx, desc_idx, used_idx;
 		struct vring_used_elem *uep;
 
@@ -1524,9 +1519,12 @@ set_rxtx_funcs(struct rte_eth_dev *eth_dev)
 	if (vtpci_packed_queue(hw)) {
 		PMD_INIT_LOG(INFO,
 			"virtio: using packed ring %s Tx path on port %u",
-			hw->use_inorder_tx ? "inorder" : "standard",
+			hw->use_vec_tx ? "vectorized" : "standard",
 			eth_dev->data->port_id);
-		eth_dev->tx_pkt_burst = virtio_xmit_pkts_packed;
+		if (hw->use_vec_tx)
+			eth_dev->tx_pkt_burst = virtio_xmit_pkts_packed_vec;
+		else
+			eth_dev->tx_pkt_burst = virtio_xmit_pkts_packed;
 	} else {
 		if (hw->use_inorder_tx) {
 			PMD_INIT_LOG(INFO, "virtio: using inorder Tx path on port %u",
@@ -1540,7 +1538,13 @@ set_rxtx_funcs(struct rte_eth_dev *eth_dev)
 	}
 
 	if (vtpci_packed_queue(hw)) {
-		if (vtpci_with_feature(hw, VIRTIO_NET_F_MRG_RXBUF)) {
+		if (hw->use_vec_rx) {
+			PMD_INIT_LOG(INFO,
+				"virtio: using packed ring vectorized Rx path on port %u",
+				eth_dev->data->port_id);
+			eth_dev->rx_pkt_burst =
+				&virtio_recv_pkts_packed_vec;
+		} else if (vtpci_with_feature(hw, VIRTIO_NET_F_MRG_RXBUF)) {
 			PMD_INIT_LOG(INFO,
 				"virtio: using packed ring mergeable buffer Rx path on port %u",
 				eth_dev->data->port_id);
@@ -1554,8 +1558,8 @@ set_rxtx_funcs(struct rte_eth_dev *eth_dev)
 		}
 	} else {
 		//设置virtio设备的发包函数
-		if (hw->use_simple_rx) {
-			PMD_INIT_LOG(INFO, "virtio: using simple Rx path on port %u",
+		if (hw->use_vec_rx) {
+			PMD_INIT_LOG(INFO, "virtio: using vectorized Rx path on port %u",
 				eth_dev->data->port_id);
 			eth_dev->rx_pkt_burst = virtio_recv_pkts_vec;
 		} else if (hw->use_inorder_rx) {
@@ -1896,6 +1900,7 @@ eth_virtio_dev_init(struct rte_eth_dev *eth_dev)
 {
 	struct virtio_hw *hw = eth_dev->data->dev_private;
 	uint32_t speed = SPEED_UNKNOWN;
+	int vectorized = 0;
 	int ret;
 
 	if (sizeof(struct virtio_net_hdr_mrg_rxbuf) > RTE_PKTMBUF_HEADROOM) {
@@ -1922,7 +1927,7 @@ eth_virtio_dev_init(struct rte_eth_dev *eth_dev)
 		return 0;
 	}
 	ret = virtio_dev_devargs_parse(eth_dev->device->devargs,
-		 NULL, &speed);
+		 NULL, &speed, &vectorized);
 	if (ret < 0)
 		return ret;
 	hw->speed = speed;
@@ -1958,6 +1963,20 @@ eth_virtio_dev_init(struct rte_eth_dev *eth_dev)
 	ret = virtio_init_device(eth_dev, VIRTIO_PMD_DEFAULT_GUEST_FEATURES);
 	if (ret < 0)
 		goto err_virtio_init;
+
+	if (vectorized) {
+		if (!vtpci_packed_queue(hw)) {
+			hw->use_vec_rx = 1;
+		} else {
+#if !defined(CC_AVX512_SUPPORT)
+			PMD_DRV_LOG(INFO,
+				"building environment do not support packed ring vectorized");
+#else
+			hw->use_vec_rx = 1;
+			hw->use_vec_tx = 1;
+#endif
+		}
+	}
 
 	hw->opened = true;
 
@@ -2031,9 +2050,20 @@ virtio_dev_speed_capa_get(uint32_t speed)
 	}
 }
 
+static int vectorized_check_handler(__rte_unused const char *key,
+		const char *value, void *ret_val)
+{
+	if (strcmp(value, "1") == 0)
+		*(int *)ret_val = 1;
+	else
+		*(int *)ret_val = 0;
+
+	return 0;
+}
 
 #define VIRTIO_ARG_SPEED      "speed"
 #define VIRTIO_ARG_VDPA       "vdpa"
+#define VIRTIO_ARG_VECTORIZED "vectorized"
 
 
 static int
@@ -2055,7 +2085,7 @@ link_speed_handler(const char *key __rte_unused,
 
 static int
 virtio_dev_devargs_parse(struct rte_devargs *devargs, int *vdpa,
-	uint32_t *speed)
+	uint32_t *speed, int *vectorized)
 {
 	struct rte_kvargs *kvlist;
 	int ret = 0;
@@ -2091,6 +2121,18 @@ virtio_dev_devargs_parse(struct rte_devargs *devargs, int *vdpa,
 		}
 	}
 
+	if (vectorized &&
+		rte_kvargs_count(kvlist, VIRTIO_ARG_VECTORIZED) == 1) {
+		ret = rte_kvargs_process(kvlist,
+				VIRTIO_ARG_VECTORIZED,
+				vectorized_check_handler, vectorized);
+		if (ret < 0) {
+			PMD_INIT_LOG(ERR, "Failed to parse %s",
+					VIRTIO_ARG_VECTORIZED);
+			goto exit;
+		}
+	}
+
 exit:
 	rte_kvargs_free(kvlist);
 	return ret;
@@ -2102,7 +2144,8 @@ static int eth_virtio_pci_probe(struct rte_pci_driver *pci_drv __rte_unused,
 	int vdpa = 0;
 	int ret = 0;
 
-	ret = virtio_dev_devargs_parse(pci_dev->device.devargs, &vdpa, NULL);
+	ret = virtio_dev_devargs_parse(pci_dev->device.devargs, &vdpa, NULL,
+		NULL);
 	if (ret < 0) {
 		PMD_INIT_LOG(ERR, "devargs parsing is failed");
 		return ret;
@@ -2268,33 +2311,66 @@ virtio_dev_configure(struct rte_eth_dev *dev)
 			return -EBUSY;
 		}
 
-	hw->use_simple_rx = 1;
-
-	if (vtpci_with_feature(hw, VIRTIO_F_IN_ORDER)) {
-		hw->use_inorder_tx = 1;
-		hw->use_inorder_rx = 1;
-		hw->use_simple_rx = 0;
-	}
-
 	if (vtpci_packed_queue(hw)) {
-		hw->use_simple_rx = 0;
-		hw->use_inorder_rx = 0;
-	}
-
-#if defined RTE_ARCH_ARM64 || defined RTE_ARCH_ARM
-	if (!rte_cpu_get_flag_enabled(RTE_CPUFLAG_NEON)) {
-		hw->use_simple_rx = 0;
-	}
+#if defined(RTE_ARCH_X86_64) && defined(CC_AVX512_SUPPORT)
+		if ((hw->use_vec_rx || hw->use_vec_tx) &&
+		    (!rte_cpu_get_flag_enabled(RTE_CPUFLAG_AVX512F) ||
+		     !vtpci_with_feature(hw, VIRTIO_F_IN_ORDER) ||
+		     !vtpci_with_feature(hw, VIRTIO_F_VERSION_1))) {
+			PMD_DRV_LOG(INFO,
+				"disabled packed ring vectorized path for requirements not met");
+			hw->use_vec_rx = 0;
+			hw->use_vec_tx = 0;
+		}
+#else
+		hw->use_vec_rx = 0;
+		hw->use_vec_tx = 0;
 #endif
-	if (vtpci_with_feature(hw, VIRTIO_NET_F_MRG_RXBUF)) {
-		 hw->use_simple_rx = 0;
-	}
 
-	if (rx_offloads & (DEV_RX_OFFLOAD_UDP_CKSUM |
-			   DEV_RX_OFFLOAD_TCP_CKSUM |
-			   DEV_RX_OFFLOAD_TCP_LRO |
-			   DEV_RX_OFFLOAD_VLAN_STRIP))
-		hw->use_simple_rx = 0;
+		if (hw->use_vec_rx) {
+			if (vtpci_with_feature(hw, VIRTIO_NET_F_MRG_RXBUF)) {
+				PMD_DRV_LOG(INFO,
+					"disabled packed ring vectorized rx for mrg_rxbuf enabled");
+				hw->use_vec_rx = 0;
+			}
+
+			if (rx_offloads & DEV_RX_OFFLOAD_TCP_LRO) {
+				PMD_DRV_LOG(INFO,
+					"disabled packed ring vectorized rx for TCP_LRO enabled");
+				hw->use_vec_rx = 0;
+			}
+		}
+	} else {
+		if (vtpci_with_feature(hw, VIRTIO_F_IN_ORDER)) {
+			hw->use_inorder_tx = 1;
+			hw->use_inorder_rx = 1;
+			hw->use_vec_rx = 0;
+		}
+
+		if (hw->use_vec_rx) {
+#if defined RTE_ARCH_ARM64 || defined RTE_ARCH_ARM
+			if (!rte_cpu_get_flag_enabled(RTE_CPUFLAG_NEON)) {
+				PMD_DRV_LOG(INFO,
+					"disabled split ring vectorized path for requirement not met");
+				hw->use_vec_rx = 0;
+			}
+#endif
+			if (vtpci_with_feature(hw, VIRTIO_NET_F_MRG_RXBUF)) {
+				PMD_DRV_LOG(INFO,
+					"disabled split ring vectorized rx for mrg_rxbuf enabled");
+				hw->use_vec_rx = 0;
+			}
+
+			if (rx_offloads & (DEV_RX_OFFLOAD_UDP_CKSUM |
+					   DEV_RX_OFFLOAD_TCP_CKSUM |
+					   DEV_RX_OFFLOAD_TCP_LRO |
+					   DEV_RX_OFFLOAD_VLAN_STRIP)) {
+				PMD_DRV_LOG(INFO,
+					"disabled split ring vectorized rx for offloading enabled");
+				hw->use_vec_rx = 0;
+			}
+		}
+	}
 
 	return 0;
 }
@@ -2591,13 +2667,5 @@ __rte_unused uint8_t is_rx)
 RTE_PMD_EXPORT_NAME(net_virtio, __COUNTER__);
 RTE_PMD_REGISTER_PCI_TABLE(net_virtio, pci_id_virtio_map);
 RTE_PMD_REGISTER_KMOD_DEP(net_virtio, "* igb_uio | uio_pci_generic | vfio-pci");
-
-RTE_INIT(virtio_init_log)
-{
-	virtio_logtype_init = rte_log_register("pmd.net.virtio.init");
-	if (virtio_logtype_init >= 0)
-		rte_log_set_level(virtio_logtype_init, RTE_LOG_NOTICE);
-	virtio_logtype_driver = rte_log_register("pmd.net.virtio.driver");
-	if (virtio_logtype_driver >= 0)
-		rte_log_set_level(virtio_logtype_driver, RTE_LOG_NOTICE);
-}
+RTE_LOG_REGISTER(virtio_logtype_init, pmd.net.virtio.init, NOTICE);
+RTE_LOG_REGISTER(virtio_logtype_driver, pmd.net.virtio.driver, NOTICE);

@@ -74,20 +74,6 @@ static int iavf_dev_filter_ctrl(struct rte_eth_dev *dev,
 		     enum rte_filter_op filter_op,
 		     void *arg);
 
-
-int iavf_logtype_init;
-int iavf_logtype_driver;
-
-#ifdef RTE_LIBRTE_IAVF_DEBUG_RX
-int iavf_logtype_rx;
-#endif
-#ifdef RTE_LIBRTE_IAVF_DEBUG_TX
-int iavf_logtype_tx;
-#endif
-#ifdef RTE_LIBRTE_IAVF_DEBUG_TX_FREE
-int iavf_logtype_tx_free;
-#endif
-
 static const struct rte_pci_id pci_id_iavf_map[] = {
 	{ RTE_PCI_DEVICE(IAVF_INTEL_VENDOR_ID, IAVF_DEV_ID_ADAPTIVE_VF) },
 	{ .vendor_id = 0, /* sentinel */ },
@@ -135,34 +121,6 @@ static const struct eth_dev_ops iavf_eth_dev_ops = {
 	.rx_queue_intr_disable      = iavf_dev_rx_queue_intr_disable,
 	.filter_ctrl                = iavf_dev_filter_ctrl,
 };
-
-static int
-iavf_dev_configure(struct rte_eth_dev *dev)
-{
-	struct iavf_adapter *ad =
-		IAVF_DEV_PRIVATE_TO_ADAPTER(dev->data->dev_private);
-	struct iavf_info *vf =  IAVF_DEV_PRIVATE_TO_VF(ad);
-	struct rte_eth_conf *dev_conf = &dev->data->dev_conf;
-
-	ad->rx_bulk_alloc_allowed = true;
-	/* Initialize to TRUE. If any of Rx queues doesn't meet the
-	 * vector Rx/Tx preconditions, it will be reset.
-	 */
-	ad->rx_vec_allowed = true;
-	ad->tx_vec_allowed = true;
-
-	if (dev->data->dev_conf.rxmode.mq_mode & ETH_MQ_RX_RSS_FLAG)
-		dev->data->dev_conf.rxmode.offloads |= DEV_RX_OFFLOAD_RSS_HASH;
-
-	/* Vlan stripping setting */
-	if (vf->vf_res->vf_cap_flags & VIRTCHNL_VF_OFFLOAD_VLAN) {
-		if (dev_conf->rxmode.offloads & DEV_RX_OFFLOAD_VLAN_STRIP)
-			iavf_enable_vlan_strip(ad);
-		else
-			iavf_disable_vlan_strip(ad);
-	}
-	return 0;
-}
 
 static int
 iavf_init_rss(struct iavf_adapter *adapter)
@@ -217,6 +175,41 @@ iavf_init_rss(struct iavf_adapter *adapter)
 	if (ret)
 		return ret;
 
+	return 0;
+}
+
+static int
+iavf_dev_configure(struct rte_eth_dev *dev)
+{
+	struct iavf_adapter *ad =
+		IAVF_DEV_PRIVATE_TO_ADAPTER(dev->data->dev_private);
+	struct iavf_info *vf =  IAVF_DEV_PRIVATE_TO_VF(ad);
+	struct rte_eth_conf *dev_conf = &dev->data->dev_conf;
+
+	ad->rx_bulk_alloc_allowed = true;
+	/* Initialize to TRUE. If any of Rx queues doesn't meet the
+	 * vector Rx/Tx preconditions, it will be reset.
+	 */
+	ad->rx_vec_allowed = true;
+	ad->tx_vec_allowed = true;
+
+	if (dev->data->dev_conf.rxmode.mq_mode & ETH_MQ_RX_RSS_FLAG)
+		dev->data->dev_conf.rxmode.offloads |= DEV_RX_OFFLOAD_RSS_HASH;
+
+	/* Vlan stripping setting */
+	if (vf->vf_res->vf_cap_flags & VIRTCHNL_VF_OFFLOAD_VLAN) {
+		if (dev_conf->rxmode.offloads & DEV_RX_OFFLOAD_VLAN_STRIP)
+			iavf_enable_vlan_strip(ad);
+		else
+			iavf_disable_vlan_strip(ad);
+	}
+
+	if (vf->vf_res->vf_cap_flags & VIRTCHNL_VF_OFFLOAD_RSS_PF) {
+		if (iavf_init_rss(ad) != 0) {
+			PMD_DRV_LOG(ERR, "configure rss failed");
+			return -1;
+		}
+	}
 	return 0;
 }
 
@@ -440,13 +433,6 @@ iavf_dev_start(struct rte_eth_dev *dev)
 		return -1;
 	}
 
-	if (vf->vf_res->vf_cap_flags & VIRTCHNL_VF_OFFLOAD_RSS_PF) {
-		if (iavf_init_rss(adapter) != 0) {
-			PMD_DRV_LOG(ERR, "configure rss failed");
-			goto err_rss;
-		}
-	}
-
 	if (iavf_configure_queues(adapter) != 0) {
 		PMD_DRV_LOG(ERR, "configure queues failed");
 		goto err_queue;
@@ -475,7 +461,6 @@ iavf_dev_start(struct rte_eth_dev *dev)
 err_mac:
 	iavf_add_del_all_mac_addr(adapter, false);
 err_queue:
-err_rss:
 	return -1;
 }
 
@@ -595,6 +580,8 @@ iavf_dev_link_update(struct rte_eth_dev *dev,
 {
 	struct rte_eth_link new_link;
 	struct iavf_info *vf = IAVF_DEV_PRIVATE_TO_VF(dev->data->dev_private);
+
+	memset(&new_link, 0, sizeof(new_link));
 
 	/* Only read status info stored in VF, and the info is updated
 	 *  when receive LINK_CHANGE evnet from PF by Virtchnnl.
@@ -1431,6 +1418,8 @@ iavf_dev_close(struct rte_eth_dev *dev)
 		IAVF_DEV_PRIVATE_TO_ADAPTER(dev->data->dev_private);
 
 	iavf_dev_stop(dev);
+	iavf_flow_flush(dev, NULL);
+	iavf_flow_uninit(adapter);
 	iavf_shutdown_adminq(hw);
 	/* disable uio intr before callback unregister */
 	rte_intr_disable(intr_handle);
@@ -1439,8 +1428,6 @@ iavf_dev_close(struct rte_eth_dev *dev)
 	rte_intr_callback_unregister(intr_handle,
 				     iavf_dev_interrupt_handler, dev);
 	iavf_disable_irq0(hw);
-
-	iavf_flow_uninit(adapter);
 }
 
 static int
@@ -1556,30 +1543,14 @@ RTE_PMD_REGISTER_PCI(net_iavf, rte_iavf_pmd);
 RTE_PMD_REGISTER_PCI_TABLE(net_iavf, pci_id_iavf_map);
 RTE_PMD_REGISTER_KMOD_DEP(net_iavf, "* igb_uio | vfio-pci");
 RTE_PMD_REGISTER_PARAM_STRING(net_iavf, "cap=dcf");
-RTE_INIT(iavf_init_log)
-{
-	iavf_logtype_init = rte_log_register("pmd.net.iavf.init");
-	if (iavf_logtype_init >= 0)
-		rte_log_set_level(iavf_logtype_init, RTE_LOG_NOTICE);
-	iavf_logtype_driver = rte_log_register("pmd.net.iavf.driver");
-	if (iavf_logtype_driver >= 0)
-		rte_log_set_level(iavf_logtype_driver, RTE_LOG_NOTICE);
-
+RTE_LOG_REGISTER(iavf_logtype_init, pmd.net.iavf.init, NOTICE);
+RTE_LOG_REGISTER(iavf_logtype_driver, pmd.net.iavf.driver, NOTICE);
 #ifdef RTE_LIBRTE_IAVF_DEBUG_RX
-	iavf_logtype_rx = rte_log_register("pmd.net.iavf.rx");
-	if (iavf_logtype_rx >= 0)
-		rte_log_set_level(iavf_logtype_rx, RTE_LOG_DEBUG);
+RTE_LOG_REGISTER(iavf_logtype_rx, pmd.net.iavf.rx, DEBUG);
 #endif
-
 #ifdef RTE_LIBRTE_IAVF_DEBUG_TX
-	iavf_logtype_tx = rte_log_register("pmd.net.iavf.tx");
-	if (iavf_logtype_tx >= 0)
-		rte_log_set_level(iavf_logtype_tx, RTE_LOG_DEBUG);
+RTE_LOG_REGISTER(iavf_logtype_tx, pmd.net.iavf.tx, DEBUG);
 #endif
-
 #ifdef RTE_LIBRTE_IAVF_DEBUG_TX_FREE
-	iavf_logtype_tx_free = rte_log_register("pmd.net.iavf.tx_free");
-	if (iavf_logtype_tx_free >= 0)
-		rte_log_set_level(iavf_logtype_tx_free, RTE_LOG_DEBUG);
+RTE_LOG_REGISTER(iavf_logtype_tx_free, pmd.net.iavf.tx_free, DEBUG);
 #endif
-}

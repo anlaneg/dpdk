@@ -22,8 +22,9 @@ poll mode crypto driver support for the following hardware accelerator devices:
 * ``Intel QuickAssist Technology DH895xCC``
 * ``Intel QuickAssist Technology C62x``
 * ``Intel QuickAssist Technology C3xxx``
+* ``Intel QuickAssist Technology 200xx``
 * ``Intel QuickAssist Technology D15xx``
-* ``Intel QuickAssist Technology P5xxx``
+* ``Intel QuickAssist Technology C4xxx``
 
 
 Features
@@ -75,7 +76,11 @@ Supported AEAD algorithms:
 
 * ``RTE_CRYPTO_AEAD_AES_GCM``
 * ``RTE_CRYPTO_AEAD_AES_CCM``
+* ``RTE_CRYPTO_AEAD_CHACHA20_POLY1305``
 
+Protocol offloads:
+
+* ``RTE_SECURITY_PROTOCOL_DOCSIS``
 
 Supported Chains
 ~~~~~~~~~~~~~~~~
@@ -126,6 +131,12 @@ Limitations
   generations in the same process if planning to use for GCM.
 * The mixed algo feature on GEN2 is not supported by all kernel drivers. Check
   the notes under the Available Kernel Drivers table below for specific details.
+* Out-of-place is not supported for combined Crypto-CRC DOCSIS security
+  protocol.
+* ``RTE_CRYPTO_CIPHER_DES_DOCSISBPI`` is not supported for combined Crypto-CRC
+  DOCSIS security protocol.
+* Multi-segment buffers are not supported for combined Crypto-CRC DOCSIS
+  security protocol.
 
 Extra notes on KASUMI F9
 ~~~~~~~~~~~~~~~~~~~~~~~~
@@ -155,7 +166,7 @@ poll mode crypto driver support for the following hardware accelerator devices:
 * ``Intel QuickAssist Technology C62x``
 * ``Intel QuickAssist Technology C3xxx``
 * ``Intel QuickAssist Technology D15xx``
-* ``Intel QuickAssist Technology P5xxx``
+* ``Intel QuickAssist Technology C4xxx``
 
 The QAT ASYM PMD has support for:
 
@@ -383,9 +394,11 @@ to see the full table)
    +-----+-----+-----+-----+----------+---------------+---------------+------------+--------+------+--------+--------+
    | Yes | Yes | Yes | "   | "        | 01.org/4.2.0+ | "             | "          | "      | "    | "      | "      |
    +-----+-----+-----+-----+----------+---------------+---------------+------------+--------+------+--------+--------+
-   | Yes | No  | No  | 2   | D15xx    | p             | qat_d15xx     | d15xx      | 6f54   | 1    | 6f55   | 16     |
+   | Yes | No  | No  | 2   | 200xx    | p             | qat_200xx     | 200xx      | 18ee   | 1    | 18ef   | 16     |
    +-----+-----+-----+-----+----------+---------------+---------------+------------+--------+------+--------+--------+
-   | Yes | No  | No  | 3   | P5xxx    | p             | qat_p5xxx     | p5xxx      | 18a0   | 1    | 18a1   | 128    |
+   | Yes | No  | No  | 2   | D15xx    | 01.org/4.2.0+ | qat_d15xx     | d15xx      | 6f54   | 1    | 6f55   | 16     |
+   +-----+-----+-----+-----+----------+---------------+---------------+------------+--------+------+--------+--------+
+   | Yes | No  | No  | 3   | C4xxx    | p             | qat_c4xxx     | c4xxx      | 18a0   | 1    | 18a1   | 128    |
    +-----+-----+-----+-----+----------+---------------+---------------+------------+--------+------+--------+--------+
 
 * Note: Symmetric mixed crypto algorithms feature on Gen 2 works only with 01.org driver version 4.9.0+
@@ -609,8 +622,8 @@ adjust the unbind command below::
         done; \
     done
 
-For Intel(R) QuickAssist Technology C3xxx or D15xx device
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+For Intel(R) QuickAssist Technology C3xxx or 200xx or D15xx device
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 The unbind command below assumes ``BDFs`` of ``01:01.00-01:02.07``, if your
 VFs are different adjust the unbind command below::

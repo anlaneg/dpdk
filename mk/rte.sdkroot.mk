@@ -65,12 +65,28 @@ export ROOTDIRS-y ROOTDIRS- ROOTDIRS-n
 .PHONY: default test-build
 default test-build: all
 
+.PHONY: warning
+warning:
+	@echo
+	@echo "=========================== WARNING ============================"
+	@echo "It is recommended to build DPDK using 'meson' and 'ninja'"
+	@echo "See https://doc.dpdk.org/guides/linux_gsg/build_dpdk.html"
+	@echo "Building DPDK with 'make' will be deprecated in a future release"
+	@echo "================================================================"
+	@echo
+	@test "$(MAKE_PAUSE)" = n || ( \
+	echo "This deprecation warning can be passed by adding MAKE_PAUSE=n"; \
+	echo "to 'make' command line or as an exported environment variable."; \
+	echo "Press enter to continue..."; read junk)
+
 #
 # 下面的代码对目标进行分类
 #
 
 #配置版本类信息显示相关
+
 .PHONY: config defconfig showconfigs showversion showversionum
+config: warning
 config defconfig showconfigs showversion showversionum:
 	$(Q)$(MAKE) -f $(RTE_SDK)/mk/rte.sdkconfig.mk $@
 
@@ -114,5 +130,6 @@ examples examples_clean:
 %:
 	#执行checkconfig，确保config.h生成，且已配置
 	$(Q)$(MAKE) -f $(RTE_SDK)/mk/rte.sdkconfig.mk checkconfig
+	$(Q)$(MAKE) -f $(RTE_SDK)/mk/rte.sdkroot.mk warning
 	#执行相应目标$@
 	$(Q)$(MAKE) -f $(RTE_SDK)/mk/rte.sdkbuild.mk $@

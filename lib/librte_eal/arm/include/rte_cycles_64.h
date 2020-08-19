@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: BSD-3-Clause
  * Copyright(c) 2015 Cavium, Inc
+ * Copyright(c) 2020 Arm Limited
  */
 
 #ifndef _RTE_CYCLES_ARM64_H_
@@ -10,6 +11,33 @@ extern "C" {
 #endif
 
 #include "generic/rte_cycles.h"
+
+/** Read generic counter frequency */
+static __rte_always_inline uint64_t
+__rte_arm64_cntfrq(void)
+{
+	uint64_t freq;
+
+	asm volatile("mrs %0, cntfrq_el0" : "=r" (freq));
+	return freq;
+}
+
+/** Read generic counter */
+static __rte_always_inline uint64_t
+__rte_arm64_cntvct(void)
+{
+	uint64_t tsc;
+
+	asm volatile("mrs %0, cntvct_el0" : "=r" (tsc));
+	return tsc;
+}
+
+static __rte_always_inline uint64_t
+__rte_arm64_cntvct_precise(void)
+{
+	asm volatile("isb" : : : "memory");
+	return __rte_arm64_cntvct();
+}
 
 /**
  * Read the time base register.
@@ -22,13 +50,10 @@ extern "C" {
  * This call is portable to any ARMv8 architecture, however, typically
  * cntvct_el0 runs at <= 100MHz and it may be imprecise for some tasks.
  */
-static inline uint64_t
+static __rte_always_inline uint64_t
 rte_rdtsc(void)
 {
-	uint64_t tsc;
-
-	asm volatile("mrs %0, cntvct_el0" : "=r" (tsc));
-	return tsc;
+	return __rte_arm64_cntvct();
 }
 #else
 /**
@@ -49,25 +74,36 @@ rte_rdtsc(void)
  * asm volatile("msr pmcr_el0, %0" : : "r" (val));
  *
  */
-static inline uint64_t
-rte_rdtsc(void)
+
+/** Read PMU cycle counter */
+static __rte_always_inline uint64_t
+__rte_arm64_pmccntr(void)
 {
 	uint64_t tsc;
 
 	asm volatile("mrs %0, pmccntr_el0" : "=r"(tsc));
 	return tsc;
 }
+
+static __rte_always_inline uint64_t
+rte_rdtsc(void)
+{
+	return __rte_arm64_pmccntr();
+}
 #endif
 
-static inline uint64_t
+static __rte_always_inline uint64_t
 rte_rdtsc_precise(void)
 {
 	asm volatile("isb" : : : "memory");
 	return rte_rdtsc();
 }
 
-static inline uint64_t
-rte_get_tsc_cycles(void) { return rte_rdtsc(); }
+static __rte_always_inline uint64_t
+rte_get_tsc_cycles(void)
+{
+	return rte_rdtsc();
+}
 
 #ifdef __cplusplus
 }

@@ -22,7 +22,6 @@
 #include <rte_eal.h>
 #include <rte_per_lcore.h>
 #include <rte_lcore.h>
-#include <rte_atomic.h>
 #include <rte_branch_prediction.h>
 #include <rte_mempool.h>
 #include <rte_mbuf.h>
@@ -197,14 +196,14 @@ __rte_pktmbuf_init_extmem(struct rte_mempool *mp,
 	ext_mem = ctx->ext_mem + ctx->ext;
 
 	RTE_ASSERT(ctx->ext < ctx->ext_num);
-	RTE_ASSERT(ctx->off < ext_mem->buf_len);
+	RTE_ASSERT(ctx->off + ext_mem->elt_size <= ext_mem->buf_len);
 
 	m->buf_addr = RTE_PTR_ADD(ext_mem->buf_ptr, ctx->off);
 	m->buf_iova = ext_mem->buf_iova == RTE_BAD_IOVA ?
 		      RTE_BAD_IOVA : (ext_mem->buf_iova + ctx->off);
 
 	ctx->off += ext_mem->elt_size;
-	if (ctx->off >= ext_mem->buf_len) {
+	if (ctx->off + ext_mem->elt_size > ext_mem->buf_len) {
 		ctx->off = 0;
 		++ctx->ext;
 	}

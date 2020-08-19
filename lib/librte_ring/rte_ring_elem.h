@@ -23,9 +23,6 @@ extern "C" {
 #include <rte_ring_core.h>
 
 /**
- * @warning
- * @b EXPERIMENTAL: this API may change without prior notice
- *
  * Calculate the memory size needed for a ring with given element size
  *
  * This function returns the number of bytes needed for a ring, given
@@ -43,13 +40,9 @@ extern "C" {
  *   - -EINVAL - esize is not a multiple of 4 or count provided is not a
  *		 power of 2.
  */
-__rte_experimental
 ssize_t rte_ring_get_memsize_elem(unsigned int esize, unsigned int count);
 
 /**
- * @warning
- * @b EXPERIMENTAL: this API may change without prior notice
- *
  * Create a new ring named *name* that stores elements with given size.
  *
  * This function uses ``memzone_reserve()`` to allocate memory. Then it
@@ -109,7 +102,6 @@ ssize_t rte_ring_get_memsize_elem(unsigned int esize, unsigned int count);
  *    - EEXIST - a memzone with the same name already exists
  *    - ENOMEM - no appropriate memory area found in which to create memzone
  */
-__rte_experimental
 struct rte_ring *rte_ring_create_elem(const char *name, unsigned int esize,
 			unsigned int count, int socket_id, unsigned int flags);
 
@@ -578,9 +570,6 @@ static __rte_always_inline unsigned int
 rte_ring_enqueue_bulk_elem(struct rte_ring *r, const void *obj_table,
 		unsigned int esize, unsigned int n, unsigned int *free_space)
 {
-	return __rte_ring_do_enqueue_elem(r, obj_table, esize, n,
-			RTE_RING_QUEUE_FIXED, r->prod.sync_type, free_space);
-
 	switch (r->prod.sync_type) {
 	case RTE_RING_SYNC_MT:
 		return rte_ring_mp_enqueue_bulk_elem(r, obj_table, esize, n,
@@ -889,7 +878,7 @@ rte_ring_dequeue_elem(struct rte_ring *r, void *obj_p, unsigned int esize)
  * @return
  *   - n: Actual number of objects enqueued.
  */
-static __rte_always_inline unsigned
+static __rte_always_inline unsigned int
 rte_ring_mp_enqueue_burst_elem(struct rte_ring *r, const void *obj_table,
 		unsigned int esize, unsigned int n, unsigned int *free_space)
 {
@@ -918,7 +907,7 @@ rte_ring_mp_enqueue_burst_elem(struct rte_ring *r, const void *obj_table,
  * @return
  *   - n: Actual number of objects enqueued.
  */
-static __rte_always_inline unsigned
+static __rte_always_inline unsigned int
 rte_ring_sp_enqueue_burst_elem(struct rte_ring *r, const void *obj_table,
 		unsigned int esize, unsigned int n, unsigned int *free_space)
 {
@@ -949,7 +938,7 @@ rte_ring_sp_enqueue_burst_elem(struct rte_ring *r, const void *obj_table,
  * @return
  *   - n: Actual number of objects enqueued.
  */
-static __rte_always_inline unsigned
+static __rte_always_inline unsigned int
 rte_ring_enqueue_burst_elem(struct rte_ring *r, const void *obj_table,
 		unsigned int esize, unsigned int n, unsigned int *free_space)
 {
@@ -1001,7 +990,7 @@ rte_ring_enqueue_burst_elem(struct rte_ring *r, const void *obj_table,
  * @return
  *   - n: Actual number of objects dequeued, 0 if ring is empty
  */
-static __rte_always_inline unsigned
+static __rte_always_inline unsigned int
 rte_ring_mc_dequeue_burst_elem(struct rte_ring *r, void *obj_table,
 		unsigned int esize, unsigned int n, unsigned int *available)
 {
@@ -1030,7 +1019,7 @@ rte_ring_mc_dequeue_burst_elem(struct rte_ring *r, void *obj_table,
  * @return
  *   - n: Actual number of objects dequeued, 0 if ring is empty
  */
-static __rte_always_inline unsigned
+static __rte_always_inline unsigned int
 rte_ring_sc_dequeue_burst_elem(struct rte_ring *r, void *obj_table,
 		unsigned int esize, unsigned int n, unsigned int *available)
 {

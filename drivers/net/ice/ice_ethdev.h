@@ -112,11 +112,13 @@
 		       ICE_FLAG_VF_MAC_BY_PF)
 
 #define ICE_RSS_OFFLOAD_ALL ( \
+	ETH_RSS_IPV4 | \
 	ETH_RSS_FRAG_IPV4 | \
 	ETH_RSS_NONFRAG_IPV4_TCP | \
 	ETH_RSS_NONFRAG_IPV4_UDP | \
 	ETH_RSS_NONFRAG_IPV4_SCTP | \
 	ETH_RSS_NONFRAG_IPV4_OTHER | \
+	ETH_RSS_IPV6 | \
 	ETH_RSS_FRAG_IPV6 | \
 	ETH_RSS_NONFRAG_IPV6_TCP | \
 	ETH_RSS_NONFRAG_IPV6_UDP | \
@@ -130,6 +132,9 @@
  */
 #define ICE_ETH_OVERHEAD \
 	(RTE_ETHER_HDR_LEN + RTE_ETHER_CRC_LEN + ICE_VLAN_TAG_SIZE * 2)
+
+#define ICE_RXTX_BYTES_HIGH(bytes) ((bytes) & ~ICE_40_BIT_MASK)
+#define ICE_RXTX_BYTES_LOW(bytes) ((bytes) & ICE_40_BIT_MASK)
 
 /* DDP package type */
 enum ice_pkg_type {
@@ -246,6 +251,8 @@ struct ice_vsi {
 	struct ice_eth_stats eth_stats_offset;
 	struct ice_eth_stats eth_stats;
 	bool offset_loaded;
+	uint64_t old_rx_bytes;
+	uint64_t old_tx_bytes;
 };
 
 enum proto_xtr_type {
@@ -351,6 +358,39 @@ struct ice_fdir_info {
 	struct ice_fdir_counter_pool_container counter;
 };
 
+#define ICE_HASH_CFG_VALID(p)		\
+	((p)->hash_fld != 0 && (p)->pkt_hdr != 0)
+
+#define ICE_HASH_CFG_RESET(p) do {	\
+	(p)->hash_fld = 0;		\
+	(p)->pkt_hdr = 0;		\
+} while (0)
+
+#define ICE_HASH_CFG_IS_ROTATING(p)	\
+	((p)->rotate == true)
+
+#define ICE_HASH_CFG_ROTATE_START(p)	\
+	((p)->rotate = true)
+
+#define ICE_HASH_CFG_ROTATE_STOP(p)	\
+	((p)->rotate = false)
+
+struct ice_hash_cfg {
+	uint32_t pkt_hdr;
+	uint64_t hash_fld;
+	bool rotate;  /* rotate l3 rule after l4 rule. */
+	bool symm;
+};
+
+struct ice_hash_gtpu_ctx {
+	struct ice_hash_cfg ipv4;
+	struct ice_hash_cfg ipv6;
+	struct ice_hash_cfg ipv4_udp;
+	struct ice_hash_cfg ipv6_udp;
+	struct ice_hash_cfg ipv4_tcp;
+	struct ice_hash_cfg ipv6_tcp;
+};
+
 struct ice_pf {
 	struct ice_adapter *adapter; /* The adapter this PF associate to */
 	struct ice_vsi *main_vsi; /* pointer to main VSI structure */
@@ -374,6 +414,7 @@ struct ice_pf {
 	uint16_t fdir_nb_qps; /* The number of queue pairs of Flow Director */
 	uint16_t fdir_qp_offset;
 	struct ice_fdir_info fdir; /* flow director info */
+	struct ice_hash_gtpu_ctx gtpu_hash_ctx;
 	uint16_t hw_prof_cnt[ICE_FLTR_PTYPE_MAX][ICE_FD_HW_SEG_MAX];
 	uint16_t fdir_fltr_cnt[ICE_FLTR_PTYPE_MAX][ICE_FD_HW_SEG_MAX];
 	struct ice_hw_port_stats stats_offset;
@@ -389,6 +430,8 @@ struct ice_pf {
 	struct ice_parser_list perm_parser_list;
 	struct ice_parser_list dist_parser_list;
 	bool init_link_up;
+	uint64_t old_rx_bytes;
+	uint64_t old_tx_bytes;
 };
 
 #define ICE_MAX_QUEUE_NUM  2048
@@ -473,6 +516,10 @@ ice_release_vsi(struct ice_vsi *vsi);
 void ice_vsi_enable_queues_intr(struct ice_vsi *vsi);
 void ice_vsi_disable_queues_intr(struct ice_vsi *vsi);
 void ice_vsi_queues_bind_intr(struct ice_vsi *vsi);
+int ice_add_rss_cfg_wrap(struct ice_pf *pf, uint16_t vsi_id,
+		uint64_t hash_fld, uint32_t pkt_hdr, bool symm);
+int ice_rem_rss_cfg_wrap(struct ice_pf *pf, uint16_t vsi_id,
+		uint64_t hash_fld, uint32_t pkt_hdr);
 
 static inline int
 ice_align_floor(int n)

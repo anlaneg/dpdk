@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: BSD-3-Clause
- * Copyright(c) 2001-2020
+ * Copyright(c) 2001-2020 Intel Corporation
  */
 
 #ifndef _VIRTCHNL_H_
@@ -551,7 +551,7 @@ VIRTCHNL_CHECK_STRUCT_LEN(8, virtchnl_rss_hena);
 /* Type of RSS algorithm */
 enum virtchnl_rss_algorithm {
 	VIRTCHNL_RSS_ALG_TOEPLITZ_ASYMMETRIC	= 0,
-	VIRTCHNL_RSS_ALG_R_ASYMMETRIC		= 1,
+	VIRTCHNL_RSS_ALG_XOR_ASYMMETRIC		= 1,
 	VIRTCHNL_RSS_ALG_TOEPLITZ_SYMMETRIC	= 2,
 	VIRTCHNL_RSS_ALG_XOR_SYMMETRIC		= 3,
 };

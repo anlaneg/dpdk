@@ -12,33 +12,26 @@
 #include <assert.h>
 #include <string.h>
 
+#include <rte_errno.h>
 #include <rte_lcore.h>
-#include <rte_memory.h>
 #include <rte_log.h>
-#ifndef RTE_EXEC_ENV_WINDOWS
+#include <rte_memory.h>
 #include <rte_trace_point.h>
-#endif
 
 #include "eal_internal_cfg.h"
 #include "eal_private.h"
 #include "eal_thread.h"
+#include "eal_trace.h"
 
-RTE_DECLARE_PER_LCORE(unsigned , _socket_id);
+RTE_DEFINE_PER_LCORE(unsigned int, _lcore_id) = LCORE_ID_ANY;
+RTE_DEFINE_PER_LCORE(int, _thread_id) = -1;
+static RTE_DEFINE_PER_LCORE(unsigned int, _socket_id) =
+	(unsigned int)SOCKET_ID_ANY;
+static RTE_DEFINE_PER_LCORE(rte_cpuset_t, _cpuset);
 
 unsigned rte_socket_id(void)
 {
 	return RTE_PER_LCORE(_socket_id);
-}
-
-int
-rte_lcore_has_role(unsigned int lcore_id, enum rte_lcore_role_t role)
-{
-	struct rte_config *cfg = rte_eal_get_configuration();
-
-	if (lcore_id >= RTE_MAX_LCORE)
-		return -EINVAL;
-
-	return cfg->lcore_role[lcore_id] == role;
 }
 
 //检查cpusetp中cpu对应的numa,如果cpusetp中包含的cpu有多个
@@ -77,21 +70,10 @@ eal_cpuset_socket_id(rte_cpuset_t *cpusetp)
 	return socket_id;
 }
 
-int
-rte_thread_set_affinity(rte_cpuset_t *cpusetp)
+static void
+thread_update_affinity(rte_cpuset_t *cpusetp)
 {
-	int s;
-	unsigned lcore_id;
-	pthread_t tid;
-
-	tid = pthread_self();
-
-	//使线程绑定cpu
-	s = pthread_setaffinity_np(tid, sizeof(rte_cpuset_t), cpusetp);
-	if (s != 0) {
-		RTE_LOG(ERR, EAL, "pthread_setaffinity_np failed\n");
-		return -1;
-	}
+	unsigned int lcore_id = rte_lcore_id();
 
 	/* store socket_id in TLS for quick access */
 	//设置当前线程默认使用的socket_id
@@ -103,14 +85,24 @@ rte_thread_set_affinity(rte_cpuset_t *cpusetp)
 	memmove(&RTE_PER_LCORE(_cpuset), cpusetp,
 		sizeof(rte_cpuset_t));
 
-	lcore_id = rte_lcore_id();
 	if (lcore_id != (unsigned)LCORE_ID_ANY) {
 		/* EAL thread will update lcore_config */
 		lcore_config[lcore_id].socket_id = RTE_PER_LCORE(_socket_id);
 		memmove(&lcore_config[lcore_id].cpuset, cpusetp,
 			sizeof(rte_cpuset_t));
 	}
+}
 
+int
+rte_thread_set_affinity(rte_cpuset_t *cpusetp)
+{
+	if (pthread_setaffinity_np(pthread_self(), sizeof(rte_cpuset_t),
+			cpusetp) != 0) {
+		RTE_LOG(ERR, EAL, "pthread_setaffinity_np failed\n");
+		return -1;
+	}
+
+	thread_update_affinity(cpusetp);
 	return 0;
 }
 
@@ -123,19 +115,15 @@ rte_thread_get_affinity(rte_cpuset_t *cpusetp)
 }
 
 int
-eal_thread_dump_affinity(char *str, unsigned size)
+eal_thread_dump_affinity(rte_cpuset_t *cpuset, char *str, unsigned int size)
 {
-	rte_cpuset_t cpuset;
 	unsigned cpu;
 	int ret;
 	unsigned int out = 0;
 
-	//获取当前线程的cpuset
-	rte_thread_get_affinity(&cpuset);
-
 	//收集cpuset中的cpu列表
 	for (cpu = 0; cpu < CPU_SETSIZE; cpu++) {
-		if (!CPU_ISSET(cpu, &cpuset))
+		if (!CPU_ISSET(cpu, cpuset))
 			continue;
 
 		ret = snprintf(str + out,
@@ -158,6 +146,36 @@ exit:
 	return ret;
 }
 
+int
+eal_thread_dump_current_affinity(char *str, unsigned int size)
+{
+	rte_cpuset_t cpuset;
+
+	rte_thread_get_affinity(&cpuset);
+	return eal_thread_dump_affinity(&cpuset, str, size);
+}
+
+void
+__rte_thread_init(unsigned int lcore_id, rte_cpuset_t *cpuset)
+{
+	/* set the lcore ID in per-lcore memory area */
+	RTE_PER_LCORE(_lcore_id) = lcore_id;
+
+	/* acquire system unique id */
+	rte_gettid();
+
+	thread_update_affinity(cpuset);
+
+	__rte_trace_mem_per_thread_alloc();
+}
+
+void
+__rte_thread_uninit(void)
+{
+	trace_mem_per_thread_free();
+
+	RTE_PER_LCORE(_lcore_id) = LCORE_ID_ANY;
+}
 
 struct rte_thread_ctrl_params {
 	void *(*start_routine)(void *);
@@ -165,16 +183,17 @@ struct rte_thread_ctrl_params {
 	pthread_barrier_t configured;
 };
 
-static void *rte_thread_init(void *arg)
+static void *ctrl_thread_init(void *arg)
 {
 	int ret;
-	rte_cpuset_t *cpuset = &internal_config.ctrl_cpuset;
+	struct internal_config *internal_conf =
+		eal_get_internal_configuration();
+	rte_cpuset_t *cpuset = &internal_conf->ctrl_cpuset;
 	struct rte_thread_ctrl_params *params = arg;
 	void *(*start_routine)(void *) = params->start_routine;
 	void *routine_arg = params->arg;
 
-	/* Store cpuset in TLS for quick access */
-	memmove(&RTE_PER_LCORE(_cpuset), cpuset, sizeof(rte_cpuset_t));
+	__rte_thread_init(rte_lcore_id(), cpuset);
 
 	//等待barrier
 	ret = pthread_barrier_wait(&params->configured);
@@ -183,9 +202,6 @@ static void *rte_thread_init(void *arg)
 		free(params);
 	}
 
-#ifndef RTE_EXEC_ENV_WINDOWS
-	__rte_trace_mem_per_thread_alloc();
-#endif
 	//执行回调
 	return start_routine(routine_arg);
 }
@@ -196,7 +212,9 @@ rte_ctrl_thread_create(pthread_t *thread, const char *name,
 		const pthread_attr_t *attr,
 		void *(*start_routine)(void *), void *arg)
 {
-	rte_cpuset_t *cpuset = &internal_config.ctrl_cpuset;
+	struct internal_config *internal_conf =
+		eal_get_internal_configuration();
+	rte_cpuset_t *cpuset = &internal_conf->ctrl_cpuset;
 	struct rte_thread_ctrl_params *params;
 	int ret;
 
@@ -210,7 +228,7 @@ rte_ctrl_thread_create(pthread_t *thread, const char *name,
 	//初始化thread barrier,等待数为1+1
 	pthread_barrier_init(&params->configured, NULL, 2);
 
-	ret = pthread_create(thread, attr, rte_thread_init, (void *)params);
+	ret = pthread_create(thread, attr, ctrl_thread_init, (void *)params);
 	if (ret != 0) {
 		free(params);
 		return -ret;
@@ -247,4 +265,50 @@ fail:
 	pthread_cancel(*thread);
 	pthread_join(*thread, NULL);
 	return -ret;
+}
+
+int
+rte_thread_register(void)
+{
+	unsigned int lcore_id;
+	rte_cpuset_t cpuset;
+
+	/* EAL init flushes all lcores, we can't register before. */
+	if (eal_get_internal_configuration()->init_complete != 1) {
+		RTE_LOG(DEBUG, EAL, "Called %s before EAL init.\n", __func__);
+		rte_errno = EINVAL;
+		return -1;
+	}
+	if (!rte_mp_disable()) {
+		RTE_LOG(ERR, EAL, "Multiprocess in use, registering non-EAL threads is not supported.\n");
+		rte_errno = EINVAL;
+		return -1;
+	}
+	if (pthread_getaffinity_np(pthread_self(), sizeof(cpuset),
+			&cpuset) != 0)
+		CPU_ZERO(&cpuset);
+	lcore_id = eal_lcore_non_eal_allocate();
+	if (lcore_id >= RTE_MAX_LCORE)
+		lcore_id = LCORE_ID_ANY;
+	__rte_thread_init(lcore_id, &cpuset);
+	if (lcore_id == LCORE_ID_ANY) {
+		rte_errno = ENOMEM;
+		return -1;
+	}
+	RTE_LOG(DEBUG, EAL, "Registered non-EAL thread as lcore %u.\n",
+		lcore_id);
+	return 0;
+}
+
+void
+rte_thread_unregister(void)
+{
+	unsigned int lcore_id = rte_lcore_id();
+
+	if (lcore_id != LCORE_ID_ANY)
+		eal_lcore_non_eal_release(lcore_id);
+	__rte_thread_uninit();
+	if (lcore_id != LCORE_ID_ANY)
+		RTE_LOG(DEBUG, EAL, "Unregistered non-EAL thread (was lcore %u).\n",
+			lcore_id);
 }

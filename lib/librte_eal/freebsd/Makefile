@@ -7,6 +7,7 @@ LIB = librte_eal.a
 
 ARCH_DIR ?= $(RTE_ARCH)
 VPATH += $(RTE_SDK)/lib/librte_eal/$(ARCH_DIR)
+VPATH += $(RTE_SDK)/lib/librte_eal/unix
 VPATH += $(RTE_SDK)/lib/librte_eal/common
 
 CFLAGS += -I$(SRCDIR)/include
@@ -18,6 +19,7 @@ LDLIBS += -lexecinfo
 LDLIBS += -lpthread
 LDLIBS += -lgcc_s
 LDLIBS += -lrte_kvargs
+LDLIBS += -lrte_telemetry
 
 EXPORT_MAP := ../rte_eal_version.map
 
@@ -36,6 +38,7 @@ SRCS-$(CONFIG_RTE_EXEC_ENV_FREEBSD) += eal_alarm.c
 SRCS-$(CONFIG_RTE_EXEC_ENV_FREEBSD) += eal_dev.c
 
 # from common dir
+SRCS-$(CONFIG_RTE_EXEC_ENV_FREEBSD) += eal_common_config.c
 SRCS-$(CONFIG_RTE_EXEC_ENV_FREEBSD) += eal_common_lcore.c
 SRCS-$(CONFIG_RTE_EXEC_ENV_FREEBSD) += eal_common_timer.c
 SRCS-$(CONFIG_RTE_EXEC_ENV_FREEBSD) += eal_common_memzone.c
@@ -50,6 +53,7 @@ SRCS-$(CONFIG_RTE_EXEC_ENV_FREEBSD) += eal_common_cpuflags.c
 SRCS-$(CONFIG_RTE_EXEC_ENV_FREEBSD) += eal_common_hypervisor.c
 SRCS-$(CONFIG_RTE_EXEC_ENV_FREEBSD) += eal_common_string_fns.c
 SRCS-$(CONFIG_RTE_EXEC_ENV_FREEBSD) += eal_common_hexdump.c
+SRCS-$(CONFIG_RTE_EXEC_ENV_FREEBSD) += eal_common_debug.c
 SRCS-$(CONFIG_RTE_EXEC_ENV_FREEBSD) += eal_common_devargs.c
 SRCS-$(CONFIG_RTE_EXEC_ENV_FREEBSD) += eal_common_class.c
 SRCS-$(CONFIG_RTE_EXEC_ENV_FREEBSD) += eal_common_bus.c
@@ -69,10 +73,14 @@ SRCS-$(CONFIG_RTE_EXEC_ENV_FREEBSD) += malloc_elem.c
 SRCS-$(CONFIG_RTE_EXEC_ENV_FREEBSD) += malloc_heap.c
 SRCS-$(CONFIG_RTE_EXEC_ENV_FREEBSD) += malloc_mp.c
 SRCS-$(CONFIG_RTE_EXEC_ENV_FREEBSD) += rte_keepalive.c
-SRCS-$(CONFIG_RTE_EXEC_ENV_FREEBSD) += rte_option.c
 SRCS-$(CONFIG_RTE_EXEC_ENV_FREEBSD) += rte_service.c
 SRCS-$(CONFIG_RTE_EXEC_ENV_FREEBSD) += rte_random.c
 SRCS-$(CONFIG_RTE_EXEC_ENV_FREEBSD) += rte_reciprocal.c
+
+# from unix dir
+SRCS-$(CONFIG_RTE_EXEC_ENV_FREEBSD) += eal_file.c
+SRCS-$(CONFIG_RTE_EXEC_ENV_FREEBSD) += eal_unix_memory.c
+SRCS-$(CONFIG_RTE_EXEC_ENV_FREEBSD) += eal_unix_timer.c
 
 # from arch dir
 SRCS-$(CONFIG_RTE_EXEC_ENV_FREEBSD) += rte_cpuflags.c

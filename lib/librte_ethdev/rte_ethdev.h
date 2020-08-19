@@ -284,6 +284,7 @@ struct rte_eth_stats {
 #define ETH_LINK_SPEED_50G      (1 << 12)  /**<  50 Gbps */
 #define ETH_LINK_SPEED_56G      (1 << 13)  /**<  56 Gbps */
 #define ETH_LINK_SPEED_100G     (1 << 14)  /**< 100 Gbps */
+#define ETH_LINK_SPEED_200G     (1 << 15)  /**< 200 Gbps */
 
 /**
  * Ethernet numeric link speeds in Mbps
@@ -301,6 +302,7 @@ struct rte_eth_stats {
 #define ETH_SPEED_NUM_50G      50000 /**<  50 Gbps */
 #define ETH_SPEED_NUM_56G      56000 /**<  56 Gbps */
 #define ETH_SPEED_NUM_100G    100000 /**< 100 Gbps */
+#define ETH_SPEED_NUM_200G    200000 /**< 200 Gbps */
 
 /**
  * A structure used to retrieve link-level information of an Ethernet port.
@@ -519,7 +521,7 @@ struct rte_eth_rss_conf {
 #define ETH_RSS_AH                 (1ULL << 28)
 #define ETH_RSS_L2TPV3             (1ULL << 29)
 #define ETH_RSS_PFCP               (1ULL << 30)
-
+#define ETH_RSS_PPPOE		   (1ULL << 31)
 
 /*
  * We use the following macros to combine with above ETH_RSS_* for
@@ -536,6 +538,19 @@ struct rte_eth_rss_conf {
 #define ETH_RSS_L4_DST_ONLY        (1ULL << 60)
 #define ETH_RSS_L2_SRC_ONLY        (1ULL << 59)
 #define ETH_RSS_L2_DST_ONLY        (1ULL << 58)
+
+/*
+ * Only select IPV6 address prefix as RSS input set according to
+ * https://tools.ietf.org/html/rfc6052
+ * Must be combined with ETH_RSS_IPV6, ETH_RSS_NONFRAG_IPV6_UDP,
+ * ETH_RSS_NONFRAG_IPV6_TCP, ETH_RSS_NONFRAG_IPV6_SCTP.
+ */
+#define RTE_ETH_RSS_L3_PRE32	   (1ULL << 57)
+#define RTE_ETH_RSS_L3_PRE40	   (1ULL << 56)
+#define RTE_ETH_RSS_L3_PRE48	   (1ULL << 55)
+#define RTE_ETH_RSS_L3_PRE56	   (1ULL << 54)
+#define RTE_ETH_RSS_L3_PRE64	   (1ULL << 53)
+#define RTE_ETH_RSS_L3_PRE96	   (1ULL << 52)
 
 /**
  * For input set change of hash filter, if SRC_ONLY and DST_ONLY of
@@ -558,6 +573,102 @@ rte_eth_rss_hf_refine(uint64_t rss_hf)
 
 	return rss_hf;
 }
+
+#define ETH_RSS_IPV6_PRE32 ( \
+		ETH_RSS_IPV6 | \
+		RTE_ETH_RSS_L3_PRE32)
+
+#define ETH_RSS_IPV6_PRE40 ( \
+		ETH_RSS_IPV6 | \
+		RTE_ETH_RSS_L3_PRE40)
+
+#define ETH_RSS_IPV6_PRE48 ( \
+		ETH_RSS_IPV6 | \
+		RTE_ETH_RSS_L3_PRE48)
+
+#define ETH_RSS_IPV6_PRE56 ( \
+		ETH_RSS_IPV6 | \
+		RTE_ETH_RSS_L3_PRE56)
+
+#define ETH_RSS_IPV6_PRE64 ( \
+		ETH_RSS_IPV6 | \
+		RTE_ETH_RSS_L3_PRE64)
+
+#define ETH_RSS_IPV6_PRE96 ( \
+		ETH_RSS_IPV6 | \
+		RTE_ETH_RSS_L3_PRE96)
+
+#define ETH_RSS_IPV6_PRE32_UDP ( \
+		ETH_RSS_NONFRAG_IPV6_UDP | \
+		RTE_ETH_RSS_L3_PRE32)
+
+#define ETH_RSS_IPV6_PRE40_UDP ( \
+		ETH_RSS_NONFRAG_IPV6_UDP | \
+		RTE_ETH_RSS_L3_PRE40)
+
+#define ETH_RSS_IPV6_PRE48_UDP ( \
+		ETH_RSS_NONFRAG_IPV6_UDP | \
+		RTE_ETH_RSS_L3_PRE48)
+
+#define ETH_RSS_IPV6_PRE56_UDP ( \
+		ETH_RSS_NONFRAG_IPV6_UDP | \
+		RTE_ETH_RSS_L3_PRE56)
+
+#define ETH_RSS_IPV6_PRE64_UDP ( \
+		ETH_RSS_NONFRAG_IPV6_UDP | \
+		RTE_ETH_RSS_L3_PRE64)
+
+#define ETH_RSS_IPV6_PRE96_UDP ( \
+		ETH_RSS_NONFRAG_IPV6_UDP | \
+		RTE_ETH_RSS_L3_PRE96)
+
+#define ETH_RSS_IPV6_PRE32_TCP ( \
+		ETH_RSS_NONFRAG_IPV6_TCP | \
+		RTE_ETH_RSS_L3_PRE32)
+
+#define ETH_RSS_IPV6_PRE40_TCP ( \
+		ETH_RSS_NONFRAG_IPV6_TCP | \
+		RTE_ETH_RSS_L3_PRE40)
+
+#define ETH_RSS_IPV6_PRE48_TCP ( \
+		ETH_RSS_NONFRAG_IPV6_TCP | \
+		RTE_ETH_RSS_L3_PRE48)
+
+#define ETH_RSS_IPV6_PRE56_TCP ( \
+		ETH_RSS_NONFRAG_IPV6_TCP | \
+		RTE_ETH_RSS_L3_PRE56)
+
+#define ETH_RSS_IPV6_PRE64_TCP ( \
+		ETH_RSS_NONFRAG_IPV6_TCP | \
+		RTE_ETH_RSS_L3_PRE64)
+
+#define ETH_RSS_IPV6_PRE96_TCP ( \
+		ETH_RSS_NONFRAG_IPV6_TCP | \
+		RTE_ETH_RSS_L3_PRE96)
+
+#define ETH_RSS_IPV6_PRE32_SCTP ( \
+		ETH_RSS_NONFRAG_IPV6_SCTP | \
+		RTE_ETH_RSS_L3_PRE32)
+
+#define ETH_RSS_IPV6_PRE40_SCTP ( \
+		ETH_RSS_NONFRAG_IPV6_SCTP | \
+		RTE_ETH_RSS_L3_PRE40)
+
+#define ETH_RSS_IPV6_PRE48_SCTP ( \
+		ETH_RSS_NONFRAG_IPV6_SCTP | \
+		RTE_ETH_RSS_L3_PRE48)
+
+#define ETH_RSS_IPV6_PRE56_SCTP ( \
+		ETH_RSS_NONFRAG_IPV6_SCTP | \
+		RTE_ETH_RSS_L3_PRE56)
+
+#define ETH_RSS_IPV6_PRE64_SCTP ( \
+		ETH_RSS_NONFRAG_IPV6_SCTP | \
+		RTE_ETH_RSS_L3_PRE64)
+
+#define ETH_RSS_IPV6_PRE96_SCTP ( \
+		ETH_RSS_NONFRAG_IPV6_SCTP | \
+		RTE_ETH_RSS_L3_PRE96)
 
 #define ETH_RSS_IP ( \
 	ETH_RSS_IPV4 | \
@@ -813,7 +924,6 @@ struct rte_eth_txmode {
 	 */
 	uint64_t offloads;
 
-	/* For i40e specifically */
 	uint16_t pvid;
 	__extension__
 	uint8_t hw_vlan_reject_tagged : 1,
@@ -1176,6 +1286,10 @@ struct rte_eth_conf {
 #define DEV_TX_OFFLOAD_IP_TNL_TSO       0x00080000
 /** Device supports outer UDP checksum */
 #define DEV_TX_OFFLOAD_OUTER_UDP_CKSUM  0x00100000
+
+/** Device supports send on timestamp */
+#define DEV_TX_OFFLOAD_SEND_ON_TIMESTAMP 0x00200000
+
 
 #define RTE_ETH_DEV_CAPA_RUNTIME_RX_QUEUE_SETUP 0x00000001
 /**< Device supports Rx queue setup after device started*/
@@ -2735,7 +2849,6 @@ int rte_eth_dev_vlan_filter(uint16_t port_id, uint16_t vlan_id, int on);
 
 /**
  * Enable/Disable hardware VLAN Strip by a rx queue of an Ethernet device.
- * 82599/X540/X550 can support VLAN stripping at the rx queue level
  *
  * @param port_id
  *   The port identifier of the Ethernet device.
@@ -2757,8 +2870,7 @@ int rte_eth_dev_set_vlan_strip_on_queue(uint16_t port_id, uint16_t rx_queue_id,
 
 /**
  * Set the Outer VLAN Ether Type by an Ethernet device, it can be inserted to
- * the VLAN Header. This is a register setup available on some Intel NIC, not
- * but all, please check the data sheet for availability.
+ * the VLAN header.
  *
  * @param port_id
  *   The port identifier of the Ethernet device.
@@ -2777,12 +2889,7 @@ int rte_eth_dev_set_vlan_ether_type(uint16_t port_id,
 				    uint16_t tag_type);
 
 /**
- * Set VLAN offload configuration on an Ethernet device
- * Enable/Disable Extended VLAN by an Ethernet device, This is a register setup
- * available on some Intel NIC, not but all, please check the data sheet for
- * availability.
- * Enable/Disable VLAN Strip can be done on rx queue for certain NIC, but here
- * the configuration is applied on the port level.
+ * Set VLAN offload configuration on an Ethernet device.
  *
  * @param port_id
  *   The port identifier of the Ethernet device.
@@ -3276,8 +3383,7 @@ int rte_eth_dev_priority_flow_ctrl_set(uint16_t port_id,
 				struct rte_eth_pfc_conf *pfc_conf);
 
 /**
- * Add a MAC address to an internal array of addresses used to enable whitelist
- * filtering to accept packets only if the destination MAC address matches.
+ * Add a MAC address to the set used for filtering incoming packets.
  *
  * @param port_id
  *   The port identifier of the Ethernet device.

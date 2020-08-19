@@ -10,16 +10,12 @@
 #include <rte_flow.h>
 #include <rte_flow_driver.h>
 #include "tf_core.h"
-#include "ulp_template_db.h"
+#include "ulp_template_db_enum.h"
 #include "ulp_template_struct.h"
 #include "bnxt_ulp.h"
 #include "ulp_utils.h"
 
-#define ULP_SZ_BITS2BYTES(x) (((x) + 7) / 8)
 #define ULP_IDENTS_INVALID ((uint16_t)0xffff)
-#define ULP_MAPPER_CACHE_RES_TBL_ID_SHFT 16
-#define ULP_MAPPER_CACHE_RES_TBL_TYPE_SHFT 0
-#define ULP_MAPPER_CACHE_RES_TBL_MASK ((uint32_t)0x0000ffff)
 
 /*
  * The cache table opcode is used to convey informat from the cache handler
@@ -42,14 +38,15 @@ struct bnxt_ulp_mapper_cache_entry {
 	uint8_t ident_types[BNXT_ULP_CACHE_TBL_IDENT_MAX_NUM];
 };
 
-struct bnxt_ulp_mapper_def_id_entry {
-	enum tf_identifier_type ident_type;
-	uint64_t ident;
+struct bnxt_ulp_mapper_glb_resource_entry {
+	enum bnxt_ulp_resource_func	resource_func;
+	uint32_t			resource_type; /* TF_ enum type */
+	uint64_t			resource_hndl;
 };
 
 struct bnxt_ulp_mapper_data {
-	struct bnxt_ulp_mapper_def_id_entry
-		dflt_ids[TF_DIR_MAX][BNXT_ULP_DEF_IDENT_INFO_TBL_MAX_SZ];
+	struct bnxt_ulp_mapper_glb_resource_entry
+		glb_res_tbl[TF_DIR_MAX][BNXT_ULP_GLB_RESOURCE_TBL_MAX_SZ];
 	struct bnxt_ulp_mapper_cache_entry
 		*cache_tbl[BNXT_ULP_CACHE_TBL_MAX_SZ];
 };
@@ -57,16 +54,17 @@ struct bnxt_ulp_mapper_data {
 /* Internal Structure for passing the arguments around */
 struct bnxt_ulp_mapper_parms {
 	uint32_t				dev_id;
-	enum bnxt_ulp_byte_order		order;
 	uint32_t				act_tid;
-	struct bnxt_ulp_mapper_act_tbl_info	*atbls;
+	struct bnxt_ulp_mapper_tbl_info		*atbls; /* action table */
 	uint32_t				num_atbls;
 	uint32_t				class_tid;
-	struct bnxt_ulp_mapper_class_tbl_info	*ctbls;
+	struct bnxt_ulp_mapper_tbl_info		*ctbls; /* class table */
 	uint32_t				num_ctbls;
 	struct ulp_rte_act_prop			*act_prop;
 	struct ulp_rte_act_bitmap		*act_bitmap;
+	struct ulp_rte_hdr_bitmap		*hdr_bitmap;
 	struct ulp_rte_hdr_field		*hdr_field;
+	uint32_t				*comp_fld;
 	struct ulp_regfile			*regfile;
 	struct tf				*tfp;
 	struct bnxt_ulp_context			*ulp_ctx;
@@ -76,18 +74,20 @@ struct bnxt_ulp_mapper_parms {
 	struct bnxt_ulp_mapper_data		*mapper_data;
 	enum bnxt_ulp_cache_table_opc		tcam_tbl_opc;
 	struct bnxt_ulp_mapper_cache_entry	*cache_ptr;
+	struct bnxt_ulp_device_params           *device_params;
 };
 
 struct bnxt_ulp_mapper_create_parms {
 	uint32_t			app_priority;
 	struct ulp_rte_hdr_bitmap	*hdr_bitmap;
 	struct ulp_rte_hdr_field	*hdr_field;
+	uint32_t			*comp_fld;
 	struct ulp_rte_act_bitmap	*act;
 	struct ulp_rte_act_prop		*act_prop;
 	uint32_t			class_tid;
 	uint32_t			act_tid;
 	uint16_t			func_id;
-	enum ulp_direction_type		dir;
+	uint32_t			dir_attr;
 };
 
 /* Function to initialize any dynamic mapper data. */
@@ -109,7 +109,8 @@ ulp_mapper_flow_create(struct bnxt_ulp_context	*ulp_ctx,
 
 /* Function that frees all resources associated with the flow. */
 int32_t
-ulp_mapper_flow_destroy(struct bnxt_ulp_context	*ulp_ctx, uint32_t fid);
+ulp_mapper_flow_destroy(struct bnxt_ulp_context	*ulp_ctx, uint32_t fid,
+			enum bnxt_ulp_flow_db_tables flow_tbl_type);
 
 /*
  * Function that frees all resources and can be called on default or regular

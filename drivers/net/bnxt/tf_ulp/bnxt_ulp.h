@@ -12,6 +12,22 @@
 
 #include "rte_ethdev.h"
 
+#include "ulp_template_db_enum.h"
+
+/* NAT defines to reuse existing inner L2 SMAC and DMAC */
+#define BNXT_ULP_NAT_INNER_L2_HEADER_SMAC	0x2000
+#define BNXT_ULP_NAT_INNER_L2_HEADER_DMAC	0x100
+
+/* defines for the ulp_flags */
+#define BNXT_ULP_VF_REP_ENABLED		0x1
+#define ULP_VF_REP_IS_ENABLED(flag)	((flag) & BNXT_ULP_VF_REP_ENABLED)
+
+struct bnxt_ulp_df_rule_info {
+	uint32_t			port_to_app_flow_id;
+	uint32_t			app_to_port_flow_id;
+	uint8_t				valid;
+};
+
 struct bnxt_ulp_data {
 	uint32_t			tbl_scope_id;
 	struct bnxt_ulp_mark_tbl	*mark_tbl;
@@ -20,6 +36,9 @@ struct bnxt_ulp_data {
 	struct bnxt_ulp_flow_db		*flow_db;
 	void				*mapper_data;
 	struct bnxt_ulp_port_db		*port_db;
+	struct bnxt_ulp_fc_info		*fc_info;
+	uint32_t			ulp_flags;
+	struct bnxt_ulp_df_rule_info   df_rule_info[RTE_MAX_ETHPORTS];
 };
 
 struct bnxt_ulp_context {
@@ -47,6 +66,12 @@ struct bnxt_ulp_session_state {
 /* ULP flow id structure */
 struct rte_tf_flow {
 	uint32_t	flow_id;
+};
+
+struct ulp_tlv_param {
+	enum bnxt_ulp_df_param_type type;
+	uint32_t length;
+	uint8_t value[16];
 };
 
 /*
@@ -126,5 +151,36 @@ bnxt_ulp_cntxt_ptr2_port_db_set(struct bnxt_ulp_context	*ulp_ctx,
 /* Function to get the port database from the ulp context. */
 struct bnxt_ulp_port_db *
 bnxt_ulp_cntxt_ptr2_port_db_get(struct bnxt_ulp_context	*ulp_ctx);
+
+/* Function to create default flows. */
+int32_t
+ulp_default_flow_create(struct rte_eth_dev *eth_dev,
+			struct ulp_tlv_param *param_list,
+			uint32_t ulp_class_tid,
+			uint32_t *flow_id);
+
+/* Function to destroy default flows. */
+int32_t
+ulp_default_flow_destroy(struct rte_eth_dev *eth_dev,
+			 uint32_t flow_id);
+
+int
+bnxt_ulp_flow_destroy(struct rte_eth_dev *dev, struct rte_flow *flow,
+		      struct rte_flow_error *error);
+
+int32_t
+bnxt_ulp_cntxt_ptr2_fc_info_set(struct bnxt_ulp_context *ulp_ctx,
+				struct bnxt_ulp_fc_info *ulp_fc_info);
+
+struct bnxt_ulp_fc_info *
+bnxt_ulp_cntxt_ptr2_fc_info_get(struct bnxt_ulp_context *ulp_ctx);
+
+int32_t
+bnxt_ulp_cntxt_ptr2_ulp_flags_get(struct bnxt_ulp_context *ulp_ctx,
+				  uint32_t *flags);
+
+int32_t
+bnxt_ulp_get_df_rule_info(uint8_t port_id, struct bnxt_ulp_context *ulp_ctx,
+			  struct bnxt_ulp_df_rule_info *info);
 
 #endif /* _BNXT_ULP_H_ */

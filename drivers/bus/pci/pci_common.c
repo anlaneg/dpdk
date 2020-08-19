@@ -10,8 +10,6 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <sys/queue.h>
-#include <sys/mman.h>
-
 #include <rte_errno.h>
 #include <rte_interrupts.h>
 #include <rte_log.h>
@@ -36,21 +34,24 @@ const char *rte_pci_get_sysfs_path(void)
 {
 	const char *path = NULL;
 
+#ifdef RTE_EXEC_ENV_LINUX
 	path = getenv("SYSFS_PCI_DEVICES");
 	if (path == NULL)
 		return SYSFS_PCI_DEVICES;
+#endif
 
 	return path;
 }
 
-static struct rte_devargs *pci_devargs_lookup(struct rte_pci_device *dev)
+static struct rte_devargs *
+pci_devargs_lookup(const struct rte_pci_addr *pci_addr)
 {
 	struct rte_devargs *devargs;
 	struct rte_pci_addr addr;
 
 	RTE_EAL_DEVARGS_FOREACH("pci", devargs) {
 		devargs->bus->parse(devargs->name, &addr);
-		if (!rte_pci_addr_cmp(&dev->addr, &addr))
+		if (!rte_pci_addr_cmp(pci_addr, &addr))
 			return devargs;
 	}
 	return NULL;
@@ -64,7 +65,7 @@ pci_name_set(struct rte_pci_device *dev)
 	/* Each device has its internal, canonical name set. */
 	rte_pci_device_name(&dev->addr,
 			dev->name, sizeof(dev->name));
-	devargs = pci_devargs_lookup(dev);
+	devargs = pci_devargs_lookup(&dev->addr);
 	dev->device.devargs = devargs;
 	/* In blacklist mode, if the device is not blacklisted, no
 	 * rte_devargs exists for it.
@@ -141,7 +142,7 @@ rte_pci_probe_one_driver(struct rte_pci_driver *dr,
 		return 1;
 
 	//设备可以被此驱动使用
-	RTE_LOG(INFO, EAL, "PCI device "PCI_PRI_FMT" on NUMA socket %i\n",
+	RTE_LOG(DEBUG, EAL, "PCI device "PCI_PRI_FMT" on NUMA socket %i\n",
 			loc->domain, loc->bus, loc->devid, loc->function,
 			dev->device.numa_node);
 
@@ -169,7 +170,7 @@ rte_pci_probe_one_driver(struct rte_pci_driver *dr,
 	}
 
 	//指名驱动适配成功
-	RTE_LOG(INFO, EAL, "  probe driver: %x:%x %s\n", dev->id.vendor_id,
+	RTE_LOG(DEBUG, EAL, "  probe driver: %x:%x %s\n", dev->id.vendor_id,
 		dev->id.device_id, dr->driver.name);
 
 	/*
@@ -206,6 +207,10 @@ rte_pci_probe_one_driver(struct rte_pci_driver *dr,
 		}
 	}
 
+	RTE_LOG(INFO, EAL, "Probe PCI driver: %s (%x:%x) device: "PCI_PRI_FMT" (socket %i)\n",
+			dr->driver.name, dev->id.vendor_id, dev->id.device_id,
+			loc->domain, loc->bus, loc->devid, loc->function,
+			dev->device.numa_node);
 	/* call the driver probe() function */
 	//用此driver探测此设备
 	ret = dr->probe(dr, dev);
@@ -302,30 +307,18 @@ pci_probe_all_drivers(struct rte_pci_device *dev)
  * all registered drivers that have a matching entry in its id_table
  * for discovered devices.
  */
-int
-rte_pci_probe(void)
+static int
+pci_probe(void)
 {
 	struct rte_pci_device *dev = NULL;
 	size_t probed = 0, failed = 0;
-	struct rte_devargs *devargs;
-	int probe_all = 0;
 	int ret = 0;
-
-	if (rte_pci_bus.bus.conf.scan_mode != RTE_BUS_SCAN_WHITELIST)
-		probe_all = 1;
 
 	//遍历扫描出来的所有设备
 	FOREACH_DEVICE_ON_PCIBUS(dev) {
 		probed++;
 
-		devargs = dev->device.devargs;
-		/* probe all or only whitelisted devices */
-		if (probe_all)
-			ret = pci_probe_all_drivers(dev);
-		else if (devargs != NULL &&
-			devargs->policy == RTE_DEV_WHITELISTED)
-			ret = pci_probe_all_drivers(dev);
-
+		ret = pci_probe_all_drivers(dev);
 		//黑名单或者虚拟设备时，将被跳过
 		if (ret < 0) {
 			if (ret != -EEXIST) {
@@ -609,10 +602,10 @@ pci_dma_unmap(struct rte_device *dev, void *addr, uint64_t iova, size_t len)
 	return -1;
 }
 
-static bool
-pci_ignore_device(const struct rte_pci_device *dev)
+bool
+rte_pci_ignore_device(const struct rte_pci_addr *pci_addr)
 {
-	struct rte_devargs *devargs = dev->device.devargs;
+	struct rte_devargs *devargs = pci_devargs_lookup(pci_addr);
 
 	switch (rte_pci_bus.bus.conf.scan_mode) {
 	case RTE_BUS_SCAN_WHITELIST:
@@ -647,8 +640,7 @@ rte_pci_get_iommu_class(void)
 		if (iommu_no_va == -1)
 			iommu_no_va = pci_device_iommu_support_va(dev)
 					? 0 : 1;
-		if (pci_ignore_device(dev))
-			continue;
+
 		if (dev->kdrv == RTE_KDRV_UNKNOWN ||
 		    dev->kdrv == RTE_KDRV_NONE)
 			continue;
@@ -695,7 +687,7 @@ rte_pci_get_iommu_class(void)
 struct rte_pci_bus rte_pci_bus = {
 	.bus = {
 		.scan = rte_pci_scan,//扫描函数,找到系统中所有pci设备
-		.probe = rte_pci_probe,//探测
+		.probe = pci_probe,//探测
 		.find_device = pci_find_device,
 		.plug = pci_plug,
 		.unplug = pci_unplug,

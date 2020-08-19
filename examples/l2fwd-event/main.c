@@ -39,10 +39,7 @@ l2fwd_event_parse_portmask(const char *portmask)
 	/* parse hexadecimal string */
 	pm = strtoul(portmask, &end, 16);
 	if ((portmask[0] == '\0') || (end == NULL) || (*end != '\0'))
-		return -1;
-
-	if (pm == 0)
-		return -1;
+		return 0;
 
 	return pm;
 }
@@ -394,7 +391,7 @@ check_all_ports_link_status(struct l2fwd_resources *rsrc,
 					"Port%d Link Up. Speed %u Mbps - %s\n",
 						port_id, link.link_speed,
 				(link.link_duplex == ETH_LINK_FULL_DUPLEX) ?
-					("full-duplex") : ("half-duplex\n"));
+					("full-duplex") : ("half-duplex"));
 				else
 					printf("Port %d Link Down\n", port_id);
 				continue;
@@ -516,6 +513,8 @@ print_stats(struct l2fwd_resources *rsrc)
 		   total_packets_rx,
 		   total_packets_dropped);
 	printf("\n====================================================\n");
+
+	fflush(stdout);
 }
 
 static void

@@ -99,7 +99,7 @@ void hinic_set_pf_status(struct hinic_hwif *hwif, enum hinic_pf_status status)
 	u32 addr  = HINIC_CSR_FUNC_ATTR5_ADDR;
 
 	if (hwif->attr.func_type == TYPE_VF) {
-		PMD_DRV_LOG(ERR, "VF doesn't support set attr5");
+		PMD_DRV_LOG(INFO, "VF doesn't support to set attr5");
 		return;
 	}
 
@@ -321,7 +321,7 @@ int wait_until_doorbell_flush_states(struct hinic_hwif *hwif,
 		rte_delay_ms(1);
 	} while (time_before(jiffies, end));
 
-	return -EFAULT;
+	return -ETIMEDOUT;
 }
 
 static int wait_until_doorbell_and_outbound_enabled(struct hinic_hwif *hwif)
@@ -343,7 +343,7 @@ static int wait_until_doorbell_and_outbound_enabled(struct hinic_hwif *hwif)
 		rte_delay_ms(1);
 	} while (time_before(jiffies, end));
 
-	return -EFAULT;
+	return -ETIMEDOUT;
 }
 
 u16 hinic_global_func_id(void *hwdev)

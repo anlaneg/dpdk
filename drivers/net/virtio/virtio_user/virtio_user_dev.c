@@ -151,8 +151,10 @@ virtio_user_start_device(struct virtio_user_dev *dev)
 	if (virtio_user_queue_setup(dev, virtio_user_create_queue) < 0)
 		goto error;
 
-	/* Step 1: set features */
+	/* Step 1: negotiate protocol features & set features */
 	features = dev->features;
+
+
 	/* Strip VIRTIO_NET_F_MAC, as MAC address is handled in vdev init */
 	features &= ~(1ull << VIRTIO_NET_F_MAC);
 	/* Strip VIRTIO_NET_F_CTRL_VQ, as devices do not really need to know */
@@ -426,13 +428,20 @@ virtio_user_dev_setup(struct virtio_user_dev *dev)
 	 1ULL << VIRTIO_NET_F_GUEST_TSO6	|	\
 	 1ULL << VIRTIO_F_IN_ORDER		|	\
 	 1ULL << VIRTIO_F_VERSION_1		|	\
-	 1ULL << VIRTIO_F_RING_PACKED)
+	 1ULL << VIRTIO_F_RING_PACKED		|	\
+	 1ULL << VHOST_USER_F_PROTOCOL_FEATURES)
+
+#define VIRTIO_USER_SUPPORTED_PROTOCOL_FEATURES		\
+	(1ULL << VHOST_USER_PROTOCOL_F_MQ |		\
+	 1ULL << VHOST_USER_PROTOCOL_F_REPLY_ACK)
 
 int
 virtio_user_dev_init(struct virtio_user_dev *dev, char *path, int queues,
 		     int cq, int queue_size, const char *mac, char **ifname,
 		     int server, int mrg_rxbuf, int in_order, int packed_vq)
 {
+	uint64_t protocol_features = 0;
+
 	pthread_mutex_init(&dev->mutex, NULL);
 	strlcpy(dev->path, path, PATH_MAX);
 	dev->started = 0;
@@ -443,6 +452,7 @@ virtio_user_dev_init(struct virtio_user_dev *dev, char *path, int queues,
 	dev->mac_specified = 0;
 	dev->frontend_features = 0;
 	dev->unsupported_features = ~VIRTIO_USER_SUPPORTED_FEATURES;
+	dev->protocol_features = VIRTIO_USER_SUPPORTED_PROTOCOL_FEATURES;
 	parse_mac(dev, mac);
 
 	if (*ifname) {
@@ -454,6 +464,10 @@ virtio_user_dev_init(struct virtio_user_dev *dev, char *path, int queues,
 		PMD_INIT_LOG(ERR, "backend set up fails");
 		return -1;
 	}
+
+	if (!is_vhost_user_by_type(dev->path))
+		dev->unsupported_features |=
+			(1ULL << VHOST_USER_F_PROTOCOL_FEATURES);
 
 	if (!dev->is_server) {
 		//client模式时，设置owner
@@ -471,6 +485,27 @@ virtio_user_dev_init(struct virtio_user_dev *dev, char *path, int queues,
 				     strerror(errno));
 			return -1;
 		}
+
+
+		if (dev->device_features &
+				(1ULL << VHOST_USER_F_PROTOCOL_FEATURES)) {
+			if (dev->ops->send_request(dev,
+					VHOST_USER_GET_PROTOCOL_FEATURES,
+					&protocol_features))
+				return -1;
+
+			dev->protocol_features &= protocol_features;
+
+			if (dev->ops->send_request(dev,
+					VHOST_USER_SET_PROTOCOL_FEATURES,
+					&dev->protocol_features))
+				return -1;
+
+			if (!(dev->protocol_features &
+					(1ULL << VHOST_USER_PROTOCOL_F_MQ)))
+				dev->unsupported_features |=
+					(1ull << VIRTIO_NET_F_MQ);
+		}
 	} else {
 		/* We just pretend vhost-user can support all these features.
 		 * Note that this could be problematic that if some feature is
@@ -479,6 +514,8 @@ virtio_user_dev_init(struct virtio_user_dev *dev, char *path, int queues,
 		 */
 		dev->device_features = VIRTIO_USER_SUPPORTED_FEATURES;
 	}
+
+
 
 	if (!mrg_rxbuf)
 		dev->unsupported_features |= (1ull << VIRTIO_NET_F_MRG_RXBUF);
@@ -746,9 +783,11 @@ virtio_user_handle_cq(struct virtio_user_dev *dev, uint16_t queue_idx)
 	/* Consume avail ring, using used ring idx as first one */
 	//如果used->idx与avail->idx不相等，则说明avail->idx中新增了数据
 	//读端维护used->idx,写端维护avail->idx
-	while (vring->used->idx != vring->avail->idx) {
+	while (__atomic_load_n(&vring->used->idx, __ATOMIC_RELAXED)
+	       != vring->avail->idx) {
 		//取出未读取的avail_idx及其对应的描述符索引（读端依赖used->idx)
-		avail_idx = (vring->used->idx) & (vring->num - 1);
+		avail_idx = __atomic_load_n(&vring->used->idx, __ATOMIC_RELAXED)
+			    & (vring->num - 1);
 		desc_idx = vring->avail->ring[avail_idx];
 
 		//处理消息（并计算有多个描述符被消费）
@@ -761,6 +800,6 @@ virtio_user_handle_cq(struct virtio_user_dev *dev, uint16_t queue_idx)
 		uep->len = n_descs;
 
 		//更新已处理的idx
-		vring->used->idx++;
+		__atomic_add_fetch(&vring->used->idx, 1, __ATOMIC_RELAXED);
 	}
 }

@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: BSD-3-Clause
- * Copyright(c) 2001-2020
+ * Copyright(c) 2001-2020 Intel Corporation
  */
 
 #include "ice_acl.h"
@@ -12,6 +12,7 @@
 #define ICE_ACL_TBL_TCAM_ENTRY_IDX(e) ((e) % ICE_AQC_ACL_TCAM_DEPTH)
 
 #define ICE_ACL_SCEN_ENTRY_INVAL 0xFFFF
+
 /**
  * ice_acl_init_entry
  * @scen: pointer to the scenario struct
@@ -20,8 +21,7 @@
  */
 static void ice_acl_init_entry(struct ice_acl_scen *scen)
 {
-	/**
-	 * low priority: start from the highest index, 25% of total entries
+	/* low priority: start from the highest index, 25% of total entries
 	 * normal priority: start from the highest index, 50% of total entries
 	 * high priority: start from the lowest index, 25% of total entries
 	 */
@@ -44,8 +44,9 @@ static void ice_acl_init_entry(struct ice_acl_scen *scen)
  * Returns ICE_ACL_SCEN_ENTRY_INVAL if fails
  * Returns index on success
  */
-static u16 ice_acl_scen_assign_entry_idx(struct ice_acl_scen *scen,
-					 enum ice_acl_entry_prior prior)
+static u16
+ice_acl_scen_assign_entry_idx(struct ice_acl_scen *scen,
+			      enum ice_acl_entry_prior prior)
 {
 	u16 first_idx, last_idx, i;
 	s8 step;
@@ -198,7 +199,7 @@ static enum ice_status ice_acl_init_tbl(struct ice_hw *hw)
 
 /**
  * ice_acl_assign_act_mems_to_tcam
- * @tbl: pointer to acl table structure
+ * @tbl: pointer to ACL table structure
  * @cur_tcam: Index of current TCAM. Value = 0 to (ICE_AQC_ACL_SLICES - 1)
  * @cur_mem_idx: Index of current action memory bank. Value = 0 to
  *		 (ICE_AQC_MAX_ACTION_MEMORIES - 1)
@@ -229,7 +230,7 @@ ice_acl_assign_act_mems_to_tcam(struct ice_acl_tbl *tbl, u8 cur_tcam,
 
 /**
  * ice_acl_divide_act_mems_to_tcams
- * @tbl: pointer to acl table structure
+ * @tbl: pointer to ACL table structure
  *
  * Figure out how to divide given action memory banks to given TCAMs. This
  * division is for SW book keeping. In the time when scenario is created,
@@ -351,7 +352,7 @@ ice_acl_create_tbl(struct ice_hw *hw, struct ice_acl_tbl_params *params)
 				CPU_TO_LE16(params->dep_tbls[i]);
 	}
 
-	/* call the aq command to create the ACL table with these values */
+	/* call the AQ command to create the ACL table with these values */
 	status = ice_aq_alloc_acl_tbl(hw, &tbl_alloc, NULL);
 
 	if (status) {
@@ -660,7 +661,7 @@ ice_acl_set_scen_chnk_msk(struct ice_aqc_acl_scen *scen_buf,
 
 /**
  * ice_acl_assign_act_mem_for_scen
- * @tbl: pointer to acl table structure
+ * @tbl: pointer to ACL table structure
  * @scen: pointer to the scenario struct
  * @scen_buf: pointer to the available space for the scenario
  * @current_tcam_idx: theoretical index of the TCAM that we associated those
@@ -897,7 +898,7 @@ enum ice_status ice_acl_destroy_tbl(struct ice_hw *hw)
 		}
 	}
 
-	/* call the aq command to destroy the ACL table */
+	/* call the AQ command to destroy the ACL table */
 	status = ice_aq_dealloc_acl_tbl(hw, hw->acl_tbl->id, &resp_buf, NULL);
 
 	if (status) {
@@ -934,9 +935,10 @@ ice_acl_add_entry(struct ice_hw *hw, struct ice_acl_scen *scen,
 		  enum ice_acl_entry_prior prior, u8 *keys, u8 *inverts,
 		  struct ice_acl_act_entry *acts, u8 acts_cnt, u16 *entry_idx)
 {
-	u8 i, entry_tcam, num_cscd, idx, offset;
+	u8 i, entry_tcam, num_cscd, offset;
 	struct ice_aqc_acl_data buf;
 	enum ice_status status = ICE_SUCCESS;
+	u16 idx;
 
 	if (!scen)
 		return ICE_ERR_DOES_NOT_EXIST;
@@ -1106,7 +1108,7 @@ ice_acl_rem_entry(struct ice_hw *hw, struct ice_acl_scen *scen, u16 entry_idx)
 						  NULL);
 		if (status)
 			ice_debug(hw, ICE_DBG_ACL,
-				  "aq program acl entry failed status: %d\n",
+				  "AQ program ACL entry failed status: %d\n",
 				  status);
 	}
 
@@ -1163,7 +1165,7 @@ enum ice_status ice_acl_destroy_scen(struct ice_hw *hw, u16 scen_id)
 			}
 		}
 
-	/* Call the aq command to destroy the targeted scenario */
+	/* Call the AQ command to destroy the targeted scenario */
 	status = ice_aq_dealloc_acl_scen(hw, scen_id, NULL);
 
 	if (status) {

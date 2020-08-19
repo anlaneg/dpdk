@@ -28,13 +28,6 @@
 #define IV_OFFSET		(sizeof(struct rte_crypto_op) + \
 				sizeof(struct rte_crypto_sym_op))
 
-#define uint32_t_to_char(ip, a, b, c, d) do {\
-		*a = (uint8_t)(ip >> 24 & 0xff);\
-		*b = (uint8_t)(ip >> 16 & 0xff);\
-		*c = (uint8_t)(ip >> 8 & 0xff);\
-		*d = (uint8_t)(ip & 0xff);\
-	} while (0)
-
 #define DEFAULT_MAX_CATEGORIES	1
 
 #define INVALID_SPI (0)
@@ -415,5 +408,8 @@ check_flow_params(uint16_t fdir_portid, uint8_t fdir_qid);
 
 int
 create_ipsec_esp_flow(struct ipsec_sa *sa);
+
+uint32_t
+get_nb_crypto_sessions(void);
 
 #endif /* __IPSEC_H__ */

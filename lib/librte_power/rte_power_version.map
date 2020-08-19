@@ -1,4 +1,4 @@
-DPDK_20.0 {
+DPDK_21 {
 	global:
 
 	rte_power_exit;
@@ -26,6 +26,7 @@ EXPERIMENTAL {
 	global:
 
 	rte_empty_poll_detection;
+	rte_power_check_env_supported;
 	rte_power_empty_poll_stat_fetch;
 	rte_power_empty_poll_stat_free;
 	rte_power_empty_poll_stat_init;

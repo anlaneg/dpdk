@@ -193,7 +193,8 @@ int qat_qp_setup(struct qat_pci_device *qat_dev,
 
 {
 	struct qat_qp *qp;
-	struct rte_pci_device *pci_dev = qat_dev->pci_dev;
+	struct rte_pci_device *pci_dev =
+			qat_pci_devs[qat_dev->qat_dev_id].pci_dev;
 	char op_cookie_pool_name[RTE_RING_NAMESIZE];
 	uint32_t i;
 
@@ -274,7 +275,7 @@ int qat_qp_setup(struct qat_pci_device *qat_dev,
 				qp->nb_descriptors,
 				qat_qp_conf->cookie_size, 64, 0,
 				NULL, NULL, NULL, NULL,
-				qat_dev->pci_dev->device.numa_node,
+				pci_dev->device.numa_node,
 				0);
 	if (!qp->op_cookie_pool) {
 		QAT_LOG(ERR, "QAT PMD Cannot create"
@@ -291,7 +292,6 @@ int qat_qp_setup(struct qat_pci_device *qat_dev,
 	}
 
 	qp->qat_dev_gen = qat_dev->qat_dev_gen;
-	qp->build_request = qat_qp_conf->build_request;
 	qp->service_type = qat_qp_conf->hw->service_type;
 	qp->qat_dev = qat_dev;
 
@@ -379,7 +379,8 @@ qat_queue_create(struct qat_pci_device *qat_dev, struct qat_queue *queue,
 	uint64_t queue_base;
 	void *io_addr;
 	const struct rte_memzone *qp_mz;
-	struct rte_pci_device *pci_dev = qat_dev->pci_dev;
+	struct rte_pci_device *pci_dev =
+			qat_pci_devs[qat_dev->qat_dev_id].pci_dev;
 	int ret = 0;
 	uint16_t desc_size = (dir == ADF_RING_DIR_TX ?
 			qp_conf->hw->tx_msg_size : qp_conf->hw->rx_msg_size);
@@ -403,7 +404,7 @@ qat_queue_create(struct qat_pci_device *qat_dev, struct qat_queue *queue,
 		qp_conf->service_str, "qp_mem",
 		queue->hw_bundle_number, queue->hw_queue_number);
 	qp_mz = queue_dma_zone_reserve(queue->memz_name, queue_size_bytes,
-			qat_dev->pci_dev->device.numa_node);
+			pci_dev->device.numa_node);
 	if (qp_mz == NULL) {
 		QAT_LOG(ERR, "Failed to allocate ring memzone");
 		return -ENOMEM;
@@ -580,7 +581,7 @@ qat_enqueue_op_burst(void *qp, void **ops, uint16_t nb_ops)
 	register struct qat_queue *queue;
 	struct qat_qp *tmp_qp = (struct qat_qp *)qp;
 	register uint32_t nb_ops_sent = 0;
-	register int ret;
+	register int ret = -1;
 	uint16_t nb_ops_possible = nb_ops;
 	register uint8_t *base_addr;
 	register uint32_t tail;
@@ -625,11 +626,29 @@ qat_enqueue_op_burst(void *qp, void **ops, uint16_t nb_ops)
 		}
 	}
 
+#ifdef BUILD_QAT_SYM
+	if (tmp_qp->service_type == QAT_SERVICE_SYMMETRIC)
+		qat_sym_preprocess_requests(ops, nb_ops_possible);
+#endif
 
 	while (nb_ops_sent != nb_ops_possible) {
-		ret = tmp_qp->build_request(*ops, base_addr + tail,
+		if (tmp_qp->service_type == QAT_SERVICE_SYMMETRIC) {
+#ifdef BUILD_QAT_SYM
+			ret = qat_sym_build_request(*ops, base_addr + tail,
 				tmp_qp->op_cookies[tail >> queue->trailz],
 				tmp_qp->qat_dev_gen);
+#endif
+		} else if (tmp_qp->service_type == QAT_SERVICE_COMPRESSION) {
+			ret = qat_comp_build_request(*ops, base_addr + tail,
+				tmp_qp->op_cookies[tail >> queue->trailz],
+				tmp_qp->qat_dev_gen);
+		} else if (tmp_qp->service_type == QAT_SERVICE_ASYMMETRIC) {
+#ifdef BUILD_QAT_ASYM
+			ret = qat_asym_build_request(*ops, base_addr + tail,
+				tmp_qp->op_cookies[tail >> queue->trailz],
+				tmp_qp->qat_dev_gen);
+#endif
+		}
 		if (ret != 0) {
 			tmp_qp->stats.enqueue_err_count++;
 			/* This message cannot be enqueued */
@@ -818,7 +837,7 @@ qat_enqueue_comp_op_burst(void *qp, void **ops, uint16_t nb_ops)
 kick_tail:
 	queue->tail = tail;
 	tmp_qp->enqueued += total_descriptors_built;
-	tmp_qp->stats.enqueued_count += total_descriptors_built;
+	tmp_qp->stats.enqueued_count += nb_ops_sent;
 	txq_write_tail(tmp_qp, queue);
 	return nb_ops_sent;
 }
@@ -831,7 +850,7 @@ qat_dequeue_op_burst(void *qp, void **ops, uint16_t nb_ops)
 	uint32_t head;
 	uint32_t op_resp_counter = 0, fw_resp_counter = 0;
 	uint8_t *resp_msg;
-	int nb_fw_responses = 0;
+	int nb_fw_responses;
 
 	rx_queue = &(tmp_qp->rx_q);
 	head = rx_queue->head;
@@ -840,31 +859,27 @@ qat_dequeue_op_burst(void *qp, void **ops, uint16_t nb_ops)
 	while (*(uint32_t *)resp_msg != ADF_RING_EMPTY_SIG &&
 			op_resp_counter != nb_ops) {
 
-		nb_fw_responses = 0;
-		if (tmp_qp->service_type == QAT_SERVICE_SYMMETRIC) {
-			qat_sym_process_response(ops, resp_msg);
-			nb_fw_responses = 1;
-		} else if (tmp_qp->service_type == QAT_SERVICE_COMPRESSION)
+		nb_fw_responses = 1;
 
+		if (tmp_qp->service_type == QAT_SERVICE_SYMMETRIC)
+			qat_sym_process_response(ops, resp_msg);
+		else if (tmp_qp->service_type == QAT_SERVICE_COMPRESSION)
 			nb_fw_responses = qat_comp_process_response(
 				ops, resp_msg,
 				tmp_qp->op_cookies[head >> rx_queue->trailz],
 				&tmp_qp->stats.dequeue_err_count);
-
-		else if (tmp_qp->service_type == QAT_SERVICE_ASYMMETRIC) {
 #ifdef BUILD_QAT_ASYM
+		else if (tmp_qp->service_type == QAT_SERVICE_ASYMMETRIC)
 			qat_asym_process_response(ops, resp_msg,
 				tmp_qp->op_cookies[head >> rx_queue->trailz]);
-			nb_fw_responses = 1;
 #endif
-		}
 
 		head = adf_modulo(head + rx_queue->msg_size,
 				  rx_queue->modulo_mask);
 
 		resp_msg = (uint8_t *)rx_queue->base_addr + head;
 
-		if (ops != NULL && nb_fw_responses) {
+		if (nb_fw_responses) {
 			/* only move on to next op if one was ready to return
 			 * to API
 			 */
@@ -879,18 +894,17 @@ qat_dequeue_op_burst(void *qp, void **ops, uint16_t nb_ops)
 		  * finished with all firmware responses.
 		  */
 		fw_resp_counter += nb_fw_responses;
+
+		rx_queue->nb_processed_responses++;
 	}
 
-	if (fw_resp_counter > 0) {
-		rx_queue->head = head;
-		tmp_qp->dequeued += fw_resp_counter;
-		tmp_qp->stats.dequeued_count += fw_resp_counter;
-		rx_queue->nb_processed_responses += fw_resp_counter;
+	tmp_qp->dequeued += fw_resp_counter;
+	tmp_qp->stats.dequeued_count += op_resp_counter;
 
-		if (rx_queue->nb_processed_responses >
-				QAT_CSR_HEAD_WRITE_THRESH)
-			rxq_free_desc(tmp_qp, rx_queue);
-	}
+	rx_queue->head = head;
+	if (rx_queue->nb_processed_responses > QAT_CSR_HEAD_WRITE_THRESH)
+		rxq_free_desc(tmp_qp, rx_queue);
+
 	QAT_DP_LOG(DEBUG, "Dequeue burst return: %u, QAT responses: %u",
 			op_resp_counter, fw_resp_counter);
 

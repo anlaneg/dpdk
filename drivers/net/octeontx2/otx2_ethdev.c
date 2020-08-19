@@ -298,8 +298,7 @@ nix_cq_rq_init(struct rte_eth_dev *eth_dev, struct otx2_eth_dev *dev,
 				      NIX_CQ_ALIGN, dev->node);
 	if (rz == NULL) {
 		otx2_err("Failed to allocate mem for cq hw ring");
-		rc = -ENOMEM;
-		goto fail;
+		return -ENOMEM;
 	}
 	memset(rz->addr, 0, rz->len);
 	rxq->desc = (uintptr_t)rz->addr;
@@ -348,7 +347,7 @@ nix_cq_rq_init(struct rte_eth_dev *eth_dev, struct otx2_eth_dev *dev,
 	rc = otx2_mbox_process(mbox);
 	if (rc) {
 		otx2_err("Failed to init cq context");
-		goto fail;
+		return rc;
 	}
 
 	aq = otx2_mbox_alloc_msg_nix_aq_enq(mbox);
@@ -373,10 +372,7 @@ nix_cq_rq_init(struct rte_eth_dev *eth_dev, struct otx2_eth_dev *dev,
 	aq->rq.first_skip = first_skip;
 	aq->rq.later_skip = (sizeof(struct rte_mbuf) / 8);
 	aq->rq.flow_tagw = 32; /* 32-bits */
-	aq->rq.lpb_sizem1 = rte_pktmbuf_data_room_size(mp);
-	aq->rq.lpb_sizem1 += rte_pktmbuf_priv_size(mp);
-	aq->rq.lpb_sizem1 += sizeof(struct rte_mbuf);
-	aq->rq.lpb_sizem1 /= 8;
+	aq->rq.lpb_sizem1 = mp->elt_size / 8;
 	aq->rq.lpb_sizem1 -= 1; /* Expressed in size minus one */
 	aq->rq.ena = 1;
 	aq->rq.pb_caching = 0x2; /* First cache aligned block to LLC */
@@ -390,12 +386,44 @@ nix_cq_rq_init(struct rte_eth_dev *eth_dev, struct otx2_eth_dev *dev,
 	rc = otx2_mbox_process(mbox);
 	if (rc) {
 		otx2_err("Failed to init rq context");
-		goto fail;
+		return rc;
+	}
+
+	if (dev->lock_rx_ctx) {
+		aq = otx2_mbox_alloc_msg_nix_aq_enq(mbox);
+		aq->qidx = qid;
+		aq->ctype = NIX_AQ_CTYPE_CQ;
+		aq->op = NIX_AQ_INSTOP_LOCK;
+
+		aq = otx2_mbox_alloc_msg_nix_aq_enq(mbox);
+		if (!aq) {
+			/* The shared memory buffer can be full.
+			 * Flush it and retry
+			 */
+			otx2_mbox_msg_send(mbox, 0);
+			rc = otx2_mbox_wait_for_rsp(mbox, 0);
+			if (rc < 0) {
+				otx2_err("Failed to LOCK cq context");
+				return rc;
+			}
+
+			aq = otx2_mbox_alloc_msg_nix_aq_enq(mbox);
+			if (!aq) {
+				otx2_err("Failed to LOCK rq context");
+				return -ENOMEM;
+			}
+		}
+		aq->qidx = qid;
+		aq->ctype = NIX_AQ_CTYPE_RQ;
+		aq->op = NIX_AQ_INSTOP_LOCK;
+		rc = otx2_mbox_process(mbox);
+		if (rc < 0) {
+			otx2_err("Failed to LOCK rq context");
+			return rc;
+		}
 	}
 
 	return 0;
-fail:
-	return rc;
 }
 
 static int
@@ -440,6 +468,40 @@ nix_cq_rq_uninit(struct rte_eth_dev *eth_dev, struct otx2_eth_rxq *rxq)
 	if (rc < 0) {
 		otx2_err("Failed to disable cq context");
 		return rc;
+	}
+
+	if (dev->lock_rx_ctx) {
+		aq = otx2_mbox_alloc_msg_nix_aq_enq(mbox);
+		aq->qidx = rxq->rq;
+		aq->ctype = NIX_AQ_CTYPE_CQ;
+		aq->op = NIX_AQ_INSTOP_UNLOCK;
+
+		aq = otx2_mbox_alloc_msg_nix_aq_enq(mbox);
+		if (!aq) {
+			/* The shared memory buffer can be full.
+			 * Flush it and retry
+			 */
+			otx2_mbox_msg_send(mbox, 0);
+			rc = otx2_mbox_wait_for_rsp(mbox, 0);
+			if (rc < 0) {
+				otx2_err("Failed to UNLOCK cq context");
+				return rc;
+			}
+
+			aq = otx2_mbox_alloc_msg_nix_aq_enq(mbox);
+			if (!aq) {
+				otx2_err("Failed to UNLOCK rq context");
+				return -ENOMEM;
+			}
+		}
+		aq->qidx = rxq->rq;
+		aq->ctype = NIX_AQ_CTYPE_RQ;
+		aq->op = NIX_AQ_INSTOP_UNLOCK;
+		rc = otx2_mbox_process(mbox);
+		if (rc < 0) {
+			otx2_err("Failed to UNLOCK rq context");
+			return rc;
+		}
 	}
 
 	return 0;
@@ -531,6 +593,7 @@ otx2_nix_rx_queue_setup(struct rte_eth_dev *eth_dev, uint16_t rq,
 	if (eth_dev->data->rx_queues[rq] != NULL) {
 		otx2_nix_dbg("Freeing memory prior to re-allocation %d", rq);
 		otx2_nix_rx_queue_release(eth_dev->data->rx_queues[rq]);
+		rte_eth_dma_zone_free(eth_dev, "cq", rq);
 		eth_dev->data->rx_queues[rq] = NULL;
 	}
 
@@ -728,6 +791,94 @@ nix_tx_offload_flags(struct rte_eth_dev *eth_dev)
 }
 
 static int
+nix_sqb_lock(struct rte_mempool *mp)
+{
+	struct otx2_npa_lf *npa_lf = otx2_intra_dev_get_cfg()->npa_lf;
+	struct npa_aq_enq_req *req;
+	int rc;
+
+	req = otx2_mbox_alloc_msg_npa_aq_enq(npa_lf->mbox);
+	req->aura_id = npa_lf_aura_handle_to_aura(mp->pool_id);
+	req->ctype = NPA_AQ_CTYPE_AURA;
+	req->op = NPA_AQ_INSTOP_LOCK;
+
+	req = otx2_mbox_alloc_msg_npa_aq_enq(npa_lf->mbox);
+	if (!req) {
+		/* The shared memory buffer can be full.
+		 * Flush it and retry
+		 */
+		otx2_mbox_msg_send(npa_lf->mbox, 0);
+		rc = otx2_mbox_wait_for_rsp(npa_lf->mbox, 0);
+		if (rc < 0) {
+			otx2_err("Failed to LOCK AURA context");
+			return rc;
+		}
+
+		req = otx2_mbox_alloc_msg_npa_aq_enq(npa_lf->mbox);
+		if (!req) {
+			otx2_err("Failed to LOCK POOL context");
+			return -ENOMEM;
+		}
+	}
+
+	req->aura_id = npa_lf_aura_handle_to_aura(mp->pool_id);
+	req->ctype = NPA_AQ_CTYPE_POOL;
+	req->op = NPA_AQ_INSTOP_LOCK;
+
+	rc = otx2_mbox_process(npa_lf->mbox);
+	if (rc < 0) {
+		otx2_err("Unable to lock POOL in NDC");
+		return rc;
+	}
+
+	return 0;
+}
+
+static int
+nix_sqb_unlock(struct rte_mempool *mp)
+{
+	struct otx2_npa_lf *npa_lf = otx2_intra_dev_get_cfg()->npa_lf;
+	struct npa_aq_enq_req *req;
+	int rc;
+
+	req = otx2_mbox_alloc_msg_npa_aq_enq(npa_lf->mbox);
+	req->aura_id = npa_lf_aura_handle_to_aura(mp->pool_id);
+	req->ctype = NPA_AQ_CTYPE_AURA;
+	req->op = NPA_AQ_INSTOP_UNLOCK;
+
+	req = otx2_mbox_alloc_msg_npa_aq_enq(npa_lf->mbox);
+	if (!req) {
+		/* The shared memory buffer can be full.
+		 * Flush it and retry
+		 */
+		otx2_mbox_msg_send(npa_lf->mbox, 0);
+		rc = otx2_mbox_wait_for_rsp(npa_lf->mbox, 0);
+		if (rc < 0) {
+			otx2_err("Failed to UNLOCK AURA context");
+			return rc;
+		}
+
+		req = otx2_mbox_alloc_msg_npa_aq_enq(npa_lf->mbox);
+		if (!req) {
+			otx2_err("Failed to UNLOCK POOL context");
+			return -ENOMEM;
+		}
+	}
+	req = otx2_mbox_alloc_msg_npa_aq_enq(npa_lf->mbox);
+	req->aura_id = npa_lf_aura_handle_to_aura(mp->pool_id);
+	req->ctype = NPA_AQ_CTYPE_POOL;
+	req->op = NPA_AQ_INSTOP_UNLOCK;
+
+	rc = otx2_mbox_process(npa_lf->mbox);
+	if (rc < 0) {
+		otx2_err("Unable to UNLOCK AURA in NDC");
+		return rc;
+	}
+
+	return 0;
+}
+
+static int
 nix_sq_init(struct otx2_eth_txq *txq)
 {
 	struct otx2_eth_dev *dev = txq->dev;
@@ -769,7 +920,20 @@ nix_sq_init(struct otx2_eth_txq *txq)
 	/* Many to one reduction */
 	sq->sq.qint_idx = txq->sq % dev->qints;
 
-	return otx2_mbox_process(mbox);
+	rc = otx2_mbox_process(mbox);
+	if (rc < 0)
+		return rc;
+
+	if (dev->lock_tx_ctx) {
+		sq = otx2_mbox_alloc_msg_nix_aq_enq(mbox);
+		sq->qidx = txq->sq;
+		sq->ctype = NIX_AQ_CTYPE_SQ;
+		sq->op = NIX_AQ_INSTOP_LOCK;
+
+		rc = otx2_mbox_process(mbox);
+	}
+
+	return rc;
 }
 
 static int
@@ -811,6 +975,20 @@ nix_sq_uninit(struct otx2_eth_txq *txq)
 	rc = otx2_mbox_process(mbox);
 	if (rc)
 		return rc;
+
+	if (dev->lock_tx_ctx) {
+		/* Unlock sq */
+		aq = otx2_mbox_alloc_msg_nix_aq_enq(mbox);
+		aq->qidx = txq->sq;
+		aq->ctype = NIX_AQ_CTYPE_SQ;
+		aq->op = NIX_AQ_INSTOP_UNLOCK;
+
+		rc = otx2_mbox_process(mbox);
+		if (rc < 0)
+			return rc;
+
+		nix_sqb_unlock(txq->sqb_pool);
+	}
 
 	/* Read SQ and free sqb's */
 	aq = otx2_mbox_alloc_msg_nix_aq_enq(mbox);
@@ -933,6 +1111,8 @@ nix_alloc_sqb_pool(int port, struct otx2_eth_txq *txq, uint16_t nb_desc)
 	}
 
 	nix_sqb_aura_limit_cfg(txq->sqb_pool, txq->nb_sqb_bufs);
+	if (dev->lock_tx_ctx)
+		nix_sqb_lock(txq->sqb_pool);
 
 	return 0;
 fail:
@@ -2180,6 +2360,20 @@ otx2_eth_dev_is_sdp(struct rte_pci_device *pci_dev)
 	return false;
 }
 
+static inline uint64_t
+nix_get_blkaddr(struct otx2_eth_dev *dev)
+{
+	uint64_t reg;
+
+	/* Reading the discovery register to know which NIX is the LF
+	 * attached to.
+	 */
+	reg = otx2_read64(dev->bar2 +
+			  RVU_PF_BLOCK_ADDRX_DISC(RVU_BLOCK_ADDR_NIX0));
+
+	return reg & 0x1FFULL ? RVU_BLOCK_ADDR_NIX0 : RVU_BLOCK_ADDR_NIX1;
+}
+
 static int
 otx2_eth_dev_init(struct rte_eth_dev *eth_dev)
 {
@@ -2239,13 +2433,14 @@ otx2_eth_dev_init(struct rte_eth_dev *eth_dev)
 	dev->configured = 0;
 	dev->drv_inited = true;
 	dev->ptype_disable = 0;
-	dev->base = dev->bar2 + (RVU_BLOCK_ADDR_NIX0 << 20);
 	dev->lmt_addr = dev->bar2 + (RVU_BLOCK_ADDR_LMT << 20);
 
 	/* Attach NIX LF */
 	rc = nix_lf_attach(dev);
 	if (rc)
 		goto otx2_npa_uninit;
+
+	dev->base = dev->bar2 + (nix_get_blkaddr(dev) << 20);
 
 	/* Get NIX MSIX offset */
 	rc = nix_lf_get_msix_offset(dev);

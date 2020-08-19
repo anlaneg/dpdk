@@ -23,9 +23,14 @@
 #include "ice_logs.h"
 #include "ice_ethdev.h"
 #include "ice_generic_flow.h"
+#include "ice_dcf_ethdev.h"
 
 
-#define MAX_QGRP_NUM_TYPE 7
+#define MAX_QGRP_NUM_TYPE	7
+#define MAX_INPUT_SET_BYTE	32
+#define ICE_PPP_IPV4_PROTO	0x0021
+#define ICE_PPP_IPV6_PROTO	0x0057
+#define ICE_IPV4_PROTO_NVGRE	0x002F
 
 #define ICE_SW_INSET_ETHER ( \
 	ICE_INSET_DMAC | ICE_INSET_SMAC | ICE_INSET_ETHERTYPE)
@@ -95,6 +100,18 @@
 	ICE_INSET_VLAN_OUTER | ICE_INSET_VLAN_INNER | \
 	ICE_INSET_DMAC | ICE_INSET_ETHERTYPE | ICE_INSET_PPPOE_SESSION | \
 	ICE_INSET_PPPOE_PROTO)
+#define ICE_SW_INSET_MAC_PPPOE_IPV4 ( \
+	ICE_SW_INSET_MAC_PPPOE | ICE_SW_INSET_MAC_IPV4)
+#define ICE_SW_INSET_MAC_PPPOE_IPV4_TCP ( \
+	ICE_SW_INSET_MAC_PPPOE | ICE_SW_INSET_MAC_IPV4_TCP)
+#define ICE_SW_INSET_MAC_PPPOE_IPV4_UDP ( \
+	ICE_SW_INSET_MAC_PPPOE | ICE_SW_INSET_MAC_IPV4_UDP)
+#define ICE_SW_INSET_MAC_PPPOE_IPV6 ( \
+	ICE_SW_INSET_MAC_PPPOE | ICE_SW_INSET_MAC_IPV6)
+#define ICE_SW_INSET_MAC_PPPOE_IPV6_TCP ( \
+	ICE_SW_INSET_MAC_PPPOE | ICE_SW_INSET_MAC_IPV6_TCP)
+#define ICE_SW_INSET_MAC_PPPOE_IPV6_UDP ( \
+	ICE_SW_INSET_MAC_PPPOE | ICE_SW_INSET_MAC_IPV6_UDP)
 #define ICE_SW_INSET_MAC_IPV4_ESP ( \
 	ICE_SW_INSET_MAC_IPV4 | ICE_INSET_ESP_SPI)
 #define ICE_SW_INSET_MAC_IPV6_ESP ( \
@@ -154,10 +171,6 @@ ice_pattern_match_item ice_switch_pattern_dist_comms[] = {
 			ICE_SW_INSET_DIST_NVGRE_IPV4_UDP, ICE_INSET_NONE},
 	{pattern_eth_ipv4_nvgre_eth_ipv4_tcp,
 			ICE_SW_INSET_DIST_NVGRE_IPV4_TCP, ICE_INSET_NONE},
-	{pattern_eth_pppoed,
-			ICE_SW_INSET_MAC_PPPOE, ICE_INSET_NONE},
-	{pattern_eth_vlan_pppoed,
-			ICE_SW_INSET_MAC_PPPOE, ICE_INSET_NONE},
 	{pattern_eth_pppoes,
 			ICE_SW_INSET_MAC_PPPOE, ICE_INSET_NONE},
 	{pattern_eth_vlan_pppoes,
@@ -166,6 +179,30 @@ ice_pattern_match_item ice_switch_pattern_dist_comms[] = {
 			ICE_SW_INSET_MAC_PPPOE_PROTO, ICE_INSET_NONE},
 	{pattern_eth_vlan_pppoes_proto,
 			ICE_SW_INSET_MAC_PPPOE_PROTO, ICE_INSET_NONE},
+	{pattern_eth_pppoes_ipv4,
+			ICE_SW_INSET_MAC_PPPOE_IPV4, ICE_INSET_NONE},
+	{pattern_eth_pppoes_ipv4_tcp,
+			ICE_SW_INSET_MAC_PPPOE_IPV4_TCP, ICE_INSET_NONE},
+	{pattern_eth_pppoes_ipv4_udp,
+			ICE_SW_INSET_MAC_PPPOE_IPV4_UDP, ICE_INSET_NONE},
+	{pattern_eth_pppoes_ipv6,
+			ICE_SW_INSET_MAC_PPPOE_IPV6, ICE_INSET_NONE},
+	{pattern_eth_pppoes_ipv6_tcp,
+			ICE_SW_INSET_MAC_PPPOE_IPV6_TCP, ICE_INSET_NONE},
+	{pattern_eth_pppoes_ipv6_udp,
+			ICE_SW_INSET_MAC_PPPOE_IPV6_UDP, ICE_INSET_NONE},
+	{pattern_eth_vlan_pppoes_ipv4,
+			ICE_SW_INSET_MAC_PPPOE_IPV4, ICE_INSET_NONE},
+	{pattern_eth_vlan_pppoes_ipv4_tcp,
+			ICE_SW_INSET_MAC_PPPOE_IPV4_TCP, ICE_INSET_NONE},
+	{pattern_eth_vlan_pppoes_ipv4_udp,
+			ICE_SW_INSET_MAC_PPPOE_IPV4_UDP, ICE_INSET_NONE},
+	{pattern_eth_vlan_pppoes_ipv6,
+			ICE_SW_INSET_MAC_PPPOE_IPV6, ICE_INSET_NONE},
+	{pattern_eth_vlan_pppoes_ipv6_tcp,
+			ICE_SW_INSET_MAC_PPPOE_IPV6_TCP, ICE_INSET_NONE},
+	{pattern_eth_vlan_pppoes_ipv6_udp,
+			ICE_SW_INSET_MAC_PPPOE_IPV6_UDP, ICE_INSET_NONE},
 	{pattern_eth_ipv4_esp,
 			ICE_SW_INSET_MAC_IPV4_ESP, ICE_INSET_NONE},
 	{pattern_eth_ipv4_udp_esp,
@@ -254,10 +291,6 @@ ice_pattern_match_item ice_switch_pattern_perm[] = {
 			ICE_SW_INSET_PERM_TUNNEL_IPV4_UDP, ICE_INSET_NONE},
 	{pattern_eth_ipv4_nvgre_eth_ipv4_tcp,
 			ICE_SW_INSET_PERM_TUNNEL_IPV4_TCP, ICE_INSET_NONE},
-	{pattern_eth_pppoed,
-			ICE_SW_INSET_MAC_PPPOE, ICE_INSET_NONE},
-	{pattern_eth_vlan_pppoed,
-			ICE_SW_INSET_MAC_PPPOE, ICE_INSET_NONE},
 	{pattern_eth_pppoes,
 			ICE_SW_INSET_MAC_PPPOE, ICE_INSET_NONE},
 	{pattern_eth_vlan_pppoes,
@@ -266,6 +299,30 @@ ice_pattern_match_item ice_switch_pattern_perm[] = {
 			ICE_SW_INSET_MAC_PPPOE_PROTO, ICE_INSET_NONE},
 	{pattern_eth_vlan_pppoes_proto,
 			ICE_SW_INSET_MAC_PPPOE_PROTO, ICE_INSET_NONE},
+	{pattern_eth_pppoes_ipv4,
+			ICE_SW_INSET_MAC_PPPOE_IPV4, ICE_INSET_NONE},
+	{pattern_eth_pppoes_ipv4_tcp,
+			ICE_SW_INSET_MAC_PPPOE_IPV4_TCP, ICE_INSET_NONE},
+	{pattern_eth_pppoes_ipv4_udp,
+			ICE_SW_INSET_MAC_PPPOE_IPV4_UDP, ICE_INSET_NONE},
+	{pattern_eth_pppoes_ipv6,
+			ICE_SW_INSET_MAC_PPPOE_IPV6, ICE_INSET_NONE},
+	{pattern_eth_pppoes_ipv6_tcp,
+			ICE_SW_INSET_MAC_PPPOE_IPV6_TCP, ICE_INSET_NONE},
+	{pattern_eth_pppoes_ipv6_udp,
+			ICE_SW_INSET_MAC_PPPOE_IPV6_UDP, ICE_INSET_NONE},
+	{pattern_eth_vlan_pppoes_ipv4,
+			ICE_SW_INSET_MAC_PPPOE_IPV4, ICE_INSET_NONE},
+	{pattern_eth_vlan_pppoes_ipv4_tcp,
+			ICE_SW_INSET_MAC_PPPOE_IPV4_TCP, ICE_INSET_NONE},
+	{pattern_eth_vlan_pppoes_ipv4_udp,
+			ICE_SW_INSET_MAC_PPPOE_IPV4_UDP, ICE_INSET_NONE},
+	{pattern_eth_vlan_pppoes_ipv6,
+			ICE_SW_INSET_MAC_PPPOE_IPV6, ICE_INSET_NONE},
+	{pattern_eth_vlan_pppoes_ipv6_tcp,
+			ICE_SW_INSET_MAC_PPPOE_IPV6_TCP, ICE_INSET_NONE},
+	{pattern_eth_vlan_pppoes_ipv6_udp,
+			ICE_SW_INSET_MAC_PPPOE_IPV6_UDP, ICE_INSET_NONE},
 	{pattern_eth_ipv4_esp,
 			ICE_SW_INSET_MAC_IPV4_ESP, ICE_INSET_NONE},
 	{pattern_eth_ipv4_udp_esp,
@@ -416,13 +473,19 @@ ice_switch_inset_get(const struct rte_flow_item pattern[],
 	const struct rte_flow_item_l2tpv3oip *l2tp_spec, *l2tp_mask;
 	const struct rte_flow_item_pfcp *pfcp_spec, *pfcp_mask;
 	uint64_t input_set = ICE_INSET_NONE;
-	uint16_t j, t = 0;
-	bool profile_rule = 0;
+	uint16_t input_set_byte = 0;
+	bool pppoe_elem_valid = 0;
+	bool pppoe_patt_valid = 0;
+	bool pppoe_prot_valid = 0;
 	bool tunnel_valid = 0;
-	bool pppoe_valid = 0;
-	bool ipv6_valiad = 0;
-	bool ipv4_valiad = 0;
-	bool udp_valiad = 0;
+	bool profile_rule = 0;
+	bool nvgre_valid = 0;
+	bool vxlan_valid = 0;
+	bool ipv6_valid = 0;
+	bool ipv4_valid = 0;
+	bool udp_valid = 0;
+	bool tcp_valid = 0;
+	uint16_t j, t = 0;
 
 	for (item = pattern; item->type !=
 			RTE_FLOW_ITEM_TYPE_END; item++) {
@@ -480,6 +543,7 @@ ice_switch_inset_get(const struct rte_flow_item pattern[],
 						m->src_addr[j] =
 						eth_mask->src.addr_bytes[j];
 						i = 1;
+						input_set_byte++;
 					}
 					if (eth_mask->dst.addr_bytes[j]) {
 						h->dst_addr[j] =
@@ -487,6 +551,7 @@ ice_switch_inset_get(const struct rte_flow_item pattern[],
 						m->dst_addr[j] =
 						eth_mask->dst.addr_bytes[j];
 						i = 1;
+						input_set_byte++;
 					}
 				}
 				if (i)
@@ -497,6 +562,7 @@ ice_switch_inset_get(const struct rte_flow_item pattern[],
 						eth_spec->type;
 					list[t].m_u.ethertype.ethtype_id =
 						eth_mask->type;
+					input_set_byte += 2;
 					t++;
 				}
 			}
@@ -505,7 +571,7 @@ ice_switch_inset_get(const struct rte_flow_item pattern[],
 		case RTE_FLOW_ITEM_TYPE_IPV4:
 			ipv4_spec = item->spec;
 			ipv4_mask = item->mask;
-			ipv4_valiad = 1;
+			ipv4_valid = 1;
 			if (ipv4_spec && ipv4_mask) {
 				/* Check IPv4 mask and update input set */
 				if (ipv4_mask->hdr.version_ihl ||
@@ -556,30 +622,39 @@ ice_switch_inset_get(const struct rte_flow_item pattern[],
 						ipv4_spec->hdr.src_addr;
 					list[t].m_u.ipv4_hdr.src_addr =
 						ipv4_mask->hdr.src_addr;
+					input_set_byte += 2;
 				}
 				if (ipv4_mask->hdr.dst_addr) {
 					list[t].h_u.ipv4_hdr.dst_addr =
 						ipv4_spec->hdr.dst_addr;
 					list[t].m_u.ipv4_hdr.dst_addr =
 						ipv4_mask->hdr.dst_addr;
+					input_set_byte += 2;
 				}
 				if (ipv4_mask->hdr.time_to_live) {
 					list[t].h_u.ipv4_hdr.time_to_live =
 						ipv4_spec->hdr.time_to_live;
 					list[t].m_u.ipv4_hdr.time_to_live =
 						ipv4_mask->hdr.time_to_live;
+					input_set_byte++;
 				}
 				if (ipv4_mask->hdr.next_proto_id) {
 					list[t].h_u.ipv4_hdr.protocol =
 						ipv4_spec->hdr.next_proto_id;
 					list[t].m_u.ipv4_hdr.protocol =
 						ipv4_mask->hdr.next_proto_id;
+					input_set_byte++;
 				}
+				if ((ipv4_spec->hdr.next_proto_id &
+					ipv4_mask->hdr.next_proto_id) ==
+					ICE_IPV4_PROTO_NVGRE)
+					*tun_type = ICE_SW_TUN_AND_NON_TUN;
 				if (ipv4_mask->hdr.type_of_service) {
 					list[t].h_u.ipv4_hdr.tos =
 						ipv4_spec->hdr.type_of_service;
 					list[t].m_u.ipv4_hdr.tos =
 						ipv4_mask->hdr.type_of_service;
+					input_set_byte++;
 				}
 				t++;
 			}
@@ -588,7 +663,7 @@ ice_switch_inset_get(const struct rte_flow_item pattern[],
 		case RTE_FLOW_ITEM_TYPE_IPV6:
 			ipv6_spec = item->spec;
 			ipv6_mask = item->mask;
-			ipv6_valiad = 1;
+			ipv6_valid = 1;
 			if (ipv6_spec && ipv6_mask) {
 				if (ipv6_mask->hdr.payload_len) {
 					rte_flow_error_set(error, EINVAL,
@@ -657,12 +732,14 @@ ice_switch_inset_get(const struct rte_flow_item pattern[],
 						ipv6_spec->hdr.src_addr[j];
 						s->src_addr[j] =
 						ipv6_mask->hdr.src_addr[j];
+						input_set_byte++;
 					}
 					if (ipv6_mask->hdr.dst_addr[j]) {
 						f->dst_addr[j] =
 						ipv6_spec->hdr.dst_addr[j];
 						s->dst_addr[j] =
 						ipv6_mask->hdr.dst_addr[j];
+						input_set_byte++;
 					}
 				}
 				if (ipv6_mask->hdr.proto) {
@@ -670,12 +747,14 @@ ice_switch_inset_get(const struct rte_flow_item pattern[],
 						ipv6_spec->hdr.proto;
 					s->next_hdr =
 						ipv6_mask->hdr.proto;
+					input_set_byte++;
 				}
 				if (ipv6_mask->hdr.hop_limits) {
 					f->hop_limit =
 						ipv6_spec->hdr.hop_limits;
 					s->hop_limit =
 						ipv6_mask->hdr.hop_limits;
+					input_set_byte++;
 				}
 				if (ipv6_mask->hdr.vtc_flow &
 						rte_cpu_to_be_32
@@ -693,6 +772,7 @@ ice_switch_inset_get(const struct rte_flow_item pattern[],
 							RTE_IPV6_HDR_TC_MASK) >>
 							RTE_IPV6_HDR_TC_SHIFT;
 					s->be_ver_tc_flow = CPU_TO_BE32(vtf.u.val);
+					input_set_byte += 4;
 				}
 				t++;
 			}
@@ -701,7 +781,7 @@ ice_switch_inset_get(const struct rte_flow_item pattern[],
 		case RTE_FLOW_ITEM_TYPE_UDP:
 			udp_spec = item->spec;
 			udp_mask = item->mask;
-			udp_valiad = 1;
+			udp_valid = 1;
 			if (udp_spec && udp_mask) {
 				/* Check UDP mask and update input set*/
 				if (udp_mask->hdr.dgram_len ||
@@ -738,20 +818,23 @@ ice_switch_inset_get(const struct rte_flow_item pattern[],
 						udp_spec->hdr.src_port;
 					list[t].m_u.l4_hdr.src_port =
 						udp_mask->hdr.src_port;
+					input_set_byte += 2;
 				}
 				if (udp_mask->hdr.dst_port) {
 					list[t].h_u.l4_hdr.dst_port =
 						udp_spec->hdr.dst_port;
 					list[t].m_u.l4_hdr.dst_port =
 						udp_mask->hdr.dst_port;
+					input_set_byte += 2;
 				}
-						t++;
+				t++;
 			}
 			break;
 
 		case RTE_FLOW_ITEM_TYPE_TCP:
 			tcp_spec = item->spec;
 			tcp_mask = item->mask;
+			tcp_valid = 1;
 			if (tcp_spec && tcp_mask) {
 				/* Check TCP mask and update input set */
 				if (tcp_mask->hdr.sent_seq ||
@@ -789,12 +872,14 @@ ice_switch_inset_get(const struct rte_flow_item pattern[],
 						tcp_spec->hdr.src_port;
 					list[t].m_u.l4_hdr.src_port =
 						tcp_mask->hdr.src_port;
+					input_set_byte += 2;
 				}
 				if (tcp_mask->hdr.dst_port) {
 					list[t].h_u.l4_hdr.dst_port =
 						tcp_spec->hdr.dst_port;
 					list[t].m_u.l4_hdr.dst_port =
 						tcp_mask->hdr.dst_port;
+					input_set_byte += 2;
 				}
 				t++;
 			}
@@ -834,12 +919,14 @@ ice_switch_inset_get(const struct rte_flow_item pattern[],
 						sctp_spec->hdr.src_port;
 					list[t].m_u.sctp_hdr.src_port =
 						sctp_mask->hdr.src_port;
+					input_set_byte += 2;
 				}
 				if (sctp_mask->hdr.dst_port) {
 					list[t].h_u.sctp_hdr.dst_port =
 						sctp_spec->hdr.dst_port;
 					list[t].m_u.sctp_hdr.dst_port =
 						sctp_mask->hdr.dst_port;
+					input_set_byte += 2;
 				}
 				t++;
 			}
@@ -860,7 +947,7 @@ ice_switch_inset_get(const struct rte_flow_item pattern[],
 					   "Invalid VXLAN item");
 				return 0;
 			}
-
+			vxlan_valid = 1;
 			tunnel_valid = 1;
 			if (vxlan_spec && vxlan_mask) {
 				list[t].type = ICE_VXLAN;
@@ -877,6 +964,7 @@ ice_switch_inset_get(const struct rte_flow_item pattern[],
 						vxlan_mask->vni[0];
 					input_set |=
 						ICE_INSET_TUN_VXLAN_VNI;
+					input_set_byte += 2;
 				}
 				t++;
 			}
@@ -897,6 +985,7 @@ ice_switch_inset_get(const struct rte_flow_item pattern[],
 					   "Invalid NVGRE item");
 				return 0;
 			}
+			nvgre_valid = 1;
 			tunnel_valid = 1;
 			if (nvgre_spec && nvgre_mask) {
 				list[t].type = ICE_NVGRE;
@@ -913,6 +1002,7 @@ ice_switch_inset_get(const struct rte_flow_item pattern[],
 						nvgre_mask->tni[0];
 					input_set |=
 						ICE_INSET_TUN_NVGRE_TNI;
+					input_set_byte += 2;
 				}
 				t++;
 			}
@@ -941,6 +1031,7 @@ ice_switch_inset_get(const struct rte_flow_item pattern[],
 					list[t].m_u.vlan_hdr.vlan =
 						vlan_mask->tci;
 					input_set |= ICE_INSET_VLAN_OUTER;
+					input_set_byte += 2;
 				}
 				if (vlan_mask->inner_type) {
 					list[t].h_u.vlan_hdr.type =
@@ -948,6 +1039,7 @@ ice_switch_inset_get(const struct rte_flow_item pattern[],
 					list[t].m_u.vlan_hdr.type =
 						vlan_mask->inner_type;
 					input_set |= ICE_INSET_ETHERTYPE;
+					input_set_byte += 2;
 				}
 				t++;
 			}
@@ -969,6 +1061,7 @@ ice_switch_inset_get(const struct rte_flow_item pattern[],
 					"Invalid pppoe item");
 				return 0;
 			}
+			pppoe_patt_valid = 1;
 			if (pppoe_spec && pppoe_mask) {
 				/* Check pppoe mask and update input set */
 				if (pppoe_mask->length ||
@@ -987,9 +1080,10 @@ ice_switch_inset_get(const struct rte_flow_item pattern[],
 					list[t].m_u.pppoe_hdr.session_id =
 						pppoe_mask->session_id;
 					input_set |= ICE_INSET_PPPOE_SESSION;
+					input_set_byte += 2;
 				}
 				t++;
-				pppoe_valid = 1;
+				pppoe_elem_valid = 1;
 			}
 			break;
 
@@ -1010,7 +1104,7 @@ ice_switch_inset_get(const struct rte_flow_item pattern[],
 				return 0;
 			}
 			if (pppoe_proto_spec && pppoe_proto_mask) {
-				if (pppoe_valid)
+				if (pppoe_elem_valid)
 					t--;
 				list[t].type = ICE_PPPOE;
 				if (pppoe_proto_mask->proto_id) {
@@ -1019,9 +1113,21 @@ ice_switch_inset_get(const struct rte_flow_item pattern[],
 					list[t].m_u.pppoe_hdr.ppp_prot_id =
 						pppoe_proto_mask->proto_id;
 					input_set |= ICE_INSET_PPPOE_PROTO;
+					input_set_byte += 2;
+					pppoe_prot_valid = 1;
 				}
+				if ((pppoe_proto_mask->proto_id &
+					pppoe_proto_spec->proto_id) !=
+					    CPU_TO_BE16(ICE_PPP_IPV4_PROTO) &&
+					(pppoe_proto_mask->proto_id &
+					pppoe_proto_spec->proto_id) !=
+					    CPU_TO_BE16(ICE_PPP_IPV6_PROTO))
+					*tun_type = ICE_SW_TUN_PPPOE_PAY;
+				else
+					*tun_type = ICE_SW_TUN_PPPOE;
 				t++;
 			}
+
 			break;
 
 		case RTE_FLOW_ITEM_TYPE_ESP:
@@ -1046,16 +1152,16 @@ ice_switch_inset_get(const struct rte_flow_item pattern[],
 
 			if (!esp_spec && !esp_mask && !input_set) {
 				profile_rule = 1;
-				if (ipv6_valiad && udp_valiad)
+				if (ipv6_valid && udp_valid)
 					*tun_type =
 					ICE_SW_TUN_PROFID_IPV6_NAT_T;
-				else if (ipv6_valiad)
+				else if (ipv6_valid)
 					*tun_type = ICE_SW_TUN_PROFID_IPV6_ESP;
-				else if (ipv4_valiad)
+				else if (ipv4_valid)
 					return 0;
 			} else if (esp_spec && esp_mask &&
 						esp_mask->hdr.spi){
-				if (udp_valiad)
+				if (udp_valid)
 					list[t].type = ICE_NAT_T;
 				else
 					list[t].type = ICE_ESP;
@@ -1064,17 +1170,18 @@ ice_switch_inset_get(const struct rte_flow_item pattern[],
 				list[t].m_u.esp_hdr.spi =
 					esp_mask->hdr.spi;
 				input_set |= ICE_INSET_ESP_SPI;
+				input_set_byte += 4;
 				t++;
 			}
 
 			if (!profile_rule) {
-				if (ipv6_valiad && udp_valiad)
+				if (ipv6_valid && udp_valid)
 					*tun_type = ICE_SW_TUN_IPV6_NAT_T;
-				else if (ipv4_valiad && udp_valiad)
+				else if (ipv4_valid && udp_valid)
 					*tun_type = ICE_SW_TUN_IPV4_NAT_T;
-				else if (ipv6_valiad)
+				else if (ipv6_valid)
 					*tun_type = ICE_SW_TUN_IPV6_ESP;
-				else if (ipv4_valiad)
+				else if (ipv4_valid)
 					*tun_type = ICE_SW_TUN_IPV4_ESP;
 			}
 			break;
@@ -1105,12 +1212,12 @@ ice_switch_inset_get(const struct rte_flow_item pattern[],
 
 			if (!ah_spec && !ah_mask && !input_set) {
 				profile_rule = 1;
-				if (ipv6_valiad && udp_valiad)
+				if (ipv6_valid && udp_valid)
 					*tun_type =
 					ICE_SW_TUN_PROFID_IPV6_NAT_T;
-				else if (ipv6_valiad)
+				else if (ipv6_valid)
 					*tun_type = ICE_SW_TUN_PROFID_IPV6_AH;
-				else if (ipv4_valiad)
+				else if (ipv4_valid)
 					return 0;
 			} else if (ah_spec && ah_mask &&
 						ah_mask->spi){
@@ -1120,15 +1227,16 @@ ice_switch_inset_get(const struct rte_flow_item pattern[],
 				list[t].m_u.ah_hdr.spi =
 					ah_mask->spi;
 				input_set |= ICE_INSET_AH_SPI;
+				input_set_byte += 4;
 				t++;
 			}
 
 			if (!profile_rule) {
-				if (udp_valiad)
+				if (udp_valid)
 					return 0;
-				else if (ipv6_valiad)
+				else if (ipv6_valid)
 					*tun_type = ICE_SW_TUN_IPV6_AH;
-				else if (ipv4_valiad)
+				else if (ipv4_valid)
 					*tun_type = ICE_SW_TUN_IPV4_AH;
 			}
 			break;
@@ -1146,10 +1254,10 @@ ice_switch_inset_get(const struct rte_flow_item pattern[],
 			}
 
 			if (!l2tp_spec && !l2tp_mask && !input_set) {
-				if (ipv6_valiad)
+				if (ipv6_valid)
 					*tun_type =
 					ICE_SW_TUN_PROFID_MAC_IPV6_L2TPV3;
-				else if (ipv4_valiad)
+				else if (ipv4_valid)
 					return 0;
 			} else if (l2tp_spec && l2tp_mask &&
 						l2tp_mask->session_id){
@@ -1159,14 +1267,15 @@ ice_switch_inset_get(const struct rte_flow_item pattern[],
 				list[t].m_u.l2tpv3_sess_hdr.session_id =
 					l2tp_mask->session_id;
 				input_set |= ICE_INSET_L2TPV3OIP_SESSION_ID;
+				input_set_byte += 4;
 				t++;
 			}
 
 			if (!profile_rule) {
-				if (ipv6_valiad)
+				if (ipv6_valid)
 					*tun_type =
 					ICE_SW_TUN_IPV6_L2TPV3;
-				else if (ipv4_valiad)
+				else if (ipv4_valid)
 					*tun_type =
 					ICE_SW_TUN_IPV4_L2TPV3;
 			}
@@ -1200,7 +1309,7 @@ ice_switch_inset_get(const struct rte_flow_item pattern[],
 				}
 				if (pfcp_mask->s_field &&
 					pfcp_spec->s_field == 0x01 &&
-					ipv6_valiad)
+					ipv6_valid)
 					*tun_type =
 					ICE_SW_TUN_PROFID_IPV6_PFCP_SESSION;
 				else if (pfcp_mask->s_field &&
@@ -1209,7 +1318,7 @@ ice_switch_inset_get(const struct rte_flow_item pattern[],
 					ICE_SW_TUN_PROFID_IPV4_PFCP_SESSION;
 				else if (pfcp_mask->s_field &&
 					!pfcp_spec->s_field &&
-					ipv6_valiad)
+					ipv6_valid)
 					*tun_type =
 					ICE_SW_TUN_PROFID_IPV6_PFCP_NODE;
 				else if (pfcp_mask->s_field &&
@@ -1232,6 +1341,46 @@ ice_switch_inset_get(const struct rte_flow_item pattern[],
 		}
 	}
 
+	if (pppoe_patt_valid && !pppoe_prot_valid) {
+		if (ipv6_valid && udp_valid)
+			*tun_type = ICE_SW_TUN_PPPOE_IPV6_UDP;
+		else if (ipv6_valid && tcp_valid)
+			*tun_type = ICE_SW_TUN_PPPOE_IPV6_TCP;
+		else if (ipv4_valid && udp_valid)
+			*tun_type = ICE_SW_TUN_PPPOE_IPV4_UDP;
+		else if (ipv4_valid && tcp_valid)
+			*tun_type = ICE_SW_TUN_PPPOE_IPV4_TCP;
+		else if (ipv6_valid)
+			*tun_type = ICE_SW_TUN_PPPOE_IPV6;
+		else if (ipv4_valid)
+			*tun_type = ICE_SW_TUN_PPPOE_IPV4;
+		else
+			*tun_type = ICE_SW_TUN_PPPOE;
+	}
+
+	if (*tun_type == ICE_NON_TUN) {
+		if (vxlan_valid)
+			*tun_type = ICE_SW_TUN_VXLAN;
+		else if (nvgre_valid)
+			*tun_type = ICE_SW_TUN_NVGRE;
+		else if (ipv4_valid && tcp_valid)
+			*tun_type = ICE_SW_IPV4_TCP;
+		else if (ipv4_valid && udp_valid)
+			*tun_type = ICE_SW_IPV4_UDP;
+		else if (ipv6_valid && tcp_valid)
+			*tun_type = ICE_SW_IPV6_TCP;
+		else if (ipv6_valid && udp_valid)
+			*tun_type = ICE_SW_IPV6_UDP;
+	}
+
+	if (input_set_byte > MAX_INPUT_SET_BYTE) {
+		rte_flow_error_set(error, EINVAL,
+			RTE_FLOW_ERROR_TYPE_ITEM,
+			item,
+			"too much input set");
+		return -ENOTSUP;
+	}
+
 	*lkups_num = t;
 
 	return input_set;
@@ -1240,7 +1389,8 @@ out:
 }
 
 static int
-ice_switch_parse_dcf_action(const struct rte_flow_action *actions,
+ice_switch_parse_dcf_action(struct ice_dcf_adapter *ad,
+			    const struct rte_flow_action *actions,
 			    struct rte_flow_error *error,
 			    struct ice_adv_rule_info *rule_info)
 {
@@ -1255,7 +1405,11 @@ ice_switch_parse_dcf_action(const struct rte_flow_action *actions,
 		case RTE_FLOW_ACTION_TYPE_VF:
 			rule_info->sw_act.fltr_act = ICE_FWD_TO_VSI;
 			act_vf = action->conf;
-			rule_info->sw_act.vsi_handle = act_vf->id;
+			if (act_vf->original)
+				rule_info->sw_act.vsi_handle =
+					ad->real_hw.avf.bus.func;
+			else
+				rule_info->sw_act.vsi_handle = act_vf->id;
 			break;
 		default:
 			rte_flow_error_set(error,
@@ -1267,6 +1421,7 @@ ice_switch_parse_dcf_action(const struct rte_flow_action *actions,
 	}
 
 	rule_info->sw_act.src = rule_info->sw_act.vsi_handle;
+	rule_info->sw_act.flag = ICE_FLTR_RX;
 	rule_info->rx = 1;
 	rule_info->priority = 5;
 
@@ -1296,6 +1451,8 @@ ice_switch_parse_action(struct ice_pf *pf,
 		switch (action_type) {
 		case RTE_FLOW_ACTION_TYPE_RSS:
 			act_qgrop = action->conf;
+			if (act_qgrop->queue_num <= 1)
+				goto error;
 			rule_info->sw_act.fltr_act =
 				ICE_FWD_TO_QGRP;
 			rule_info->sw_act.fwd_id.q_id =
@@ -1385,7 +1542,7 @@ ice_switch_check_action(const struct rte_flow_action *actions,
 		}
 	}
 
-	if (actions_num > 1) {
+	if (actions_num != 1) {
 		rte_flow_error_set(error,
 				   EINVAL, RTE_FLOW_ERROR_TYPE_ACTION,
 				   actions,
@@ -1435,18 +1592,11 @@ ice_switch_parse_pattern_action(struct ice_adapter *ad,
 	const struct rte_flow_item *item = pattern;
 	uint16_t item_num = 0;
 	enum ice_sw_tunnel_type tun_type =
-		ICE_SW_TUN_AND_NON_TUN;
+			ICE_NON_TUN;
 	struct ice_pattern_match_item *pattern_match_item = NULL;
 
 	for (; item->type != RTE_FLOW_ITEM_TYPE_END; item++) {
 		item_num++;
-		if (item->type == RTE_FLOW_ITEM_TYPE_VXLAN)
-			tun_type = ICE_SW_TUN_VXLAN;
-		if (item->type == RTE_FLOW_ITEM_TYPE_NVGRE)
-			tun_type = ICE_SW_TUN_NVGRE;
-		if (item->type == RTE_FLOW_ITEM_TYPE_PPPOED ||
-				item->type == RTE_FLOW_ITEM_TYPE_PPPOES)
-			tun_type = ICE_SW_TUN_PPPOE;
 		if (item->type == RTE_FLOW_ITEM_TYPE_ETH) {
 			const struct rte_flow_item_eth *eth_mask;
 			if (item->mask)
@@ -1500,6 +1650,7 @@ ice_switch_parse_pattern_action(struct ice_adapter *ad,
 		goto error;
 	}
 
+	memset(&rule_info, 0, sizeof(rule_info));
 	rule_info.tun_type = tun_type;
 
 	ret = ice_switch_check_action(actions, error);
@@ -1511,7 +1662,8 @@ ice_switch_parse_pattern_action(struct ice_adapter *ad,
 	}
 
 	if (ad->hw.dcf_enabled)
-		ret = ice_switch_parse_dcf_action(actions, error, &rule_info);
+		ret = ice_switch_parse_dcf_action((void *)ad, actions, error,
+						  &rule_info);
 	else
 		ret = ice_switch_parse_action(pf, actions, error, &rule_info);
 
@@ -1573,6 +1725,9 @@ ice_switch_redirect(struct ice_adapter *ad,
 	uint16_t lkups_cnt;
 	int ret;
 
+	if (rdata->vsi_handle != rd->vsi_handle)
+		return 0;
+
 	sw = hw->switch_info;
 	if (!sw->recp_list[rdata->rid].recp_created)
 		return -EINVAL;
@@ -1584,25 +1739,32 @@ ice_switch_redirect(struct ice_adapter *ad,
 	LIST_FOR_EACH_ENTRY(list_itr, list_head, ice_adv_fltr_mgmt_list_entry,
 			    list_entry) {
 		rinfo = list_itr->rule_info;
-		if (rinfo.fltr_rule_id == rdata->rule_id &&
+		if ((rinfo.fltr_rule_id == rdata->rule_id &&
 		    rinfo.sw_act.fltr_act == ICE_FWD_TO_VSI &&
-		    rinfo.sw_act.vsi_handle == rd->vsi_handle) {
+		    rinfo.sw_act.vsi_handle == rd->vsi_handle) ||
+		    (rinfo.fltr_rule_id == rdata->rule_id &&
+		    rinfo.sw_act.fltr_act == ICE_FWD_TO_VSI_LIST)){
 			lkups_cnt = list_itr->lkups_cnt;
 			lkups_dp = (struct ice_adv_lkup_elem *)
 				ice_memdup(hw, list_itr->lkups,
 					   sizeof(*list_itr->lkups) *
 					   lkups_cnt, ICE_NONDMA_TO_NONDMA);
+
 			if (!lkups_dp) {
 				PMD_DRV_LOG(ERR, "Failed to allocate memory.");
 				return -EINVAL;
 			}
 
+			if (rinfo.sw_act.fltr_act == ICE_FWD_TO_VSI_LIST) {
+				rinfo.sw_act.vsi_handle = rd->vsi_handle;
+				rinfo.sw_act.fltr_act = ICE_FWD_TO_VSI;
+			}
 			break;
 		}
 	}
 
 	if (!lkups_dp)
-		return 0;
+		return -EINVAL;
 
 	/* Remove the old rule */
 	ret = ice_rem_adv_rule(hw, list_itr->lkups,

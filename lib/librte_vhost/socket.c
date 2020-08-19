@@ -43,6 +43,7 @@ struct vhost_user_socket {
 	bool use_builtin_virtio_net;//是否使用内建的virtio_net
 	bool extbuf;
 	bool linearbuf;/*是否line buffer*/
+	bool async_copy;
 
 	/*
 	 * The "supported_features" indicates the feature bits the
@@ -56,12 +57,7 @@ struct vhost_user_socket {
 
 	uint64_t protocol_features;
 
-	/*
-	 * Device id to identify a specific backend device.
-	 * It's set to -1 for the default software implementation.
-	 * If valid, one socket can have 1 connection only.
-	 */
-	int vdpa_dev_id;
+	struct rte_vdpa_device *vdpa_dev;
 
 	struct vhost_device_ops const *notify_ops;//通知操作集
 };
@@ -220,6 +216,7 @@ vhost_user_add_connection(int fd, struct vhost_user_socket *vsocket)
 	size_t size;
 	struct vhost_user_connection *conn;
 	int ret;
+	struct virtio_net *dev;
 
 	if (vsocket == NULL)
 		return;
@@ -241,7 +238,7 @@ vhost_user_add_connection(int fd, struct vhost_user_socket *vsocket)
 
 	vhost_set_builtin_virtio_net(vid, vsocket->use_builtin_virtio_net);
 
-	vhost_attach_vdpa_device(vid, vsocket->vdpa_dev_id);
+	vhost_attach_vdpa_device(vid, vsocket->vdpa_dev);
 
 	//如果vsocket开启了入队zero copy,则设置在dev上
 	if (vsocket->dequeue_zero_copy)
@@ -252,6 +249,13 @@ vhost_user_add_connection(int fd, struct vhost_user_socket *vsocket)
 
 	if (vsocket->linearbuf)
 		vhost_enable_linearbuf(vid);
+
+	if (vsocket->async_copy) {
+		dev = get_device(vid);
+
+		if (dev)
+			dev->async_copy = 1;
+	}
 
 	VHOST_LOG_CONFIG(INFO, "new device, handle is %d\n", vid);
 
@@ -633,17 +637,18 @@ find_vhost_user_socket(const char *path)
 }
 
 int
-rte_vhost_driver_attach_vdpa_device(const char *path, int did)
+rte_vhost_driver_attach_vdpa_device(const char *path,
+		struct rte_vdpa_device *dev)
 {
 	struct vhost_user_socket *vsocket;
 
-	if (rte_vdpa_get_device(did) == NULL || path == NULL)
+	if (dev == NULL || path == NULL)
 		return -1;
 
 	pthread_mutex_lock(&vhost_user.mutex);
 	vsocket = find_vhost_user_socket(path);
 	if (vsocket)
-		vsocket->vdpa_dev_id = did;
+		vsocket->vdpa_dev = dev;
 	pthread_mutex_unlock(&vhost_user.mutex);
 
 	return vsocket ? 0 : -1;
@@ -657,25 +662,25 @@ rte_vhost_driver_detach_vdpa_device(const char *path)
 	pthread_mutex_lock(&vhost_user.mutex);
 	vsocket = find_vhost_user_socket(path);
 	if (vsocket)
-		vsocket->vdpa_dev_id = -1;
+		vsocket->vdpa_dev = NULL;
 	pthread_mutex_unlock(&vhost_user.mutex);
 
 	return vsocket ? 0 : -1;
 }
 
-int
-rte_vhost_driver_get_vdpa_device_id(const char *path)
+struct rte_vdpa_device *
+rte_vhost_driver_get_vdpa_device(const char *path)
 {
 	struct vhost_user_socket *vsocket;
-	int did = -1;
+	struct rte_vdpa_device *dev = NULL;
 
 	pthread_mutex_lock(&vhost_user.mutex);
 	vsocket = find_vhost_user_socket(path);
 	if (vsocket)
-		did = vsocket->vdpa_dev_id;
+		dev = vsocket->vdpa_dev;
 	pthread_mutex_unlock(&vhost_user.mutex);
 
-	return did;
+	return dev;
 }
 
 int
@@ -754,7 +759,6 @@ rte_vhost_driver_get_features(const char *path, uint64_t *features)
 	struct vhost_user_socket *vsocket;
 	uint64_t vdpa_features;
 	struct rte_vdpa_device *vdpa_dev;
-	int did = -1;
 	int ret = 0;
 
 	pthread_mutex_lock(&vhost_user.mutex);
@@ -766,14 +770,13 @@ rte_vhost_driver_get_features(const char *path, uint64_t *features)
 		goto unlock_exit;
 	}
 
-	did = vsocket->vdpa_dev_id;
-	vdpa_dev = rte_vdpa_get_device(did);
-	if (!vdpa_dev || !vdpa_dev->ops->get_features) {
+	vdpa_dev = vsocket->vdpa_dev;
+	if (!vdpa_dev) {
 		*features = vsocket->features;
 		goto unlock_exit;
 	}
 
-	if (vdpa_dev->ops->get_features(did, &vdpa_features) < 0) {
+	if (vdpa_dev->ops->get_features(vdpa_dev, &vdpa_features) < 0) {
 		VHOST_LOG_CONFIG(ERR,
 				"failed to get vdpa features "
 				"for socket file %s.\n", path);
@@ -810,7 +813,6 @@ rte_vhost_driver_get_protocol_features(const char *path,
 	struct vhost_user_socket *vsocket;
 	uint64_t vdpa_protocol_features;
 	struct rte_vdpa_device *vdpa_dev;
-	int did = -1;
 	int ret = 0;
 
 	pthread_mutex_lock(&vhost_user.mutex);
@@ -823,14 +825,13 @@ rte_vhost_driver_get_protocol_features(const char *path,
 		goto unlock_exit;
 	}
 
-	did = vsocket->vdpa_dev_id;
-	vdpa_dev = rte_vdpa_get_device(did);
-	if (!vdpa_dev || !vdpa_dev->ops->get_protocol_features) {
+	vdpa_dev = vsocket->vdpa_dev;
+	if (!vdpa_dev) {
 		*protocol_features = vsocket->protocol_features;
 		goto unlock_exit;
 	}
 
-	if (vdpa_dev->ops->get_protocol_features(did,
+	if (vdpa_dev->ops->get_protocol_features(vdpa_dev,
 				&vdpa_protocol_features) < 0) {
 		VHOST_LOG_CONFIG(ERR,
 				"failed to get vdpa protocol features "
@@ -854,7 +855,6 @@ rte_vhost_driver_get_queue_num(const char *path, uint32_t *queue_num)
 	struct vhost_user_socket *vsocket;
 	uint32_t vdpa_queue_num;
 	struct rte_vdpa_device *vdpa_dev;
-	int did = -1;
 	int ret = 0;
 
 	pthread_mutex_lock(&vhost_user.mutex);
@@ -866,14 +866,13 @@ rte_vhost_driver_get_queue_num(const char *path, uint32_t *queue_num)
 		goto unlock_exit;
 	}
 
-	did = vsocket->vdpa_dev_id;
-	vdpa_dev = rte_vdpa_get_device(did);
-	if (!vdpa_dev || !vdpa_dev->ops->get_queue_num) {
+	vdpa_dev = vsocket->vdpa_dev;
+	if (!vdpa_dev) {
 		*queue_num = VHOST_MAX_QUEUE_PAIRS;
 		goto unlock_exit;
 	}
 
-	if (vdpa_dev->ops->get_queue_num(did, &vdpa_queue_num) < 0) {
+	if (vdpa_dev->ops->get_queue_num(vdpa_dev, &vdpa_queue_num) < 0) {
 		VHOST_LOG_CONFIG(ERR,
 				"failed to get vdpa queue number "
 				"for socket file %s.\n", path);
@@ -946,7 +945,7 @@ rte_vhost_driver_register(const char *path, uint64_t flags)
 			"error: failed to init connection mutex\n");
 		goto out_free;
 	}
-	vsocket->vdpa_dev_id = -1;
+	vsocket->vdpa_dev = NULL;
 	//是否开启出队zero copy
 	vsocket->dequeue_zero_copy = flags & RTE_VHOST_USER_DEQUEUE_ZERO_COPY;
 	vsocket->extbuf = flags & RTE_VHOST_USER_EXTBUF_SUPPORT;
@@ -957,6 +956,17 @@ rte_vhost_driver_register(const char *path, uint64_t flags)
 		VHOST_LOG_CONFIG(ERR,
 			"error: enabling dequeue zero copy and IOMMU features "
 			"simultaneously is not supported\n");
+		goto out_mutex;
+	}
+
+	vsocket->async_copy = flags & RTE_VHOST_USER_ASYNC_COPY;
+
+	if (vsocket->async_copy &&
+		(flags & (RTE_VHOST_USER_IOMMU_SUPPORT |
+		RTE_VHOST_USER_POSTCOPY_SUPPORT))) {
+		VHOST_LOG_CONFIG(ERR, "error: enabling async copy and IOMMU "
+			"or post-copy feature simultaneously is not "
+			"supported\n");
 		goto out_mutex;
 	}
 
@@ -997,6 +1007,12 @@ rte_vhost_driver_register(const char *path, uint64_t flags)
 			ret = -1;
 			goto out_mutex;
 		}
+		if ((flags & RTE_VHOST_USER_CLIENT) != 0) {
+			VHOST_LOG_CONFIG(ERR,
+			"error: zero copy is incompatible with vhost client mode\n");
+			ret = -1;
+			goto out_mutex;
+		}
 		vsocket->supported_features &= ~(1ULL << VIRTIO_F_IN_ORDER);
 		vsocket->features &= ~(1ULL << VIRTIO_F_IN_ORDER);
 
@@ -1004,6 +1020,13 @@ rte_vhost_driver_register(const char *path, uint64_t flags)
 			"Dequeue zero copy requested, disabling postcopy support\n");
 		vsocket->protocol_features &=
 			~(1ULL << VHOST_USER_PROTOCOL_F_PAGEFAULT);
+	}
+
+	if (vsocket->async_copy) {
+		vsocket->supported_features &= ~(1ULL << VHOST_F_LOG_ALL);
+		vsocket->features &= ~(1ULL << VHOST_F_LOG_ALL);
+		VHOST_LOG_CONFIG(INFO,
+			"Logging feature is disabled in async copy mode\n");
 	}
 
 	/*

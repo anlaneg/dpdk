@@ -8,16 +8,6 @@
 #include <stdint.h>
 #include <string.h>
 
-/* Verbs header. */
-/* ISO C doesn't support unnamed structs/unions, disabling -pedantic. */
-#ifdef PEDANTIC
-#pragma GCC diagnostic ignored "-Wpedantic"
-#endif
-#include <infiniband/verbs.h>
-#ifdef PEDANTIC
-#pragma GCC diagnostic error "-Wpedantic"
-#endif
-
 #include <rte_common.h>
 #include <rte_ether.h>
 #include <rte_ethdev_driver.h>
@@ -28,6 +18,7 @@
 
 #include <mlx5_glue.h>
 #include <mlx5_prm.h>
+#include <mlx5_malloc.h>
 
 #include "mlx5_defs.h"
 #include "mlx5.h"
@@ -36,6 +27,118 @@
 
 #define VERBS_SPEC_INNER(item_flags) \
 	(!!((item_flags) & MLX5_FLOW_LAYER_TUNNEL) ? IBV_FLOW_SPEC_INNER : 0)
+
+/* Map of Verbs to Flow priority with 8 Verbs priorities. */
+static const uint32_t priority_map_3[][MLX5_PRIORITY_MAP_MAX] = {
+	{ 0, 1, 2 }, { 2, 3, 4 }, { 5, 6, 7 },
+};
+
+/* Map of Verbs to Flow priority with 16 Verbs priorities. */
+static const uint32_t priority_map_5[][MLX5_PRIORITY_MAP_MAX] = {
+	{ 0, 1, 2 }, { 3, 4, 5 }, { 6, 7, 8 },
+	{ 9, 10, 11 }, { 12, 13, 14 },
+};
+
+/**
+ * Discover the maximum number of priority available.
+ *
+ * @param[in] dev
+ *   Pointer to the Ethernet device structure.
+ *
+ * @return
+ *   number of supported flow priority on success, a negative errno
+ *   value otherwise and rte_errno is set.
+ */
+int
+mlx5_flow_discover_priorities(struct rte_eth_dev *dev)
+{
+	struct mlx5_priv *priv = dev->data->dev_private;
+	struct {
+		struct ibv_flow_attr attr;
+		struct ibv_flow_spec_eth eth;
+		struct ibv_flow_spec_action_drop drop;
+	} flow_attr = {
+		.attr = {
+			.num_of_specs = 2,
+			.port = (uint8_t)priv->dev_port,
+		},
+		.eth = {
+			.type = IBV_FLOW_SPEC_ETH,
+			.size = sizeof(struct ibv_flow_spec_eth),
+		},
+		.drop = {
+			.size = sizeof(struct ibv_flow_spec_action_drop),
+			.type = IBV_FLOW_SPEC_ACTION_DROP,
+		},
+	};
+	struct ibv_flow *flow;
+	struct mlx5_hrxq *drop = mlx5_hrxq_drop_new(dev);
+	uint16_t vprio[] = { 8, 16 };
+	int i;
+	int priority = 0;
+
+	if (!drop) {
+		rte_errno = ENOTSUP;
+		return -rte_errno;
+	}
+	for (i = 0; i != RTE_DIM(vprio); i++) {
+		flow_attr.attr.priority = vprio[i] - 1;
+		flow = mlx5_glue->create_flow(drop->qp, &flow_attr.attr);
+		if (!flow)
+			break;
+		claim_zero(mlx5_glue->destroy_flow(flow));
+		priority = vprio[i];
+	}
+	mlx5_hrxq_drop_release(dev);
+	switch (priority) {
+	case 8:
+		priority = RTE_DIM(priority_map_3);
+		break;
+	case 16:
+		priority = RTE_DIM(priority_map_5);
+		break;
+	default:
+		rte_errno = ENOTSUP;
+		DRV_LOG(ERR,
+			"port %u verbs maximum priority: %d expected 8/16",
+			dev->data->port_id, priority);
+		return -rte_errno;
+	}
+	DRV_LOG(INFO, "port %u flow maximum priority: %d",
+		dev->data->port_id, priority);
+	return priority;
+}
+
+/**
+ * Adjust flow priority based on the highest layer and the request priority.
+ *
+ * @param[in] dev
+ *   Pointer to the Ethernet device structure.
+ * @param[in] priority
+ *   The rule base priority.
+ * @param[in] subpriority
+ *   The priority based on the items.
+ *
+ * @return
+ *   The new priority.
+ */
+uint32_t
+mlx5_flow_adjust_priority(struct rte_eth_dev *dev, int32_t priority,
+				   uint32_t subpriority)
+{
+	uint32_t res = 0;
+	struct mlx5_priv *priv = dev->data->dev_private;
+
+	switch (priv->config.flow_prio) {
+	case RTE_DIM(priority_map_3):
+		res = priority_map_3[priority][subpriority];
+		break;
+	case RTE_DIM(priority_map_5):
+		res = priority_map_5[priority][subpriority];
+		break;
+	}
+	return  res;
+}
 
 /**
  * Get Verbs flow counter by index.
@@ -64,7 +167,7 @@ flow_verbs_counter_get_by_idx(struct rte_eth_dev *dev,
 	MLX5_ASSERT(pool);
 	if (ppool)
 		*ppool = pool;
-	return &pool->counters_raw[idx % MLX5_COUNTERS_PER_POOL];
+	return MLX5_POOL_GET_CNT(pool, idx % MLX5_COUNTERS_PER_POOL);
 }
 
 /**
@@ -176,7 +279,7 @@ flow_verbs_counter_new(struct rte_eth_dev *dev, uint32_t shared, uint32_t id)
 		pool = cont->pools[pool_idx];
 		if (!pool)
 			continue;
-		cnt = TAILQ_FIRST(&pool->counters);
+		cnt = TAILQ_FIRST(&pool->counters[0]);
 		if (cnt)
 			break;
 	}
@@ -188,35 +291,37 @@ flow_verbs_counter_new(struct rte_eth_dev *dev, uint32_t shared, uint32_t id)
 			/* Resize the container pool array. */
 			size = sizeof(struct mlx5_flow_counter_pool *) *
 				     (n_valid + MLX5_CNT_CONTAINER_RESIZE);
-			pools = rte_zmalloc(__func__, size, 0);
+			pools = mlx5_malloc(MLX5_MEM_ZERO, size, 0,
+					    SOCKET_ID_ANY);
 			if (!pools)
 				return 0;
 			if (n_valid) {
 				memcpy(pools, cont->pools,
 				       sizeof(struct mlx5_flow_counter_pool *) *
 				       n_valid);
-				rte_free(cont->pools);
+				mlx5_free(cont->pools);
 			}
 			cont->pools = pools;
 			cont->n += MLX5_CNT_CONTAINER_RESIZE;
 		}
 		/* Allocate memory for new pool*/
-		size = sizeof(*pool) + sizeof(*cnt_ext) *
+		size = sizeof(*pool) + (sizeof(*cnt_ext) + sizeof(*cnt)) *
 		       MLX5_COUNTERS_PER_POOL;
-		pool = rte_calloc(__func__, 1, size, 0);
+		pool = mlx5_malloc(MLX5_MEM_ZERO, size, 0, SOCKET_ID_ANY);
 		if (!pool)
 			return 0;
+		pool->type |= CNT_POOL_TYPE_EXT;
 		for (i = 0; i < MLX5_COUNTERS_PER_POOL; ++i) {
-			cnt = &pool->counters_raw[i];
-			TAILQ_INSERT_HEAD(&pool->counters, cnt, next);
+			cnt = MLX5_POOL_GET_CNT(pool, i);
+			TAILQ_INSERT_HEAD(&pool->counters[0], cnt, next);
 		}
-		cnt = &pool->counters_raw[0];
+		cnt = MLX5_POOL_GET_CNT(pool, 0);
 		cont->pools[n_valid] = pool;
 		pool_idx = n_valid;
 		rte_atomic16_add(&cont->n_valid, 1);
 		TAILQ_INSERT_HEAD(&cont->pool_list, pool, next);
 	}
-	i = cnt - pool->counters_raw;
+	i = MLX5_CNT_ARRAY_IDX(pool, cnt);
 	cnt_ext = MLX5_GET_POOL_CNT_EXT(pool, i);
 	cnt_ext->id = id;
 	cnt_ext->shared = shared;
@@ -226,7 +331,7 @@ flow_verbs_counter_new(struct rte_eth_dev *dev, uint32_t shared, uint32_t id)
 	/* Create counter with Verbs. */
 	ret = flow_verbs_counter_create(dev, cnt_ext);
 	if (!ret) {
-		TAILQ_REMOVE(&pool->counters, cnt, next);
+		TAILQ_REMOVE(&pool->counters[0], cnt, next);
 		return MLX5_MAKE_CNT_IDX(pool_idx, i);
 	}
 	/* Some error occurred in Verbs library. */
@@ -260,7 +365,7 @@ flow_verbs_counter_release(struct rte_eth_dev *dev, uint32_t counter)
 		claim_zero(mlx5_glue->destroy_counters(cnt_ext->cs));
 		cnt_ext->cs = NULL;
 #endif
-		TAILQ_INSERT_HEAD(&pool->counters, cnt, next);
+		TAILQ_INSERT_HEAD(&pool->counters[0], cnt, next);
 	}
 }
 
@@ -282,7 +387,7 @@ flow_verbs_counter_query(struct rte_eth_dev *dev __rte_unused,
 		struct mlx5_flow_counter *cnt = flow_verbs_counter_get_by_idx
 						(dev, flow->counter, &pool);
 		struct mlx5_flow_counter_ext *cnt_ext = MLX5_CNT_TO_CNT_EXT
-							(pool, cnt);
+						(pool, cnt);
 		struct rte_flow_query_count *qc = data;
 		uint64_t counters[2] = {0, 0};
 #if defined(HAVE_IBV_DEVICE_COUNTERS_SET_V42)
@@ -678,6 +783,28 @@ flow_verbs_translate_item_udp(struct mlx5_flow *dev_flow,
 		udp.val.src_port &= udp.mask.src_port;
 		udp.val.dst_port &= udp.mask.dst_port;
 	}
+	item++;
+	while (item->type == RTE_FLOW_ITEM_TYPE_VOID)
+		item++;
+	if (!(udp.val.dst_port & udp.mask.dst_port)) {
+		switch ((item)->type) {
+		case RTE_FLOW_ITEM_TYPE_VXLAN:
+			udp.val.dst_port = htons(MLX5_UDP_PORT_VXLAN);
+			udp.mask.dst_port = 0xffff;
+			break;
+		case RTE_FLOW_ITEM_TYPE_VXLAN_GPE:
+			udp.val.dst_port = htons(MLX5_UDP_PORT_VXLAN_GPE);
+			udp.mask.dst_port = 0xffff;
+			break;
+		case RTE_FLOW_ITEM_TYPE_MPLS:
+			udp.val.dst_port = htons(MLX5_UDP_PORT_MPLS);
+			udp.mask.dst_port = 0xffff;
+			break;
+		default:
+			break;
+		}
+	}
+
 	flow_verbs_spec_add(&dev_flow->verbs, &udp, size);
 }
 
@@ -1537,6 +1664,7 @@ flow_verbs_prepare(struct rte_eth_dev *dev,
 	dev_flow->verbs.size = 0;
 	dev_flow->verbs.attr.num_of_specs = 0;
 	dev_flow->ingress = attr->ingress;
+	dev_flow->hash_fields = 0;
 	/* Need to set transfer attribute: not supported in Verbs mode. */
 	return dev_flow;
 }
@@ -1699,25 +1827,25 @@ flow_verbs_translate(struct rte_eth_dev *dev,
 		case RTE_FLOW_ITEM_TYPE_VXLAN:
 			flow_verbs_translate_item_vxlan(dev_flow, items,
 							item_flags);
-			subpriority = MLX5_PRIORITY_MAP_L2;
+			subpriority = MLX5_TUNNEL_PRIO_GET(rss_desc);
 			item_flags |= MLX5_FLOW_LAYER_VXLAN;
 			break;
 		case RTE_FLOW_ITEM_TYPE_VXLAN_GPE:
 			flow_verbs_translate_item_vxlan_gpe(dev_flow, items,
 							    item_flags);
-			subpriority = MLX5_PRIORITY_MAP_L2;
+			subpriority = MLX5_TUNNEL_PRIO_GET(rss_desc);
 			item_flags |= MLX5_FLOW_LAYER_VXLAN_GPE;
 			break;
 		case RTE_FLOW_ITEM_TYPE_GRE:
 			flow_verbs_translate_item_gre(dev_flow, items,
 						      item_flags);
-			subpriority = MLX5_PRIORITY_MAP_L2;
+			subpriority = MLX5_TUNNEL_PRIO_GET(rss_desc);
 			item_flags |= MLX5_FLOW_LAYER_GRE;
 			break;
 		case RTE_FLOW_ITEM_TYPE_MPLS:
 			flow_verbs_translate_item_mpls(dev_flow, items,
 						       item_flags);
-			subpriority = MLX5_PRIORITY_MAP_L2;
+			subpriority = MLX5_TUNNEL_PRIO_GET(rss_desc);
 			item_flags |= MLX5_FLOW_LAYER_MPLS;
 			break;
 		default:
@@ -1731,7 +1859,7 @@ flow_verbs_translate(struct rte_eth_dev *dev,
 	/* Other members of attr will be ignored. */
 	dev_flow->verbs.attr.priority =
 		mlx5_flow_adjust_priority(dev, priority, subpriority);
-	dev_flow->verbs.attr.port = (uint8_t)priv->ibv_port;
+	dev_flow->verbs.attr.port = (uint8_t)priv->dev_port;
 	return 0;
 }
 
@@ -1754,9 +1882,9 @@ flow_verbs_remove(struct rte_eth_dev *dev, struct rte_flow *flow)
 		return;
 	SILIST_FOREACH(priv->sh->ipool[MLX5_IPOOL_MLX5_FLOW], flow->dev_handles,
 		       handle_idx, handle, next) {
-		if (handle->ib_flow) {
-			claim_zero(mlx5_glue->destroy_flow(handle->ib_flow));
-			handle->ib_flow = NULL;
+		if (handle->drv_flow) {
+			claim_zero(mlx5_glue->destroy_flow(handle->drv_flow));
+			handle->drv_flow = NULL;
 		}
 		/* hrxq is union, don't touch it only the flag is set. */
 		if (handle->rix_hrxq) {
@@ -1877,9 +2005,9 @@ flow_verbs_apply(struct rte_eth_dev *dev, struct rte_flow *flow,
 			handle->rix_hrxq = hrxq_idx;
 		}
 		MLX5_ASSERT(hrxq);
-		handle->ib_flow = mlx5_glue->create_flow(hrxq->qp,
-						     &dev_flow->verbs.attr);
-		if (!handle->ib_flow) {
+		handle->drv_flow = mlx5_glue->create_flow
+					(hrxq->qp, &dev_flow->verbs.attr);
+		if (!handle->drv_flow) {
 			rte_flow_error_set(error, errno,
 					   RTE_FLOW_ERROR_TYPE_UNSPECIFIED,
 					   NULL,

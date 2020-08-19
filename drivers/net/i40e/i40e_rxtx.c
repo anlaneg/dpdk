@@ -1571,6 +1571,15 @@ i40e_dev_rx_queue_start(struct rte_eth_dev *dev, uint16_t rx_queue_id)
 	PMD_INIT_FUNC_TRACE();
 
 	rxq = dev->data->rx_queues[rx_queue_id];
+	if (!rxq || !rxq->q_set) {
+		PMD_DRV_LOG(ERR, "RX queue %u not available or setup",
+			    rx_queue_id);
+		return -EINVAL;
+	}
+
+	if (rxq->rx_deferred_start)
+		PMD_DRV_LOG(WARNING, "RX queue %u is deferrd start",
+			    rx_queue_id);
 
 	err = i40e_alloc_rx_queue_mbufs(rxq);
 	if (err) {
@@ -1603,6 +1612,11 @@ i40e_dev_rx_queue_stop(struct rte_eth_dev *dev, uint16_t rx_queue_id)
 	struct i40e_hw *hw = I40E_DEV_PRIVATE_TO_HW(dev->data->dev_private);
 
 	rxq = dev->data->rx_queues[rx_queue_id];
+	if (!rxq || !rxq->q_set) {
+		PMD_DRV_LOG(ERR, "RX queue %u not available or setup",
+				rx_queue_id);
+		return -EINVAL;
+	}
 
 	/*
 	 * rx_queue_id is queue id application refers to, while
@@ -1631,6 +1645,15 @@ i40e_dev_tx_queue_start(struct rte_eth_dev *dev, uint16_t tx_queue_id)
 	PMD_INIT_FUNC_TRACE();
 
 	txq = dev->data->tx_queues[tx_queue_id];
+	if (!txq || !txq->q_set) {
+		PMD_DRV_LOG(ERR, "TX queue %u is not available or setup",
+			    tx_queue_id);
+		return -EINVAL;
+	}
+
+	if (txq->tx_deferred_start)
+		PMD_DRV_LOG(WARNING, "TX queue %u is deferrd start",
+			    tx_queue_id);
 
 	/*
 	 * tx_queue_id is queue id application refers to, while
@@ -1655,6 +1678,11 @@ i40e_dev_tx_queue_stop(struct rte_eth_dev *dev, uint16_t tx_queue_id)
 	struct i40e_hw *hw = I40E_DEV_PRIVATE_TO_HW(dev->data->dev_private);
 
 	txq = dev->data->tx_queues[tx_queue_id];
+	if (!txq || !txq->q_set) {
+		PMD_DRV_LOG(ERR, "TX queue %u is not available or setup",
+			tx_queue_id);
+		return -EINVAL;
+	}
 
 	/*
 	 * tx_queue_id is queue id application refers to, while
@@ -2900,6 +2928,7 @@ i40e_dev_free_queues(struct rte_eth_dev *dev)
 			continue;
 		i40e_dev_rx_queue_release(dev->data->rx_queues[i]);
 		dev->data->rx_queues[i] = NULL;
+		rte_eth_dma_zone_free(dev, "rx_ring", i);
 	}
 
 	for (i = 0; i < dev->data->nb_tx_queues; i++) {
@@ -2907,19 +2936,17 @@ i40e_dev_free_queues(struct rte_eth_dev *dev)
 			continue;
 		i40e_dev_tx_queue_release(dev->data->tx_queues[i]);
 		dev->data->tx_queues[i] = NULL;
+		rte_eth_dma_zone_free(dev, "tx_ring", i);
 	}
 }
-
-#define I40E_FDIR_NUM_TX_DESC  I40E_MIN_RING_DESC
-#define I40E_FDIR_NUM_RX_DESC  I40E_MIN_RING_DESC
 
 enum i40e_status_code
 i40e_fdir_setup_tx_resources(struct i40e_pf *pf)
 {
 	struct i40e_tx_queue *txq;
 	const struct rte_memzone *tz = NULL;
-	uint32_t ring_size;
 	struct rte_eth_dev *dev;
+	uint32_t ring_size;
 
 	if (!pf) {
 		PMD_DRV_LOG(ERR, "PF is not available");
@@ -2959,12 +2986,14 @@ i40e_fdir_setup_tx_resources(struct i40e_pf *pf)
 
 	txq->tx_ring_phys_addr = tz->iova;
 	txq->tx_ring = (struct i40e_tx_desc *)tz->addr;
+
 	/*
 	 * don't need to allocate software ring and reset for the fdir
 	 * program queue just set the queue has been configured.
 	 */
 	txq->q_set = TRUE;
 	pf->fdir.txq = txq;
+	pf->fdir.txq_available_buf_count = I40E_FDIR_PRG_PKT_CNT;
 
 	return I40E_SUCCESS;
 }

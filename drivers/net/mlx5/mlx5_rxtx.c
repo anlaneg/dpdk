@@ -7,17 +7,6 @@
 #include <string.h>
 #include <stdlib.h>
 
-/* Verbs header. */
-/* ISO C doesn't support unnamed structs/unions, disabling -pedantic. */
-#ifdef PEDANTIC
-#pragma GCC diagnostic ignored "-Wpedantic"
-#endif
-#include <infiniband/verbs.h>
-#include <infiniband/mlx5dv.h>
-#ifdef PEDANTIC
-#pragma GCC diagnostic error "-Wpedantic"
-#endif
-
 #include <rte_mbuf.h>
 #include <rte_mempool.h>
 #include <rte_prefetch.h>
@@ -27,6 +16,7 @@
 #include <rte_cycles.h>
 #include <rte_flow.h>
 
+#include <mlx5_glue.h>
 #include <mlx5_devx_cmds.h>
 #include <mlx5_prm.h>
 #include <mlx5_common.h>
@@ -66,6 +56,7 @@ enum mlx5_txcmp_code {
 #define MLX5_TXOFF_CONFIG_METADATA (1u << 6) /* Flow metadata. */
 #define MLX5_TXOFF_CONFIG_EMPW (1u << 8) /* Enhanced MPW supported.*/
 #define MLX5_TXOFF_CONFIG_MPW (1u << 9) /* Legacy MPW supported.*/
+#define MLX5_TXOFF_CONFIG_TXPP (1u << 10) /* Scheduling on timestamp.*/
 
 /* The most common offloads groups. */
 #define MLX5_TXOFF_CONFIG_NONE 0
@@ -113,13 +104,13 @@ mlx5_queue_state_modify(struct rte_eth_dev *dev,
 			struct mlx5_mp_arg_queue_state_modify *sm);
 
 static inline void
-mlx5_lro_update_tcp_hdr(struct rte_tcp_hdr *restrict tcp,
-			volatile struct mlx5_cqe *restrict cqe,
+mlx5_lro_update_tcp_hdr(struct rte_tcp_hdr *__rte_restrict tcp,
+			volatile struct mlx5_cqe *__rte_restrict cqe,
 			uint32_t phcsum);
 
 static inline void
-mlx5_lro_update_hdr(uint8_t *restrict padd,
-		    volatile struct mlx5_cqe *restrict cqe,
+mlx5_lro_update_hdr(uint8_t *__rte_restrict padd,
+		    volatile struct mlx5_cqe *__rte_restrict cqe,
 		    uint32_t len);
 
 uint32_t mlx5_ptype_table[] __rte_cache_aligned = {
@@ -374,7 +365,7 @@ mlx5_set_swp_types_table(void)
  *   Software Parser flags are set by pointer.
  */
 static __rte_always_inline uint32_t
-txq_mbuf_to_swp(struct mlx5_txq_local *restrict loc,
+txq_mbuf_to_swp(struct mlx5_txq_local *__rte_restrict loc,
 		uint8_t *swp_flags,
 		unsigned int olx)
 {
@@ -747,7 +738,7 @@ check_err_cqe_seen(volatile struct mlx5_err_cqe *err_cqe)
  *   the error completion entry is handled successfully.
  */
 static int
-mlx5_tx_error_cqe_handle(struct mlx5_txq_data *restrict txq,
+mlx5_tx_error_cqe_handle(struct mlx5_txq_data *__rte_restrict txq,
 			 volatile struct mlx5_err_cqe *err_cqe)
 {
 	if (err_cqe->syndrome != MLX5_CQE_SYNDROME_WR_FLUSH_ERR) {
@@ -944,43 +935,79 @@ mlx5_queue_state_modify_primary(struct rte_eth_dev *dev,
 		struct mlx5_txq_data *txq = (*priv->txqs)[sm->queue_id];
 		struct mlx5_txq_ctrl *txq_ctrl =
 			container_of(txq, struct mlx5_txq_ctrl, txq);
-		struct ibv_qp_attr mod = {
-			.qp_state = IBV_QPS_RESET,
-			.port_num = (uint8_t)priv->ibv_port,
-		};
-		struct ibv_qp *qp = txq_ctrl->obj->qp;
 
-		ret = mlx5_glue->modify_qp(qp, &mod, IBV_QP_STATE);
-		if (ret) {
-			DRV_LOG(ERR, "Cannot change the Tx QP state to RESET "
-				"%s", strerror(errno));
-			rte_errno = errno;
-			return ret;
-		}
-		mod.qp_state = IBV_QPS_INIT;
-		ret = mlx5_glue->modify_qp(qp, &mod,
-					   (IBV_QP_STATE | IBV_QP_PORT));
-		if (ret) {
-			DRV_LOG(ERR, "Cannot change Tx QP state to INIT %s",
-				strerror(errno));
-			rte_errno = errno;
-			return ret;
-		}
-		mod.qp_state = IBV_QPS_RTR;
-		ret = mlx5_glue->modify_qp(qp, &mod, IBV_QP_STATE);
-		if (ret) {
-			DRV_LOG(ERR, "Cannot change Tx QP state to RTR %s",
-				strerror(errno));
-			rte_errno = errno;
-			return ret;
-		}
-		mod.qp_state = IBV_QPS_RTS;
-		ret = mlx5_glue->modify_qp(qp, &mod, IBV_QP_STATE);
-		if (ret) {
-			DRV_LOG(ERR, "Cannot change Tx QP state to RTS %s",
-				strerror(errno));
-			rte_errno = errno;
-			return ret;
+		if (txq_ctrl->obj->type == MLX5_TXQ_OBJ_TYPE_DEVX_SQ) {
+			struct mlx5_devx_modify_sq_attr msq_attr = { 0 };
+
+			/* Change queue state to reset. */
+			msq_attr.sq_state = MLX5_SQC_STATE_ERR;
+			msq_attr.state = MLX5_SQC_STATE_RST;
+			ret = mlx5_devx_cmd_modify_sq(txq_ctrl->obj->sq_devx,
+						      &msq_attr);
+			if (ret) {
+				DRV_LOG(ERR, "Cannot change the "
+					"Tx QP state to RESET %s",
+					strerror(errno));
+				rte_errno = errno;
+				return ret;
+			}
+			/* Change queue state to ready. */
+			msq_attr.sq_state = MLX5_SQC_STATE_RST;
+			msq_attr.state = MLX5_SQC_STATE_RDY;
+			ret = mlx5_devx_cmd_modify_sq(txq_ctrl->obj->sq_devx,
+						      &msq_attr);
+			if (ret) {
+				DRV_LOG(ERR, "Cannot change the "
+					"Tx QP state to READY %s",
+					strerror(errno));
+				rte_errno = errno;
+				return ret;
+			}
+		} else {
+			struct ibv_qp_attr mod = {
+				.qp_state = IBV_QPS_RESET,
+				.port_num = (uint8_t)priv->dev_port,
+			};
+			struct ibv_qp *qp = txq_ctrl->obj->qp;
+
+			MLX5_ASSERT
+				(txq_ctrl->obj->type == MLX5_TXQ_OBJ_TYPE_IBV);
+
+			ret = mlx5_glue->modify_qp(qp, &mod, IBV_QP_STATE);
+			if (ret) {
+				DRV_LOG(ERR, "Cannot change the "
+					"Tx QP state to RESET %s",
+					strerror(errno));
+				rte_errno = errno;
+				return ret;
+			}
+			mod.qp_state = IBV_QPS_INIT;
+			ret = mlx5_glue->modify_qp(qp, &mod, IBV_QP_STATE);
+			if (ret) {
+				DRV_LOG(ERR, "Cannot change the "
+					"Tx QP state to INIT %s",
+					strerror(errno));
+				rte_errno = errno;
+				return ret;
+			}
+			mod.qp_state = IBV_QPS_RTR;
+			ret = mlx5_glue->modify_qp(qp, &mod, IBV_QP_STATE);
+			if (ret) {
+				DRV_LOG(ERR, "Cannot change the "
+					"Tx QP state to RTR %s",
+					strerror(errno));
+				rte_errno = errno;
+				return ret;
+			}
+			mod.qp_state = IBV_QPS_RTS;
+			ret = mlx5_glue->modify_qp(qp, &mod, IBV_QP_STATE);
+			if (ret) {
+				DRV_LOG(ERR, "Cannot change the "
+					"Tx QP state to RTS %s",
+					strerror(errno));
+				rte_errno = errno;
+				return ret;
+			}
 		}
 	}
 	return 0;
@@ -1352,7 +1379,11 @@ rxq_cq_to_mbuf(struct mlx5_rxq_data *rxq, struct rte_mbuf *pkt,
 		pkt->vlan_tci = rte_be_to_cpu_16(cqe->vlan_info);
 	}
 	if (rxq->hw_timestamp) {
-		pkt->timestamp = rte_be_to_cpu_64(cqe->timestamp);
+		uint64_t ts = rte_be_to_cpu_64(cqe->timestamp);
+
+		if (rxq->rt_timestamp)
+			ts = mlx5_txpp_convert_rx_ts(rxq->sh, ts);
+		pkt->timestamp = ts;
 		pkt->ol_flags |= PKT_RX_TIMESTAMP;
 	}
 }
@@ -1508,8 +1539,8 @@ mlx5_rx_burst(void *dpdk_rxq, struct rte_mbuf **pkts, uint16_t pkts_n)
  *   The L3 pseudo-header checksum.
  */
 static inline void
-mlx5_lro_update_tcp_hdr(struct rte_tcp_hdr *restrict tcp,
-			volatile struct mlx5_cqe *restrict cqe,
+mlx5_lro_update_tcp_hdr(struct rte_tcp_hdr *__rte_restrict tcp,
+			volatile struct mlx5_cqe *__rte_restrict cqe,
 			uint32_t phcsum)
 {
 	uint8_t l4_type = (rte_be_to_cpu_16(cqe->hdr_type_etc) &
@@ -1529,7 +1560,7 @@ mlx5_lro_update_tcp_hdr(struct rte_tcp_hdr *restrict tcp,
 	if (cqe->lro_tcppsh_abort_dupack & MLX5_CQE_LRO_PUSH_MASK)
 		tcp->tcp_flags |= RTE_TCP_PSH_FLAG;
 	tcp->cksum = 0;
-	csum += rte_raw_cksum(tcp, (tcp->data_off & 0xF) * 4);
+	csum += rte_raw_cksum(tcp, (tcp->data_off >> 4) * 4);
 	csum = ((csum & 0xffff0000) >> 16) + (csum & 0xffff);
 	csum = (~csum) & 0xffff;
 	if (csum == 0)
@@ -1550,8 +1581,8 @@ mlx5_lro_update_tcp_hdr(struct rte_tcp_hdr *restrict tcp,
  *   The packet length.
  */
 static inline void
-mlx5_lro_update_hdr(uint8_t *restrict padd,
-		    volatile struct mlx5_cqe *restrict cqe,
+mlx5_lro_update_hdr(uint8_t *__rte_restrict padd,
+		    volatile struct mlx5_cqe *__rte_restrict cqe,
 		    uint32_t len)
 {
 	union {
@@ -1814,7 +1845,7 @@ mlx5_rx_burst_mprq(void *dpdk_rxq, struct rte_mbuf **pkts, uint16_t pkts_n)
 			/* Set mbuf head-room. */
 			SET_DATA_OFF(pkt, RTE_PKTMBUF_HEADROOM);
 			MLX5_ASSERT(pkt->ol_flags == EXT_ATTACHED_MBUF);
-			MLX5_ASSERT(rte_pktmbuf_tailroom(pkt) <
+			MLX5_ASSERT(rte_pktmbuf_tailroom(pkt) >=
 				len - (hdrm_overlap > 0 ? hdrm_overlap : 0));
 			DATA_LEN(pkt) = len;
 			/*
@@ -1965,7 +1996,7 @@ mlx5_check_vec_rx_support(struct rte_eth_dev *dev __rte_unused)
  *   compile time and may be used for optimization.
  */
 static __rte_always_inline void
-mlx5_tx_free_mbuf(struct rte_mbuf **restrict pkts,
+mlx5_tx_free_mbuf(struct rte_mbuf **__rte_restrict pkts,
 		  unsigned int pkts_n,
 		  unsigned int olx __rte_unused)
 {
@@ -2070,7 +2101,7 @@ mlx5_tx_free_mbuf(struct rte_mbuf **restrict pkts,
  *   compile time and may be used for optimization.
  */
 static __rte_always_inline void
-mlx5_tx_free_elts(struct mlx5_txq_data *restrict txq,
+mlx5_tx_free_elts(struct mlx5_txq_data *__rte_restrict txq,
 		  uint16_t tail,
 		  unsigned int olx __rte_unused)
 {
@@ -2111,8 +2142,8 @@ mlx5_tx_free_elts(struct mlx5_txq_data *restrict txq,
  *   compile time and may be used for optimization.
  */
 static __rte_always_inline void
-mlx5_tx_copy_elts(struct mlx5_txq_data *restrict txq,
-		  struct rte_mbuf **restrict pkts,
+mlx5_tx_copy_elts(struct mlx5_txq_data *__rte_restrict txq,
+		  struct rte_mbuf **__rte_restrict pkts,
 		  unsigned int pkts_n,
 		  unsigned int olx __rte_unused)
 {
@@ -2148,7 +2179,7 @@ mlx5_tx_copy_elts(struct mlx5_txq_data *restrict txq,
  *   compile time and may be used for optimization.
  */
 static __rte_always_inline void
-mlx5_tx_comp_flush(struct mlx5_txq_data *restrict txq,
+mlx5_tx_comp_flush(struct mlx5_txq_data *__rte_restrict txq,
 		   volatile struct mlx5_cqe *last_cqe,
 		   unsigned int olx __rte_unused)
 {
@@ -2179,7 +2210,7 @@ mlx5_tx_comp_flush(struct mlx5_txq_data *restrict txq,
  * routine smaller, simple and faster - from experiments.
  */
 static void
-mlx5_tx_handle_completion(struct mlx5_txq_data *restrict txq,
+mlx5_tx_handle_completion(struct mlx5_txq_data *__rte_restrict txq,
 			  unsigned int olx __rte_unused)
 {
 	unsigned int count = MLX5_TX_COMP_MAX_CQE;
@@ -2268,8 +2299,8 @@ mlx5_tx_handle_completion(struct mlx5_txq_data *restrict txq,
  *   compile time and may be used for optimization.
  */
 static __rte_always_inline void
-mlx5_tx_request_completion(struct mlx5_txq_data *restrict txq,
-			   struct mlx5_txq_local *restrict loc,
+mlx5_tx_request_completion(struct mlx5_txq_data *__rte_restrict txq,
+			   struct mlx5_txq_local *__rte_restrict loc,
 			   unsigned int olx)
 {
 	uint16_t head = txq->elts_head;
@@ -2316,7 +2347,7 @@ mlx5_tx_request_completion(struct mlx5_txq_data *restrict txq,
 int
 mlx5_tx_descriptor_status(void *tx_queue, uint16_t offset)
 {
-	struct mlx5_txq_data *restrict txq = tx_queue;
+	struct mlx5_txq_data *__rte_restrict txq = tx_queue;
 	uint16_t used;
 
 	mlx5_tx_handle_completion(txq, 0);
@@ -2347,14 +2378,14 @@ mlx5_tx_descriptor_status(void *tx_queue, uint16_t offset)
  *   compile time and may be used for optimization.
  */
 static __rte_always_inline void
-mlx5_tx_cseg_init(struct mlx5_txq_data *restrict txq,
-		  struct mlx5_txq_local *restrict loc __rte_unused,
-		  struct mlx5_wqe *restrict wqe,
+mlx5_tx_cseg_init(struct mlx5_txq_data *__rte_restrict txq,
+		  struct mlx5_txq_local *__rte_restrict loc __rte_unused,
+		  struct mlx5_wqe *__rte_restrict wqe,
 		  unsigned int ds,
 		  unsigned int opcode,
 		  unsigned int olx __rte_unused)
 {
-	struct mlx5_wqe_cseg *restrict cs = &wqe->cseg;
+	struct mlx5_wqe_cseg *__rte_restrict cs = &wqe->cseg;
 
 	/* For legacy MPW replace the EMPW by TSO with modifier. */
 	if (MLX5_TXOFF_CONFIG(MPW) && opcode == MLX5_OPCODE_ENHANCED_MPSW)
@@ -2364,6 +2395,37 @@ mlx5_tx_cseg_init(struct mlx5_txq_data *restrict txq,
 	cs->flags = RTE_BE32(MLX5_COMP_ONLY_FIRST_ERR <<
 			     MLX5_COMP_MODE_OFFSET);
 	cs->misc = RTE_BE32(0);
+}
+
+/**
+ * Build the Synchronize Queue Segment with specified completion index.
+ *
+ * @param txq
+ *   Pointer to TX queue structure.
+ * @param loc
+ *   Pointer to burst routine local context.
+ * @param wqe
+ *   Pointer to WQE to fill with built Control Segment.
+ * @param wci
+ *   Completion index in Clock Queue to wait.
+ * @param olx
+ *   Configured Tx offloads mask. It is fully defined at
+ *   compile time and may be used for optimization.
+ */
+static __rte_always_inline void
+mlx5_tx_wseg_init(struct mlx5_txq_data *restrict txq,
+		  struct mlx5_txq_local *restrict loc __rte_unused,
+		  struct mlx5_wqe *restrict wqe,
+		  unsigned int wci,
+		  unsigned int olx __rte_unused)
+{
+	struct mlx5_wqe_qseg *qs;
+
+	qs = RTE_PTR_ADD(wqe, MLX5_WSEG_SIZE);
+	qs->max_index = rte_cpu_to_be_32(wci);
+	qs->qpn_cqn = rte_cpu_to_be_32(txq->sh->txpp.clock_queue.cq->id);
+	qs->reserved0 = RTE_BE32(0);
+	qs->reserved1 = RTE_BE32(0);
 }
 
 /**
@@ -2382,12 +2444,12 @@ mlx5_tx_cseg_init(struct mlx5_txq_data *restrict txq,
  *   compile time and may be used for optimization.
  */
 static __rte_always_inline void
-mlx5_tx_eseg_none(struct mlx5_txq_data *restrict txq __rte_unused,
-		  struct mlx5_txq_local *restrict loc,
-		  struct mlx5_wqe *restrict wqe,
+mlx5_tx_eseg_none(struct mlx5_txq_data *__rte_restrict txq __rte_unused,
+		  struct mlx5_txq_local *__rte_restrict loc,
+		  struct mlx5_wqe *__rte_restrict wqe,
 		  unsigned int olx)
 {
-	struct mlx5_wqe_eseg *restrict es = &wqe->eseg;
+	struct mlx5_wqe_eseg *__rte_restrict es = &wqe->eseg;
 	uint32_t csum;
 
 	/*
@@ -2440,13 +2502,13 @@ mlx5_tx_eseg_none(struct mlx5_txq_data *restrict txq __rte_unused,
  *   compile time and may be used for optimization.
  */
 static __rte_always_inline void
-mlx5_tx_eseg_dmin(struct mlx5_txq_data *restrict txq __rte_unused,
-		  struct mlx5_txq_local *restrict loc,
-		  struct mlx5_wqe *restrict wqe,
+mlx5_tx_eseg_dmin(struct mlx5_txq_data *__rte_restrict txq __rte_unused,
+		  struct mlx5_txq_local *__rte_restrict loc,
+		  struct mlx5_wqe *__rte_restrict wqe,
 		  unsigned int vlan,
 		  unsigned int olx)
 {
-	struct mlx5_wqe_eseg *restrict es = &wqe->eseg;
+	struct mlx5_wqe_eseg *__rte_restrict es = &wqe->eseg;
 	uint32_t csum;
 	uint8_t *psrc, *pdst;
 
@@ -2524,15 +2586,15 @@ mlx5_tx_eseg_dmin(struct mlx5_txq_data *restrict txq __rte_unused,
  *   Pointer to the next Data Segment (aligned and wrapped around).
  */
 static __rte_always_inline struct mlx5_wqe_dseg *
-mlx5_tx_eseg_data(struct mlx5_txq_data *restrict txq,
-		  struct mlx5_txq_local *restrict loc,
-		  struct mlx5_wqe *restrict wqe,
+mlx5_tx_eseg_data(struct mlx5_txq_data *__rte_restrict txq,
+		  struct mlx5_txq_local *__rte_restrict loc,
+		  struct mlx5_wqe *__rte_restrict wqe,
 		  unsigned int vlan,
 		  unsigned int inlen,
 		  unsigned int tso,
 		  unsigned int olx)
 {
-	struct mlx5_wqe_eseg *restrict es = &wqe->eseg;
+	struct mlx5_wqe_eseg *__rte_restrict es = &wqe->eseg;
 	uint32_t csum;
 	uint8_t *psrc, *pdst;
 	unsigned int part;
@@ -2650,7 +2712,7 @@ mlx5_tx_eseg_data(struct mlx5_txq_data *restrict txq,
  */
 static __rte_always_inline unsigned int
 mlx5_tx_mseg_memcpy(uint8_t *pdst,
-		    struct mlx5_txq_local *restrict loc,
+		    struct mlx5_txq_local *__rte_restrict loc,
 		    unsigned int len,
 		    unsigned int must,
 		    unsigned int olx __rte_unused)
@@ -2747,15 +2809,15 @@ mlx5_tx_mseg_memcpy(uint8_t *pdst,
  *   wrapping check on its own).
  */
 static __rte_always_inline struct mlx5_wqe_dseg *
-mlx5_tx_eseg_mdat(struct mlx5_txq_data *restrict txq,
-		  struct mlx5_txq_local *restrict loc,
-		  struct mlx5_wqe *restrict wqe,
+mlx5_tx_eseg_mdat(struct mlx5_txq_data *__rte_restrict txq,
+		  struct mlx5_txq_local *__rte_restrict loc,
+		  struct mlx5_wqe *__rte_restrict wqe,
 		  unsigned int vlan,
 		  unsigned int inlen,
 		  unsigned int tso,
 		  unsigned int olx)
 {
-	struct mlx5_wqe_eseg *restrict es = &wqe->eseg;
+	struct mlx5_wqe_eseg *__rte_restrict es = &wqe->eseg;
 	uint32_t csum;
 	uint8_t *pdst;
 	unsigned int part, tlen = 0;
@@ -2851,9 +2913,9 @@ mlx5_tx_eseg_mdat(struct mlx5_txq_data *restrict txq,
  *   compile time and may be used for optimization.
  */
 static __rte_always_inline void
-mlx5_tx_dseg_ptr(struct mlx5_txq_data *restrict txq,
-		 struct mlx5_txq_local *restrict loc,
-		 struct mlx5_wqe_dseg *restrict dseg,
+mlx5_tx_dseg_ptr(struct mlx5_txq_data *__rte_restrict txq,
+		 struct mlx5_txq_local *__rte_restrict loc,
+		 struct mlx5_wqe_dseg *__rte_restrict dseg,
 		 uint8_t *buf,
 		 unsigned int len,
 		 unsigned int olx __rte_unused)
@@ -2885,9 +2947,9 @@ mlx5_tx_dseg_ptr(struct mlx5_txq_data *restrict txq,
  *   compile time and may be used for optimization.
  */
 static __rte_always_inline void
-mlx5_tx_dseg_iptr(struct mlx5_txq_data *restrict txq,
-		  struct mlx5_txq_local *restrict loc,
-		  struct mlx5_wqe_dseg *restrict dseg,
+mlx5_tx_dseg_iptr(struct mlx5_txq_data *__rte_restrict txq,
+		  struct mlx5_txq_local *__rte_restrict loc,
+		  struct mlx5_wqe_dseg *__rte_restrict dseg,
 		  uint8_t *buf,
 		  unsigned int len,
 		  unsigned int olx __rte_unused)
@@ -2961,9 +3023,9 @@ mlx5_tx_dseg_iptr(struct mlx5_txq_data *restrict txq,
  *   last packet in the eMPW session.
  */
 static __rte_always_inline struct mlx5_wqe_dseg *
-mlx5_tx_dseg_empw(struct mlx5_txq_data *restrict txq,
-		  struct mlx5_txq_local *restrict loc __rte_unused,
-		  struct mlx5_wqe_dseg *restrict dseg,
+mlx5_tx_dseg_empw(struct mlx5_txq_data *__rte_restrict txq,
+		  struct mlx5_txq_local *__rte_restrict loc __rte_unused,
+		  struct mlx5_wqe_dseg *__rte_restrict dseg,
 		  uint8_t *buf,
 		  unsigned int len,
 		  unsigned int olx __rte_unused)
@@ -3024,9 +3086,9 @@ mlx5_tx_dseg_empw(struct mlx5_txq_data *restrict txq,
  *   Ring buffer wraparound check is needed.
  */
 static __rte_always_inline struct mlx5_wqe_dseg *
-mlx5_tx_dseg_vlan(struct mlx5_txq_data *restrict txq,
-		  struct mlx5_txq_local *restrict loc __rte_unused,
-		  struct mlx5_wqe_dseg *restrict dseg,
+mlx5_tx_dseg_vlan(struct mlx5_txq_data *__rte_restrict txq,
+		  struct mlx5_txq_local *__rte_restrict loc __rte_unused,
+		  struct mlx5_wqe_dseg *__rte_restrict dseg,
 		  uint8_t *buf,
 		  unsigned int len,
 		  unsigned int olx __rte_unused)
@@ -3112,15 +3174,15 @@ mlx5_tx_dseg_vlan(struct mlx5_txq_data *restrict txq,
  *   Actual size of built WQE in segments.
  */
 static __rte_always_inline unsigned int
-mlx5_tx_mseg_build(struct mlx5_txq_data *restrict txq,
-		   struct mlx5_txq_local *restrict loc,
-		   struct mlx5_wqe *restrict wqe,
+mlx5_tx_mseg_build(struct mlx5_txq_data *__rte_restrict txq,
+		   struct mlx5_txq_local *__rte_restrict loc,
+		   struct mlx5_wqe *__rte_restrict wqe,
 		   unsigned int vlan,
 		   unsigned int inlen,
 		   unsigned int tso,
 		   unsigned int olx __rte_unused)
 {
-	struct mlx5_wqe_dseg *restrict dseg;
+	struct mlx5_wqe_dseg *__rte_restrict dseg;
 	unsigned int ds;
 
 	MLX5_ASSERT((rte_pktmbuf_pkt_len(loc->mbuf) + vlan) >= inlen);
@@ -3204,6 +3266,59 @@ dseg_done:
 }
 
 /**
+ * The routine checks timestamp flag in the current packet,
+ * and push WAIT WQE into the queue if scheduling is required.
+ *
+ * @param txq
+ *   Pointer to TX queue structure.
+ * @param loc
+ *   Pointer to burst routine local context.
+ * @param olx
+ *   Configured Tx offloads mask. It is fully defined at
+ *   compile time and may be used for optimization.
+ *
+ * @return
+ *   MLX5_TXCMP_CODE_EXIT - sending is done or impossible.
+ *   MLX5_TXCMP_CODE_SINGLE - continue processing with the packet.
+ *   MLX5_TXCMP_CODE_MULTI - the WAIT inserted, continue processing.
+ * Local context variables partially updated.
+ */
+static __rte_always_inline enum mlx5_txcmp_code
+mlx5_tx_schedule_send(struct mlx5_txq_data *restrict txq,
+		      struct mlx5_txq_local *restrict loc,
+		      unsigned int olx)
+{
+	if (MLX5_TXOFF_CONFIG(TXPP) &&
+	    loc->mbuf->ol_flags & txq->ts_mask) {
+		struct mlx5_wqe *wqe;
+		uint64_t ts;
+		int32_t wci;
+
+		/*
+		 * Estimate the required space quickly and roughly.
+		 * We would like to ensure the packet can be pushed
+		 * to the queue and we won't get the orphan WAIT WQE.
+		 */
+		if (loc->wqe_free <= MLX5_WQE_SIZE_MAX / MLX5_WQE_SIZE ||
+		    loc->elts_free < NB_SEGS(loc->mbuf))
+			return MLX5_TXCMP_CODE_EXIT;
+		/* Convert the timestamp into completion to wait. */
+		ts = *RTE_MBUF_DYNFIELD(loc->mbuf, txq->ts_offset, uint64_t *);
+		wci = mlx5_txpp_convert_tx_ts(txq->sh, ts);
+		if (unlikely(wci < 0))
+			return MLX5_TXCMP_CODE_SINGLE;
+		/* Build the WAIT WQE with specified completion. */
+		wqe = txq->wqes + (txq->wqe_ci & txq->wqe_m);
+		mlx5_tx_cseg_init(txq, loc, wqe, 2, MLX5_OPCODE_WAIT, olx);
+		mlx5_tx_wseg_init(txq, loc, wqe, wci, olx);
+		++txq->wqe_ci;
+		--loc->wqe_free;
+		return MLX5_TXCMP_CODE_MULTI;
+	}
+	return MLX5_TXCMP_CODE_SINGLE;
+}
+
+/**
  * Tx one packet function for multi-segment TSO. Supports all
  * types of Tx offloads, uses MLX5_OPCODE_TSO to build WQEs,
  * sends one packet per WQE.
@@ -3225,13 +3340,23 @@ dseg_done:
  * Local context variables partially updated.
  */
 static __rte_always_inline enum mlx5_txcmp_code
-mlx5_tx_packet_multi_tso(struct mlx5_txq_data *restrict txq,
-			struct mlx5_txq_local *restrict loc,
+mlx5_tx_packet_multi_tso(struct mlx5_txq_data *__rte_restrict txq,
+			struct mlx5_txq_local *__rte_restrict loc,
 			unsigned int olx)
 {
-	struct mlx5_wqe *restrict wqe;
+	struct mlx5_wqe *__rte_restrict wqe;
 	unsigned int ds, dlen, inlen, ntcp, vlan = 0;
 
+	if (MLX5_TXOFF_CONFIG(TXPP)) {
+		enum mlx5_txcmp_code wret;
+
+		/* Generate WAIT for scheduling if requested. */
+		wret = mlx5_tx_schedule_send(txq, loc, olx);
+		if (wret == MLX5_TXCMP_CODE_EXIT)
+			return MLX5_TXCMP_CODE_EXIT;
+		if (wret == MLX5_TXCMP_CODE_ERROR)
+			return MLX5_TXCMP_CODE_ERROR;
+	}
 	/*
 	 * Calculate data length to be inlined to estimate
 	 * the required space in WQE ring buffer.
@@ -3314,15 +3439,25 @@ mlx5_tx_packet_multi_tso(struct mlx5_txq_data *restrict txq,
  * Local context variables partially updated.
  */
 static __rte_always_inline enum mlx5_txcmp_code
-mlx5_tx_packet_multi_send(struct mlx5_txq_data *restrict txq,
-			  struct mlx5_txq_local *restrict loc,
+mlx5_tx_packet_multi_send(struct mlx5_txq_data *__rte_restrict txq,
+			  struct mlx5_txq_local *__rte_restrict loc,
 			  unsigned int olx)
 {
-	struct mlx5_wqe_dseg *restrict dseg;
-	struct mlx5_wqe *restrict wqe;
+	struct mlx5_wqe_dseg *__rte_restrict dseg;
+	struct mlx5_wqe *__rte_restrict wqe;
 	unsigned int ds, nseg;
 
 	MLX5_ASSERT(NB_SEGS(loc->mbuf) > 1);
+	if (MLX5_TXOFF_CONFIG(TXPP)) {
+		enum mlx5_txcmp_code wret;
+
+		/* Generate WAIT for scheduling if requested. */
+		wret = mlx5_tx_schedule_send(txq, loc, olx);
+		if (wret == MLX5_TXCMP_CODE_EXIT)
+			return MLX5_TXCMP_CODE_EXIT;
+		if (wret == MLX5_TXCMP_CODE_ERROR)
+			return MLX5_TXCMP_CODE_ERROR;
+	}
 	/*
 	 * No inline at all, it means the CPU cycles saving
 	 * is prioritized at configuration, we should not
@@ -3422,15 +3557,25 @@ mlx5_tx_packet_multi_send(struct mlx5_txq_data *restrict txq,
  * Local context variables partially updated.
  */
 static __rte_always_inline enum mlx5_txcmp_code
-mlx5_tx_packet_multi_inline(struct mlx5_txq_data *restrict txq,
-			    struct mlx5_txq_local *restrict loc,
+mlx5_tx_packet_multi_inline(struct mlx5_txq_data *__rte_restrict txq,
+			    struct mlx5_txq_local *__rte_restrict loc,
 			    unsigned int olx)
 {
-	struct mlx5_wqe *restrict wqe;
+	struct mlx5_wqe *__rte_restrict wqe;
 	unsigned int ds, inlen, dlen, vlan = 0;
 
 	MLX5_ASSERT(MLX5_TXOFF_CONFIG(INLINE));
 	MLX5_ASSERT(NB_SEGS(loc->mbuf) > 1);
+	if (MLX5_TXOFF_CONFIG(TXPP)) {
+		enum mlx5_txcmp_code wret;
+
+		/* Generate WAIT for scheduling if requested. */
+		wret = mlx5_tx_schedule_send(txq, loc, olx);
+		if (wret == MLX5_TXCMP_CODE_EXIT)
+			return MLX5_TXCMP_CODE_EXIT;
+		if (wret == MLX5_TXCMP_CODE_ERROR)
+			return MLX5_TXCMP_CODE_ERROR;
+	}
 	/*
 	 * First calculate data length to be inlined
 	 * to estimate the required space for WQE.
@@ -3587,10 +3732,10 @@ do_align:
  * Local context variables updated.
  */
 static __rte_always_inline enum mlx5_txcmp_code
-mlx5_tx_burst_mseg(struct mlx5_txq_data *restrict txq,
-		   struct rte_mbuf **restrict pkts,
+mlx5_tx_burst_mseg(struct mlx5_txq_data *__rte_restrict txq,
+		   struct rte_mbuf **__rte_restrict pkts,
 		   unsigned int pkts_n,
-		   struct mlx5_txq_local *restrict loc,
+		   struct mlx5_txq_local *__rte_restrict loc,
 		   unsigned int olx)
 {
 	MLX5_ASSERT(loc->elts_free && loc->wqe_free);
@@ -3676,10 +3821,10 @@ mlx5_tx_burst_mseg(struct mlx5_txq_data *restrict txq,
  * Local context variables updated.
  */
 static __rte_always_inline enum mlx5_txcmp_code
-mlx5_tx_burst_tso(struct mlx5_txq_data *restrict txq,
-		  struct rte_mbuf **restrict pkts,
+mlx5_tx_burst_tso(struct mlx5_txq_data *__rte_restrict txq,
+		  struct rte_mbuf **__rte_restrict pkts,
 		  unsigned int pkts_n,
-		  struct mlx5_txq_local *restrict loc,
+		  struct mlx5_txq_local *__rte_restrict loc,
 		  unsigned int olx)
 {
 	MLX5_ASSERT(loc->elts_free && loc->wqe_free);
@@ -3687,12 +3832,22 @@ mlx5_tx_burst_tso(struct mlx5_txq_data *restrict txq,
 	pkts += loc->pkts_sent + 1;
 	pkts_n -= loc->pkts_sent;
 	for (;;) {
-		struct mlx5_wqe_dseg *restrict dseg;
-		struct mlx5_wqe *restrict wqe;
+		struct mlx5_wqe_dseg *__rte_restrict dseg;
+		struct mlx5_wqe *__rte_restrict wqe;
 		unsigned int ds, dlen, hlen, ntcp, vlan = 0;
 		uint8_t *dptr;
 
 		MLX5_ASSERT(NB_SEGS(loc->mbuf) == 1);
+		if (MLX5_TXOFF_CONFIG(TXPP)) {
+			enum mlx5_txcmp_code wret;
+
+			/* Generate WAIT for scheduling if requested. */
+			wret = mlx5_tx_schedule_send(txq, loc, olx);
+			if (wret == MLX5_TXCMP_CODE_EXIT)
+				return MLX5_TXCMP_CODE_EXIT;
+			if (wret == MLX5_TXCMP_CODE_ERROR)
+				return MLX5_TXCMP_CODE_ERROR;
+		}
 		dlen = rte_pktmbuf_data_len(loc->mbuf);
 		if (MLX5_TXOFF_CONFIG(VLAN) &&
 		    loc->mbuf->ol_flags & PKT_TX_VLAN_PKT) {
@@ -3800,8 +3955,8 @@ mlx5_tx_burst_tso(struct mlx5_txq_data *restrict txq,
  *  MLX5_TXCMP_CODE_EMPW - single-segment packet, use MPW.
  */
 static __rte_always_inline enum mlx5_txcmp_code
-mlx5_tx_able_to_empw(struct mlx5_txq_data *restrict txq,
-		     struct mlx5_txq_local *restrict loc,
+mlx5_tx_able_to_empw(struct mlx5_txq_data *__rte_restrict txq,
+		     struct mlx5_txq_local *__rte_restrict loc,
 		     unsigned int olx,
 		     bool newp)
 {
@@ -3855,9 +4010,9 @@ mlx5_tx_able_to_empw(struct mlx5_txq_data *restrict txq,
  *  false - no match, eMPW should be restarted.
  */
 static __rte_always_inline bool
-mlx5_tx_match_empw(struct mlx5_txq_data *restrict txq __rte_unused,
-		   struct mlx5_wqe_eseg *restrict es,
-		   struct mlx5_txq_local *restrict loc,
+mlx5_tx_match_empw(struct mlx5_txq_data *__rte_restrict txq,
+		   struct mlx5_wqe_eseg *__rte_restrict es,
+		   struct mlx5_txq_local *__rte_restrict loc,
 		   uint32_t dlen,
 		   unsigned int olx)
 {
@@ -3884,6 +4039,10 @@ mlx5_tx_match_empw(struct mlx5_txq_data *restrict txq __rte_unused,
 	/* There must be no VLAN packets in eMPW loop. */
 	if (MLX5_TXOFF_CONFIG(VLAN))
 		MLX5_ASSERT(!(loc->mbuf->ol_flags & PKT_TX_VLAN_PKT));
+	/* Check if the scheduling is requested. */
+	if (MLX5_TXOFF_CONFIG(TXPP) &&
+	    loc->mbuf->ol_flags & txq->ts_mask)
+		return false;
 	return true;
 }
 
@@ -3909,8 +4068,8 @@ mlx5_tx_match_empw(struct mlx5_txq_data *restrict txq __rte_unused,
  *  false - no match, eMPW should be restarted.
  */
 static __rte_always_inline void
-mlx5_tx_sdone_empw(struct mlx5_txq_data *restrict txq,
-		   struct mlx5_txq_local *restrict loc,
+mlx5_tx_sdone_empw(struct mlx5_txq_data *__rte_restrict txq,
+		   struct mlx5_txq_local *__rte_restrict loc,
 		   unsigned int ds,
 		   unsigned int slen,
 		   unsigned int olx __rte_unused)
@@ -3954,11 +4113,11 @@ mlx5_tx_sdone_empw(struct mlx5_txq_data *restrict txq,
  *  false - no match, eMPW should be restarted.
  */
 static __rte_always_inline void
-mlx5_tx_idone_empw(struct mlx5_txq_data *restrict txq,
-		   struct mlx5_txq_local *restrict loc,
+mlx5_tx_idone_empw(struct mlx5_txq_data *__rte_restrict txq,
+		   struct mlx5_txq_local *__rte_restrict loc,
 		   unsigned int len,
 		   unsigned int slen,
-		   struct mlx5_wqe *restrict wqem,
+		   struct mlx5_wqe *__rte_restrict wqem,
 		   unsigned int olx __rte_unused)
 {
 	struct mlx5_wqe_dseg *dseg = &wqem->dseg[0];
@@ -4042,10 +4201,10 @@ mlx5_tx_idone_empw(struct mlx5_txq_data *restrict txq,
  * No VLAN insertion is supported.
  */
 static __rte_always_inline enum mlx5_txcmp_code
-mlx5_tx_burst_empw_simple(struct mlx5_txq_data *restrict txq,
-			  struct rte_mbuf **restrict pkts,
+mlx5_tx_burst_empw_simple(struct mlx5_txq_data *__rte_restrict txq,
+			  struct rte_mbuf **__rte_restrict pkts,
 			  unsigned int pkts_n,
-			  struct mlx5_txq_local *restrict loc,
+			  struct mlx5_txq_local *__rte_restrict loc,
 			  unsigned int olx)
 {
 	/*
@@ -4061,14 +4220,24 @@ mlx5_tx_burst_empw_simple(struct mlx5_txq_data *restrict txq,
 	pkts += loc->pkts_sent + 1;
 	pkts_n -= loc->pkts_sent;
 	for (;;) {
-		struct mlx5_wqe_dseg *restrict dseg;
-		struct mlx5_wqe_eseg *restrict eseg;
+		struct mlx5_wqe_dseg *__rte_restrict dseg;
+		struct mlx5_wqe_eseg *__rte_restrict eseg;
 		enum mlx5_txcmp_code ret;
 		unsigned int part, loop;
 		unsigned int slen = 0;
 
 next_empw:
 		MLX5_ASSERT(NB_SEGS(loc->mbuf) == 1);
+		if (MLX5_TXOFF_CONFIG(TXPP)) {
+			enum mlx5_txcmp_code wret;
+
+			/* Generate WAIT for scheduling if requested. */
+			wret = mlx5_tx_schedule_send(txq, loc, olx);
+			if (wret == MLX5_TXCMP_CODE_EXIT)
+				return MLX5_TXCMP_CODE_EXIT;
+			if (wret == MLX5_TXCMP_CODE_ERROR)
+				return MLX5_TXCMP_CODE_ERROR;
+		}
 		part = RTE_MIN(pkts_n, MLX5_TXOFF_CONFIG(MPW) ?
 				       MLX5_MPW_MAX_PACKETS :
 				       MLX5_EMPW_MAX_PACKETS);
@@ -4164,6 +4333,7 @@ next_empw:
 			 * - metadata value
 			 * - software parser settings
 			 * - packets length (legacy MPW only)
+			 * - scheduling is not required
 			 */
 			if (!mlx5_tx_match_empw(txq, eseg, loc, dlen, olx)) {
 				MLX5_ASSERT(loop);
@@ -4208,10 +4378,10 @@ next_empw:
  * with inlining, optionally supports VLAN insertion.
  */
 static __rte_always_inline enum mlx5_txcmp_code
-mlx5_tx_burst_empw_inline(struct mlx5_txq_data *restrict txq,
-			  struct rte_mbuf **restrict pkts,
+mlx5_tx_burst_empw_inline(struct mlx5_txq_data *__rte_restrict txq,
+			  struct rte_mbuf **__rte_restrict pkts,
 			  unsigned int pkts_n,
-			  struct mlx5_txq_local *restrict loc,
+			  struct mlx5_txq_local *__rte_restrict loc,
 			  unsigned int olx)
 {
 	/*
@@ -4227,13 +4397,23 @@ mlx5_tx_burst_empw_inline(struct mlx5_txq_data *restrict txq,
 	pkts += loc->pkts_sent + 1;
 	pkts_n -= loc->pkts_sent;
 	for (;;) {
-		struct mlx5_wqe_dseg *restrict dseg;
-		struct mlx5_wqe *restrict wqem;
+		struct mlx5_wqe_dseg *__rte_restrict dseg;
+		struct mlx5_wqe *__rte_restrict wqem;
 		enum mlx5_txcmp_code ret;
 		unsigned int room, part, nlim;
 		unsigned int slen = 0;
 
 		MLX5_ASSERT(NB_SEGS(loc->mbuf) == 1);
+		if (MLX5_TXOFF_CONFIG(TXPP)) {
+			enum mlx5_txcmp_code wret;
+
+			/* Generate WAIT for scheduling if requested. */
+			wret = mlx5_tx_schedule_send(txq, loc, olx);
+			if (wret == MLX5_TXCMP_CODE_EXIT)
+				return MLX5_TXCMP_CODE_EXIT;
+			if (wret == MLX5_TXCMP_CODE_ERROR)
+				return MLX5_TXCMP_CODE_ERROR;
+		}
 		/*
 		 * Limits the amount of packets in one WQE
 		 * to improve CQE latency generation.
@@ -4459,6 +4639,7 @@ next_mbuf:
 			 * - metadata value
 			 * - software parser settings
 			 * - packets length (legacy MPW only)
+			 * - scheduling is not required
 			 */
 			if (!mlx5_tx_match_empw(txq, &wqem->eseg,
 						loc, dlen, olx))
@@ -4489,10 +4670,10 @@ next_mbuf:
  * Data inlining and VLAN insertion are supported.
  */
 static __rte_always_inline enum mlx5_txcmp_code
-mlx5_tx_burst_single_send(struct mlx5_txq_data *restrict txq,
-			  struct rte_mbuf **restrict pkts,
+mlx5_tx_burst_single_send(struct mlx5_txq_data *__rte_restrict txq,
+			  struct rte_mbuf **__rte_restrict pkts,
 			  unsigned int pkts_n,
-			  struct mlx5_txq_local *restrict loc,
+			  struct mlx5_txq_local *__rte_restrict loc,
 			  unsigned int olx)
 {
 	/*
@@ -4504,10 +4685,20 @@ mlx5_tx_burst_single_send(struct mlx5_txq_data *restrict txq,
 	pkts += loc->pkts_sent + 1;
 	pkts_n -= loc->pkts_sent;
 	for (;;) {
-		struct mlx5_wqe *restrict wqe;
+		struct mlx5_wqe *__rte_restrict wqe;
 		enum mlx5_txcmp_code ret;
 
 		MLX5_ASSERT(NB_SEGS(loc->mbuf) == 1);
+		if (MLX5_TXOFF_CONFIG(TXPP)) {
+			enum mlx5_txcmp_code wret;
+
+			/* Generate WAIT for scheduling if requested. */
+			wret = mlx5_tx_schedule_send(txq, loc, olx);
+			if (wret == MLX5_TXCMP_CODE_EXIT)
+				return MLX5_TXCMP_CODE_EXIT;
+			if (wret == MLX5_TXCMP_CODE_ERROR)
+				return MLX5_TXCMP_CODE_ERROR;
+		}
 		if (MLX5_TXOFF_CONFIG(INLINE)) {
 			unsigned int inlen, vlan = 0;
 
@@ -4548,6 +4739,8 @@ mlx5_tx_burst_single_send(struct mlx5_txq_data *restrict txq,
 					      txq->inlen_mode) ||
 					    (MLX5_TXOFF_CONFIG(MPW) &&
 					     txq->inlen_mode)) {
+						if (inlen <= txq->inlen_send)
+							goto single_inline;
 						/*
 						 * The hardware requires the
 						 * minimal inline data header.
@@ -4564,6 +4757,7 @@ mlx5_tx_burst_single_send(struct mlx5_txq_data *restrict txq,
 					}
 					goto single_no_inline;
 				}
+single_inline:
 				/*
 				 * Completely inlined packet data WQE:
 				 * - Control Segment, SEND opcode
@@ -4602,7 +4796,7 @@ mlx5_tx_burst_single_send(struct mlx5_txq_data *restrict txq,
 				 * not contain inlined data for eMPW due to
 				 * segment shared for all packets.
 				 */
-				struct mlx5_wqe_dseg *restrict dseg;
+				struct mlx5_wqe_dseg *__rte_restrict dseg;
 				unsigned int ds;
 				uint8_t *dptr;
 
@@ -4765,10 +4959,10 @@ single_no_inline:
 }
 
 static __rte_always_inline enum mlx5_txcmp_code
-mlx5_tx_burst_single(struct mlx5_txq_data *restrict txq,
-		     struct rte_mbuf **restrict pkts,
+mlx5_tx_burst_single(struct mlx5_txq_data *__rte_restrict txq,
+		     struct rte_mbuf **__rte_restrict pkts,
 		     unsigned int pkts_n,
-		     struct mlx5_txq_local *restrict loc,
+		     struct mlx5_txq_local *__rte_restrict loc,
 		     unsigned int olx)
 {
 	enum mlx5_txcmp_code ret;
@@ -4819,8 +5013,8 @@ ordinary_send:
  *   Number of packets successfully transmitted (<= pkts_n).
  */
 static __rte_always_inline uint16_t
-mlx5_tx_burst_tmpl(struct mlx5_txq_data *restrict txq,
-		   struct rte_mbuf **restrict pkts,
+mlx5_tx_burst_tmpl(struct mlx5_txq_data *__rte_restrict txq,
+		   struct rte_mbuf **__rte_restrict pkts,
 		   uint16_t pkts_n,
 		   unsigned int olx)
 {
@@ -5232,6 +5426,45 @@ MLX5_TXOFF_DECL(iv,
 		MLX5_TXOFF_CONFIG_INLINE | MLX5_TXOFF_CONFIG_VLAN |
 		MLX5_TXOFF_CONFIG_METADATA)
 
+/* Generate routines with timestamp scheduling. */
+MLX5_TXOFF_DECL(full_ts_nompw,
+		MLX5_TXOFF_CONFIG_FULL | MLX5_TXOFF_CONFIG_TXPP)
+
+MLX5_TXOFF_DECL(full_ts_nompwi,
+		MLX5_TXOFF_CONFIG_MULTI | MLX5_TXOFF_CONFIG_TSO |
+		MLX5_TXOFF_CONFIG_SWP | MLX5_TXOFF_CONFIG_CSUM |
+		MLX5_TXOFF_CONFIG_VLAN | MLX5_TXOFF_CONFIG_METADATA |
+		MLX5_TXOFF_CONFIG_TXPP)
+
+MLX5_TXOFF_DECL(full_ts,
+		MLX5_TXOFF_CONFIG_FULL | MLX5_TXOFF_CONFIG_TXPP |
+		MLX5_TXOFF_CONFIG_EMPW)
+
+MLX5_TXOFF_DECL(full_ts_noi,
+		MLX5_TXOFF_CONFIG_MULTI | MLX5_TXOFF_CONFIG_TSO |
+		MLX5_TXOFF_CONFIG_SWP | MLX5_TXOFF_CONFIG_CSUM |
+		MLX5_TXOFF_CONFIG_VLAN | MLX5_TXOFF_CONFIG_METADATA |
+		MLX5_TXOFF_CONFIG_TXPP | MLX5_TXOFF_CONFIG_EMPW)
+
+MLX5_TXOFF_DECL(none_ts,
+		MLX5_TXOFF_CONFIG_NONE | MLX5_TXOFF_CONFIG_TXPP |
+		MLX5_TXOFF_CONFIG_EMPW)
+
+MLX5_TXOFF_DECL(mdi_ts,
+		MLX5_TXOFF_CONFIG_INLINE | MLX5_TXOFF_CONFIG_METADATA |
+		MLX5_TXOFF_CONFIG_TXPP | MLX5_TXOFF_CONFIG_EMPW)
+
+MLX5_TXOFF_DECL(mti_ts,
+		MLX5_TXOFF_CONFIG_MULTI | MLX5_TXOFF_CONFIG_TSO |
+		MLX5_TXOFF_CONFIG_INLINE | MLX5_TXOFF_CONFIG_METADATA |
+		MLX5_TXOFF_CONFIG_TXPP | MLX5_TXOFF_CONFIG_EMPW)
+
+MLX5_TXOFF_DECL(mtiv_ts,
+		MLX5_TXOFF_CONFIG_MULTI | MLX5_TXOFF_CONFIG_TSO |
+		MLX5_TXOFF_CONFIG_INLINE | MLX5_TXOFF_CONFIG_VLAN |
+		MLX5_TXOFF_CONFIG_METADATA | MLX5_TXOFF_CONFIG_TXPP |
+		MLX5_TXOFF_CONFIG_EMPW)
+
 /*
  * Generate routines with Legacy Multi-Packet Write support.
  * This mode is supported by ConnectX-4 Lx only and imposes
@@ -5335,6 +5568,44 @@ MLX5_TXOFF_INFO(v_empw,
 MLX5_TXOFF_INFO(iv_empw,
 		MLX5_TXOFF_CONFIG_INLINE | MLX5_TXOFF_CONFIG_VLAN |
 		MLX5_TXOFF_CONFIG_METADATA | MLX5_TXOFF_CONFIG_EMPW)
+
+MLX5_TXOFF_INFO(full_ts_nompw,
+		MLX5_TXOFF_CONFIG_FULL | MLX5_TXOFF_CONFIG_TXPP)
+
+MLX5_TXOFF_INFO(full_ts_nompwi,
+		MLX5_TXOFF_CONFIG_MULTI | MLX5_TXOFF_CONFIG_TSO |
+		MLX5_TXOFF_CONFIG_SWP | MLX5_TXOFF_CONFIG_CSUM |
+		MLX5_TXOFF_CONFIG_VLAN | MLX5_TXOFF_CONFIG_METADATA |
+		MLX5_TXOFF_CONFIG_TXPP)
+
+MLX5_TXOFF_INFO(full_ts,
+		MLX5_TXOFF_CONFIG_FULL | MLX5_TXOFF_CONFIG_TXPP |
+		MLX5_TXOFF_CONFIG_EMPW)
+
+MLX5_TXOFF_INFO(full_ts_noi,
+		MLX5_TXOFF_CONFIG_MULTI | MLX5_TXOFF_CONFIG_TSO |
+		MLX5_TXOFF_CONFIG_SWP | MLX5_TXOFF_CONFIG_CSUM |
+		MLX5_TXOFF_CONFIG_VLAN | MLX5_TXOFF_CONFIG_METADATA |
+		MLX5_TXOFF_CONFIG_TXPP | MLX5_TXOFF_CONFIG_EMPW)
+
+MLX5_TXOFF_INFO(none_ts,
+		MLX5_TXOFF_CONFIG_NONE | MLX5_TXOFF_CONFIG_TXPP |
+		MLX5_TXOFF_CONFIG_EMPW)
+
+MLX5_TXOFF_INFO(mdi_ts,
+		MLX5_TXOFF_CONFIG_INLINE | MLX5_TXOFF_CONFIG_METADATA |
+		MLX5_TXOFF_CONFIG_TXPP | MLX5_TXOFF_CONFIG_EMPW)
+
+MLX5_TXOFF_INFO(mti_ts,
+		MLX5_TXOFF_CONFIG_MULTI | MLX5_TXOFF_CONFIG_TSO |
+		MLX5_TXOFF_CONFIG_INLINE | MLX5_TXOFF_CONFIG_METADATA |
+		MLX5_TXOFF_CONFIG_TXPP | MLX5_TXOFF_CONFIG_EMPW)
+
+MLX5_TXOFF_INFO(mtiv_ts,
+		MLX5_TXOFF_CONFIG_MULTI | MLX5_TXOFF_CONFIG_TSO |
+		MLX5_TXOFF_CONFIG_INLINE | MLX5_TXOFF_CONFIG_VLAN |
+		MLX5_TXOFF_CONFIG_METADATA | MLX5_TXOFF_CONFIG_TXPP |
+		MLX5_TXOFF_CONFIG_EMPW)
 
 MLX5_TXOFF_INFO(full,
 		MLX5_TXOFF_CONFIG_MULTI | MLX5_TXOFF_CONFIG_TSO |
@@ -5482,6 +5753,14 @@ mlx5_select_tx_function(struct rte_eth_dev *dev)
 		/* We should support VLAN insertion. */
 		olx |= MLX5_TXOFF_CONFIG_VLAN;
 	}
+	if (tx_offloads & DEV_TX_OFFLOAD_SEND_ON_TIMESTAMP &&
+	    rte_mbuf_dynflag_lookup
+			(RTE_MBUF_DYNFLAG_TX_TIMESTAMP_NAME, NULL) > 0 &&
+	    rte_mbuf_dynfield_lookup
+			(RTE_MBUF_DYNFIELD_TIMESTAMP_NAME, NULL) > 0) {
+		/* Offload configured, dynamic entities registered. */
+		olx |= MLX5_TXOFF_CONFIG_TXPP;
+	}
 	if (priv->txqs_n && (*priv->txqs)[0]) {
 		struct mlx5_txq_data *txd = (*priv->txqs)[0];
 
@@ -5542,11 +5821,17 @@ mlx5_select_tx_function(struct rte_eth_dev *dev)
 			/* Does not meet requested offloads at all. */
 			continue;
 		}
+		if ((olx ^ tmp) & MLX5_TXOFF_CONFIG_MPW)
+			/* Do not enable legacy MPW if not configured. */
+			continue;
 		if ((olx ^ tmp) & MLX5_TXOFF_CONFIG_EMPW)
 			/* Do not enable eMPW if not configured. */
 			continue;
 		if ((olx ^ tmp) & MLX5_TXOFF_CONFIG_INLINE)
 			/* Do not enable inlining if not configured. */
+			continue;
+		if ((olx ^ tmp) & MLX5_TXOFF_CONFIG_TXPP)
+			/* Do not enable scheduling if not configured. */
 			continue;
 		/*
 		 * Some routine meets the requirements.
@@ -5592,6 +5877,8 @@ mlx5_select_tx_function(struct rte_eth_dev *dev)
 		DRV_LOG(DEBUG, "\tVLANI (VLAN insertion)");
 	if (txoff_func[m].olx & MLX5_TXOFF_CONFIG_METADATA)
 		DRV_LOG(DEBUG, "\tMETAD (tx Flow metadata)");
+	if (txoff_func[m].olx & MLX5_TXOFF_CONFIG_TXPP)
+		DRV_LOG(DEBUG, "\tMETAD (tx Scheduling)");
 	if (txoff_func[m].olx & MLX5_TXOFF_CONFIG_EMPW) {
 		if (txoff_func[m].olx & MLX5_TXOFF_CONFIG_MPW)
 			DRV_LOG(DEBUG, "\tMPW   (Legacy MPW)");
@@ -5666,7 +5953,7 @@ mlx5_tx_burst_mode_get(struct rte_eth_dev *dev,
 		if (pkt_burst == txoff_func[i].func) {
 			olx = txoff_func[i].olx;
 			snprintf(mode->info, sizeof(mode->info),
-				 "%s%s%s%s%s%s%s%s",
+				 "%s%s%s%s%s%s%s%s%s",
 				 (olx & MLX5_TXOFF_CONFIG_EMPW) ?
 				 ((olx & MLX5_TXOFF_CONFIG_MPW) ?
 				 "Legacy MPW" : "Enhanced MPW") : "No MPW",
@@ -5683,7 +5970,9 @@ mlx5_tx_burst_mode_get(struct rte_eth_dev *dev,
 				 (olx & MLX5_TXOFF_CONFIG_VLAN) ?
 				 " + VLAN" : "",
 				 (olx & MLX5_TXOFF_CONFIG_METADATA) ?
-				 " + METADATA" : "");
+				 " + METADATA" : "",
+				 (olx & MLX5_TXOFF_CONFIG_TXPP) ?
+				 " + TXPP" : "");
 			return 0;
 		}
 	}

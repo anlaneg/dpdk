@@ -1033,7 +1033,7 @@ enum rte_flow_item_type pattern_eth_ipv6_nvgre_eth_ipv6_icmp6[] = {
 	RTE_FLOW_ITEM_TYPE_END,
 };
 
-/* GTPU */
+/*IPv4 GTPU (EH) */
 enum rte_flow_item_type pattern_eth_ipv4_gtpu[] = {
 	RTE_FLOW_ITEM_TYPE_ETH,
 	RTE_FLOW_ITEM_TYPE_IPV4,
@@ -1041,14 +1041,7 @@ enum rte_flow_item_type pattern_eth_ipv4_gtpu[] = {
 	RTE_FLOW_ITEM_TYPE_GTPU,
 	RTE_FLOW_ITEM_TYPE_END,
 };
-enum rte_flow_item_type pattern_eth_ipv4_gtpu_ipv4[] = {
-	RTE_FLOW_ITEM_TYPE_ETH,
-	RTE_FLOW_ITEM_TYPE_IPV4,
-	RTE_FLOW_ITEM_TYPE_UDP,
-	RTE_FLOW_ITEM_TYPE_GTPU,
-	RTE_FLOW_ITEM_TYPE_IPV4,
-	RTE_FLOW_ITEM_TYPE_END,
-};
+
 enum rte_flow_item_type pattern_eth_ipv4_gtpu_eh[] = {
 	RTE_FLOW_ITEM_TYPE_ETH,
 	RTE_FLOW_ITEM_TYPE_IPV4,
@@ -1057,6 +1050,186 @@ enum rte_flow_item_type pattern_eth_ipv4_gtpu_eh[] = {
 	RTE_FLOW_ITEM_TYPE_GTP_PSC,
 	RTE_FLOW_ITEM_TYPE_END,
 };
+
+/*IPv6 GTPU (EH) */
+enum rte_flow_item_type pattern_eth_ipv6_gtpu[] = {
+	RTE_FLOW_ITEM_TYPE_ETH,
+	RTE_FLOW_ITEM_TYPE_IPV6,
+	RTE_FLOW_ITEM_TYPE_UDP,
+	RTE_FLOW_ITEM_TYPE_GTPU,
+	RTE_FLOW_ITEM_TYPE_END,
+};
+
+enum rte_flow_item_type pattern_eth_ipv6_gtpu_eh[] = {
+	RTE_FLOW_ITEM_TYPE_ETH,
+	RTE_FLOW_ITEM_TYPE_IPV6,
+	RTE_FLOW_ITEM_TYPE_UDP,
+	RTE_FLOW_ITEM_TYPE_GTPU,
+	RTE_FLOW_ITEM_TYPE_GTP_PSC,
+	RTE_FLOW_ITEM_TYPE_END,
+};
+
+/*IPv4 GTPU IPv4 */
+enum rte_flow_item_type pattern_eth_ipv4_gtpu_ipv4[] = {
+	RTE_FLOW_ITEM_TYPE_ETH,
+	RTE_FLOW_ITEM_TYPE_IPV4,
+	RTE_FLOW_ITEM_TYPE_UDP,
+	RTE_FLOW_ITEM_TYPE_GTPU,
+	RTE_FLOW_ITEM_TYPE_IPV4,
+	RTE_FLOW_ITEM_TYPE_END,
+};
+
+enum rte_flow_item_type pattern_eth_ipv4_gtpu_ipv4_udp[] = {
+	RTE_FLOW_ITEM_TYPE_ETH,
+	RTE_FLOW_ITEM_TYPE_IPV4,
+	RTE_FLOW_ITEM_TYPE_UDP,
+	RTE_FLOW_ITEM_TYPE_GTPU,
+	RTE_FLOW_ITEM_TYPE_IPV4,
+	RTE_FLOW_ITEM_TYPE_UDP,
+	RTE_FLOW_ITEM_TYPE_END,
+};
+
+enum rte_flow_item_type pattern_eth_ipv4_gtpu_ipv4_tcp[] = {
+	RTE_FLOW_ITEM_TYPE_ETH,
+	RTE_FLOW_ITEM_TYPE_IPV4,
+	RTE_FLOW_ITEM_TYPE_UDP,
+	RTE_FLOW_ITEM_TYPE_GTPU,
+	RTE_FLOW_ITEM_TYPE_IPV4,
+	RTE_FLOW_ITEM_TYPE_TCP,
+	RTE_FLOW_ITEM_TYPE_END,
+};
+
+enum rte_flow_item_type pattern_eth_ipv4_gtpu_ipv4_icmp[] = {
+	RTE_FLOW_ITEM_TYPE_ETH,
+	RTE_FLOW_ITEM_TYPE_IPV4,
+	RTE_FLOW_ITEM_TYPE_UDP,
+	RTE_FLOW_ITEM_TYPE_GTPU,
+	RTE_FLOW_ITEM_TYPE_IPV4,
+	RTE_FLOW_ITEM_TYPE_ICMP,
+	RTE_FLOW_ITEM_TYPE_END,
+};
+
+/*IPv4 GTPU IPv6 */
+enum rte_flow_item_type pattern_eth_ipv4_gtpu_ipv6[] = {
+	RTE_FLOW_ITEM_TYPE_ETH,
+	RTE_FLOW_ITEM_TYPE_IPV4,
+	RTE_FLOW_ITEM_TYPE_UDP,
+	RTE_FLOW_ITEM_TYPE_GTPU,
+	RTE_FLOW_ITEM_TYPE_IPV6,
+	RTE_FLOW_ITEM_TYPE_END,
+};
+
+enum rte_flow_item_type pattern_eth_ipv4_gtpu_ipv6_udp[] = {
+	RTE_FLOW_ITEM_TYPE_ETH,
+	RTE_FLOW_ITEM_TYPE_IPV4,
+	RTE_FLOW_ITEM_TYPE_UDP,
+	RTE_FLOW_ITEM_TYPE_GTPU,
+	RTE_FLOW_ITEM_TYPE_IPV6,
+	RTE_FLOW_ITEM_TYPE_UDP,
+	RTE_FLOW_ITEM_TYPE_END,
+};
+
+enum rte_flow_item_type pattern_eth_ipv4_gtpu_ipv6_tcp[] = {
+	RTE_FLOW_ITEM_TYPE_ETH,
+	RTE_FLOW_ITEM_TYPE_IPV4,
+	RTE_FLOW_ITEM_TYPE_UDP,
+	RTE_FLOW_ITEM_TYPE_GTPU,
+	RTE_FLOW_ITEM_TYPE_IPV6,
+	RTE_FLOW_ITEM_TYPE_TCP,
+	RTE_FLOW_ITEM_TYPE_END,
+};
+
+enum rte_flow_item_type pattern_eth_ipv4_gtpu_ipv6_icmp[] = {
+	RTE_FLOW_ITEM_TYPE_ETH,
+	RTE_FLOW_ITEM_TYPE_IPV4,
+	RTE_FLOW_ITEM_TYPE_UDP,
+	RTE_FLOW_ITEM_TYPE_GTPU,
+	RTE_FLOW_ITEM_TYPE_IPV6,
+	RTE_FLOW_ITEM_TYPE_ICMP,
+	RTE_FLOW_ITEM_TYPE_END,
+};
+
+/*IPv6 GTPU IPv4 */
+enum rte_flow_item_type pattern_eth_ipv6_gtpu_ipv4[] = {
+	RTE_FLOW_ITEM_TYPE_ETH,
+	RTE_FLOW_ITEM_TYPE_IPV6,
+	RTE_FLOW_ITEM_TYPE_UDP,
+	RTE_FLOW_ITEM_TYPE_GTPU,
+	RTE_FLOW_ITEM_TYPE_IPV4,
+	RTE_FLOW_ITEM_TYPE_END,
+};
+
+enum rte_flow_item_type pattern_eth_ipv6_gtpu_ipv4_udp[] = {
+	RTE_FLOW_ITEM_TYPE_ETH,
+	RTE_FLOW_ITEM_TYPE_IPV6,
+	RTE_FLOW_ITEM_TYPE_UDP,
+	RTE_FLOW_ITEM_TYPE_GTPU,
+	RTE_FLOW_ITEM_TYPE_IPV4,
+	RTE_FLOW_ITEM_TYPE_UDP,
+	RTE_FLOW_ITEM_TYPE_END,
+};
+
+enum rte_flow_item_type pattern_eth_ipv6_gtpu_ipv4_tcp[] = {
+	RTE_FLOW_ITEM_TYPE_ETH,
+	RTE_FLOW_ITEM_TYPE_IPV6,
+	RTE_FLOW_ITEM_TYPE_UDP,
+	RTE_FLOW_ITEM_TYPE_GTPU,
+	RTE_FLOW_ITEM_TYPE_IPV4,
+	RTE_FLOW_ITEM_TYPE_TCP,
+	RTE_FLOW_ITEM_TYPE_END,
+};
+
+enum rte_flow_item_type pattern_eth_ipv6_gtpu_ipv4_icmp[] = {
+	RTE_FLOW_ITEM_TYPE_ETH,
+	RTE_FLOW_ITEM_TYPE_IPV6,
+	RTE_FLOW_ITEM_TYPE_UDP,
+	RTE_FLOW_ITEM_TYPE_GTPU,
+	RTE_FLOW_ITEM_TYPE_IPV4,
+	RTE_FLOW_ITEM_TYPE_ICMP,
+	RTE_FLOW_ITEM_TYPE_END,
+};
+
+/*IPv6 GTPU IPv6 */
+enum rte_flow_item_type pattern_eth_ipv6_gtpu_ipv6[] = {
+	RTE_FLOW_ITEM_TYPE_ETH,
+	RTE_FLOW_ITEM_TYPE_IPV6,
+	RTE_FLOW_ITEM_TYPE_UDP,
+	RTE_FLOW_ITEM_TYPE_GTPU,
+	RTE_FLOW_ITEM_TYPE_IPV6,
+	RTE_FLOW_ITEM_TYPE_END,
+};
+
+enum rte_flow_item_type pattern_eth_ipv6_gtpu_ipv6_udp[] = {
+	RTE_FLOW_ITEM_TYPE_ETH,
+	RTE_FLOW_ITEM_TYPE_IPV6,
+	RTE_FLOW_ITEM_TYPE_UDP,
+	RTE_FLOW_ITEM_TYPE_GTPU,
+	RTE_FLOW_ITEM_TYPE_IPV6,
+	RTE_FLOW_ITEM_TYPE_UDP,
+	RTE_FLOW_ITEM_TYPE_END,
+};
+
+enum rte_flow_item_type pattern_eth_ipv6_gtpu_ipv6_tcp[] = {
+	RTE_FLOW_ITEM_TYPE_ETH,
+	RTE_FLOW_ITEM_TYPE_IPV6,
+	RTE_FLOW_ITEM_TYPE_UDP,
+	RTE_FLOW_ITEM_TYPE_GTPU,
+	RTE_FLOW_ITEM_TYPE_IPV6,
+	RTE_FLOW_ITEM_TYPE_TCP,
+	RTE_FLOW_ITEM_TYPE_END,
+};
+
+enum rte_flow_item_type pattern_eth_ipv6_gtpu_ipv6_icmp[] = {
+	RTE_FLOW_ITEM_TYPE_ETH,
+	RTE_FLOW_ITEM_TYPE_IPV6,
+	RTE_FLOW_ITEM_TYPE_UDP,
+	RTE_FLOW_ITEM_TYPE_GTPU,
+	RTE_FLOW_ITEM_TYPE_IPV6,
+	RTE_FLOW_ITEM_TYPE_ICMP,
+	RTE_FLOW_ITEM_TYPE_END,
+};
+
+/*IPv4 GTPU EH IPv4 */
 enum rte_flow_item_type pattern_eth_ipv4_gtpu_eh_ipv4[] = {
 	RTE_FLOW_ITEM_TYPE_ETH,
 	RTE_FLOW_ITEM_TYPE_IPV4,
@@ -1066,6 +1239,7 @@ enum rte_flow_item_type pattern_eth_ipv4_gtpu_eh_ipv4[] = {
 	RTE_FLOW_ITEM_TYPE_IPV4,
 	RTE_FLOW_ITEM_TYPE_END,
 };
+
 enum rte_flow_item_type pattern_eth_ipv4_gtpu_eh_ipv4_udp[] = {
 	RTE_FLOW_ITEM_TYPE_ETH,
 	RTE_FLOW_ITEM_TYPE_IPV4,
@@ -1076,6 +1250,7 @@ enum rte_flow_item_type pattern_eth_ipv4_gtpu_eh_ipv4_udp[] = {
 	RTE_FLOW_ITEM_TYPE_UDP,
 	RTE_FLOW_ITEM_TYPE_END,
 };
+
 enum rte_flow_item_type pattern_eth_ipv4_gtpu_eh_ipv4_tcp[] = {
 	RTE_FLOW_ITEM_TYPE_ETH,
 	RTE_FLOW_ITEM_TYPE_IPV4,
@@ -1085,8 +1260,8 @@ enum rte_flow_item_type pattern_eth_ipv4_gtpu_eh_ipv4_tcp[] = {
 	RTE_FLOW_ITEM_TYPE_IPV4,
 	RTE_FLOW_ITEM_TYPE_TCP,
 	RTE_FLOW_ITEM_TYPE_END,
-
 };
+
 enum rte_flow_item_type pattern_eth_ipv4_gtpu_eh_ipv4_icmp[] = {
 	RTE_FLOW_ITEM_TYPE_ETH,
 	RTE_FLOW_ITEM_TYPE_IPV4,
@@ -1094,6 +1269,138 @@ enum rte_flow_item_type pattern_eth_ipv4_gtpu_eh_ipv4_icmp[] = {
 	RTE_FLOW_ITEM_TYPE_GTPU,
 	RTE_FLOW_ITEM_TYPE_GTP_PSC,
 	RTE_FLOW_ITEM_TYPE_IPV4,
+	RTE_FLOW_ITEM_TYPE_ICMP,
+	RTE_FLOW_ITEM_TYPE_END,
+};
+
+/*IPv4 GTPU EH IPv6 */
+enum rte_flow_item_type pattern_eth_ipv4_gtpu_eh_ipv6[] = {
+	RTE_FLOW_ITEM_TYPE_ETH,
+	RTE_FLOW_ITEM_TYPE_IPV4,
+	RTE_FLOW_ITEM_TYPE_UDP,
+	RTE_FLOW_ITEM_TYPE_GTPU,
+	RTE_FLOW_ITEM_TYPE_GTP_PSC,
+	RTE_FLOW_ITEM_TYPE_IPV6,
+	RTE_FLOW_ITEM_TYPE_END,
+};
+
+enum rte_flow_item_type pattern_eth_ipv4_gtpu_eh_ipv6_udp[] = {
+	RTE_FLOW_ITEM_TYPE_ETH,
+	RTE_FLOW_ITEM_TYPE_IPV4,
+	RTE_FLOW_ITEM_TYPE_UDP,
+	RTE_FLOW_ITEM_TYPE_GTPU,
+	RTE_FLOW_ITEM_TYPE_GTP_PSC,
+	RTE_FLOW_ITEM_TYPE_IPV6,
+	RTE_FLOW_ITEM_TYPE_UDP,
+	RTE_FLOW_ITEM_TYPE_END,
+};
+
+enum rte_flow_item_type pattern_eth_ipv4_gtpu_eh_ipv6_tcp[] = {
+	RTE_FLOW_ITEM_TYPE_ETH,
+	RTE_FLOW_ITEM_TYPE_IPV4,
+	RTE_FLOW_ITEM_TYPE_UDP,
+	RTE_FLOW_ITEM_TYPE_GTPU,
+	RTE_FLOW_ITEM_TYPE_GTP_PSC,
+	RTE_FLOW_ITEM_TYPE_IPV6,
+	RTE_FLOW_ITEM_TYPE_TCP,
+	RTE_FLOW_ITEM_TYPE_END,
+};
+
+enum rte_flow_item_type pattern_eth_ipv4_gtpu_eh_ipv6_icmp[] = {
+	RTE_FLOW_ITEM_TYPE_ETH,
+	RTE_FLOW_ITEM_TYPE_IPV4,
+	RTE_FLOW_ITEM_TYPE_UDP,
+	RTE_FLOW_ITEM_TYPE_GTPU,
+	RTE_FLOW_ITEM_TYPE_GTP_PSC,
+	RTE_FLOW_ITEM_TYPE_IPV6,
+	RTE_FLOW_ITEM_TYPE_ICMP,
+	RTE_FLOW_ITEM_TYPE_END,
+};
+
+/*IPv6 GTPU EH IPv4 */
+enum rte_flow_item_type pattern_eth_ipv6_gtpu_eh_ipv4[] = {
+	RTE_FLOW_ITEM_TYPE_ETH,
+	RTE_FLOW_ITEM_TYPE_IPV6,
+	RTE_FLOW_ITEM_TYPE_UDP,
+	RTE_FLOW_ITEM_TYPE_GTPU,
+	RTE_FLOW_ITEM_TYPE_GTP_PSC,
+	RTE_FLOW_ITEM_TYPE_IPV4,
+	RTE_FLOW_ITEM_TYPE_END,
+};
+
+enum rte_flow_item_type pattern_eth_ipv6_gtpu_eh_ipv4_udp[] = {
+	RTE_FLOW_ITEM_TYPE_ETH,
+	RTE_FLOW_ITEM_TYPE_IPV6,
+	RTE_FLOW_ITEM_TYPE_UDP,
+	RTE_FLOW_ITEM_TYPE_GTPU,
+	RTE_FLOW_ITEM_TYPE_GTP_PSC,
+	RTE_FLOW_ITEM_TYPE_IPV4,
+	RTE_FLOW_ITEM_TYPE_UDP,
+	RTE_FLOW_ITEM_TYPE_END,
+};
+
+enum rte_flow_item_type pattern_eth_ipv6_gtpu_eh_ipv4_tcp[] = {
+	RTE_FLOW_ITEM_TYPE_ETH,
+	RTE_FLOW_ITEM_TYPE_IPV6,
+	RTE_FLOW_ITEM_TYPE_UDP,
+	RTE_FLOW_ITEM_TYPE_GTPU,
+	RTE_FLOW_ITEM_TYPE_GTP_PSC,
+	RTE_FLOW_ITEM_TYPE_IPV4,
+	RTE_FLOW_ITEM_TYPE_TCP,
+	RTE_FLOW_ITEM_TYPE_END,
+};
+
+enum rte_flow_item_type pattern_eth_ipv6_gtpu_eh_ipv4_icmp[] = {
+	RTE_FLOW_ITEM_TYPE_ETH,
+	RTE_FLOW_ITEM_TYPE_IPV6,
+	RTE_FLOW_ITEM_TYPE_UDP,
+	RTE_FLOW_ITEM_TYPE_GTPU,
+	RTE_FLOW_ITEM_TYPE_GTP_PSC,
+	RTE_FLOW_ITEM_TYPE_IPV4,
+	RTE_FLOW_ITEM_TYPE_ICMP,
+	RTE_FLOW_ITEM_TYPE_END,
+};
+
+/*IPv6 GTPU EH IPv6 */
+enum rte_flow_item_type pattern_eth_ipv6_gtpu_eh_ipv6[] = {
+	RTE_FLOW_ITEM_TYPE_ETH,
+	RTE_FLOW_ITEM_TYPE_IPV6,
+	RTE_FLOW_ITEM_TYPE_UDP,
+	RTE_FLOW_ITEM_TYPE_GTPU,
+	RTE_FLOW_ITEM_TYPE_GTP_PSC,
+	RTE_FLOW_ITEM_TYPE_IPV6,
+	RTE_FLOW_ITEM_TYPE_END,
+};
+
+enum rte_flow_item_type pattern_eth_ipv6_gtpu_eh_ipv6_udp[] = {
+	RTE_FLOW_ITEM_TYPE_ETH,
+	RTE_FLOW_ITEM_TYPE_IPV6,
+	RTE_FLOW_ITEM_TYPE_UDP,
+	RTE_FLOW_ITEM_TYPE_GTPU,
+	RTE_FLOW_ITEM_TYPE_GTP_PSC,
+	RTE_FLOW_ITEM_TYPE_IPV6,
+	RTE_FLOW_ITEM_TYPE_UDP,
+	RTE_FLOW_ITEM_TYPE_END,
+};
+
+enum rte_flow_item_type pattern_eth_ipv6_gtpu_eh_ipv6_tcp[] = {
+	RTE_FLOW_ITEM_TYPE_ETH,
+	RTE_FLOW_ITEM_TYPE_IPV6,
+	RTE_FLOW_ITEM_TYPE_UDP,
+	RTE_FLOW_ITEM_TYPE_GTPU,
+	RTE_FLOW_ITEM_TYPE_GTP_PSC,
+	RTE_FLOW_ITEM_TYPE_IPV6,
+	RTE_FLOW_ITEM_TYPE_TCP,
+	RTE_FLOW_ITEM_TYPE_END,
+};
+
+enum rte_flow_item_type pattern_eth_ipv6_gtpu_eh_ipv6_icmp[] = {
+	RTE_FLOW_ITEM_TYPE_ETH,
+	RTE_FLOW_ITEM_TYPE_IPV6,
+	RTE_FLOW_ITEM_TYPE_UDP,
+	RTE_FLOW_ITEM_TYPE_GTPU,
+	RTE_FLOW_ITEM_TYPE_GTP_PSC,
+	RTE_FLOW_ITEM_TYPE_IPV6,
 	RTE_FLOW_ITEM_TYPE_ICMP,
 	RTE_FLOW_ITEM_TYPE_END,
 };
@@ -1873,7 +2180,7 @@ ice_flow_process_filter(struct rte_eth_dev *dev,
 		return -rte_errno;
 	}
 
-	if (!actions) {
+	if (!actions || actions->type == RTE_FLOW_ACTION_TYPE_END) {
 		rte_flow_error_set(error, EINVAL,
 				   RTE_FLOW_ERROR_TYPE_ACTION_NUM,
 				   NULL, "NULL action.");

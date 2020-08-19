@@ -50,6 +50,15 @@ struct ice_dcf_hw {
 	uint16_t vsi_id;
 
 	struct rte_eth_dev *eth_dev;
+	uint8_t *rss_lut;
+	uint8_t *rss_key;
+	uint64_t supported_rxdid;
+	uint16_t num_queue_pairs;
+
+	uint16_t msix_base;
+	uint16_t nb_msix;
+	uint16_t rxq_map[16];
+	struct virtchnl_eth_stats eth_stats_offset;
 };
 
 int ice_dcf_execute_virtchnl_cmd(struct ice_dcf_hw *hw,
@@ -59,5 +68,13 @@ int ice_dcf_send_aq_cmd(void *dcf_hw, struct ice_aq_desc *desc,
 int ice_dcf_handle_vsi_update_event(struct ice_dcf_hw *hw);
 int ice_dcf_init_hw(struct rte_eth_dev *eth_dev, struct ice_dcf_hw *hw);
 void ice_dcf_uninit_hw(struct rte_eth_dev *eth_dev, struct ice_dcf_hw *hw);
+int ice_dcf_init_rss(struct ice_dcf_hw *hw);
+int ice_dcf_configure_queues(struct ice_dcf_hw *hw);
+int ice_dcf_config_irq_map(struct ice_dcf_hw *hw);
+int ice_dcf_switch_queue(struct ice_dcf_hw *hw, uint16_t qid, bool rx, bool on);
+int ice_dcf_disable_queues(struct ice_dcf_hw *hw);
+int ice_dcf_query_stats(struct ice_dcf_hw *hw,
+			struct virtchnl_eth_stats *pstats);
+int ice_dcf_add_del_all_mac_addr(struct ice_dcf_hw *hw, bool add);
 
 #endif /* _ICE_DCF_H_ */

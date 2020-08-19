@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: BSD-3-Clause
- * Copyright(c) 2001-2020
+ * Copyright(c) 2001-2020 Intel Corporation
  */
 
 #include "ice_common.h"
@@ -10,6 +10,9 @@
 #define ICE_FLOW_FLD_SZ_VLAN		2
 #define ICE_FLOW_FLD_SZ_IPV4_ADDR	4
 #define ICE_FLOW_FLD_SZ_IPV6_ADDR	16
+#define ICE_FLOW_FLD_SZ_IPV6_PRE32_ADDR	4
+#define ICE_FLOW_FLD_SZ_IPV6_PRE48_ADDR	6
+#define ICE_FLOW_FLD_SZ_IPV6_PRE64_ADDR	8
 #define ICE_FLOW_FLD_SZ_IP_DSCP		1
 #define ICE_FLOW_FLD_SZ_IP_TTL		1
 #define ICE_FLOW_FLD_SZ_IP_PROT		1
@@ -63,7 +66,7 @@ struct ice_flow_field_info ice_flds_info[ICE_FLOW_FIELD_IDX_MAX] = {
 	/* ICE_FLOW_FIELD_IDX_C_VLAN */
 	ICE_FLOW_FLD_INFO(ICE_FLOW_SEG_HDR_VLAN, 14, ICE_FLOW_FLD_SZ_VLAN),
 	/* ICE_FLOW_FIELD_IDX_ETH_TYPE */
-	ICE_FLOW_FLD_INFO(ICE_FLOW_SEG_HDR_ETH, 12, ICE_FLOW_FLD_SZ_ETH_TYPE),
+	ICE_FLOW_FLD_INFO(ICE_FLOW_SEG_HDR_ETH, 0, ICE_FLOW_FLD_SZ_ETH_TYPE),
 	/* IPv4 / IPv6 */
 	/* ICE_FLOW_FIELD_IDX_IPV4_DSCP */
 	ICE_FLOW_FLD_INFO_MSK(ICE_FLOW_SEG_HDR_IPV4, 0, ICE_FLOW_FLD_SZ_IP_DSCP,
@@ -91,6 +94,24 @@ struct ice_flow_field_info ice_flds_info[ICE_FLOW_FIELD_IDX_MAX] = {
 	ICE_FLOW_FLD_INFO(ICE_FLOW_SEG_HDR_IPV6, 8, ICE_FLOW_FLD_SZ_IPV6_ADDR),
 	/* ICE_FLOW_FIELD_IDX_IPV6_DA */
 	ICE_FLOW_FLD_INFO(ICE_FLOW_SEG_HDR_IPV6, 24, ICE_FLOW_FLD_SZ_IPV6_ADDR),
+	/* ICE_FLOW_FIELD_IDX_IPV6_PRE32_SA */
+	ICE_FLOW_FLD_INFO(ICE_FLOW_SEG_HDR_IPV6, 8,
+			  ICE_FLOW_FLD_SZ_IPV6_PRE32_ADDR),
+	/* ICE_FLOW_FIELD_IDX_IPV6_PRE32_DA */
+	ICE_FLOW_FLD_INFO(ICE_FLOW_SEG_HDR_IPV6, 24,
+			  ICE_FLOW_FLD_SZ_IPV6_PRE32_ADDR),
+	/* ICE_FLOW_FIELD_IDX_IPV6_PRE48_SA */
+	ICE_FLOW_FLD_INFO(ICE_FLOW_SEG_HDR_IPV6, 8,
+			  ICE_FLOW_FLD_SZ_IPV6_PRE48_ADDR),
+	/* ICE_FLOW_FIELD_IDX_IPV6_PRE48_DA */
+	ICE_FLOW_FLD_INFO(ICE_FLOW_SEG_HDR_IPV6, 24,
+			  ICE_FLOW_FLD_SZ_IPV6_PRE48_ADDR),
+	/* ICE_FLOW_FIELD_IDX_IPV6_PRE64_SA */
+	ICE_FLOW_FLD_INFO(ICE_FLOW_SEG_HDR_IPV6, 8,
+			  ICE_FLOW_FLD_SZ_IPV6_PRE64_ADDR),
+	/* ICE_FLOW_FIELD_IDX_IPV6_PRE64_DA */
+	ICE_FLOW_FLD_INFO(ICE_FLOW_SEG_HDR_IPV6, 24,
+			  ICE_FLOW_FLD_SZ_IPV6_PRE64_ADDR),
 	/* Transport */
 	/* ICE_FLOW_FIELD_IDX_TCP_SRC_PORT */
 	ICE_FLOW_FLD_INFO(ICE_FLOW_SEG_HDR_TCP, 0, ICE_FLOW_FLD_SZ_PORT),
@@ -177,7 +198,7 @@ struct ice_flow_field_info ice_flds_info[ICE_FLOW_FIELD_IDX_MAX] = {
 static const u32 ice_ptypes_mac_ofos[] = {
 	0xFDC00846, 0xBFBF7F7E, 0xF70001DF, 0xFEFDFDFB,
 	0x0000077E, 0x00000000, 0x00000000, 0x00000000,
-	0x00000000, 0x03FFF000, 0x7FFFFFE0, 0x00000000,
+	0x00400000, 0x03FFF000, 0x7FFFFFE0, 0x00000000,
 	0x00000000, 0x00000000, 0x00000000, 0x00000000,
 	0x00000000, 0x00000000, 0x00000000, 0x00000000,
 	0x00000000, 0x00000000, 0x00000000, 0x00000000,
@@ -197,11 +218,27 @@ static const u32 ice_ptypes_macvlan_il[] = {
 	0x00000000, 0x00000000, 0x00000000, 0x00000000,
 };
 
-/* Packet types for packets with an Outer/First/Single IPv4 header */
+/* Packet types for packets with an Outer/First/Single IPv4 header, does NOT
+ * include IPV4 other PTYPEs
+ */
 static const u32 ice_ptypes_ipv4_ofos[] = {
 	0x1DC00000, 0x04000800, 0x00000000, 0x00000000,
 	0x00000000, 0x00000155, 0x00000000, 0x00000000,
-	0x0003000F, 0x000FC000, 0x83E0F800, 0x00000101,
+	0x00000000, 0x000FC000, 0x00000000, 0x00000000,
+	0x00000000, 0x00000000, 0x00000000, 0x00000000,
+	0x00000000, 0x00000000, 0x00000000, 0x00000000,
+	0x00000000, 0x00000000, 0x00000000, 0x00000000,
+	0x00000000, 0x00000000, 0x00000000, 0x00000000,
+	0x00000000, 0x00000000, 0x00000000, 0x00000000,
+};
+
+/* Packet types for packets with an Outer/First/Single IPv4 header, includes
+ * IPV4 other PTYPEs
+ */
+static const u32 ice_ptypes_ipv4_ofos_all[] = {
+	0x1DC00000, 0x04000800, 0x00000000, 0x00000000,
+	0x00000000, 0x00000155, 0x00000000, 0x00000000,
+	0x00000000, 0x000FC000, 0x83E0F800, 0x00000101,
 	0x00000000, 0x00000000, 0x00000000, 0x00000000,
 	0x00000000, 0x00000000, 0x00000000, 0x00000000,
 	0x00000000, 0x00000000, 0x00000000, 0x00000000,
@@ -221,8 +258,24 @@ static const u32 ice_ptypes_ipv4_il[] = {
 	0x00000000, 0x00000000, 0x00000000, 0x00000000,
 };
 
-/* Packet types for packets with an Outer/First/Single IPv6 header */
+/* Packet types for packets with an Outer/First/Single IPv6 header, does NOT
+ * include IVP6 other PTYPEs
+ */
 static const u32 ice_ptypes_ipv6_ofos[] = {
+	0x00000000, 0x00000000, 0x77000000, 0x10002000,
+	0x00000000, 0x000002AA, 0x00000000, 0x00000000,
+	0x00000000, 0x03F00000, 0x00000000, 0x00000000,
+	0x00000000, 0x00000000, 0x00000000, 0x00000000,
+	0x00000000, 0x00000000, 0x00000000, 0x00000000,
+	0x00000000, 0x00000000, 0x00000000, 0x00000000,
+	0x00000000, 0x00000000, 0x00000000, 0x00000000,
+	0x00000000, 0x00000000, 0x00000000, 0x00000000,
+};
+
+/* Packet types for packets with an Outer/First/Single IPv6 header, includes
+ * IPV6 other PTYPEs
+ */
+static const u32 ice_ptypes_ipv6_ofos_all[] = {
 	0x00000000, 0x00000000, 0x77000000, 0x10002000,
 	0x00000000, 0x000002AA, 0x00000000, 0x00000000,
 	0x00080F00, 0x03F00000, 0x7C1F0000, 0x00000206,
@@ -238,6 +291,54 @@ static const u32 ice_ptypes_ipv6_il[] = {
 	0x00000000, 0x03B80770, 0x000001DC, 0x0EE00000,
 	0x00000770, 0x00000000, 0x00000000, 0x00000000,
 	0x00000000, 0x00000000, 0x7FE00000, 0x00000000,
+	0x00000000, 0x00000000, 0x00000000, 0x00000000,
+	0x00000000, 0x00000000, 0x00000000, 0x00000000,
+	0x00000000, 0x00000000, 0x00000000, 0x00000000,
+	0x00000000, 0x00000000, 0x00000000, 0x00000000,
+	0x00000000, 0x00000000, 0x00000000, 0x00000000,
+};
+
+/* Packet types for packets with an Outer/First/Single IPv4 header - no L4 */
+static const u32 ice_ipv4_ofos_no_l4[] = {
+	0x10C00000, 0x04000800, 0x00000000, 0x00000000,
+	0x00000000, 0x00000000, 0x00000000, 0x00000000,
+	0x00000000, 0x000cc000, 0x00000000, 0x00000000,
+	0x00000000, 0x00000000, 0x00000000, 0x00000000,
+	0x00000000, 0x00000000, 0x00000000, 0x00000000,
+	0x00000000, 0x00000000, 0x00000000, 0x00000000,
+	0x00000000, 0x00000000, 0x00000000, 0x00000000,
+	0x00000000, 0x00000000, 0x00000000, 0x00000000,
+};
+
+/* Packet types for packets with an Innermost/Last IPv4 header - no L4 */
+static const u32 ice_ipv4_il_no_l4[] = {
+	0x60000000, 0x18043008, 0x80000002, 0x6010c021,
+	0x00000008, 0x00000000, 0x00000000, 0x00000000,
+	0x00000000, 0x00000000, 0x00139800, 0x00000000,
+	0x00000000, 0x00000000, 0x00000000, 0x00000000,
+	0x00000000, 0x00000000, 0x00000000, 0x00000000,
+	0x00000000, 0x00000000, 0x00000000, 0x00000000,
+	0x00000000, 0x00000000, 0x00000000, 0x00000000,
+	0x00000000, 0x00000000, 0x00000000, 0x00000000,
+};
+
+/* Packet types for packets with an Outer/First/Single IPv6 header - no L4 */
+static const u32 ice_ipv6_ofos_no_l4[] = {
+	0x00000000, 0x00000000, 0x43000000, 0x10002000,
+	0x00000000, 0x00000000, 0x00000000, 0x00000000,
+	0x00000000, 0x02300000, 0x00000000, 0x00000000,
+	0x00000000, 0x00000000, 0x00000000, 0x00000000,
+	0x00000000, 0x00000000, 0x00000000, 0x00000000,
+	0x00000000, 0x00000000, 0x00000000, 0x00000000,
+	0x00000000, 0x00000000, 0x00000000, 0x00000000,
+	0x00000000, 0x00000000, 0x00000000, 0x00000000,
+};
+
+/* Packet types for packets with an Innermost/Last IPv6 header - no L4 */
+static const u32 ice_ipv6_il_no_l4[] = {
+	0x00000000, 0x02180430, 0x0000010c, 0x086010c0,
+	0x00000430, 0x00000000, 0x00000000, 0x00000000,
+	0x00000000, 0x00000000, 0x4e600000, 0x00000000,
 	0x00000000, 0x00000000, 0x00000000, 0x00000000,
 	0x00000000, 0x00000000, 0x00000000, 0x00000000,
 	0x00000000, 0x00000000, 0x00000000, 0x00000000,
@@ -368,6 +469,29 @@ static const u32 ice_ptypes_gtpc_tid[] = {
 };
 
 /* Packet types for GTPU */
+static const struct ice_ptype_attributes ice_attr_gtpu_session[] = {
+	{ ICE_MAC_IPV4_GTPU_IPV4_FRAG,	  ICE_PTYPE_ATTR_GTP_SESSION },
+	{ ICE_MAC_IPV4_GTPU_IPV4_PAY,	  ICE_PTYPE_ATTR_GTP_SESSION },
+	{ ICE_MAC_IPV4_GTPU_IPV4_UDP_PAY, ICE_PTYPE_ATTR_GTP_SESSION },
+	{ ICE_MAC_IPV4_GTPU_IPV4_TCP,	  ICE_PTYPE_ATTR_GTP_SESSION },
+	{ ICE_MAC_IPV4_GTPU_IPV4_ICMP,	  ICE_PTYPE_ATTR_GTP_SESSION },
+	{ ICE_MAC_IPV6_GTPU_IPV4_FRAG,	  ICE_PTYPE_ATTR_GTP_SESSION },
+	{ ICE_MAC_IPV6_GTPU_IPV4_PAY,	  ICE_PTYPE_ATTR_GTP_SESSION },
+	{ ICE_MAC_IPV6_GTPU_IPV4_UDP_PAY, ICE_PTYPE_ATTR_GTP_SESSION },
+	{ ICE_MAC_IPV6_GTPU_IPV4_TCP,	  ICE_PTYPE_ATTR_GTP_SESSION },
+	{ ICE_MAC_IPV6_GTPU_IPV4_ICMP,	  ICE_PTYPE_ATTR_GTP_SESSION },
+	{ ICE_MAC_IPV4_GTPU_IPV6_FRAG,	  ICE_PTYPE_ATTR_GTP_SESSION },
+	{ ICE_MAC_IPV4_GTPU_IPV6_PAY,	  ICE_PTYPE_ATTR_GTP_SESSION },
+	{ ICE_MAC_IPV4_GTPU_IPV6_UDP_PAY, ICE_PTYPE_ATTR_GTP_SESSION },
+	{ ICE_MAC_IPV4_GTPU_IPV6_TCP,	  ICE_PTYPE_ATTR_GTP_SESSION },
+	{ ICE_MAC_IPV4_GTPU_IPV6_ICMPV6,  ICE_PTYPE_ATTR_GTP_SESSION },
+	{ ICE_MAC_IPV6_GTPU_IPV6_FRAG,	  ICE_PTYPE_ATTR_GTP_SESSION },
+	{ ICE_MAC_IPV6_GTPU_IPV6_PAY,	  ICE_PTYPE_ATTR_GTP_SESSION },
+	{ ICE_MAC_IPV6_GTPU_IPV6_UDP_PAY, ICE_PTYPE_ATTR_GTP_SESSION },
+	{ ICE_MAC_IPV6_GTPU_IPV6_TCP,	  ICE_PTYPE_ATTR_GTP_SESSION },
+	{ ICE_MAC_IPV6_GTPU_IPV6_ICMPV6,  ICE_PTYPE_ATTR_GTP_SESSION },
+};
+
 static const struct ice_ptype_attributes ice_attr_gtpu_eh[] = {
 	{ ICE_MAC_IPV4_GTPU_IPV4_FRAG,	  ICE_PTYPE_ATTR_GTP_PDU_EH },
 	{ ICE_MAC_IPV4_GTPU_IPV4_PAY,	  ICE_PTYPE_ATTR_GTP_PDU_EH },
@@ -452,7 +576,7 @@ static const u32 ice_ptypes_gtpu[] = {
 static const u32 ice_ptypes_pppoe[] = {
 	0x00000000, 0x00000000, 0x00000000, 0x00000000,
 	0x00000000, 0x00000000, 0x00000000, 0x00000000,
-	0x00000000, 0x03FFF000, 0x00000000, 0x00000000,
+	0x00000000, 0x03ffe000, 0x00000000, 0x00000000,
 	0x00000000, 0x00000000, 0x00000000, 0x00000000,
 	0x00000000, 0x00000000, 0x00000000, 0x00000000,
 	0x00000000, 0x00000000, 0x00000000, 0x00000000,
@@ -532,6 +656,17 @@ static const u32 ice_ptypes_nat_t_esp[] = {
 	0x00000000, 0x00000000, 0x00000000, 0x00000000,
 };
 
+static const u32 ice_ptypes_mac_non_ip_ofos[] = {
+	0x00000846, 0x00000000, 0x00000000, 0x00000000,
+	0x00000000, 0x00000000, 0x00000000, 0x00000000,
+	0x00400000, 0x03FFF000, 0x00000000, 0x00000000,
+	0x00000000, 0x00000000, 0x00000000, 0x00000000,
+	0x00000000, 0x00000000, 0x00000000, 0x00000000,
+	0x00000000, 0x00000000, 0x00000000, 0x00000000,
+	0x00000000, 0x00000000, 0x00000000, 0x00000000,
+	0x00000000, 0x00000000, 0x00000000, 0x00000000,
+};
+
 /* Manage parameters and info. used during the creation of a flow profile */
 struct ice_flow_prof_params {
 	enum ice_block blk;
@@ -566,6 +701,9 @@ struct ice_flow_prof_params {
 #define ICE_FLOW_SEG_HDRS_L4_MASK	\
 	(ICE_FLOW_SEG_HDR_ICMP | ICE_FLOW_SEG_HDR_TCP | ICE_FLOW_SEG_HDR_UDP | \
 	 ICE_FLOW_SEG_HDR_SCTP)
+/* mask for L4 protocols that are NOT part of IPV4/6 OTHER PTYPE groups */
+#define ICE_FLOW_SEG_HDRS_L4_MASK_NO_OTHER	\
+	(ICE_FLOW_SEG_HDR_TCP | ICE_FLOW_SEG_HDR_UDP | ICE_FLOW_SEG_HDR_SCTP)
 
 /**
  * ice_flow_val_hdrs - validates packet segments for valid protocol headers
@@ -688,10 +826,35 @@ ice_flow_proc_seg_hdrs(struct ice_flow_prof_params *params)
 			ice_and_bitmap(params->ptypes, params->ptypes, src,
 				       ICE_FLOW_PTYPE_MAX);
 		}
-
-		if (hdrs & ICE_FLOW_SEG_HDR_IPV4) {
+		if ((hdrs & ICE_FLOW_SEG_HDR_IPV4) &&
+		    (hdrs & ICE_FLOW_SEG_HDR_IPV_OTHER)) {
+			src = i ?
+				(const ice_bitmap_t *)ice_ptypes_ipv4_il :
+				(const ice_bitmap_t *)ice_ptypes_ipv4_ofos_all;
+			ice_and_bitmap(params->ptypes, params->ptypes, src,
+				       ICE_FLOW_PTYPE_MAX);
+		} else if ((hdrs & ICE_FLOW_SEG_HDR_IPV6) &&
+			   (hdrs & ICE_FLOW_SEG_HDR_IPV_OTHER)) {
+			src = i ?
+				(const ice_bitmap_t *)ice_ptypes_ipv6_il :
+				(const ice_bitmap_t *)ice_ptypes_ipv6_ofos_all;
+			ice_and_bitmap(params->ptypes, params->ptypes, src,
+				       ICE_FLOW_PTYPE_MAX);
+		} else if ((hdrs & ICE_FLOW_SEG_HDR_IPV4) &&
+			   !(hdrs & ICE_FLOW_SEG_HDRS_L4_MASK_NO_OTHER)) {
+			src = !i ? (const ice_bitmap_t *)ice_ipv4_ofos_no_l4 :
+				(const ice_bitmap_t *)ice_ipv4_il_no_l4;
+			ice_and_bitmap(params->ptypes, params->ptypes, src,
+				       ICE_FLOW_PTYPE_MAX);
+		} else if (hdrs & ICE_FLOW_SEG_HDR_IPV4) {
 			src = !i ? (const ice_bitmap_t *)ice_ptypes_ipv4_ofos :
 				(const ice_bitmap_t *)ice_ptypes_ipv4_il;
+			ice_and_bitmap(params->ptypes, params->ptypes, src,
+				       ICE_FLOW_PTYPE_MAX);
+		} else if ((hdrs & ICE_FLOW_SEG_HDR_IPV6) &&
+			   !(hdrs & ICE_FLOW_SEG_HDRS_L4_MASK_NO_OTHER)) {
+			src = !i ? (const ice_bitmap_t *)ice_ipv6_ofos_no_l4 :
+				(const ice_bitmap_t *)ice_ipv6_il_no_l4;
 			ice_and_bitmap(params->ptypes, params->ptypes, src,
 				       ICE_FLOW_PTYPE_MAX);
 		} else if (hdrs & ICE_FLOW_SEG_HDR_IPV6) {
@@ -701,12 +864,21 @@ ice_flow_proc_seg_hdrs(struct ice_flow_prof_params *params)
 				       ICE_FLOW_PTYPE_MAX);
 		}
 
-		if (hdrs & ICE_FLOW_SEG_HDR_ICMP) {
-			src = !i ? (const ice_bitmap_t *)ice_ptypes_icmp_of :
-				(const ice_bitmap_t *)ice_ptypes_icmp_il;
+		if (hdrs & ICE_FLOW_SEG_HDR_ETH_NON_IP) {
+			src = (const ice_bitmap_t *)ice_ptypes_mac_non_ip_ofos;
+			ice_and_bitmap(params->ptypes, params->ptypes,
+				       src, ICE_FLOW_PTYPE_MAX);
+		} else if (hdrs & ICE_FLOW_SEG_HDR_PPPOE) {
+			src = (const ice_bitmap_t *)ice_ptypes_pppoe;
 			ice_and_bitmap(params->ptypes, params->ptypes, src,
 				       ICE_FLOW_PTYPE_MAX);
-		} else if (hdrs & ICE_FLOW_SEG_HDR_UDP) {
+		} else {
+			src = (const ice_bitmap_t *)ice_ptypes_pppoe;
+			ice_andnot_bitmap(params->ptypes, params->ptypes, src,
+					  ICE_FLOW_PTYPE_MAX);
+		}
+
+		if (hdrs & ICE_FLOW_SEG_HDR_UDP) {
 			src = (const ice_bitmap_t *)ice_ptypes_udp_il;
 			ice_and_bitmap(params->ptypes, params->ptypes, src,
 				       ICE_FLOW_PTYPE_MAX);
@@ -716,6 +888,13 @@ ice_flow_proc_seg_hdrs(struct ice_flow_prof_params *params)
 				       ICE_FLOW_PTYPE_MAX);
 		} else if (hdrs & ICE_FLOW_SEG_HDR_SCTP) {
 			src = (const ice_bitmap_t *)ice_ptypes_sctp_il;
+			ice_and_bitmap(params->ptypes, params->ptypes, src,
+				       ICE_FLOW_PTYPE_MAX);
+		}
+
+		if (hdrs & ICE_FLOW_SEG_HDR_ICMP) {
+			src = !i ? (const ice_bitmap_t *)ice_ptypes_icmp_of :
+				(const ice_bitmap_t *)ice_ptypes_icmp_il;
 			ice_and_bitmap(params->ptypes, params->ptypes, src,
 				       ICE_FLOW_PTYPE_MAX);
 		} else if (hdrs & ICE_FLOW_SEG_HDR_GRE) {
@@ -760,6 +939,10 @@ ice_flow_proc_seg_hdrs(struct ice_flow_prof_params *params)
 			src = (const ice_bitmap_t *)ice_ptypes_gtpu;
 			ice_and_bitmap(params->ptypes, params->ptypes,
 				       src, ICE_FLOW_PTYPE_MAX);
+
+			/* Attributes for GTP packet without Extension Header */
+			params->attr = ice_attr_gtpu_session;
+			params->attr_cnt = ARRAY_SIZE(ice_attr_gtpu_session);
 		} else if (hdrs & ICE_FLOW_SEG_HDR_L2TPV3) {
 			src = (const ice_bitmap_t *)ice_ptypes_l2tpv3;
 			ice_and_bitmap(params->ptypes, params->ptypes,
@@ -860,7 +1043,6 @@ ice_flow_xtract_fld(struct ice_hw *hw, struct ice_flow_prof_params *params,
 	struct ice_flow_fld_info *flds;
 	u16 cnt, ese_bits, i;
 	u16 sib_mask = 0;
-	s16 adj = 0;
 	u16 mask;
 	u16 off;
 
@@ -926,6 +1108,12 @@ ice_flow_xtract_fld(struct ice_hw *hw, struct ice_flow_prof_params *params,
 		break;
 	case ICE_FLOW_FIELD_IDX_IPV6_SA:
 	case ICE_FLOW_FIELD_IDX_IPV6_DA:
+	case ICE_FLOW_FIELD_IDX_IPV6_PRE32_SA:
+	case ICE_FLOW_FIELD_IDX_IPV6_PRE32_DA:
+	case ICE_FLOW_FIELD_IDX_IPV6_PRE48_SA:
+	case ICE_FLOW_FIELD_IDX_IPV6_PRE48_DA:
+	case ICE_FLOW_FIELD_IDX_IPV6_PRE64_SA:
+	case ICE_FLOW_FIELD_IDX_IPV6_PRE64_DA:
 		prot_id = seg == 0 ? ICE_PROT_IPV6_OF_OR_S : ICE_PROT_IPV6_IL;
 		break;
 	case ICE_FLOW_FIELD_IDX_TCP_SRC_PORT:
@@ -1000,7 +1188,7 @@ ice_flow_xtract_fld(struct ice_hw *hw, struct ice_flow_prof_params *params,
 	flds[fld].xtrct.prot_id = prot_id;
 	flds[fld].xtrct.off = (ice_flds_info[fld].off / ese_bits) *
 		ICE_FLOW_FV_EXTRACT_SZ;
-	flds[fld].xtrct.disp = (u8)((ice_flds_info[fld].off + adj) % ese_bits);
+	flds[fld].xtrct.disp = (u8)(ice_flds_info[fld].off % ese_bits);
 	flds[fld].xtrct.idx = params->es_cnt;
 	flds[fld].xtrct.mask = ice_flds_info[fld].mask;
 
@@ -1324,7 +1512,6 @@ ice_flow_proc_segs(struct ice_hw *hw, struct ice_flow_prof_params *params)
 		if (status)
 			return status;
 		break;
-	case ICE_BLK_SW:
 	default:
 		return ICE_ERR_NOT_IMPL;
 	}
@@ -1354,7 +1541,7 @@ ice_flow_find_prof_conds(struct ice_hw *hw, enum ice_block blk,
 	struct ice_flow_prof *p, *prof = NULL;
 
 	ice_acquire_lock(&hw->fl_profs_locks[blk]);
-	LIST_FOR_EACH_ENTRY(p, &hw->fl_profs[blk], ice_flow_prof, l_entry) {
+	LIST_FOR_EACH_ENTRY(p, &hw->fl_profs[blk], ice_flow_prof, l_entry)
 		if ((p->dir == dir || conds & ICE_FLOW_FIND_PROF_NOT_CHK_DIR) &&
 		    segs_cnt && segs_cnt == p->segs_cnt) {
 			u8 i;
@@ -1380,7 +1567,6 @@ ice_flow_find_prof_conds(struct ice_hw *hw, enum ice_block blk,
 				break;
 			}
 		}
-	}
 	ice_release_lock(&hw->fl_profs_locks[blk]);
 
 	return prof;
@@ -1417,10 +1603,9 @@ ice_flow_find_prof_id(struct ice_hw *hw, enum ice_block blk, u64 prof_id)
 {
 	struct ice_flow_prof *p;
 
-	LIST_FOR_EACH_ENTRY(p, &hw->fl_profs[blk], ice_flow_prof, l_entry) {
+	LIST_FOR_EACH_ENTRY(p, &hw->fl_profs[blk], ice_flow_prof, l_entry)
 		if (p->id == prof_id)
 			return p;
-	}
 
 	return NULL;
 }
@@ -1456,13 +1641,13 @@ ice_dealloc_flow_entry(struct ice_hw *hw, struct ice_flow_entry *entry)
 #define ICE_ACL_INVALID_SCEN	0x3f
 
 /**
- * ice_flow_acl_is_prof_in_use - Verify if the profile is associated to any pf
+ * ice_flow_acl_is_prof_in_use - Verify if the profile is associated to any PF
  * @hw: pointer to the hardware structure
  * @prof: pointer to flow profile
- * @buf: destination buffer function writes partial xtrct sequence to
+ * @buf: destination buffer function writes partial extraction sequence to
  *
- * returns ICE_SUCCESS if no pf is associated to the given profile
- * returns ICE_ERR_IN_USE if at least one pf is associated to the given profile
+ * returns ICE_SUCCESS if no PF is associated to the given profile
+ * returns ICE_ERR_IN_USE if at least one PF is associated to the given profile
  * returns other error code for real error
  */
 static enum ice_status
@@ -1480,7 +1665,7 @@ ice_flow_acl_is_prof_in_use(struct ice_hw *hw, struct ice_flow_prof *prof,
 	if (status)
 		return status;
 
-	/* If all pf's associated scenarios are all 0 or all
+	/* If all PF's associated scenarios are all 0 or all
 	 * ICE_ACL_INVALID_SCEN (63) for the given profile then the latter has
 	 * not been configured yet.
 	 */
@@ -1504,7 +1689,7 @@ ice_flow_acl_is_prof_in_use(struct ice_hw *hw, struct ice_flow_prof *prof,
 }
 
 /**
- * ice_flow_acl_free_act_cntr - Free the acl rule's actions
+ * ice_flow_acl_free_act_cntr - Free the ACL rule's actions
  * @hw: pointer to the hardware structure
  * @acts: array of actions to be performed on a match
  * @acts_cnt: number of actions
@@ -1542,11 +1727,11 @@ ice_flow_acl_free_act_cntr(struct ice_hw *hw, struct ice_flow_action *acts,
 }
 
 /**
- * ice_flow_acl_disassoc_scen - Disassociate the scenario to the Profile
+ * ice_flow_acl_disassoc_scen - Disassociate the scenario from the profile
  * @hw: pointer to the hardware structure
  * @prof: pointer to flow profile
  *
- * Disassociate the scenario to the Profile for the PF of the VSI.
+ * Disassociate the scenario from the profile for the PF of the VSI.
  */
 static enum ice_status
 ice_flow_acl_disassoc_scen(struct ice_hw *hw, struct ice_flow_prof *prof)
@@ -1565,7 +1750,7 @@ ice_flow_acl_disassoc_scen(struct ice_hw *hw, struct ice_flow_prof *prof)
 	if (status)
 		return status;
 
-	/* Clear scenario for this pf */
+	/* Clear scenario for this PF */
 	buf.pf_scenario_num[hw->pf_id] = ICE_ACL_INVALID_SCEN;
 	status = ice_prgm_acl_prof_extrt(hw, prof_id, &buf, NULL);
 
@@ -1740,7 +1925,7 @@ ice_flow_rem_prof_sync(struct ice_hw *hw, enum ice_block blk,
 		struct ice_aqc_acl_prof_generic_frmt buf;
 		u8 prof_id = 0;
 
-		/* Deassociate the scenario to the Profile for the PF */
+		/* Disassociate the scenario from the profile for the PF */
 		status = ice_flow_acl_disassoc_scen(hw, prof);
 		if (status)
 			return status;
@@ -2057,15 +2242,17 @@ enum ice_status
 ice_flow_get_hw_prof(struct ice_hw *hw, enum ice_block blk, u64 prof_id,
 		     u8 *hw_prof_id)
 {
+	enum ice_status status = ICE_ERR_DOES_NOT_EXIST;
 	struct ice_prof_map *map;
 
+	ice_acquire_lock(&hw->blk[blk].es.prof_map_lock);
 	map = ice_search_prof_id(hw, blk, prof_id);
 	if (map) {
 		*hw_prof_id = map->prof_id;
-		return ICE_SUCCESS;
+		status = ICE_SUCCESS;
 	}
-
-	return ICE_ERR_DOES_NOT_EXIST;
+	ice_release_lock(&hw->blk[blk].es.prof_map_lock);
+	return status;
 }
 
 /**
@@ -2107,11 +2294,11 @@ u64 ice_flow_find_entry(struct ice_hw *hw, enum ice_block blk, u64 entry_id)
 }
 
 /**
- * ice_flow_acl_check_actions - Checks the acl rule's actions
+ * ice_flow_acl_check_actions - Checks the ACL rule's actions
  * @hw: pointer to the hardware structure
  * @acts: array of actions to be performed on a match
  * @acts_cnt: number of actions
- * @cnt_alloc: indicates if a ACL counter has been allocated.
+ * @cnt_alloc: indicates if an ACL counter has been allocated.
  */
 static enum ice_status
 ice_flow_acl_check_actions(struct ice_hw *hw, struct ice_flow_action *acts,
@@ -2170,7 +2357,7 @@ ice_flow_acl_check_actions(struct ice_hw *hw, struct ice_flow_action *acts,
 }
 
 /**
- * ice_flow_acl_frmt_entry_range - Format an acl range checker for a given field
+ * ice_flow_acl_frmt_entry_range - Format an ACL range checker for a given field
  * @fld: number of the given field
  * @info: info about field
  * @range_buf: range checker configuration buffer
@@ -2211,7 +2398,7 @@ ice_flow_acl_frmt_entry_range(u16 fld, struct ice_flow_fld_info *info,
 }
 
 /**
- * ice_flow_acl_frmt_entry_fld - Partially format acl entry for a given field
+ * ice_flow_acl_frmt_entry_fld - Partially format ACL entry for a given field
  * @fld: number of the given field
  * @info: info about the field
  * @buf: buffer containing the entry
@@ -2283,7 +2470,7 @@ ice_flow_acl_frmt_entry_fld(u16 fld, struct ice_flow_fld_info *info, u8 *buf,
 }
 
 /**
- * ice_flow_acl_frmt_entry - Format acl entry
+ * ice_flow_acl_frmt_entry - Format ACL entry
  * @hw: pointer to the hardware structure
  * @prof: pointer to flow profile
  * @e: pointer to the flow entry
@@ -2293,7 +2480,7 @@ ice_flow_acl_frmt_entry_fld(u16 fld, struct ice_flow_fld_info *info, u8 *buf,
  *
  * Formats the key (and key_inverse) to be matched from the data passed in,
  * along with data from the flow profile. This key/key_inverse pair makes up
- * the 'entry' for an acl flow entry.
+ * the 'entry' for an ACL flow entry.
  */
 static enum ice_status
 ice_flow_acl_frmt_entry(struct ice_hw *hw, struct ice_flow_prof *prof,
@@ -2857,8 +3044,6 @@ ice_flow_add_entry(struct ice_hw *hw, enum ice_block blk, u64 prof_id,
 			goto out;
 
 		break;
-	case ICE_BLK_SW:
-	case ICE_BLK_PE:
 	default:
 		status = ICE_ERR_NOT_IMPL;
 		goto out;
@@ -3096,7 +3281,7 @@ ice_flow_set_rss_seg_info(struct ice_flow_seg_info *segs, u64 hash_fields,
 	ICE_FLOW_SET_HDRS(segs, flow_hdr);
 
 	if (segs->hdrs & ~ICE_FLOW_RSS_SEG_HDR_VAL_MASKS &
-	    ~ICE_FLOW_RSS_HDRS_INNER_MASK)
+	    ~ICE_FLOW_RSS_HDRS_INNER_MASK & ~ICE_FLOW_SEG_HDR_IPV_OTHER)
 		return ICE_ERR_PARAM;
 
 	val = (u64)(segs->hdrs & ICE_FLOW_RSS_SEG_HDR_L3_MASKS);
@@ -3126,13 +3311,12 @@ void ice_rem_vsi_rss_list(struct ice_hw *hw, u16 vsi_handle)
 
 	ice_acquire_lock(&hw->rss_locks);
 	LIST_FOR_EACH_ENTRY_SAFE(r, tmp, &hw->rss_list_head,
-				 ice_rss_cfg, l_entry) {
+				 ice_rss_cfg, l_entry)
 		if (ice_test_and_clear_bit(vsi_handle, r->vsis))
 			if (!ice_is_any_bit_set(r->vsis, ICE_MAX_VSI)) {
 				LIST_DEL(&r->l_entry);
 				ice_free(hw, r);
 			}
-	}
 	ice_release_lock(&hw->rss_locks);
 }
 
@@ -3157,22 +3341,21 @@ enum ice_status ice_rem_vsi_rss_cfg(struct ice_hw *hw, u16 vsi_handle)
 	if (LIST_EMPTY(&hw->fl_profs[blk]))
 		return ICE_SUCCESS;
 
-	ice_acquire_lock(&hw->fl_profs_locks[blk]);
+	ice_acquire_lock(&hw->rss_locks);
 	LIST_FOR_EACH_ENTRY_SAFE(p, t, &hw->fl_profs[blk], ice_flow_prof,
-				 l_entry) {
+				 l_entry)
 		if (ice_is_bit_set(p->vsis, vsi_handle)) {
 			status = ice_flow_disassoc_prof(hw, blk, p, vsi_handle);
 			if (status)
 				break;
 
 			if (!ice_is_any_bit_set(p->vsis, ICE_MAX_VSI)) {
-				status = ice_flow_rem_prof_sync(hw, blk, p);
+				status = ice_flow_rem_prof(hw, blk, p->id);
 				if (status)
 					break;
 			}
 		}
-	}
-	ice_release_lock(&hw->fl_profs_locks[blk]);
+	ice_release_lock(&hw->rss_locks);
 
 	return status;
 }
@@ -3195,7 +3378,7 @@ ice_rem_rss_list(struct ice_hw *hw, u16 vsi_handle, struct ice_flow_prof *prof)
 	 * remove from the RSS entry list of the VSI context and delete entry.
 	 */
 	LIST_FOR_EACH_ENTRY_SAFE(r, tmp, &hw->rss_list_head,
-				 ice_rss_cfg, l_entry) {
+				 ice_rss_cfg, l_entry)
 		if (r->hashed_flds == prof->segs[prof->segs_cnt - 1].match &&
 		    r->packet_hdr == prof->segs[prof->segs_cnt - 1].hdrs) {
 			ice_clear_bit(vsi_handle, r->vsis);
@@ -3205,7 +3388,6 @@ ice_rem_rss_list(struct ice_hw *hw, u16 vsi_handle, struct ice_flow_prof *prof)
 			}
 			return;
 		}
-	}
 }
 
 /**
@@ -3303,9 +3485,13 @@ ice_rss_update_symm(struct ice_hw *hw,
 	struct ice_prof_map *map;
 	u8 prof_id, m;
 
+	ice_acquire_lock(&hw->blk[ICE_BLK_RSS].es.prof_map_lock);
 	map = ice_search_prof_id(hw, ICE_BLK_RSS, prof->id);
-	prof_id = map->prof_id;
-
+	if (map)
+		prof_id = map->prof_id;
+	ice_release_lock(&hw->blk[ICE_BLK_RSS].es.prof_map_lock);
+	if (!map)
+		return;
 	/* clear to default */
 	for (m = 0; m < 6; m++)
 		wr32(hw, GLQF_HSYMM(prof_id, m), 0);
@@ -3398,6 +3584,13 @@ ice_add_rss_cfg_sync(struct ice_hw *hw, u16 vsi_handle, u64 hashed_flds,
 	if (status)
 		goto exit;
 
+	/* don't do RSS for GTPU outer */
+	if (segs_cnt == ICE_RSS_OUTER_HEADERS &&
+	    segs[segs_cnt - 1].hdrs & ICE_FLOW_SEG_HDR_GTPU) {
+		status = ICE_SUCCESS;
+		goto exit;
+	}
+
 	/* Search for a flow profile that has matching headers, hash fields
 	 * and has the input VSI associated to it. If found, no further
 	 * operations required and exit.
@@ -3414,7 +3607,7 @@ ice_add_rss_cfg_sync(struct ice_hw *hw, u16 vsi_handle, u64 hashed_flds,
 	}
 
 	/* Check if a flow profile exists with the same protocol headers and
-	 * associated with the input VSI. If so disasscociate the VSI from
+	 * associated with the input VSI. If so disassociate the VSI from
 	 * this profile. The VSI will be added to a new profile created with
 	 * the protocol header and new hash field configuration.
 	 */
@@ -3514,6 +3707,7 @@ ice_add_rss_cfg(struct ice_hw *hw, u16 vsi_handle, u64 hashed_flds,
 	ice_acquire_lock(&hw->rss_locks);
 	status = ice_add_rss_cfg_sync(hw, vsi_handle, hashed_flds, addl_hdrs,
 				      ICE_RSS_OUTER_HEADERS, symm);
+
 	if (!status)
 		status = ice_add_rss_cfg_sync(hw, vsi_handle, hashed_flds,
 					      addl_hdrs, ICE_RSS_INNER_HEADERS,
@@ -3552,6 +3746,12 @@ ice_rem_rss_cfg_sync(struct ice_hw *hw, u16 vsi_handle, u64 hashed_flds,
 					   addl_hdrs);
 	if (status)
 		goto out;
+
+	if (segs_cnt == ICE_RSS_OUTER_HEADERS &&
+	    segs[segs_cnt - 1].hdrs & ICE_FLOW_SEG_HDR_GTPU) {
+		status = ICE_SUCCESS;
+		goto out;
+	}
 
 	prof = ice_flow_find_prof_conds(hw, blk, ICE_FLOW_RX, segs, segs_cnt,
 					vsi_handle,
@@ -3661,7 +3861,8 @@ enum ice_status ice_replay_rss_cfg(struct ice_hw *hw, u16 vsi_handle)
  */
 u64 ice_get_rss_cfg(struct ice_hw *hw, u16 vsi_handle, u32 hdrs)
 {
-	struct ice_rss_cfg *r, *rss_cfg = NULL;
+	u64 rss_hash = ICE_HASH_INVALID;
+	struct ice_rss_cfg *r;
 
 	/* verify if the protocol header is non zero and VSI is valid */
 	if (hdrs == ICE_FLOW_SEG_HDR_NONE || !ice_is_vsi_valid(hw, vsi_handle))
@@ -3672,10 +3873,10 @@ u64 ice_get_rss_cfg(struct ice_hw *hw, u16 vsi_handle, u32 hdrs)
 			    ice_rss_cfg, l_entry)
 		if (ice_is_bit_set(r->vsis, vsi_handle) &&
 		    r->packet_hdr == hdrs) {
-			rss_cfg = r;
+			rss_hash = r->hashed_flds;
 			break;
 		}
 	ice_release_lock(&hw->rss_locks);
 
-	return rss_cfg ? rss_cfg->hashed_flds : ICE_HASH_INVALID;
+	return rss_hash;
 }

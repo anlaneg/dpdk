@@ -37,7 +37,6 @@ ip4_lookup_node_process(struct rte_graph *graph, struct rte_node *node,
 	from = objs;
 	n_left_from = nb_objs;
 
-#define OBJS_PER_CLINE (RTE_CACHE_LINE_SIZE / sizeof(void *))
 	for (i = OBJS_PER_CLINE; i < RTE_GRAPH_BURST_SIZE; i += OBJS_PER_CLINE)
 		rte_prefetch0(&objs[i]);
 
@@ -45,6 +44,7 @@ ip4_lookup_node_process(struct rte_graph *graph, struct rte_node *node,
 		rte_prefetch0(rte_pktmbuf_mtod_offset(pkts[i], void *,
 						sizeof(struct rte_ether_hdr)));
 
+	dip = vdupq_n_s32(0);
 	/* Get stream for the speculated next node */
 	to_next = rte_node_next_stream_get(graph, node, next_index, nb_objs);
 	while (n_left_from >= 4) {

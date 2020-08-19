@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: BSD-3-Clause
- * Copyright(c) 2001-2020
+ * Copyright(c) 2001-2020 Intel Corporation
  */
 
 #include "ice_common.h"
@@ -182,7 +182,9 @@ unwind_alloc_rq_bufs:
 	i--;
 	for (; i >= 0; i--)
 		ice_free_dma_mem(hw, &cq->rq.r.rq_bi[i]);
+	cq->rq.r.rq_bi = NULL;
 	ice_free(hw, cq->rq.dma_head);
+	cq->rq.dma_head = NULL;
 
 	return ICE_ERR_NO_MEMORY;
 }
@@ -220,7 +222,9 @@ unwind_alloc_sq_bufs:
 	i--;
 	for (; i >= 0; i--)
 		ice_free_dma_mem(hw, &cq->sq.r.sq_bi[i]);
+	cq->sq.r.sq_bi = NULL;
 	ice_free(hw, cq->sq.dma_head);
+	cq->sq.dma_head = NULL;
 
 	return ICE_ERR_NO_MEMORY;
 }
@@ -279,6 +283,24 @@ ice_cfg_rq_regs(struct ice_hw *hw, struct ice_ctl_q_info *cq)
 	return ICE_SUCCESS;
 }
 
+#define ICE_FREE_CQ_BUFS(hw, qi, ring)					\
+do {									\
+	/* free descriptors */						\
+	if ((qi)->ring.r.ring##_bi) {					\
+		int i;							\
+									\
+		for (i = 0; i < (qi)->num_##ring##_entries; i++)	\
+			if ((qi)->ring.r.ring##_bi[i].pa)		\
+				ice_free_dma_mem((hw),			\
+					&(qi)->ring.r.ring##_bi[i]);	\
+	}								\
+	/* free the buffer info list */					\
+	if ((qi)->ring.cmd_buf)						\
+		ice_free(hw, (qi)->ring.cmd_buf);			\
+	/* free DMA head */						\
+	ice_free(hw, (qi)->ring.dma_head);				\
+} while (0)
+
 /**
  * ice_init_sq - main initialization routine for Control ATQ
  * @hw: pointer to the hardware structure
@@ -334,6 +356,7 @@ static enum ice_status ice_init_sq(struct ice_hw *hw, struct ice_ctl_q_info *cq)
 	goto init_ctrlq_exit;
 
 init_ctrlq_free_rings:
+	ICE_FREE_CQ_BUFS(hw, cq, sq);
 	ice_free_cq_ring(hw, &cq->sq);
 
 init_ctrlq_exit:
@@ -395,26 +418,12 @@ static enum ice_status ice_init_rq(struct ice_hw *hw, struct ice_ctl_q_info *cq)
 	goto init_ctrlq_exit;
 
 init_ctrlq_free_rings:
+	ICE_FREE_CQ_BUFS(hw, cq, rq);
 	ice_free_cq_ring(hw, &cq->rq);
 
 init_ctrlq_exit:
 	return ret_code;
 }
-
-#define ICE_FREE_CQ_BUFS(hw, qi, ring)					\
-do {									\
-	int i;								\
-	/* free descriptors */						\
-	for (i = 0; i < (qi)->num_##ring##_entries; i++)		\
-		if ((qi)->ring.r.ring##_bi[i].pa)			\
-			ice_free_dma_mem((hw),				\
-					 &(qi)->ring.r.ring##_bi[i]);	\
-	/* free the buffer info list */					\
-	if ((qi)->ring.cmd_buf)						\
-		ice_free(hw, (qi)->ring.cmd_buf);			\
-	/* free DMA head */						\
-	ice_free(hw, (qi)->ring.dma_head);				\
-} while (0)
 
 /**
  * ice_shutdown_sq - shutdown the Control ATQ
@@ -742,8 +751,7 @@ enum ice_status ice_create_all_ctrlq(struct ice_hw *hw)
  *
  * Destroys the send and receive queue locks for a given control queue.
  */
-static void
-ice_destroy_ctrlq_locks(struct ice_ctl_q_info *cq)
+static void ice_destroy_ctrlq_locks(struct ice_ctl_q_info *cq)
 {
 	ice_destroy_lock(&cq->sq_lock);
 	ice_destroy_lock(&cq->rq_lock);
@@ -1040,8 +1048,7 @@ ice_sq_send_cmd_nolock(struct ice_hw *hw, struct ice_ctl_q_info *cq,
 	if (!cmd_completed) {
 		if (rd32(hw, cq->rq.len) & cq->rq.len_crit_mask ||
 		    rd32(hw, cq->sq.len) & cq->sq.len_crit_mask) {
-			ice_debug(hw, ICE_DBG_AQ_MSG,
-				  "Critical FW error.\n");
+			ice_debug(hw, ICE_DBG_AQ_MSG, "Critical FW error.\n");
 			status = ICE_ERR_AQ_FW_CRITICAL;
 		} else {
 			ice_debug(hw, ICE_DBG_AQ_MSG,
@@ -1167,8 +1174,7 @@ ice_clean_rq_elem(struct ice_hw *hw, struct ice_ctl_q_info *cq,
 
 	ice_debug(hw, ICE_DBG_AQ_DESC, "ARQ: desc and buffer:\n");
 
-	ice_debug_cq(hw, (void *)desc, e->msg_buf,
-		     cq->rq_buf_size);
+	ice_debug_cq(hw, (void *)desc, e->msg_buf, cq->rq_buf_size);
 
 	/* Restore the original datalen and buffer address in the desc,
 	 * FW updates datalen to indicate the event message size

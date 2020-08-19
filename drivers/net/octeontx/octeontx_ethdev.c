@@ -47,24 +47,9 @@ enum octeontx_link_speed {
 	OCTEONTX_LINK_SPEED_RESERVE2
 };
 
-int otx_net_logtype_mbox;
-int otx_net_logtype_init;
-int otx_net_logtype_driver;
-
-RTE_INIT(otx_net_init_log)
-{
-	otx_net_logtype_mbox = rte_log_register("pmd.net.octeontx.mbox");
-	if (otx_net_logtype_mbox >= 0)
-		rte_log_set_level(otx_net_logtype_mbox, RTE_LOG_NOTICE);
-
-	otx_net_logtype_init = rte_log_register("pmd.net.octeontx.init");
-	if (otx_net_logtype_init >= 0)
-		rte_log_set_level(otx_net_logtype_init, RTE_LOG_NOTICE);
-
-	otx_net_logtype_driver = rte_log_register("pmd.net.octeontx.driver");
-	if (otx_net_logtype_driver >= 0)
-		rte_log_set_level(otx_net_logtype_driver, RTE_LOG_NOTICE);
-}
+RTE_LOG_REGISTER(otx_net_logtype_mbox, pmd.net.octeontx.mbox, NOTICE);
+RTE_LOG_REGISTER(otx_net_logtype_init, pmd.net.octeontx.init, NOTICE);
+RTE_LOG_REGISTER(otx_net_logtype_driver, pmd.net.octeontx.driver, NOTICE);
 
 /* Parse integer from integer argument */
 static int
@@ -1454,6 +1439,7 @@ octeontx_create(struct rte_vdev_device *dev, int port, uint8_t evdev,
 
 free_mac_addrs:
 	rte_free(data->mac_addrs);
+	data->mac_addrs = NULL;
 err:
 	if (nic)
 		octeontx_port_close(nic);

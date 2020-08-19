@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: BSD-3-Clause
- * Copyright(c) 2001-2020
+ * Copyright(c) 2001-2020 Intel Corporation
  */
 
 #ifndef _ICE_TYPE_H_
@@ -218,6 +218,7 @@ enum ice_media_type {
 	ICE_MEDIA_BASET,
 	ICE_MEDIA_BACKPLANE,
 	ICE_MEDIA_DA,
+	ICE_MEDIA_AUI,
 };
 
 /* Software VSI types. */
@@ -295,6 +296,20 @@ enum ice_fltr_ptype {
 	ICE_FLTR_PTYPE_NONF_IPV4_GTPU_IPV4_TCP,
 	ICE_FLTR_PTYPE_NONF_IPV4_GTPU_IPV4_ICMP,
 	ICE_FLTR_PTYPE_NONF_IPV4_GTPU_IPV4_OTHER,
+	ICE_FLTR_PTYPE_NONF_IPV6_GTPU_IPV6_OTHER,
+	ICE_FLTR_PTYPE_NONF_IPV4_L2TPV3,
+	ICE_FLTR_PTYPE_NONF_IPV6_L2TPV3,
+	ICE_FLTR_PTYPE_NONF_IPV4_ESP,
+	ICE_FLTR_PTYPE_NONF_IPV6_ESP,
+	ICE_FLTR_PTYPE_NONF_IPV4_AH,
+	ICE_FLTR_PTYPE_NONF_IPV6_AH,
+	ICE_FLTR_PTYPE_NONF_IPV4_NAT_T_ESP,
+	ICE_FLTR_PTYPE_NONF_IPV6_NAT_T_ESP,
+	ICE_FLTR_PTYPE_NONF_IPV4_PFCP_NODE,
+	ICE_FLTR_PTYPE_NONF_IPV4_PFCP_SESSION,
+	ICE_FLTR_PTYPE_NONF_IPV6_PFCP_NODE,
+	ICE_FLTR_PTYPE_NONF_IPV6_PFCP_SESSION,
+	ICE_FLTR_PTYPE_NON_IP_L2,
 	ICE_FLTR_PTYPE_FRAG_IPV4,
 	ICE_FLTR_PTYPE_NONF_IPV6_UDP,
 	ICE_FLTR_PTYPE_NONF_IPV6_TCP,
@@ -495,7 +510,7 @@ struct ice_nvm_info {
 	u32 flash_size;			/* Size of available flash in bytes */
 	u8 major_ver;			/* major version of dev starter */
 	u8 minor_ver;			/* minor version of dev starter */
-	u8 blank_nvm_mode;		/* is NVM empty (no FW present)*/
+	u8 blank_nvm_mode;		/* is NVM empty (no FW present) */
 };
 
 struct ice_link_default_override_tlv {
@@ -596,7 +611,7 @@ enum ice_rl_type {
 #define ICE_SCHED_NO_BW_WT		0
 #define ICE_SCHED_DFLT_RL_PROF_ID	0
 #define ICE_SCHED_NO_SHARED_RL_PROF_ID	0xFFFF
-#define ICE_SCHED_DFLT_BW_WT		1
+#define ICE_SCHED_DFLT_BW_WT		4
 #define ICE_SCHED_INVAL_PROF_ID		0xFFFF
 #define ICE_SCHED_DFLT_BURST_SIZE	(15 * 1024)	/* in bytes (15k) */
 
@@ -1051,7 +1066,7 @@ enum ice_sw_fwd_act_type {
 #define ICE_SR_1ST_SCRATCH_PAD_PTR		0x41
 #define ICE_SR_1ST_NVM_BANK_PTR			0x42
 #define ICE_SR_NVM_BANK_SIZE			0x43
-#define ICE_SR_1ND_OROM_BANK_PTR		0x44
+#define ICE_SR_1ST_OROM_BANK_PTR		0x44
 #define ICE_SR_OROM_BANK_SIZE			0x45
 #define ICE_SR_NETLIST_BANK_PTR			0x46
 #define ICE_SR_NETLIST_BANK_SIZE		0x47

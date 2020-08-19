@@ -7,6 +7,8 @@
 
 #include "getopt.h"
 
+struct rte_tel_data;
+
 enum {
 	/* long options mapped to a short option */
 #define OPT_HELP              "help"
@@ -67,6 +69,8 @@ enum {
 	OPT_VDEV_NUM,
 #define OPT_VFIO_INTR         "vfio-intr"
 	OPT_VFIO_INTR_NUM,
+#define OPT_VFIO_VF_TOKEN     "vfio-vf-token"
+	OPT_VFIO_VF_TOKEN_NUM,
 #define OPT_VMWARE_TSC_MAP    "vmware-tsc-map"
 	OPT_VMWARE_TSC_MAP_NUM,
 #define OPT_LEGACY_MEM    "legacy-mem"
@@ -77,6 +81,10 @@ enum {
 	OPT_IOVA_MODE_NUM,
 #define OPT_MATCH_ALLOCATIONS  "match-allocations"
 	OPT_MATCH_ALLOCATIONS_NUM,
+#define OPT_TELEMETRY         "telemetry"
+	OPT_TELEMETRY_NUM,
+#define OPT_NO_TELEMETRY      "no-telemetry"
+	OPT_NO_TELEMETRY_NUM,
 	OPT_LONG_MAX_NUM
 };
 
@@ -92,5 +100,8 @@ int eal_check_common_options(struct internal_config *internal_cfg);
 void eal_common_usage(void);
 enum rte_proc_type_t eal_proc_type_detect(void);
 int eal_plugins_init(void);
+int eal_save_args(int argc, char **argv);
+int handle_eal_info_request(const char *cmd, const char *params __rte_unused,
+		struct rte_tel_data *d);
 
 #endif /* EAL_OPTIONS_H */

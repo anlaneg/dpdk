@@ -3,6 +3,7 @@
 
 PROJECT_NAME            = DPDK
 PROJECT_NUMBER          = @VERSION@
+USE_MDFILE_AS_MAINPAGE  = @TOPDIR@/doc/api/doxy-api-index.md
 INPUT                   = @TOPDIR@/doc/api/doxy-api-index.md \
                           @TOPDIR@/drivers/bus/vdev \
                           @TOPDIR@/drivers/crypto/scheduler \
@@ -58,6 +59,7 @@ INPUT                   = @TOPDIR@/doc/api/doxy-api-index.md \
                           @TOPDIR@/lib/librte_power \
                           @TOPDIR@/lib/librte_rawdev \
                           @TOPDIR@/lib/librte_rcu \
+                          @TOPDIR@/lib/librte_regexdev \
                           @TOPDIR@/lib/librte_reorder \
                           @TOPDIR@/lib/librte_rib \
                           @TOPDIR@/lib/librte_ring \

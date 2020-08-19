@@ -6,16 +6,7 @@
 #ifndef RTE_PMD_MLX5_COMMON_MP_H_
 #define RTE_PMD_MLX5_COMMON_MP_H_
 
-/* Verbs header. */
-/* ISO C doesn't support unnamed structs/unions, disabling -pedantic. */
-#ifdef PEDANTIC
-#pragma GCC diagnostic ignored "-Wpedantic"
-#endif
-#include <infiniband/verbs.h>
-#ifdef PEDANTIC
-#pragma GCC diagnostic error "-Wpedantic"
-#endif
-
+#include <mlx5_glue.h>
 #include <rte_eal.h>
 #include <rte_string_fns.h>
 
@@ -26,12 +17,20 @@ enum mlx5_mp_req_type {
 	MLX5_MP_REQ_START_RXTX,
 	MLX5_MP_REQ_STOP_RXTX,
 	MLX5_MP_REQ_QUEUE_STATE_MODIFY,
+	MLX5_MP_REQ_QUEUE_RX_STOP,
+	MLX5_MP_REQ_QUEUE_RX_START,
+	MLX5_MP_REQ_QUEUE_TX_STOP,
+	MLX5_MP_REQ_QUEUE_TX_START,
 };
 
 struct mlx5_mp_arg_queue_state_modify {
 	uint8_t is_wq; /* Set if WQ. */
 	uint16_t queue_id; /* DPDK queue ID. */
 	enum ibv_wq_state state; /* WQ requested state. */
+};
+
+struct mlx5_mp_arg_queue_id {
+	uint16_t queue_id; /* DPDK queue ID. */
 };
 
 /* Pameters for IPC. */
@@ -44,6 +43,8 @@ struct mlx5_mp_param {
 		uintptr_t addr; /* MLX5_MP_REQ_CREATE_MR */
 		struct mlx5_mp_arg_queue_state_modify state_modify;
 		/* MLX5_MP_REQ_QUEUE_STATE_MODIFY */
+		struct mlx5_mp_arg_queue_id queue_id;
+		/* MLX5_MP_REQ_QUEUE_RX/TX_START/STOP */
 	} args;
 };
 
@@ -79,20 +80,20 @@ mp_init_msg(struct mlx5_mp_id *mp_id, struct rte_mp_msg *msg,
 	param->port_id = mp_id->port_id;
 }
 
-__rte_experimental
+__rte_internal
 int mlx5_mp_init_primary(const char *name, const rte_mp_t primary_action);
-__rte_experimental
+__rte_internal
 void mlx5_mp_uninit_primary(const char *name);
-__rte_experimental
+__rte_internal
 int mlx5_mp_init_secondary(const char *name, const rte_mp_t secondary_action);
-__rte_experimental
+__rte_internal
 void mlx5_mp_uninit_secondary(const char *name);
-__rte_experimental
+__rte_internal
 int mlx5_mp_req_mr_create(struct mlx5_mp_id *mp_id, uintptr_t addr);
-__rte_experimental
+__rte_internal
 int mlx5_mp_req_queue_state_modify(struct mlx5_mp_id *mp_id,
 				   struct mlx5_mp_arg_queue_state_modify *sm);
-__rte_experimental
+__rte_internal
 int mlx5_mp_req_verbs_cmd_fd(struct mlx5_mp_id *mp_id);
 
 #endif /* RTE_PMD_MLX5_COMMON_MP_H_ */

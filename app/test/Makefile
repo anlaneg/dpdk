@@ -70,6 +70,7 @@ SRCS-y += test_ticketlock.c
 SRCS-y += test_memory.c
 SRCS-y += test_memzone.c
 SRCS-y += test_bitmap.c
+SRCS-y += test_bitops.c
 SRCS-y += test_reciprocal_division.c
 SRCS-y += test_reciprocal_division_perf.c
 SRCS-y += test_fbarray.c
@@ -80,8 +81,9 @@ SRCS-y += test_ring.c
 SRCS-y += test_ring_mpmc_stress.c
 SRCS-y += test_ring_hts_stress.c
 SRCS-y += test_ring_perf.c
-SRCS-y += test_ring_peek_stress.c
+SRCS-y += test_ring_mt_peek_stress.c
 SRCS-y += test_ring_rts_stress.c
+SRCS-y += test_ring_st_peek_stress.c
 SRCS-y += test_ring_stress.c
 SRCS-y += test_pmd_perf.c
 
@@ -96,6 +98,7 @@ SRCS-$(CONFIG_RTE_LIBRTE_FLOW_CLASSIFY) += test_flow_classify.c
 endif
 
 SRCS-y += test_rwlock.c
+SRCS-y += test_lcores.c
 
 SRCS-$(CONFIG_RTE_LIBRTE_STACK) += test_stack.c
 SRCS-$(CONFIG_RTE_LIBRTE_STACK) += test_stack_perf.c
@@ -140,6 +143,8 @@ SRCS-$(CONFIG_RTE_LIBRTE_LPM) += test_lpm.c
 SRCS-$(CONFIG_RTE_LIBRTE_LPM) += test_lpm_perf.c
 SRCS-$(CONFIG_RTE_LIBRTE_LPM) += test_lpm6.c
 SRCS-$(CONFIG_RTE_LIBRTE_LPM) += test_lpm6_perf.c
+
+SRCS-$(CONFIG_RTE_LIBRTE_TELEMETRY) += test_telemetry_json.c
 
 SRCS-y += test_debug.c
 SRCS-y += test_errno.c
@@ -245,7 +250,7 @@ SRCS-$(CONFIG_RTE_LIBRTE_RCU) += test_rcu_qsbr.c test_rcu_qsbr_perf.c
 
 SRCS-$(CONFIG_RTE_LIBRTE_SECURITY) += test_security.c
 
-SRCS-$(CONFIG_RTE_LIBRTE_IPSEC) += test_ipsec.c
+SRCS-$(CONFIG_RTE_LIBRTE_IPSEC) += test_ipsec.c test_ipsec_perf.c
 SRCS-$(CONFIG_RTE_LIBRTE_IPSEC) += test_ipsec_sad.c
 ifeq ($(CONFIG_RTE_LIBRTE_IPSEC),y)
 LDLIBS += -lrte_ipsec

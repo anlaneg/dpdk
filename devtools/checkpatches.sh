@@ -27,10 +27,10 @@ elif [ -f "$codespell" ] ; then
 fi
 options="$options --max-line-length=$length"
 options="$options --show-types"
-options="$options --ignore=LINUX_VERSION_CODE,\
+options="$options --ignore=LINUX_VERSION_CODE,ENOSYS,\
 FILE_PATH_CHANGES,MAINTAINERS_STYLE,SPDX_LICENSE_TAG,\
 VOLATILE,PREFER_PACKED,PREFER_ALIGNED,PREFER_PRINTF,\
-PREFER_KERNEL_TYPES,BIT_MACRO,CONST_STRUCT,\
+PREFER_KERNEL_TYPES,PREFER_FALLTHROUGH,BIT_MACRO,CONST_STRUCT,\
 SPLIT_STRING,LONG_LINE_STRING,C99_COMMENT_TOLERANCE,\
 LINE_SPACING,PARENTHESIS_ALIGNMENT,NETWORKING_BLOCK_COMMENT_STYLE,\
 NEW_TYPEDEFS,COMPARISON_TO_NULL"
@@ -38,14 +38,14 @@ options="$options $DPDK_CHECKPATCH_OPTIONS"
 
 print_usage () {
 	cat <<- END_OF_HELP
-	usage: $(basename $0) [-q] [-v] [-nX|-r range|patch1 [patch2] ...]]
+	usage: $(basename $0) [-h] [-q] [-v] [-nX|-r range|patch1 [patch2] ...]
 
 	Run Linux kernel checkpatch.pl with DPDK options.
 	The environment variable DPDK_CHECKPATCH_PATH must be set.
 
 	The patches to check can be from stdin, files specified on the command line,
 	latest git commits limited with -n option, or commits in the git range
-	specified with -r option (default: "origin/master..").
+	specified with -r option (default: "origin/main..").
 	END_OF_HELP
 }
 
@@ -69,12 +69,69 @@ check_forbidden_additions() { # <patch>
 		-f $(dirname $(readlink -f $0))/check-forbidden-tokens.awk \
 		"$1" || res=1
 
+	# forbid variable declaration inside "for" loop
+	awk -v FOLDERS='.' \
+		-v EXPRESSIONS='for[[:space:]]*\\((char|u?int|unsigned|s?size_t)' \
+		-v RET_ON_FAIL=1 \
+		-v MESSAGE='Declaring a variable inside for()' \
+		-f $(dirname $(readlink -f $0))/check-forbidden-tokens.awk \
+		"$1" || res=1
+
+	# refrain from new additions of 16/32/64 bits rte_atomicNN_xxx()
+	awk -v FOLDERS="lib drivers app examples" \
+		-v EXPRESSIONS="rte_atomic[0-9][0-9]_.*\\\(" \
+		-v RET_ON_FAIL=1 \
+		-v MESSAGE='Using rte_atomicNN_xxx' \
+		-f $(dirname $(readlink -f $0))/check-forbidden-tokens.awk \
+		"$1" || res=1
+
+	# refrain from new additions of rte_smp_[r/w]mb()
+	awk -v FOLDERS="lib drivers app examples" \
+		-v EXPRESSIONS="rte_smp_(r|w)?mb\\\(" \
+		-v RET_ON_FAIL=1 \
+		-v MESSAGE='Using rte_smp_[r/w]mb' \
+		-f $(dirname $(readlink -f $0))/check-forbidden-tokens.awk \
+		"$1" || res=1
+
+	# refrain from using compiler __sync_xxx builtins
+	awk -v FOLDERS="lib drivers app examples" \
+		-v EXPRESSIONS="__sync_.*\\\(" \
+		-v RET_ON_FAIL=1 \
+		-v MESSAGE='Using __sync_xxx builtins' \
+		-f $(dirname $(readlink -f $0))/check-forbidden-tokens.awk \
+		"$1" || res=1
+
+	# refrain from using compiler __atomic_thread_fence()
+	# It should be avoided on x86 for SMP case.
+	awk -v FOLDERS="lib drivers app examples" \
+		-v EXPRESSIONS="__atomic_thread_fence\\\(" \
+		-v RET_ON_FAIL=1 \
+		-v MESSAGE='Using __atomic_thread_fence' \
+		-f $(dirname $(readlink -f $0))/check-forbidden-tokens.awk \
+		"$1" || res=1
+
+	# forbid use of experimental build flag except in examples
+	awk -v FOLDERS='lib drivers app' \
+		-v EXPRESSIONS='-DALLOW_EXPERIMENTAL_API allow_experimental_apis' \
+		-v RET_ON_FAIL=1 \
+		-v MESSAGE='Using experimental build flag for in-tree compilation' \
+		-f $(dirname $(readlink -f $0))/check-forbidden-tokens.awk \
+		"$1" || res=1
+
 	# svg figures must be included with wildcard extension
 	# because of png conversion for pdf docs
 	awk -v FOLDERS='doc' \
 		-v EXPRESSIONS='::[[:space:]]*[^[:space:]]*\\.svg' \
 		-v RET_ON_FAIL=1 \
 		-v MESSAGE='Using explicit .svg extension instead of .*' \
+		-f $(dirname $(readlink -f $0))/check-forbidden-tokens.awk \
+		"$1" || res=1
+
+	# links must prefer https over http
+	awk -v FOLDERS='doc' \
+		-v EXPRESSIONS='http://.*dpdk.org' \
+		-v RET_ON_FAIL=1 \
+		-v MESSAGE='Using non https link to dpdk.org' \
 		-f $(dirname $(readlink -f $0))/check-forbidden-tokens.awk \
 		"$1" || res=1
 
@@ -143,7 +200,7 @@ check_internal_tags() { # <patch>
 }
 
 number=0
-range='origin/master..'
+range='origin/main..'
 quiet=false
 verbose=false
 while getopts hn:qr:v ARG ; do

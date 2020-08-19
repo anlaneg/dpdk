@@ -419,19 +419,6 @@ static int ixgbe_wait_for_link_up(struct ixgbe_hw *hw);
 		(r) = (h)->bitmap[idx] >> bit & 1;\
 	} while (0)
 
-int ixgbe_logtype_init;
-int ixgbe_logtype_driver;
-
-#ifdef RTE_LIBRTE_IXGBE_DEBUG_RX
-int ixgbe_logtype_rx;
-#endif
-#ifdef RTE_LIBRTE_IXGBE_DEBUG_TX
-int ixgbe_logtype_tx;
-#endif
-#ifdef RTE_LIBRTE_IXGBE_DEBUG_TX_FREE
-int ixgbe_logtype_tx_free;
-#endif
-
 /*
  * The set of PCI devices this driver supports
  */
@@ -2545,6 +2532,8 @@ ixgbe_flow_ctrl_enable(struct rte_eth_dev *dev, struct ixgbe_hw *hw)
 	int err;
 	uint32_t mflcn;
 
+	ixgbe_setup_fc(hw);
+
 	err = ixgbe_fc_enable(hw);
 
 	/* Not negotiated is not an error case */
@@ -2938,8 +2927,6 @@ ixgbe_dev_stop(struct rte_eth_dev *dev)
 	tm_conf->committed = false;
 
 	adapter->rss_reta_updated = 0;
-
-	adapter->mac_ctrl_frame_fwd = 0;
 
 	hw->adapter_stopped = true;
 }
@@ -4259,6 +4246,11 @@ ixgbe_dev_link_update_share(struct rte_eth_dev *dev,
 	if (wait_to_complete == 0 || dev->data->dev_conf.intr_conf.lsc != 0)
 		wait = 0;
 
+/* BSD has no interrupt mechanism, so force NIC status synchronization. */
+#ifdef RTE_EXEC_ENV_FREEBSD
+	wait = 1;
+#endif
+
 	if (vf)
 		diag = ixgbevf_check_link(hw, &link_speed, &link_up, wait);
 	else
@@ -4278,9 +4270,13 @@ ixgbe_dev_link_update_share(struct rte_eth_dev *dev,
 
 	if (link_up == 0) {
 		if (ixgbe_get_media_type(hw) == ixgbe_media_type_fiber) {
-			intr->flags |= IXGBE_FLAG_NEED_LINK_CONFIG;
 			ixgbe_dev_wait_setup_link_complete(dev, 0);
 			if (rte_atomic32_test_and_set(&ad->link_thread_running)) {
+				/* To avoid race condition between threads, set
+				 * the IXGBE_FLAG_NEED_LINK_CONFIG flag only
+				 * when there is no link thread running.
+				 */
+				intr->flags |= IXGBE_FLAG_NEED_LINK_CONFIG;
 				if (rte_ctrl_thread_create(&ad->link_thread_tid,
 					"ixgbe-link-handler",
 					NULL,
@@ -4309,6 +4305,10 @@ ixgbe_dev_link_update_share(struct rte_eth_dev *dev,
 			link.link_speed = ETH_SPEED_NUM_10M;
 		else
 			link.link_speed = ETH_SPEED_NUM_100M;
+		break;
+
+	case IXGBE_LINK_SPEED_10_FULL:
+		link.link_speed = ETH_SPEED_NUM_10M;
 		break;
 
 	case IXGBE_LINK_SPEED_100_FULL:
@@ -4745,6 +4745,11 @@ ixgbe_flow_ctrl_get(struct rte_eth_dev *dev, struct rte_eth_fc_conf *fc_conf)
 	 * MFLCN register.
 	 */
 	mflcn_reg = IXGBE_READ_REG(hw, IXGBE_MFLCN);
+	if (mflcn_reg & IXGBE_MFLCN_PMCF)
+		fc_conf->mac_ctrl_frame_fwd = 1;
+	else
+		fc_conf->mac_ctrl_frame_fwd = 0;
+
 	if (mflcn_reg & (IXGBE_MFLCN_RPFCE | IXGBE_MFLCN_RFCE))
 		rx_pause = 1;
 	else
@@ -9108,29 +9113,15 @@ RTE_PMD_REGISTER_KMOD_DEP(net_ixgbe_vf, "* igb_uio | vfio-pci");
 RTE_PMD_REGISTER_PARAM_STRING(net_ixgbe_vf,
 			      IXGBEVF_DEVARG_PFLINK_FULLCHK "=<0|1>");
 
-RTE_INIT(ixgbe_init_log)
-{
-	ixgbe_logtype_init = rte_log_register("pmd.net.ixgbe.init");
-	if (ixgbe_logtype_init >= 0)
-		rte_log_set_level(ixgbe_logtype_init, RTE_LOG_NOTICE);
-	ixgbe_logtype_driver = rte_log_register("pmd.net.ixgbe.driver");
-	if (ixgbe_logtype_driver >= 0)
-		rte_log_set_level(ixgbe_logtype_driver, RTE_LOG_NOTICE);
+RTE_LOG_REGISTER(ixgbe_logtype_init, pmd.net.ixgbe.init, NOTICE);
+RTE_LOG_REGISTER(ixgbe_logtype_driver, pmd.net.ixgbe.driver, NOTICE);
+
 #ifdef RTE_LIBRTE_IXGBE_DEBUG_RX
-	ixgbe_logtype_rx = rte_log_register("pmd.net.ixgbe.rx");
-	if (ixgbe_logtype_rx >= 0)
-		rte_log_set_level(ixgbe_logtype_rx, RTE_LOG_DEBUG);
+RTE_LOG_REGISTER(ixgbe_logtype_rx, pmd.net.ixgbe.rx, DEBUG);
 #endif
-
 #ifdef RTE_LIBRTE_IXGBE_DEBUG_TX
-	ixgbe_logtype_tx = rte_log_register("pmd.net.ixgbe.tx");
-	if (ixgbe_logtype_tx >= 0)
-		rte_log_set_level(ixgbe_logtype_tx, RTE_LOG_DEBUG);
+RTE_LOG_REGISTER(ixgbe_logtype_tx, pmd.net.ixgbe.tx, DEBUG);
 #endif
-
 #ifdef RTE_LIBRTE_IXGBE_DEBUG_TX_FREE
-	ixgbe_logtype_tx_free = rte_log_register("pmd.net.ixgbe.tx_free");
-	if (ixgbe_logtype_tx_free >= 0)
-		rte_log_set_level(ixgbe_logtype_tx_free, RTE_LOG_DEBUG);
+RTE_LOG_REGISTER(ixgbe_logtype_tx_free, pmd.net.ixgbe.tx_free, DEBUG);
 #endif
-}

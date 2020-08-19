@@ -10,31 +10,37 @@
 #include <stdint.h>
 #include <sys/queue.h>
 
-/* Verbs header. */
-/* ISO C doesn't support unnamed structs/unions, disabling -pedantic. */
-#ifdef PEDANTIC
-#pragma GCC diagnostic ignored "-Wpedantic"
-#endif
-#include <infiniband/verbs.h>
-#include <infiniband/mlx5dv.h>
-#ifdef PEDANTIC
-#pragma GCC diagnostic error "-Wpedantic"
-#endif
 
 #include <rte_rwlock.h>
 #include <rte_bitmap.h>
 #include <rte_memory.h>
 
+#include "mlx5_glue.h"
 #include "mlx5_common_mp.h"
 
 /* Size of per-queue MR cache array for linear search. */
 #define MLX5_MR_CACHE_N 8
 #define MLX5_MR_BTREE_CACHE_N 256
 
+/* mlx5 PMD MR struct. */
+struct mlx5_pmd_mr {
+	uint32_t	     lkey;
+	void		     *addr;
+	size_t		     len;
+	void		     *obj;  /* verbs mr object or devx umem object. */
+};
+
+/**
+ * mr operations typedef
+ */
+typedef int (*mlx5_reg_mr_t)(void *pd, void *addr, size_t length,
+			     struct mlx5_pmd_mr *pmd_mr);
+typedef void (*mlx5_dereg_mr_t)(struct mlx5_pmd_mr *pmd_mr);
+
 /* Memory Region object. */
 struct mlx5_mr {
 	LIST_ENTRY(mlx5_mr) mr; /**< Pointer to the prev/next entry. */
-	struct ibv_mr *ibv_mr; /* Verbs Memory Region. */
+	struct mlx5_pmd_mr pmd_mr; /* PMD memory region. */
 	const struct rte_memseg_list *msl;
 	int ms_base_idx; /* Start index of msl->memseg_arr[]. */
 	int ms_n; /* Number of memsegs in use. */
@@ -46,7 +52,7 @@ struct mlx5_mr {
 struct mr_cache_entry {
 	uintptr_t start; /* Start address of MR. */
 	uintptr_t end; /* End address of MR. */
-	uint32_t lkey; /* rte_cpu_to_be_32(ibv_mr->lkey). */
+	uint32_t lkey; /* rte_cpu_to_be_32(lkey). */
 } __rte_packed;
 
 /* MR Cache table for Binary search. */
@@ -76,6 +82,8 @@ struct mlx5_mr_share_cache {
 	struct mlx5_mr_btree cache; /* Global MR cache table. */
 	struct mlx5_mr_list mr_list; /* Registered MR list. */
 	struct mlx5_mr_list mr_free_list; /* Freed MR list. */
+	mlx5_reg_mr_t reg_mr_cb; /* Callback to reg_mr func */
+	mlx5_dereg_mr_t dereg_mr_cb; /* Callback to dereg_mr func */
 } __rte_packed;
 
 /**
@@ -115,46 +123,52 @@ mlx5_mr_lookup_lkey(struct mr_cache_entry *lkp_tbl, uint16_t *cached_idx,
 	return UINT32_MAX;
 }
 
-__rte_experimental
+__rte_internal
 int mlx5_mr_btree_init(struct mlx5_mr_btree *bt, int n, int socket);
-__rte_experimental
+__rte_internal
 void mlx5_mr_btree_free(struct mlx5_mr_btree *bt);
-__rte_experimental
+__rte_internal
 void mlx5_mr_btree_dump(struct mlx5_mr_btree *bt __rte_unused);
-__rte_experimental
-uint32_t mlx5_mr_addr2mr_bh(struct ibv_pd *pd, struct mlx5_mp_id *mp_id,
+__rte_internal
+uint32_t mlx5_mr_addr2mr_bh(void *pd, struct mlx5_mp_id *mp_id,
 			    struct mlx5_mr_share_cache *share_cache,
 			    struct mlx5_mr_ctrl *mr_ctrl,
 			    uintptr_t addr, unsigned int mr_ext_memseg_en);
-__rte_experimental
+__rte_internal
 void mlx5_mr_release_cache(struct mlx5_mr_share_cache *mr_cache);
-__rte_experimental
+__rte_internal
 void mlx5_mr_dump_cache(struct mlx5_mr_share_cache *share_cache __rte_unused);
-__rte_experimental
+__rte_internal
 void mlx5_mr_rebuild_cache(struct mlx5_mr_share_cache *share_cache);
-__rte_experimental
+__rte_internal
 void mlx5_mr_flush_local_cache(struct mlx5_mr_ctrl *mr_ctrl);
-__rte_experimental
+__rte_internal
 int
 mlx5_mr_insert_cache(struct mlx5_mr_share_cache *share_cache,
 		     struct mlx5_mr *mr);
-__rte_experimental
+__rte_internal
 uint32_t
 mlx5_mr_lookup_cache(struct mlx5_mr_share_cache *share_cache,
 		     struct mr_cache_entry *entry, uintptr_t addr);
-__rte_experimental
+__rte_internal
 struct mlx5_mr *
 mlx5_mr_lookup_list(struct mlx5_mr_share_cache *share_cache,
 		    struct mr_cache_entry *entry, uintptr_t addr);
-__rte_experimental
+__rte_internal
 struct mlx5_mr *
-mlx5_create_mr_ext(struct ibv_pd *pd, uintptr_t addr, size_t len,
-		   int socket_id);
-__rte_experimental
+mlx5_create_mr_ext(void *pd, uintptr_t addr, size_t len, int socket_id,
+		   mlx5_reg_mr_t reg_mr_cb);
+__rte_internal
 uint32_t
-mlx5_mr_create_primary(struct ibv_pd *pd,
+mlx5_mr_create_primary(void *pd,
 		       struct mlx5_mr_share_cache *share_cache,
 		       struct mr_cache_entry *entry, uintptr_t addr,
 		       unsigned int mr_ext_memseg_en);
-
+__rte_internal
+int
+mlx5_common_verbs_reg_mr(void *pd, void *addr, size_t length,
+			 struct mlx5_pmd_mr *pmd_mr);
+__rte_internal
+void
+mlx5_common_verbs_dereg_mr(struct mlx5_pmd_mr *pmd_mr);
 #endif /* RTE_PMD_MLX5_COMMON_MR_H_ */

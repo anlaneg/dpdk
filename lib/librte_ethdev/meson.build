@@ -27,4 +27,4 @@ headers = files('rte_ethdev.h',
 	'rte_tm.h',
 	'rte_tm_driver.h')
 
-deps += ['net', 'kvargs', 'meter']
+deps += ['net', 'kvargs', 'meter', 'telemetry']

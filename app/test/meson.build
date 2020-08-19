@@ -12,6 +12,7 @@ test_sources = files('commands.c',
 	'test_alarm.c',
 	'test_atomic.c',
 	'test_barrier.c',
+	'test_bitops.c',
 	'test_bpf.c',
 	'test_byteorder.c',
 	'test_cmdline.c',
@@ -63,10 +64,10 @@ test_sources = files('commands.c',
         'test_ipfrag.c',
 	'test_ipsec.c',
 	'test_ipsec_sad.c',
+	'test_ipsec_perf.c',
 	'test_kni.c',
 	'test_kvargs.c',
-	'test_link_bonding.c',
-	'test_link_bonding_rssconf.c',
+	'test_lcores.c',
 	'test_logs.c',
 	'test_lpm.c',
 	'test_lpm6.c',
@@ -105,9 +106,10 @@ test_sources = files('commands.c',
 	'test_ring.c',
 	'test_ring_mpmc_stress.c',
 	'test_ring_hts_stress.c',
-	'test_ring_peek_stress.c',
+	'test_ring_mt_peek_stress.c',
 	'test_ring_perf.c',
 	'test_ring_rts_stress.c',
+	'test_ring_st_peek_stress.c',
 	'test_ring_stress.c',
 	'test_rwlock.c',
 	'test_sched.c',
@@ -138,6 +140,8 @@ test_sources = files('commands.c',
 )
 
 test_deps = ['acl',
+	'bus_pci',
+	'bus_vdev',
 	'bitratestats',
 	'bpf',
 	'cfgfile',
@@ -175,6 +179,7 @@ fast_tests = [
         ['acl_autotest', true],
         ['alarm_autotest', false],
         ['atomic_autotest', false],
+        ['bitops_autotest', true],
         ['byteorder_autotest', true],
         ['cmdline_autotest', true],
         ['common_autotest', true],
@@ -203,6 +208,7 @@ fast_tests = [
         ['hash_autotest', true],
         ['interrupt_autotest', true],
         ['ipfrag_autotest', false],
+        ['lcores_autotest', true],
         ['logs_autotest', true],
         ['lpm_autotest', true],
         ['lpm6_autotest', true],
@@ -291,6 +297,7 @@ perf_test_names = [
         'hash_readwrite_perf_autotest',
         'hash_readwrite_lf_perf_autotest',
         'trace_perf_autotest',
+	'ipsec_perf_autotest',
 ]
 
 driver_test_names = [
@@ -310,8 +317,6 @@ driver_test_names = [
         'cryptodev_sw_zuc_autotest',
         'eventdev_selftest_octeontx',
         'eventdev_selftest_sw',
-        'link_bonding_autotest',
-        'link_bonding_rssconf_autotest',
         'rawdev_autotest',
 ]
 
@@ -339,11 +344,21 @@ endif
 if dpdk_conf.has('RTE_LIBRTE_SKELETON_EVENTDEV_PMD')
 	test_deps += 'pmd_skeleton_event'
 endif
+if dpdk_conf.has('RTE_LIBRTE_TELEMETRY')
+	test_sources += 'test_telemetry_json.c'
+	fast_tests += [['telemetry_json_autotest', true]]
+endif
 
 # The following linkages of drivers are required because
 # they are used via a driver-specific API.
 if dpdk_conf.has('RTE_LIBRTE_BOND_PMD')
 	test_deps += 'pmd_bond'
+	test_sources += ['test_link_bonding.c', 'test_link_bonding_rssconf.c']
+	driver_test_names += ['link_bonding_autotest', 'link_bonding_rssconf_autotest']
+	if dpdk_conf.has('RTE_LIBRTE_RING_PMD')
+		test_sources += 'test_link_bonding_mode4.c'
+		driver_test_names += 'link_bonding_mode4_autotest'
+	endif
 endif
 if dpdk_conf.has('RTE_LIBRTE_RING_PMD')
 	test_deps += 'pmd_ring'
@@ -352,7 +367,6 @@ if dpdk_conf.has('RTE_LIBRTE_RING_PMD')
 	test_sources += 'test_event_eth_tx_adapter.c'
 	test_sources += 'test_bitratestats.c'
 	test_sources += 'test_latencystats.c'
-	test_sources += 'test_link_bonding_mode4.c'
 	test_sources += 'sample_packet_forward.c'
 	test_sources += 'test_pdump.c'
 	fast_tests += [['ring_pmd_autotest', true]]
@@ -360,7 +374,6 @@ if dpdk_conf.has('RTE_LIBRTE_RING_PMD')
 	fast_tests += [['event_eth_tx_adapter_autotest', false]]
 	fast_tests += [['bitratestats_autotest', true]]
 	fast_tests += [['latencystats_autotest', true]]
-	driver_test_names += 'link_bonding_mode4_autotest'
 	fast_tests += [['pdump_autotest', true]]
 endif
 
@@ -382,6 +395,9 @@ endif
 cflags += '-D_GNU_SOURCE'
 # Strict-aliasing rules are violated by uint8_t[] to context size casts.
 cflags += '-fno-strict-aliasing'
+
+# Enable using internal APIs in unit tests
+cflags += ['-DALLOW_INTERNAL_API']
 
 test_dep_objs = []
 if dpdk_conf.has('RTE_LIBRTE_COMPRESSDEV')
@@ -405,18 +421,17 @@ endforeach
 test_dep_objs += cc.find_library('execinfo', required: false)
 
 link_libs = []
-link_nodes = []
 if get_option('default_library') == 'static'
-	link_libs = dpdk_drivers
-	link_nodes = dpdk_graph_nodes
+	link_libs = dpdk_static_libraries + dpdk_drivers
 endif
 
 dpdk_test = executable('dpdk-test',
 	test_sources,
-	link_whole: link_libs + link_nodes,
+	link_whole: link_libs,
 	dependencies: test_dep_objs,
 	c_args: cflags,
-	install_rpath: driver_install_path,
+	install_rpath: join_paths(get_option('prefix'),
+			 driver_install_path),
 	install: true)
 
 has_hugepage = run_command('has-hugepage.sh').stdout().strip() != '0'

@@ -481,7 +481,7 @@ ice_tx_queue_start(struct rte_eth_dev *dev, uint16_t tx_queue_id)
 	tx_ctx.tso_qnum = txq->reg_idx; /* index for tso state structure */
 	tx_ctx.legacy_int = 1; /* Legacy or Advanced Host Interface */
 
-	ice_set_ctx((uint8_t *)&tx_ctx, txq_elem.txqs[0].txq_ctx,
+	ice_set_ctx(hw, (uint8_t *)&tx_ctx, txq_elem.txqs[0].txq_ctx,
 		    ice_tlan_ctx_info);
 
 	txq->qtx_tail = hw->hw_addr + QTX_COMM_DBELL(txq->reg_idx);
@@ -653,7 +653,7 @@ ice_fdir_tx_queue_start(struct rte_eth_dev *dev, uint16_t tx_queue_id)
 	tx_ctx.tso_qnum = txq->reg_idx; /* index for tso state structure */
 	tx_ctx.legacy_int = 1; /* Legacy or Advanced Host Interface */
 
-	ice_set_ctx((uint8_t *)&tx_ctx, txq_elem.txqs[0].txq_ctx,
+	ice_set_ctx(hw, (uint8_t *)&tx_ctx, txq_elem.txqs[0].txq_ctx,
 		    ice_tlan_ctx_info);
 
 	txq->qtx_tail = hw->hw_addr + QTX_COMM_DBELL(txq->reg_idx);
@@ -1905,6 +1905,7 @@ ice_free_queues(struct rte_eth_dev *dev)
 			continue;
 		ice_rx_queue_release(dev->data->rx_queues[i]);
 		dev->data->rx_queues[i] = NULL;
+		rte_eth_dma_zone_free(dev, "rx_ring", i);
 	}
 	dev->data->nb_rx_queues = 0;
 
@@ -1913,6 +1914,7 @@ ice_free_queues(struct rte_eth_dev *dev)
 			continue;
 		ice_tx_queue_release(dev->data->tx_queues[i]);
 		dev->data->tx_queues[i] = NULL;
+		rte_eth_dma_zone_free(dev, "tx_ring", i);
 	}
 	dev->data->nb_tx_queues = 0;
 }
@@ -2407,6 +2409,8 @@ ice_xmit_pkts(void *tx_queue, struct rte_mbuf **tx_pkts, uint16_t nb_pkts)
 		tx_pkt = *tx_pkts++;
 
 		td_cmd = 0;
+		td_tag = 0;
+		td_offset = 0;
 		ol_flags = tx_pkt->ol_flags;
 		tx_offload.l2_len = tx_pkt->l2_len;
 		tx_offload.l3_len = tx_pkt->l3_len;
@@ -2465,10 +2469,9 @@ ice_xmit_pkts(void *tx_queue, struct rte_mbuf **tx_pkts, uint16_t nb_pkts)
 						   &cd_tunneling_params);
 
 		/* Enable checksum offloading */
-		if (ol_flags & ICE_TX_CKSUM_OFFLOAD_MASK) {
+		if (ol_flags & ICE_TX_CKSUM_OFFLOAD_MASK)
 			ice_txd_enable_checksum(ol_flags, &td_cmd,
 						&td_offset, tx_offload);
-		}
 
 		if (nb_ctx) {
 			/* Setup TX context descriptor if required */

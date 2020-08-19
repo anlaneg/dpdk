@@ -259,7 +259,6 @@ int bnxt_hwrm_error_recovery_qcfg(struct bnxt *bp);
 int bnxt_hwrm_fw_reset(struct bnxt *bp);
 int bnxt_hwrm_port_ts_query(struct bnxt *bp, uint8_t path,
 			    uint64_t *timestamp);
-int bnxt_hwrm_cfa_adv_flow_mgmt_qcaps(struct bnxt *bp);
 int bnxt_hwrm_cfa_counter_qcaps(struct bnxt *bp, uint16_t *max_fc);
 int bnxt_hwrm_ctx_rgtr(struct bnxt *bp, rte_iova_t dma_addr, uint16_t *ctx_id);
 int bnxt_hwrm_ctx_unrgtr(struct bnxt *bp, uint16_t ctx_id);
@@ -270,4 +269,15 @@ int bnxt_hwrm_cfa_counter_qstats(struct bnxt *bp,
 				 enum bnxt_flow_dir dir,
 				 uint16_t cntr,
 				 uint16_t num_entries);
+int bnxt_hwrm_get_dflt_vnic_id(struct bnxt *bp, uint16_t fid,
+			       uint16_t *vnic_id);
+int bnxt_hwrm_get_dflt_vnic_svif(struct bnxt *bp, uint16_t fid,
+				 uint16_t *vnic_id, uint16_t *svif);
+int bnxt_hwrm_parent_pf_qcfg(struct bnxt *bp);
+int bnxt_hwrm_port_phy_qcaps(struct bnxt *bp);
+int bnxt_hwrm_oem_cmd(struct bnxt *bp, uint32_t entry_num);
+int bnxt_clear_one_vnic_filter(struct bnxt *bp,
+			       struct bnxt_filter_info *filter);
+int bnxt_hwrm_cfa_vfr_alloc(struct bnxt *bp, uint16_t vf_idx);
+int bnxt_hwrm_cfa_vfr_free(struct bnxt *bp, uint16_t vf_idx);
 #endif

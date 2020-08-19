@@ -12,6 +12,7 @@
 #include "mlx5_common_mp.h"
 #include "mlx5_common_mr.h"
 #include "mlx5_common_utils.h"
+#include "mlx5_malloc.h"
 
 struct mr_find_contig_memsegs_data {
 	uintptr_t addr;
@@ -47,7 +48,8 @@ mr_btree_expand(struct mlx5_mr_btree *bt, int n)
 	 * Initially cache_bh[] will be given practically enough space and once
 	 * it is expanded, expansion wouldn't be needed again ever.
 	 */
-	mem = rte_realloc(bt->table, n * sizeof(struct mr_cache_entry), 0);
+	mem = mlx5_realloc(bt->table, MLX5_MEM_RTE | MLX5_MEM_ZERO,
+			   n * sizeof(struct mr_cache_entry), 0, SOCKET_ID_ANY);
 	if (mem == NULL) {
 		/* Not an error, B-tree search will be skipped. */
 		DRV_LOG(WARNING, "failed to expand MR B-tree (%p) table",
@@ -180,9 +182,9 @@ mlx5_mr_btree_init(struct mlx5_mr_btree *bt, int n, int socket)
 	}
 	MLX5_ASSERT(!bt->table && !bt->size);
 	memset(bt, 0, sizeof(*bt));
-	bt->table = rte_calloc_socket("B-tree table",
-				      n, sizeof(struct mr_cache_entry),
-				      0, socket);
+	bt->table = mlx5_malloc(MLX5_MEM_RTE | MLX5_MEM_ZERO,
+				sizeof(struct mr_cache_entry) * n,
+				0, socket);
 	if (bt->table == NULL) {
 		rte_errno = ENOMEM;
 		DEBUG("failed to allocate memory for btree cache on socket %d",
@@ -212,7 +214,7 @@ mlx5_mr_btree_free(struct mlx5_mr_btree *bt)
 		return;
 	DEBUG("freeing B-tree %p with table %p",
 	      (void *)bt, (void *)bt->table);
-	rte_free(bt->table);
+	mlx5_free(bt->table);
 	memset(bt, 0, sizeof(*bt));
 }
 
@@ -266,18 +268,16 @@ mr_find_next_chunk(struct mlx5_mr *mr, struct mr_cache_entry *entry,
 
 	/* MR for external memory doesn't have memseg list. */
 	if (mr->msl == NULL) {
-		struct ibv_mr *ibv_mr = mr->ibv_mr;
-
 		MLX5_ASSERT(mr->ms_bmp_n == 1);
 		MLX5_ASSERT(mr->ms_n == 1);
 		MLX5_ASSERT(base_idx == 0);
 		/*
 		 * Can't search it from memseg list but get it directly from
-		 * verbs MR as there's only one chunk.
+		 * pmd_mr as there's only one chunk.
 		 */
-		entry->start = (uintptr_t)ibv_mr->addr;
-		entry->end = (uintptr_t)ibv_mr->addr + mr->ibv_mr->length;
-		entry->lkey = rte_cpu_to_be_32(mr->ibv_mr->lkey);
+		entry->start = (uintptr_t)mr->pmd_mr.addr;
+		entry->end = (uintptr_t)mr->pmd_mr.addr + mr->pmd_mr.len;
+		entry->lkey = rte_cpu_to_be_32(mr->pmd_mr.lkey);
 		/* Returning 1 ends iteration. */
 		return 1;
 	}
@@ -302,7 +302,7 @@ mr_find_next_chunk(struct mlx5_mr *mr, struct mr_cache_entry *entry,
 		/* Found one chunk. */
 		entry->start = start;
 		entry->end = end;
-		entry->lkey = rte_cpu_to_be_32(mr->ibv_mr->lkey);
+		entry->lkey = rte_cpu_to_be_32(mr->pmd_mr.lkey);
 	}
 	return idx;
 }
@@ -437,16 +437,15 @@ mlx5_mr_lookup_cache(struct mlx5_mr_share_cache *share_cache,
  *   Pointer to MR to free.
  */
 static void
-mr_free(struct mlx5_mr *mr)
+mr_free(struct mlx5_mr *mr, mlx5_dereg_mr_t dereg_mr_cb)
 {
 	if (mr == NULL)
 		return;
 	DRV_LOG(DEBUG, "freeing MR(%p):", (void *)mr);
-	if (mr->ibv_mr != NULL)
-		claim_zero(mlx5_glue->dereg_mr(mr->ibv_mr));
+	dereg_mr_cb(&mr->pmd_mr);
 	if (mr->ms_bmp != NULL)
 		rte_bitmap_free(mr->ms_bmp);
-	rte_free(mr);
+	mlx5_free(mr);
 }
 
 void
@@ -493,7 +492,7 @@ mlx5_mr_garbage_collect(struct mlx5_mr_share_cache *share_cache)
 		struct mlx5_mr *mr = mr_next;
 
 		mr_next = LIST_NEXT(mr, mr);
-		mr_free(mr);
+		mr_free(mr, share_cache->dereg_mr_cb);
 	}
 }
 
@@ -521,7 +520,7 @@ mr_find_contig_memsegs_cb(const struct rte_memseg_list *msl,
  * request fails.
  *
  * @param pd
- *   Pointer to ibv_pd of a device (net, regex, vdpa,...).
+ *   Pointer to pd of a device (net, regex, vdpa,...).
  * @param share_cache
  *   Pointer to a global shared MR cache.
  * @param[out] entry
@@ -536,7 +535,7 @@ mr_find_contig_memsegs_cb(const struct rte_memseg_list *msl,
  *   Searched LKey on success, UINT32_MAX on failure and rte_errno is set.
  */
 static uint32_t
-mlx5_mr_create_secondary(struct ibv_pd *pd __rte_unused,
+mlx5_mr_create_secondary(void *pd __rte_unused,
 			 struct mlx5_mp_id *mp_id,
 			 struct mlx5_mr_share_cache *share_cache,
 			 struct mr_cache_entry *entry, uintptr_t addr,
@@ -569,7 +568,7 @@ mlx5_mr_create_secondary(struct ibv_pd *pd __rte_unused,
  * Register entire virtually contiguous memory chunk around the address.
  *
  * @param pd
- *   Pointer to ibv_pd of a device (net, regex, vdpa,...).
+ *   Pointer to pd of a device (net, regex, vdpa,...).
  * @param share_cache
  *   Pointer to a global shared MR cache.
  * @param[out] entry
@@ -584,7 +583,7 @@ mlx5_mr_create_secondary(struct ibv_pd *pd __rte_unused,
  *   Searched LKey on success, UINT32_MAX on failure and rte_errno is set.
  */
 uint32_t
-mlx5_mr_create_primary(struct ibv_pd *pd,
+mlx5_mr_create_primary(void *pd,
 		       struct mlx5_mr_share_cache *share_cache,
 		       struct mr_cache_entry *entry, uintptr_t addr,
 		       unsigned int mr_ext_memseg_en)
@@ -653,11 +652,9 @@ alloc_resources:
 	      (void *)addr, data.start, data.end, msl->page_sz, ms_n);
 	/* Size of memory for bitmap. */
 	bmp_size = rte_bitmap_get_memory_footprint(ms_n);
-	mr = rte_zmalloc_socket(NULL,
-				RTE_ALIGN_CEIL(sizeof(*mr),
-					       RTE_CACHE_LINE_SIZE) +
-				bmp_size,
-				RTE_CACHE_LINE_SIZE, msl->socket_id);
+	mr = mlx5_malloc(MLX5_MEM_RTE |  MLX5_MEM_ZERO,
+			 RTE_ALIGN_CEIL(sizeof(*mr), RTE_CACHE_LINE_SIZE) +
+			 bmp_size, RTE_CACHE_LINE_SIZE, msl->socket_id);
 	if (mr == NULL) {
 		DEBUG("Unable to allocate memory for a new MR of"
 		      " address (%p).", (void *)addr);
@@ -705,7 +702,7 @@ alloc_resources:
 		data.start = RTE_ALIGN_FLOOR(addr, msl->page_sz);
 		data.end = data.start + msl->page_sz;
 		rte_mcfg_mem_read_unlock();
-		mr_free(mr);
+		mr_free(mr, share_cache->dereg_mr_cb);
 		goto alloc_resources;
 	}
 	MLX5_ASSERT(data.msl == data_re.msl);
@@ -728,7 +725,7 @@ alloc_resources:
 		 * Must be unlocked before calling rte_free() because
 		 * mlx5_mr_mem_event_free_cb() can be called inside.
 		 */
-		mr_free(mr);
+		mr_free(mr, share_cache->dereg_mr_cb);
 		return entry->lkey;
 	}
 	/*
@@ -763,28 +760,26 @@ alloc_resources:
 	mr->ms_bmp_n = len / msl->page_sz;
 	MLX5_ASSERT(ms_idx_shift + mr->ms_bmp_n <= ms_n);
 	/*
-	 * Finally create a verbs MR for the memory chunk. ibv_reg_mr() can be
-	 * called with holding the memory lock because it doesn't use
+	 * Finally create an MR for the memory chunk. Verbs: ibv_reg_mr() can
+	 * be called with holding the memory lock because it doesn't use
 	 * mlx5_alloc_buf_extern() which eventually calls rte_malloc_socket()
 	 * through mlx5_alloc_verbs_buf().
 	 */
-	mr->ibv_mr = mlx5_glue->reg_mr(pd, (void *)data.start, len,
-				       IBV_ACCESS_LOCAL_WRITE |
-					   IBV_ACCESS_RELAXED_ORDERING);
-	if (mr->ibv_mr == NULL) {
-		DEBUG("Fail to create a verbs MR for address (%p)",
+	share_cache->reg_mr_cb(pd, (void *)data.start, len, &mr->pmd_mr);
+	if (mr->pmd_mr.obj == NULL) {
+		DEBUG("Fail to create an MR for address (%p)",
 		      (void *)addr);
 		rte_errno = EINVAL;
 		goto err_mrlock;
 	}
-	MLX5_ASSERT((uintptr_t)mr->ibv_mr->addr == data.start);
-	MLX5_ASSERT(mr->ibv_mr->length == len);
+	MLX5_ASSERT((uintptr_t)mr->pmd_mr.addr == data.start);
+	MLX5_ASSERT(mr->pmd_mr.len);
 	LIST_INSERT_HEAD(&share_cache->mr_list, mr, mr);
 	DEBUG("MR CREATED (%p) for %p:\n"
 	      "  [0x%" PRIxPTR ", 0x%" PRIxPTR "),"
 	      " lkey=0x%x base_idx=%u ms_n=%u, ms_bmp_n=%u",
 	      (void *)mr, (void *)addr, data.start, data.end,
-	      rte_cpu_to_be_32(mr->ibv_mr->lkey),
+	      rte_cpu_to_be_32(mr->pmd_mr.lkey),
 	      mr->ms_base_idx, mr->ms_n, mr->ms_bmp_n);
 	/* Insert to the global cache table. */
 	mlx5_mr_insert_cache(share_cache, mr);
@@ -806,7 +801,7 @@ err_nolock:
 	 * calling rte_free() because mlx5_mr_mem_event_free_cb() can be called
 	 * inside.
 	 */
-	mr_free(mr);
+	mr_free(mr, share_cache->dereg_mr_cb);
 	return UINT32_MAX;
 }
 
@@ -815,7 +810,7 @@ err_nolock:
  * This can be called from primary and secondary process.
  *
  * @param pd
- *   Pointer to ibv_pd of a device (net, regex, vdpa,...).
+ *   Pointer to pd handle of a device (net, regex, vdpa,...).
  * @param share_cache
  *   Pointer to a global shared MR cache.
  * @param[out] entry
@@ -828,7 +823,7 @@ err_nolock:
  *   Searched LKey on success, UINT32_MAX on failure and rte_errno is set.
  */
 static uint32_t
-mlx5_mr_create(struct ibv_pd *pd, struct mlx5_mp_id *mp_id,
+mlx5_mr_create(void *pd, struct mlx5_mp_id *mp_id,
 	       struct mlx5_mr_share_cache *share_cache,
 	       struct mr_cache_entry *entry, uintptr_t addr,
 	       unsigned int mr_ext_memseg_en)
@@ -855,7 +850,7 @@ mlx5_mr_create(struct ibv_pd *pd, struct mlx5_mp_id *mp_id,
  * Insert the found/created entry to local bottom-half cache table.
  *
  * @param pd
- *   Pointer to ibv_pd of a device (net, regex, vdpa,...).
+ *   Pointer to pd of a device (net, regex, vdpa,...).
  * @param share_cache
  *   Pointer to a global shared MR cache.
  * @param mr_ctrl
@@ -870,7 +865,7 @@ mlx5_mr_create(struct ibv_pd *pd, struct mlx5_mp_id *mp_id,
  *   Searched LKey on success, UINT32_MAX on no match.
  */
 static uint32_t
-mr_lookup_caches(struct ibv_pd *pd, struct mlx5_mp_id *mp_id,
+mr_lookup_caches(void *pd, struct mlx5_mp_id *mp_id,
 		 struct mlx5_mr_share_cache *share_cache,
 		 struct mlx5_mr_ctrl *mr_ctrl,
 		 struct mr_cache_entry *entry, uintptr_t addr,
@@ -919,7 +914,7 @@ mr_lookup_caches(struct ibv_pd *pd, struct mlx5_mp_id *mp_id,
  * per-queue local caches.
  *
  * @param pd
- *   Pointer to ibv_pd of a device (net, regex, vdpa,...).
+ *   Pointer to pd of a device (net, regex, vdpa,...).
  * @param share_cache
  *   Pointer to a global shared MR cache.
  * @param mr_ctrl
@@ -930,7 +925,7 @@ mr_lookup_caches(struct ibv_pd *pd, struct mlx5_mp_id *mp_id,
  * @return
  *   Searched LKey on success, UINT32_MAX on no match.
  */
-uint32_t mlx5_mr_addr2mr_bh(struct ibv_pd *pd, struct mlx5_mp_id *mp_id,
+uint32_t mlx5_mr_addr2mr_bh(void *pd, struct mlx5_mp_id *mp_id,
 			    struct mlx5_mr_share_cache *share_cache,
 			    struct mlx5_mr_ctrl *mr_ctrl,
 			    uintptr_t addr, unsigned int mr_ext_memseg_en)
@@ -1021,7 +1016,7 @@ mlx5_mr_flush_local_cache(struct mlx5_mr_ctrl *mr_ctrl)
  * part of the DPDK memory segments.
  *
  * @param pd
- *   Pointer to ibv_pd of a device (net, regex, vdpa,...).
+ *   Pointer to pd of a device (net, regex, vdpa,...).
  * @param addr
  *   Starting virtual address of memory.
  * @param len
@@ -1033,24 +1028,22 @@ mlx5_mr_flush_local_cache(struct mlx5_mr_ctrl *mr_ctrl)
  *   Pointer to MR structure on success, NULL otherwise.
  */
 struct mlx5_mr *
-mlx5_create_mr_ext(struct ibv_pd *pd, uintptr_t addr, size_t len, int socket_id)
+mlx5_create_mr_ext(void *pd, uintptr_t addr, size_t len, int socket_id,
+		   mlx5_reg_mr_t reg_mr_cb)
 {
 	struct mlx5_mr *mr = NULL;
 
-	mr = rte_zmalloc_socket(NULL,
-				RTE_ALIGN_CEIL(sizeof(*mr),
-					       RTE_CACHE_LINE_SIZE),
-				RTE_CACHE_LINE_SIZE, socket_id);
+	mr = mlx5_malloc(MLX5_MEM_RTE | MLX5_MEM_ZERO,
+			 RTE_ALIGN_CEIL(sizeof(*mr), RTE_CACHE_LINE_SIZE),
+			 RTE_CACHE_LINE_SIZE, socket_id);
 	if (mr == NULL)
 		return NULL;
-	mr->ibv_mr = mlx5_glue->reg_mr(pd, (void *)addr, len,
-				       IBV_ACCESS_LOCAL_WRITE |
-					   IBV_ACCESS_RELAXED_ORDERING);
-	if (mr->ibv_mr == NULL) {
+	reg_mr_cb(pd, (void *)addr, len, &mr->pmd_mr);
+	if (mr->pmd_mr.obj == NULL) {
 		DRV_LOG(WARNING,
-			"Fail to create a verbs MR for address (%p)",
+			"Fail to create MR for address (%p)",
 			(void *)addr);
-		rte_free(mr);
+		mlx5_free(mr);
 		return NULL;
 	}
 	mr->msl = NULL; /* Mark it is external memory. */
@@ -1062,7 +1055,7 @@ mlx5_create_mr_ext(struct ibv_pd *pd, uintptr_t addr, size_t len, int socket_id)
 		"  [0x%" PRIxPTR ", 0x%" PRIxPTR "),"
 		" lkey=0x%x base_idx=%u ms_n=%u, ms_bmp_n=%u",
 		(void *)mr, (void *)addr,
-		addr, addr + len, rte_cpu_to_be_32(mr->ibv_mr->lkey),
+		addr, addr + len, rte_cpu_to_be_32(mr->pmd_mr.lkey),
 		mr->ms_base_idx, mr->ms_n, mr->ms_bmp_n);
 	return mr;
 }
@@ -1087,7 +1080,7 @@ mlx5_mr_dump_cache(struct mlx5_mr_share_cache *share_cache __rte_unused)
 		unsigned int n;
 
 		DEBUG("MR[%u], LKey = 0x%x, ms_n = %u, ms_bmp_n = %u",
-		      mr_n++, rte_cpu_to_be_32(mr->ibv_mr->lkey),
+		      mr_n++, rte_cpu_to_be_32(mr->pmd_mr.lkey),
 		      mr->ms_n, mr->ms_bmp_n);
 		if (mr->ms_n == 0)
 			continue;

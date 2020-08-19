@@ -47,8 +47,10 @@
 #include <rte_eventdev.h>
 #include <rte_ip.h>
 #include <rte_ip_frag.h>
+#include <rte_alarm.h>
 
 #include "event_helper.h"
+#include "flow.h"
 #include "ipsec.h"
 #include "ipsec_worker.h"
 #include "parser.h"
@@ -62,7 +64,6 @@ volatile bool force_quit;
 
 #define CDEV_QUEUE_DESC 2048
 #define CDEV_MAP_ENTRIES 16384
-#define CDEV_MP_NB_OBJS 1024
 #define CDEV_MP_CACHE_SZ 64
 #define MAX_QUEUE_PAIRS 1
 
@@ -288,6 +289,70 @@ adjust_ipv6_pktlen(struct rte_mbuf *m, const struct rte_ipv6_hdr *iph,
 	}
 }
 
+#if (STATS_INTERVAL > 0)
+
+/* Print out statistics on packet distribution */
+static void
+print_stats_cb(__rte_unused void *param)
+{
+	uint64_t total_packets_dropped, total_packets_tx, total_packets_rx;
+	float burst_percent, rx_per_call, tx_per_call;
+	unsigned int coreid;
+
+	total_packets_dropped = 0;
+	total_packets_tx = 0;
+	total_packets_rx = 0;
+
+	const char clr[] = { 27, '[', '2', 'J', '\0' };
+	const char topLeft[] = { 27, '[', '1', ';', '1', 'H', '\0' };
+
+	/* Clear screen and move to top left */
+	printf("%s%s", clr, topLeft);
+
+	printf("\nCore statistics ====================================");
+
+	for (coreid = 0; coreid < RTE_MAX_LCORE; coreid++) {
+		/* skip disabled cores */
+		if (rte_lcore_is_enabled(coreid) == 0)
+			continue;
+		burst_percent = (float)(core_statistics[coreid].burst_rx * 100)/
+					core_statistics[coreid].rx;
+		rx_per_call =  (float)(core_statistics[coreid].rx)/
+				       core_statistics[coreid].rx_call;
+		tx_per_call =  (float)(core_statistics[coreid].tx)/
+				       core_statistics[coreid].tx_call;
+		printf("\nStatistics for core %u ------------------------------"
+			   "\nPackets received: %20"PRIu64
+			   "\nPackets sent: %24"PRIu64
+			   "\nPackets dropped: %21"PRIu64
+			   "\nBurst percent: %23.2f"
+			   "\nPackets per Rx call: %17.2f"
+			   "\nPackets per Tx call: %17.2f",
+			   coreid,
+			   core_statistics[coreid].rx,
+			   core_statistics[coreid].tx,
+			   core_statistics[coreid].dropped,
+			   burst_percent,
+			   rx_per_call,
+			   tx_per_call);
+
+		total_packets_dropped += core_statistics[coreid].dropped;
+		total_packets_tx += core_statistics[coreid].tx;
+		total_packets_rx += core_statistics[coreid].rx;
+	}
+	printf("\nAggregate statistics ==============================="
+		   "\nTotal packets received: %14"PRIu64
+		   "\nTotal packets sent: %18"PRIu64
+		   "\nTotal packets dropped: %15"PRIu64,
+		   total_packets_rx,
+		   total_packets_tx,
+		   total_packets_dropped);
+	printf("\n====================================================\n");
+
+	rte_eal_alarm_set(STATS_INTERVAL * US_PER_S, print_stats_cb, NULL);
+}
+#endif /* STATS_INTERVAL */
+
 static inline void
 prepare_one_packet(struct rte_mbuf *pkt, struct ipsec_traffic *t)
 {
@@ -333,7 +398,7 @@ prepare_one_packet(struct rte_mbuf *pkt, struct ipsec_traffic *t)
 
 		/* drop packet when IPv6 header exceeds first segment length */
 		if (unlikely(l3len > pkt->data_len)) {
-			rte_pktmbuf_free(pkt);
+			free_pkts(&pkt, 1);
 			return;
 		}
 
@@ -350,7 +415,7 @@ prepare_one_packet(struct rte_mbuf *pkt, struct ipsec_traffic *t)
 		/* Unknown/Unsupported type, drop the packet */
 		RTE_LOG(ERR, IPSEC, "Unsupported packet type 0x%x\n",
 			rte_be_to_cpu_16(eth->ether_type));
-		rte_pktmbuf_free(pkt);
+		free_pkts(&pkt, 1);
 		return;
 	}
 
@@ -477,9 +542,12 @@ send_burst(struct lcore_conf *qconf, uint16_t n, uint16_t port)
 	prepare_tx_burst(m_table, n, port, qconf);
 
 	ret = rte_eth_tx_burst(port, queueid, m_table, n);
+
+	core_stats_update_tx(ret);
+
 	if (unlikely(ret < n)) {
 		do {
-			rte_pktmbuf_free(m_table[ret]);
+			free_pkts(&m_table[ret], 1);
 		} while (++ret < n);
 	}
 
@@ -525,7 +593,7 @@ send_fragment_packet(struct lcore_conf *qconf, struct rte_mbuf *m,
 			"error code: %d\n",
 			__func__, m->pkt_len, rte_errno);
 
-	rte_pktmbuf_free(m);
+	free_pkts(&m, 1);
 	return len;
 }
 
@@ -550,7 +618,7 @@ send_single_packet(struct rte_mbuf *m, uint16_t port, uint8_t proto)
 	} else if (frag_tbl_sz > 0)
 		len = send_fragment_packet(qconf, m, port, proto);
 	else
-		rte_pktmbuf_free(m);
+		free_pkts(&m, 1);
 
 	/* enough pkts to be sent */
 	if (unlikely(len == MAX_PKT_BURST)) {
@@ -584,19 +652,19 @@ inbound_sp_sa(struct sp_ctx *sp, struct sa_ctx *sa, struct traffic_type *ip,
 			continue;
 		}
 		if (res == DISCARD) {
-			rte_pktmbuf_free(m);
+			free_pkts(&m, 1);
 			continue;
 		}
 
 		/* Only check SPI match for processed IPSec packets */
 		if (i < lim && ((m->ol_flags & PKT_RX_SEC_OFFLOAD) == 0)) {
-			rte_pktmbuf_free(m);
+			free_pkts(&m, 1);
 			continue;
 		}
 
 		sa_idx = res - 1;
 		if (!inbound_sa_check(sa, m, sa_idx)) {
-			rte_pktmbuf_free(m);
+			free_pkts(&m, 1);
 			continue;
 		}
 		ip->pkts[j++] = m;
@@ -631,7 +699,7 @@ split46_traffic(struct ipsec_traffic *trf, struct rte_mbuf *mb[], uint32_t num)
 					offsetof(struct ip6_hdr, ip6_nxt));
 			n6++;
 		} else
-			rte_pktmbuf_free(m);
+			free_pkts(&m, 1);
 	}
 
 	trf->ip4.num = n4;
@@ -683,7 +751,7 @@ outbound_sp(struct sp_ctx *sp, struct traffic_type *ip,
 		m = ip->pkts[i];
 		sa_idx = ip->res[i] - 1;
 		if (ip->res[i] == DISCARD)
-			rte_pktmbuf_free(m);
+			free_pkts(&m, 1);
 		else if (ip->res[i] == BYPASS)
 			ip->pkts[j++] = m;
 		else {
@@ -702,8 +770,7 @@ process_pkts_outbound(struct ipsec_ctx *ipsec_ctx,
 	uint16_t idx, nb_pkts_out, i;
 
 	/* Drop any IPsec traffic from protected ports */
-	for (i = 0; i < traffic->ipsec.num; i++)
-		rte_pktmbuf_free(traffic->ipsec.pkts[i]);
+	free_pkts(traffic->ipsec.pkts, traffic->ipsec.num);
 
 	traffic->ipsec.num = 0;
 
@@ -743,14 +810,12 @@ process_pkts_inbound_nosp(struct ipsec_ctx *ipsec_ctx,
 	uint32_t nb_pkts_in, i, idx;
 
 	/* Drop any IPv4 traffic from unprotected ports */
-	for (i = 0; i < traffic->ip4.num; i++)
-		rte_pktmbuf_free(traffic->ip4.pkts[i]);
+	free_pkts(traffic->ip4.pkts, traffic->ip4.num);
 
 	traffic->ip4.num = 0;
 
 	/* Drop any IPv6 traffic from unprotected ports */
-	for (i = 0; i < traffic->ip6.num; i++)
-		rte_pktmbuf_free(traffic->ip6.pkts[i]);
+	free_pkts(traffic->ip6.pkts, traffic->ip6.num);
 
 	traffic->ip6.num = 0;
 
@@ -786,8 +851,7 @@ process_pkts_outbound_nosp(struct ipsec_ctx *ipsec_ctx,
 	struct ip *ip;
 
 	/* Drop any IPsec traffic from protected ports */
-	for (i = 0; i < traffic->ipsec.num; i++)
-		rte_pktmbuf_free(traffic->ipsec.pkts[i]);
+	free_pkts(traffic->ipsec.pkts, traffic->ipsec.num);
 
 	n = 0;
 
@@ -901,7 +965,7 @@ route4_pkts(struct rt_ctx *rt_ctx, struct rte_mbuf *pkts[], uint8_t nb_pkts)
 		}
 
 		if ((pkt_hop & RTE_LPM_LOOKUP_SUCCESS) == 0) {
-			rte_pktmbuf_free(pkts[i]);
+			free_pkts(&pkts[i], 1);
 			continue;
 		}
 		send_single_packet(pkts[i], pkt_hop & 0xff, IPPROTO_IP);
@@ -953,7 +1017,7 @@ route6_pkts(struct rt_ctx *rt_ctx, struct rte_mbuf *pkts[], uint8_t nb_pkts)
 		}
 
 		if (pkt_hop == -1) {
-			rte_pktmbuf_free(pkts[i]);
+			free_pkts(&pkts[i], 1);
 			continue;
 		}
 		send_single_packet(pkts[i], pkt_hop & 0xff, IPPROTO_IPV6);
@@ -1169,8 +1233,10 @@ ipsec_poll_mode_worker(void)
 			nb_rx = rte_eth_rx_burst(portid, queueid,
 					pkts, MAX_PKT_BURST);
 
-			if (nb_rx > 0)
+			if (nb_rx > 0) {
+				core_stats_update_rx(nb_rx);
 				process_pkts(qconf, pkts, nb_rx, portid);
+			}
 
 			/* dequeue and process completed crypto-ops */
 			if (is_unprotected_port(portid))
@@ -1800,7 +1866,7 @@ check_all_ports_link_status(uint32_t port_mask)
 					"Port%d Link Up - speed %u Mbps -%s\n",
 						portid, link.link_speed,
 				(link.link_duplex == ETH_LINK_FULL_DUPLEX) ?
-					("full-duplex") : ("half-duplex\n"));
+					("full-duplex") : ("half-duplex"));
 				else
 					printf("Port %d Link Down\n", portid);
 				continue;
@@ -2025,10 +2091,11 @@ cryptodevs_init(uint16_t req_queue_num)
 		dev_conf.ff_disable = RTE_CRYPTODEV_FF_ASYMMETRIC_CRYPTO;
 
 		uint32_t dev_max_sess = cdev_info.sym.max_nb_sessions;
-		if (dev_max_sess != 0 && dev_max_sess < CDEV_MP_NB_OBJS)
+		if (dev_max_sess != 0 &&
+				dev_max_sess < get_nb_crypto_sessions())
 			rte_exit(EXIT_FAILURE,
 				"Device does not support at least %u "
-				"sessions", CDEV_MP_NB_OBJS);
+				"sessions", get_nb_crypto_sessions());
 
 		if (rte_cryptodev_configure(cdev_id, &dev_conf))
 			rte_panic("Failed to initialize cryptodev %u\n",
@@ -2280,12 +2347,18 @@ session_pool_init(struct socket_ctx *ctx, int32_t socket_id, size_t sess_sz)
 {
 	char mp_name[RTE_MEMPOOL_NAMESIZE];
 	struct rte_mempool *sess_mp;
+	uint32_t nb_sess;
 
 	snprintf(mp_name, RTE_MEMPOOL_NAMESIZE,
 			"sess_mp_%u", socket_id);
+	/*
+	 * Doubled due to rte_security_session_create() uses one mempool for
+	 * session and for session private data.
+	 */
+	nb_sess = (get_nb_crypto_sessions() + CDEV_MP_CACHE_SZ *
+		rte_lcore_count()) * 2;
 	sess_mp = rte_cryptodev_sym_session_pool_create(
-			mp_name, CDEV_MP_NB_OBJS,
-			sess_sz, CDEV_MP_CACHE_SZ, 0,
+			mp_name, nb_sess, sess_sz, CDEV_MP_CACHE_SZ, 0,
 			socket_id);
 	ctx->session_pool = sess_mp;
 
@@ -2302,11 +2375,18 @@ session_priv_pool_init(struct socket_ctx *ctx, int32_t socket_id,
 {
 	char mp_name[RTE_MEMPOOL_NAMESIZE];
 	struct rte_mempool *sess_mp;
+	uint32_t nb_sess;
 
 	snprintf(mp_name, RTE_MEMPOOL_NAMESIZE,
 			"sess_mp_priv_%u", socket_id);
+	/*
+	 * Doubled due to rte_security_session_create() uses one mempool for
+	 * session and for session private data.
+	 */
+	nb_sess = (get_nb_crypto_sessions() + CDEV_MP_CACHE_SZ *
+		rte_lcore_count()) * 2;
 	sess_mp = rte_mempool_create(mp_name,
-			CDEV_MP_NB_OBJS,
+			nb_sess,
 			sess_sz,
 			CDEV_MP_CACHE_SZ,
 			0, NULL, NULL, NULL,
@@ -2901,7 +2981,15 @@ main(int32_t argc, char **argv)
 		}
 	}
 
+	flow_init();
+
 	check_all_ports_link_status(enabled_port_mask);
+
+#if (STATS_INTERVAL > 0)
+	rte_eal_alarm_set(STATS_INTERVAL * US_PER_S, print_stats_cb, NULL);
+#else
+	RTE_LOG(INFO, IPSEC, "Stats display disabled\n");
+#endif /* STATS_INTERVAL */
 
 	/* launch per-lcore init on every lcore */
 	rte_eal_mp_remote_launch(ipsec_launch_one_lcore, eh_conf, CALL_MASTER);

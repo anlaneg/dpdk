@@ -38,14 +38,13 @@
 #include <rte_kvargs.h>
 #include <rte_class.h>
 #include <rte_ether.h>
+#include <rte_telemetry.h>
 
 #include "rte_ethdev_trace.h"
 #include "rte_ethdev.h"
 #include "rte_ethdev_driver.h"
 #include "ethdev_profile.h"
 #include "ethdev_private.h"
-
-int rte_eth_dev_logtype;
 
 static const char *MZ_RTE_ETH_DEV_DATA = "rte_eth_dev_data";
 //网络设备对象（用于管理按口编号等）
@@ -162,6 +161,7 @@ static const struct {
 	RTE_TX_OFFLOAD_BIT2STR(UDP_TNL_TSO),
 	RTE_TX_OFFLOAD_BIT2STR(IP_TNL_TSO),
 	RTE_TX_OFFLOAD_BIT2STR(OUTER_UDP_CKSUM),
+	RTE_TX_OFFLOAD_BIT2STR(SEND_ON_TIMESTAMP),
 };
 
 #undef RTE_TX_OFFLOAD_BIT2STR
@@ -279,7 +279,7 @@ end:
 
 error:
 	if (ret == -ENOTSUP)
-		RTE_LOG(ERR, EAL, "Bus %s does not support iterating.\n",
+		RTE_ETHDEV_LOG(ERR, "Bus %s does not support iterating.\n",
 				iter->bus->name);
 	free(devargs.args);
 	free(bus_str);
@@ -1142,6 +1142,8 @@ rte_eth_speed_bitflag(uint32_t speed, int duplex)
 		return ETH_LINK_SPEED_56G;
 	case ETH_SPEED_NUM_100G:
 		return ETH_LINK_SPEED_100G;
+	case ETH_SPEED_NUM_200G:
+		return ETH_LINK_SPEED_200G;
 	default:
 		return 0;
 	}
@@ -1873,7 +1875,7 @@ rte_eth_rx_queue_setup(uint16_t port_id, uint16_t rx_queue_id,
 	}
 	mbp_buf_size = rte_pktmbuf_data_room_size(mp);
 
-	if ((mbp_buf_size - RTE_PKTMBUF_HEADROOM) < dev_info.min_rx_bufsize) {
+	if (mbp_buf_size < dev_info.min_rx_bufsize + RTE_PKTMBUF_HEADROOM) {
 		RTE_ETHDEV_LOG(ERR,
 			"%s mbuf_data_room_size %d < %d (RTE_PKTMBUF_HEADROOM=%d + min_rx_bufsize(dev)=%d)\n",
 			mp->name, (int)mbp_buf_size,
@@ -3330,12 +3332,14 @@ rte_eth_dev_set_vlan_ether_type(uint16_t port_id,
 int
 rte_eth_dev_set_vlan_offload(uint16_t port_id, int offload_mask)
 {
+	struct rte_eth_dev_info dev_info;
 	struct rte_eth_dev *dev;
 	int ret = 0;
 	int mask = 0;
 	int cur, org = 0;
 	uint64_t orig_offloads;
 	uint64_t dev_offloads;
+	uint64_t new_offloads;
 
 	RTE_ETH_VALID_PORTID_OR_ERR_RET(port_id, -ENODEV);
 	dev = &rte_eth_devices[port_id];
@@ -3388,6 +3392,22 @@ rte_eth_dev_set_vlan_offload(uint16_t port_id, int offload_mask)
 	/*no change*/
 	if (mask == 0)
 		return ret;
+
+	ret = rte_eth_dev_info_get(port_id, &dev_info);
+	if (ret != 0)
+		return ret;
+
+	/* Rx VLAN offloading must be within its device capabilities */
+	if ((dev_offloads & dev_info.rx_offload_capa) != dev_offloads) {
+		new_offloads = dev_offloads & ~orig_offloads;
+		RTE_ETHDEV_LOG(ERR,
+			"Ethdev port_id=%u requested new added VLAN offloads "
+			"0x%" PRIx64 " must be within Rx offloads capabilities "
+			"0x%" PRIx64 " in %s()\n",
+			port_id, new_offloads, dev_info.rx_offload_capa,
+			__func__);
+		return -EINVAL;
+	}
 
 	RTE_FUNC_PTR_OR_ERR_RET(*dev->dev_ops->vlan_offload_set, -ENOTSUP);
 	dev->data->dev_conf.rxmode.offloads = dev_offloads;
@@ -4262,6 +4282,14 @@ rte_eth_dev_rx_intr_ctl_q_get_fd(uint16_t port_id, uint16_t queue_id)
 	return fd;
 }
 
+static inline int
+eth_dma_mzone_name(char *name, size_t len, uint16_t port_id, uint16_t queue_id,
+		const char *ring_name)
+{
+	return snprintf(name, len, "eth_p%d_q%d_%s",
+			port_id, queue_id, ring_name);
+}
+
 const struct rte_memzone *
 rte_eth_dma_zone_reserve(const struct rte_eth_dev *dev, const char *ring_name,
 			 uint16_t queue_id, size_t size, unsigned align,
@@ -4271,8 +4299,8 @@ rte_eth_dma_zone_reserve(const struct rte_eth_dev *dev, const char *ring_name,
 	const struct rte_memzone *mz;
 	int rc;
 
-	rc = snprintf(z_name, sizeof(z_name), "eth_p%d_q%d_%s",
-		      dev->data->port_id, queue_id, ring_name);
+	rc = eth_dma_mzone_name(z_name, sizeof(z_name), dev->data->port_id,
+			queue_id, ring_name);
 	if (rc >= RTE_MEMZONE_NAMESIZE) {
 		RTE_ETHDEV_LOG(ERR, "ring name too long\n");
 		rte_errno = ENAMETOOLONG;
@@ -4280,14 +4308,48 @@ rte_eth_dma_zone_reserve(const struct rte_eth_dev *dev, const char *ring_name,
 	}
 
 	mz = rte_memzone_lookup(z_name);
-	if (mz)
+	if (mz) {
+		if ((socket_id != SOCKET_ID_ANY && socket_id != mz->socket_id) ||
+				size > mz->len ||
+				((uintptr_t)mz->addr & (align - 1)) != 0) {
+			RTE_ETHDEV_LOG(ERR,
+				"memzone %s does not justify the requested attributes\n",
+				mz->name);
+			return NULL;
+		}
+
 		return mz;
+	}
 
 	return rte_memzone_reserve_aligned(z_name, size, socket_id,
 			RTE_MEMZONE_IOVA_CONTIG, align);
 }
 
 /*rte_eth_dev设备创建*/
+int
+rte_eth_dma_zone_free(const struct rte_eth_dev *dev, const char *ring_name,
+		uint16_t queue_id)
+{
+	char z_name[RTE_MEMZONE_NAMESIZE];
+	const struct rte_memzone *mz;
+	int rc = 0;
+
+	rc = eth_dma_mzone_name(z_name, sizeof(z_name), dev->data->port_id,
+			queue_id, ring_name);
+	if (rc >= RTE_MEMZONE_NAMESIZE) {
+		RTE_ETHDEV_LOG(ERR, "ring name too long\n");
+		return -ENAMETOOLONG;
+	}
+
+	mz = rte_memzone_lookup(z_name);
+	if (mz)
+		rc = rte_memzone_free(mz);
+	else
+		rc = -ENOENT;
+
+	return rc;
+}
+
 int
 rte_eth_dev_create(struct rte_device *device, const char *name,
 	size_t priv_data_size,
@@ -4312,7 +4374,8 @@ rte_eth_dev_create(struct rte_device *device, const char *name,
 				device->numa_node);
 
 			if (!ethdev->data->dev_private) {
-				RTE_LOG(ERR, EAL, "failed to allocate private data");
+				RTE_ETHDEV_LOG(ERR,
+					"failed to allocate private data\n");
 				retval = -ENOMEM;
 				goto probe_failed;
 			}
@@ -4320,8 +4383,8 @@ rte_eth_dev_create(struct rte_device *device, const char *name,
 	} else {
 		ethdev = rte_eth_dev_attach_secondary(name);
 		if (!ethdev) {
-			RTE_LOG(ERR, EAL, "secondary process attach failed, "
-				"ethdev doesn't exist");
+			RTE_ETHDEV_LOG(ERR,
+				"secondary process attach failed, ethdev doesn't exist\n");
 			return  -ENODEV;
 		}
 	}
@@ -4332,15 +4395,15 @@ rte_eth_dev_create(struct rte_device *device, const char *name,
 	if (ethdev_bus_specific_init) {
 		retval = ethdev_bus_specific_init(ethdev, bus_init_params);
 		if (retval) {
-			RTE_LOG(ERR, EAL,
-				"ethdev bus specific initialisation failed");
+			RTE_ETHDEV_LOG(ERR,
+				"ethdev bus specific initialisation failed\n");
 			goto probe_failed;
 		}
 	}
 
 	retval = ethdev_init(ethdev, init_params);
 	if (retval) {
-		RTE_LOG(ERR, EAL, "ethdev initialisation failed");
+		RTE_ETHDEV_LOG(ERR, "ethdev initialisation failed\n");
 		goto probe_failed;
 	}
 
@@ -5291,9 +5354,108 @@ parse_cleanup:
 	return result;
 }
 
-RTE_INIT(ethdev_init_log)
+static int
+handle_port_list(const char *cmd __rte_unused,
+		const char *params __rte_unused,
+		struct rte_tel_data *d)
 {
-	rte_eth_dev_logtype = rte_log_register("lib.ethdev");
-	if (rte_eth_dev_logtype >= 0)
-		rte_log_set_level(rte_eth_dev_logtype, RTE_LOG_INFO);
+	int port_id;
+
+	rte_tel_data_start_array(d, RTE_TEL_INT_VAL);
+	RTE_ETH_FOREACH_DEV(port_id)
+		rte_tel_data_add_array_int(d, port_id);
+	return 0;
+}
+
+static int
+handle_port_xstats(const char *cmd __rte_unused,
+		const char *params,
+		struct rte_tel_data *d)
+{
+	struct rte_eth_xstat *eth_xstats;
+	struct rte_eth_xstat_name *xstat_names;
+	int port_id, num_xstats;
+	int i, ret;
+
+	if (params == NULL || strlen(params) == 0 || !isdigit(*params))
+		return -1;
+
+	port_id = atoi(params);
+	if (!rte_eth_dev_is_valid_port(port_id))
+		return -1;
+
+	num_xstats = rte_eth_xstats_get(port_id, NULL, 0);
+	if (num_xstats < 0)
+		return -1;
+
+	/* use one malloc for both names and stats */
+	eth_xstats = malloc((sizeof(struct rte_eth_xstat) +
+			sizeof(struct rte_eth_xstat_name)) * num_xstats);
+	if (eth_xstats == NULL)
+		return -1;
+	xstat_names = (void *)&eth_xstats[num_xstats];
+
+	ret = rte_eth_xstats_get_names(port_id, xstat_names, num_xstats);
+	if (ret < 0 || ret > num_xstats) {
+		free(eth_xstats);
+		return -1;
+	}
+
+	ret = rte_eth_xstats_get(port_id, eth_xstats, num_xstats);
+	if (ret < 0 || ret > num_xstats) {
+		free(eth_xstats);
+		return -1;
+	}
+
+	rte_tel_data_start_dict(d);
+	for (i = 0; i < num_xstats; i++)
+		rte_tel_data_add_dict_u64(d, xstat_names[i].name,
+				eth_xstats[i].value);
+	return 0;
+}
+
+static int
+handle_port_link_status(const char *cmd __rte_unused,
+		const char *params,
+		struct rte_tel_data *d)
+{
+	static const char *status_str = "status";
+	int ret, port_id;
+	struct rte_eth_link link;
+
+	if (params == NULL || strlen(params) == 0 || !isdigit(*params))
+		return -1;
+
+	port_id = atoi(params);
+	if (!rte_eth_dev_is_valid_port(port_id))
+		return -1;
+
+	ret = rte_eth_link_get(port_id, &link);
+	if (ret < 0)
+		return -1;
+
+	rte_tel_data_start_dict(d);
+	if (!link.link_status) {
+		rte_tel_data_add_dict_string(d, status_str, "DOWN");
+		return 0;
+	}
+	rte_tel_data_add_dict_string(d, status_str, "UP");
+	rte_tel_data_add_dict_u64(d, "speed", link.link_speed);
+	rte_tel_data_add_dict_string(d, "duplex",
+			(link.link_duplex == ETH_LINK_FULL_DUPLEX) ?
+				"full-duplex" : "half-duplex");
+	return 0;
+}
+
+RTE_LOG_REGISTER(rte_eth_dev_logtype, lib.ethdev, INFO);
+
+RTE_INIT(ethdev_init_telemetry)
+{
+	rte_telemetry_register_cmd("/ethdev/list", handle_port_list,
+			"Returns list of available ethdev ports. Takes no parameters");
+	rte_telemetry_register_cmd("/ethdev/xstats", handle_port_xstats,
+			"Returns the extended stats for a port. Parameters: int port_id");
+	rte_telemetry_register_cmd("/ethdev/link_status",
+			handle_port_link_status,
+			"Returns the link status for a port. Parameters: int port_id");
 }

@@ -242,13 +242,13 @@ ice_dcf_request_pkg_name(struct ice_hw *hw, char *pkg_name)
 	rte_memcpy(&dsn, pkg_info.dsn, sizeof(dsn));
 
 	snprintf(pkg_name, ICE_MAX_PKG_FILENAME_SIZE,
-		 ICE_PKG_FILE_SEARCH_PATH_UPDATES "ice-%016llX.pkg",
+		 ICE_PKG_FILE_SEARCH_PATH_UPDATES "ice-%016llx.pkg",
 		 (unsigned long long)dsn);
 	if (!access(pkg_name, 0))
 		return 0;
 
 	snprintf(pkg_name, ICE_MAX_PKG_FILENAME_SIZE,
-		 ICE_PKG_FILE_SEARCH_PATH_DEFAULT "ice-%016llX.pkg",
+		 ICE_PKG_FILE_SEARCH_PATH_DEFAULT "ice-%016llx.pkg",
 		 (unsigned long long)dsn);
 	if (!access(pkg_name, 0))
 		return 0;
@@ -335,6 +335,14 @@ ice_dcf_init_parent_adapter(struct rte_eth_dev *eth_dev)
 	parent_adapter->eth_dev = eth_dev;
 	parent_adapter->pf.adapter = parent_adapter;
 	parent_adapter->pf.dev_data = eth_dev->data;
+	/* create a dummy main_vsi */
+	parent_adapter->pf.main_vsi =
+		rte_zmalloc(NULL, sizeof(struct ice_vsi), 0);
+	if (!parent_adapter->pf.main_vsi)
+		return -ENOMEM;
+	parent_adapter->pf.main_vsi->adapter = parent_adapter;
+	parent_adapter->pf.adapter_stopped = 1;
+
 	parent_hw->back = parent_adapter;
 	parent_hw->mac_type = ICE_MAC_GENERIC;
 	parent_hw->vendor_id = ICE_INTEL_VENDOR_ID;

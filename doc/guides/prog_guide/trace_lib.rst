@@ -52,10 +52,10 @@ How to add a tracepoint?
 
 This section steps you through the details of adding a simple tracepoint.
 
-.. _create_provider_header_file:
+.. _create_tracepoint_header_file:
 
-Create the tracepoint provider header file
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Create the tracepoint header file
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 .. code-block:: c
 
@@ -96,21 +96,15 @@ Register the tracepoint
 
 .. code-block:: c
 
- /* Select tracepoint register macros */
- #define RTE_TRACE_POINT_REGISTER_SELECT
+ #include <rte_trace_point_register.h>
 
- #include <my_tracepoint_provider.h>
+ #include <my_tracepoint.h>
 
- RTE_TRACE_POINT_DEFINE(app_trace_string);
-
- RTE_INIT(app_trace_init)
- {
-       RTE_TRACE_POINT_REGISTER(app_trace_string, app.trace.string);
- }
+ RTE_TRACE_POINT_REGISTER(app_trace_string, app.trace.string)
 
 The above code snippet registers the ``app_trace_string`` tracepoint to
-trace library. Here, the ``my_tracepoint_provider.h`` is the header file
-that the user created in the first step :ref:`create_provider_header_file`.
+trace library. Here, the ``my_tracepoint.h`` is the header file
+that the user created in the first step :ref:`create_tracepoint_header_file`.
 
 The second argument for the ``RTE_TRACE_POINT_REGISTER`` is the name for the
 tracepoint. This string will be used for tracepoint lookup or regular
@@ -119,17 +113,14 @@ There is no requirement for the tracepoint function and its name to be similar.
 However, it is recommended to have a similar name for a better naming
 convention.
 
-The user must register the tracepoint before the ``rte_eal_init`` invocation.
-The user can use the ``RTE_INIT`` construction scheme to achieve this.
+.. note::
+
+   The ``rte_trace_point_register.h`` header must be included before any
+   inclusion of the ``rte_trace_point.h`` header.
 
 .. note::
 
-   The ``RTE_TRACE_POINT_REGISTER_SELECT`` must be defined before including the
-   header for the tracepoint registration to work properly.
-
-.. note::
-
-   The ``RTE_TRACE_POINT_DEFINE`` defines the placeholder for the
+   The ``RTE_TRACE_POINT_REGISTER`` defines the placeholder for the
    ``rte_trace_point_t`` tracepoint object. The user must export a
    ``__<trace_function_name>`` symbol in the library ``.map`` file for this
    tracepoint to be used out of the library, in shared builds.

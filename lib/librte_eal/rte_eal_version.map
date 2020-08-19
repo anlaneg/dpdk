@@ -1,4 +1,4 @@
-DPDK_20.0 {
+DPDK_21 {
 	global:
 
 	__rte_panic;
@@ -6,6 +6,7 @@ DPDK_20.0 {
 	eal_timer_source;
 	per_lcore__lcore_id;
 	per_lcore__rte_errno;
+	per_lcore__thread_id;
 	rte_bus_dump;
 	rte_bus_find;
 	rte_bus_find_by_device;
@@ -303,7 +304,6 @@ EXPERIMENTAL {
 	rte_memseg_get_fd_offset;
 	rte_memseg_get_fd_offset_thread_unsafe;
 	rte_memseg_get_fd_thread_unsafe;
-	rte_option_register;
 
 	# added in 19.02
 	rte_extmem_attach;
@@ -387,4 +387,23 @@ EXPERIMENTAL {
 	rte_trace_point_lookup;
 	rte_trace_regexp;
 	rte_trace_save;
+
+	# added in 20.08
+	rte_eal_vfio_get_vf_token;
+	rte_lcore_callback_register;
+	rte_lcore_callback_unregister;
+	rte_lcore_dump;
+	rte_lcore_iterate;
+	rte_mp_disable;
+	rte_thread_register;
+	rte_thread_unregister;
+};
+
+INTERNAL {
+	global:
+
+	rte_mem_lock;
+	rte_mem_map;
+	rte_mem_page_size;
+	rte_mem_unmap;
 };

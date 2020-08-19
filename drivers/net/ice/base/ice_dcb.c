@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: BSD-3-Clause
- * Copyright(c) 2001-2020
+ * Copyright(c) 2001-2020 Intel Corporation
  */
 
 #include "ice_common.h"
@@ -133,39 +133,6 @@ ice_aq_start_lldp(struct ice_hw *hw, bool persist, struct ice_sq_cd *cd)
 		cmd->command |= ICE_AQ_LLDP_AGENT_PERSIST_ENA;
 
 	return ice_aq_send_cmd(hw, &desc, NULL, 0, cd);
-}
-
-/**
- * ice_aq_set_lldp_mib - Set the LLDP MIB
- * @hw: pointer to the HW struct
- * @mib_type: Local, Remote or both Local and Remote MIBs
- * @buf: pointer to the caller-supplied buffer to store the MIB block
- * @buf_size: size of the buffer (in bytes)
- * @cd: pointer to command details structure or NULL
- *
- * Set the LLDP MIB. (0x0A08)
- */
-enum ice_status
-ice_aq_set_lldp_mib(struct ice_hw *hw, u8 mib_type, void *buf, u16 buf_size,
-		    struct ice_sq_cd *cd)
-{
-	struct ice_aqc_lldp_set_local_mib *cmd;
-	struct ice_aq_desc desc;
-
-	cmd = &desc.params.lldp_set_mib;
-
-	if (buf_size == 0 || !buf)
-		return ICE_ERR_PARAM;
-
-	ice_fill_dflt_direct_cmd_desc(&desc, ice_aqc_opc_lldp_set_local_mib);
-
-	desc.flags |= CPU_TO_LE16((u16)ICE_AQ_FLAG_RD);
-	desc.datalen = CPU_TO_LE16(buf_size);
-
-	cmd->type = mib_type;
-	cmd->length = CPU_TO_LE16(buf_size);
-
-	return ice_aq_send_cmd(hw, &desc, buf, buf_size, cd);
 }
 
 /**
@@ -631,8 +598,7 @@ ice_parse_org_tlv(struct ice_lldp_org_tlv *tlv, struct ice_dcbx_cfg *dcbcfg)
  *
  * Parse DCB configuration from the LLDPDU
  */
-enum ice_status
-ice_lldp_to_dcb_cfg(u8 *lldpmib, struct ice_dcbx_cfg *dcbcfg)
+enum ice_status ice_lldp_to_dcb_cfg(u8 *lldpmib, struct ice_dcbx_cfg *dcbcfg)
 {
 	struct ice_lldp_org_tlv *tlv;
 	enum ice_status ret = ICE_SUCCESS;

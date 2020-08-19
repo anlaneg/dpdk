@@ -23,7 +23,16 @@ extern "C" {
 #define LCORE_ID_ANY     UINT32_MAX       /**< Any lcore. */
 
 RTE_DECLARE_PER_LCORE(unsigned, _lcore_id);  /**< Per thread "lcore id". */
-RTE_DECLARE_PER_LCORE(rte_cpuset_t, _cpuset); /**< Per thread "cpuset". */
+
+/**
+ * The lcore role (used in RTE or not).
+ */
+enum rte_lcore_role_t {
+	ROLE_RTE,
+	ROLE_OFF,
+	ROLE_SERVICE,
+	ROLE_NON_EAL,
+};
 
 /**
  * Get a lcore's role.
@@ -36,6 +45,20 @@ RTE_DECLARE_PER_LCORE(rte_cpuset_t, _cpuset); /**< Per thread "cpuset". */
 enum rte_lcore_role_t rte_eal_lcore_role(unsigned int lcore_id);
 
 /**
+ * Test if the core supplied has a specific role
+ *
+ * @param lcore_id
+ *   The identifier of the lcore, which MUST be between 0 and
+ *   RTE_MAX_LCORE-1.
+ * @param role
+ *   The role to be checked against.
+ * @return
+ *   Boolean value: positive if test is true; otherwise returns 0.
+ */
+int
+rte_lcore_has_role(unsigned int lcore_id, enum rte_lcore_role_t role);
+
+/**
  * Return the Application thread ID of the execution unit.
  *
  * Note: in most cases the lcore id returned here will also correspond
@@ -45,7 +68,8 @@ enum rte_lcore_role_t rte_eal_lcore_role(unsigned int lcore_id);
  *   to run threads with lcore IDs 0, 1, 2 and 3 on physical core 10..
  *
  * @return
- *  Logical core ID (in EAL thread) or LCORE_ID_ANY (in non-EAL thread)
+ *  Logical core ID (in EAL thread or registered non-EAL thread) or
+ *  LCORE_ID_ANY (in unregistered non-EAL thread)
  */
 //当前core id
 static inline unsigned
@@ -210,6 +234,119 @@ unsigned int rte_get_next_lcore(unsigned int i, int skip_master, int wrap);
 	     i = rte_get_next_lcore(i, 1, 0))
 
 /**
+ * Callback prototype for initializing lcores.
+ *
+ * @param lcore_id
+ *   The lcore to consider.
+ * @param arg
+ *   An opaque pointer passed at callback registration.
+ * @return
+ *   - -1 when refusing this operation,
+ *   - 0 otherwise.
+ */
+typedef int (*rte_lcore_init_cb)(unsigned int lcore_id, void *arg);
+
+/**
+ * Callback prototype for uninitializing lcores.
+ *
+ * @param lcore_id
+ *   The lcore to consider.
+ * @param arg
+ *   An opaque pointer passed at callback registration.
+ */
+typedef void (*rte_lcore_uninit_cb)(unsigned int lcore_id, void *arg);
+
+/**
+ * Register callbacks invoked when initializing and uninitializing a lcore.
+ *
+ * This function calls the init callback with all initialized lcores.
+ * Any error reported by the init callback triggers a rollback calling the
+ * uninit callback for each lcore.
+ * If this step succeeds, the callbacks are put in the lcore callbacks list
+ * that will get called for each lcore allocation/release.
+ *
+ * Note: callbacks execution is serialised under a write lock protecting the
+ * lcores and callbacks list.
+ *
+ * @param name
+ *   A name serving as a small description for this callback.
+ * @param init
+ *   The callback invoked when a lcore_id is initialized.
+ *   init can be NULL.
+ * @param uninit
+ *   The callback invoked when a lcore_id is uninitialized.
+ *   uninit can be NULL.
+ * @param arg
+ *   An optional argument that gets passed to the callback when it gets
+ *   invoked.
+ * @return
+ *   On success, returns an opaque pointer for the registered object.
+ *   On failure (either memory allocation issue in the function itself or an
+ *   error is returned by the init callback itself), returns NULL.
+ */
+__rte_experimental
+void *
+rte_lcore_callback_register(const char *name, rte_lcore_init_cb init,
+	rte_lcore_uninit_cb uninit, void *arg);
+
+/**
+ * Unregister callbacks previously registered with rte_lcore_callback_register.
+ *
+ * This function calls the uninit callback with all initialized lcores.
+ * The callbacks are then removed from the lcore callbacks list.
+ *
+ * @param handle
+ *   The handle pointer returned by a former successful call to
+ *   rte_lcore_callback_register.
+ */
+__rte_experimental
+void
+rte_lcore_callback_unregister(void *handle);
+
+/**
+ * Callback prototype for iterating over lcores.
+ *
+ * @param lcore_id
+ *   The lcore to consider.
+ * @param arg
+ *   An opaque pointer coming from the caller.
+ * @return
+ *   - 0 lets the iteration continue.
+ *   - !0 makes the iteration stop.
+ */
+typedef int (*rte_lcore_iterate_cb)(unsigned int lcore_id, void *arg);
+
+/**
+ * Iterate on all active lcores (ROLE_RTE, ROLE_SERVICE and ROLE_NON_EAL).
+ * No modification on the lcore states is allowed in the callback.
+ *
+ * Note: as opposed to init/uninit callbacks, iteration callbacks can be
+ * invoked in parallel as they are run under a read lock protecting the lcores
+ * and callbacks list.
+ *
+ * @param cb
+ *   The callback that gets passed each lcore.
+ * @param arg
+ *   An opaque pointer passed to cb.
+ * @return
+ *   Same return code as the callback last invocation (see rte_lcore_iterate_cb
+ *   description).
+ */
+__rte_experimental
+int
+rte_lcore_iterate(rte_lcore_iterate_cb cb, void *arg);
+
+/**
+ * List all lcores.
+ *
+ * @param f
+ *   The output stream where the dump should be sent.
+ */
+__rte_experimental
+void
+rte_lcore_dump(FILE *f);
+
+/**
  * Set core affinity of the current thread.
  * Support both EAL and non-EAL thread and update TLS.
  *
@@ -262,6 +399,30 @@ __rte_experimental
 int rte_thread_getname(pthread_t id, char *name, size_t len);
 
 /**
+ * Register current non-EAL thread as a lcore.
+ *
+ * @note This API is not compatible with the multi-process feature:
+ * - if a primary process registers a non-EAL thread, then no secondary process
+ *   will initialise.
+ * - if a secondary process initialises successfully, trying to register a
+ *   non-EAL thread from either primary or secondary processes will always end
+ *   up with the thread getting LCORE_ID_ANY as lcore.
+ *
+ * @return
+ *   On success, return 0; otherwise return -1 with rte_errno set.
+ */
+__rte_experimental
+int
+rte_thread_register(void);
+
+/**
+ * Unregister current thread and release lcore if one was associated.
+ */
+__rte_experimental
+void
+rte_thread_unregister(void);
+
+/**
  * Create a control thread.
  *
  * Wrapper to pthread_create(), pthread_setname_np() and
@@ -287,20 +448,6 @@ int
 rte_ctrl_thread_create(pthread_t *thread, const char *name,
 		const pthread_attr_t *attr,
 		void *(*start_routine)(void *), void *arg);
-
-/**
- * Test if the core supplied has a specific role
- *
- * @param lcore_id
- *   The identifier of the lcore, which MUST be between 0 and
- *   RTE_MAX_LCORE-1.
- * @param role
- *   The role to be checked against.
- * @return
- *   Boolean value: positive if test is true; otherwise returns 0.
- */
-int
-rte_lcore_has_role(unsigned int lcore_id, enum rte_lcore_role_t role);
 
 #ifdef __cplusplus
 }
