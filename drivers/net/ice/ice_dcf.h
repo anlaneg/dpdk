@@ -5,7 +5,7 @@
 #ifndef _ICE_DCF_H_
 #define _ICE_DCF_H_
 
-#include <rte_ethdev_driver.h>
+#include <ethdev_driver.h>
 
 #include <iavf_prototype.h>
 #include <iavf_adminq_cmd.h>
@@ -43,6 +43,7 @@ struct ice_dcf_hw {
 
 	uint16_t num_vfs;
 	uint16_t *vf_vsi_map;
+	uint16_t pf_vsi_id;
 
 	struct virtchnl_version_info virtchnl_version;
 	struct virtchnl_vf_resource *vf_res; /* VF resource */

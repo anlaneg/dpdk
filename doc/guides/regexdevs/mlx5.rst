@@ -7,7 +7,7 @@ MLX5 RegEx driver
 =================
 
 The MLX5 RegEx (Regular Expression) driver library
-(**librte_pmd_mlx5_regex**) provides support for **Mellanox BlueField 2**
+(**librte_regex_mlx5**) provides support for **Mellanox BlueField 2**
 families of 25/50/100/200 Gb/s adapters.
 
 Design
@@ -26,7 +26,7 @@ to get the best performances:
 - Direct Verbs is a device-specific API
 - DevX allows to access firmware objects
 
-Enabling librte_pmd_mlx5_regex causes DPDK applications to be linked against
+Enabling librte_regex_mlx5 causes DPDK applications to be linked against
 libibverbs.
 
 Mellanox mlx5 pci device can be probed by number of different pci devices,
@@ -34,6 +34,11 @@ for example net / vDPA / RegEx. To select the RegEx PMD ``class=regex`` should
 be specified as device parameter. The RegEx device can be probed and used with
 other Mellanox devices, by adding more options in the class.
 For example: ``class=net:regex`` will probe both the net PMD and the RegEx PMD.
+
+Features
+--------
+
+- Multi segments mbuf support.
 
 Supported NICs
 --------------

@@ -4,7 +4,7 @@
 
 #include <string.h>
 
-#include "../../lib/librte_telemetry/telemetry_json.h"
+#include "../../lib/telemetry/telemetry_json.h"
 #include "test.h"
 
 static int
@@ -128,7 +128,7 @@ test_telemetry_json(void)
 			test_overflow_array() < 0 ||
 			test_overflow_obj() < 0 ||
 			test_large_array_element() < 0 ||
-+			test_large_obj_element() < 0)
+			test_large_obj_element() < 0)
 		return -1;
 	return 0;
 }

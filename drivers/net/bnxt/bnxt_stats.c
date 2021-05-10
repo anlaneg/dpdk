@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: BSD-3-Clause
- * Copyright(c) 2014-2018 Broadcom
+ * Copyright(c) 2014-2021 Broadcom
  * All rights reserved.
  */
 
@@ -528,6 +528,8 @@ int bnxt_stats_get_op(struct rte_eth_dev *eth_dev,
 		struct bnxt_rx_queue *rxq = bp->rx_queues[i];
 		struct bnxt_cp_ring_info *cpr = rxq->cp_ring;
 
+		if (!rxq->rx_started)
+			continue;
 		rc = bnxt_hwrm_ctx_qstats(bp, cpr->hw_stats_ctx_id, i,
 				     bnxt_stats, 1);
 		if (unlikely(rc))
@@ -543,6 +545,8 @@ int bnxt_stats_get_op(struct rte_eth_dev *eth_dev,
 		struct bnxt_tx_queue *txq = bp->tx_queues[i];
 		struct bnxt_cp_ring_info *cpr = txq->cp_ring;
 
+		if (!txq->tx_started)
+			continue;
 		rc = bnxt_hwrm_ctx_qstats(bp, cpr->hw_stats_ctx_id, i,
 				     bnxt_stats, 0);
 		if (unlikely(rc))
@@ -594,10 +598,15 @@ int bnxt_dev_xstats_get_op(struct rte_eth_dev *eth_dev,
 	if (rc)
 		return rc;
 
-	if (xstats == NULL)
-		return 0;
+	stat_count = RTE_DIM(bnxt_rx_stats_strings) +
+		RTE_DIM(bnxt_tx_stats_strings) +
+		RTE_DIM(bnxt_func_stats_strings) +
+		RTE_DIM(bnxt_rx_ext_stats_strings) +
+		RTE_DIM(bnxt_tx_ext_stats_strings) +
+		bnxt_flow_stats_cnt(bp);
 
-	memset(xstats, 0, sizeof(*xstats));
+	if (n < stat_count || xstats == NULL)
+		return stat_count;
 
 	bnxt_hwrm_func_qstats(bp, 0xffff, NULL, &func_qstats);
 	bnxt_hwrm_port_qstats(bp);
@@ -609,17 +618,7 @@ int bnxt_dev_xstats_get_op(struct rte_eth_dev *eth_dev,
 					(bp->fw_tx_port_stats_ext_size /
 					 stat_size));
 
-	count = RTE_DIM(bnxt_rx_stats_strings) +
-		RTE_DIM(bnxt_tx_stats_strings) +
-		RTE_DIM(bnxt_func_stats_strings) +
-		RTE_DIM(bnxt_rx_ext_stats_strings) +
-		RTE_DIM(bnxt_tx_ext_stats_strings) +
-		bnxt_flow_stats_cnt(bp);
-
-	stat_count = count;
-
-	if (n < count)
-		return count;
+	memset(xstats, 0, sizeof(*xstats));
 
 	count = 0;
 	for (i = 0; i < RTE_DIM(bnxt_rx_stats_strings); i++) {
@@ -643,7 +642,8 @@ int bnxt_dev_xstats_get_op(struct rte_eth_dev *eth_dev,
 	for (i = 0; i < RTE_DIM(bnxt_func_stats_strings); i++) {
 		xstats[count].id = count;
 		xstats[count].value =
-		rte_le_to_cpu_64(((uint64_t *)&func_qstats)[i]);
+			rte_le_to_cpu_64(*(uint64_t *)((char *)&func_qstats +
+					 bnxt_func_stats_strings[i].offset));
 		count++;
 	}
 
@@ -825,75 +825,6 @@ int bnxt_dev_xstats_reset_op(struct rte_eth_dev *eth_dev)
 			    strerror(-ret));
 
 	return ret;
-}
-
-int bnxt_dev_xstats_get_by_id_op(struct rte_eth_dev *dev, const uint64_t *ids,
-		uint64_t *values, unsigned int limit)
-{
-	struct bnxt *bp = dev->data->dev_private;
-	const unsigned int stat_cnt = RTE_DIM(bnxt_rx_stats_strings) +
-				RTE_DIM(bnxt_tx_stats_strings) +
-				RTE_DIM(bnxt_func_stats_strings) +
-				RTE_DIM(bnxt_rx_ext_stats_strings) +
-				RTE_DIM(bnxt_tx_ext_stats_strings) +
-				bnxt_flow_stats_cnt(bp);
-	struct rte_eth_xstat xstats[stat_cnt];
-	uint64_t values_copy[stat_cnt];
-	uint16_t i;
-	int rc;
-
-	rc = is_bnxt_in_error(bp);
-	if (rc)
-		return rc;
-
-	if (!ids)
-		return bnxt_dev_xstats_get_op(dev, xstats, stat_cnt);
-
-	bnxt_dev_xstats_get_by_id_op(dev, NULL, values_copy, stat_cnt);
-	for (i = 0; i < limit; i++) {
-		if (ids[i] >= stat_cnt) {
-			PMD_DRV_LOG(ERR, "id value isn't valid");
-			return -EINVAL;
-		}
-		values[i] = values_copy[ids[i]];
-	}
-	return stat_cnt;
-}
-
-int bnxt_dev_xstats_get_names_by_id_op(struct rte_eth_dev *dev,
-				struct rte_eth_xstat_name *xstats_names,
-				const uint64_t *ids, unsigned int limit)
-{
-	struct bnxt *bp = dev->data->dev_private;
-	const unsigned int stat_cnt = RTE_DIM(bnxt_rx_stats_strings) +
-				RTE_DIM(bnxt_tx_stats_strings) +
-				RTE_DIM(bnxt_func_stats_strings) +
-				RTE_DIM(bnxt_rx_ext_stats_strings) +
-				RTE_DIM(bnxt_tx_ext_stats_strings) +
-				bnxt_flow_stats_cnt(bp);
-	struct rte_eth_xstat_name xstats_names_copy[stat_cnt];
-	uint16_t i;
-	int rc;
-
-	rc = is_bnxt_in_error(bp);
-	if (rc)
-		return rc;
-
-	if (!ids)
-		return bnxt_dev_xstats_get_names_op(dev, xstats_names,
-						    stat_cnt);
-	bnxt_dev_xstats_get_names_by_id_op(dev, xstats_names_copy, NULL,
-			stat_cnt);
-
-	for (i = 0; i < limit; i++) {
-		if (ids[i] >= stat_cnt) {
-			PMD_DRV_LOG(ERR, "id value isn't valid");
-			return -EINVAL;
-		}
-		strcpy(xstats_names[i].name,
-				xstats_names_copy[ids[i]].name);
-	}
-	return stat_cnt;
 }
 
 /* Update the input context memory with the flow counter IDs

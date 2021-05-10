@@ -12,11 +12,7 @@ be supported in hardware or require a software thread to receive packets from
 the ethdev port using ethdev poll mode APIs and enqueue these as events to the
 event device using the eventdev API. Both transfer mechanisms may be present on
 the same platform depending on the particular combination of the ethdev and
-the event device. For SW based packet transfer, if the mbuf does not have a
-timestamp set, the adapter adds a timestamp to the mbuf using
-rte_get_tsc_cycles(), this provides a more accurate timestamp as compared to
-if the application were to set the timestamp since it avoids event device
-schedule latency.
+the event device.
 
 The Event Ethernet Rx Adapter library is intended for the application code to
 configure both transfer mechanisms using a common API. A capability API allows
@@ -172,7 +168,7 @@ converts the received packets to events in the same manner as packets
 received on a polled Rx queue. The interrupt thread is affinitized to the same
 CPUs as the lcores of the Rx adapter service function, if the Rx adapter
 service function has not been mapped to any lcores, the interrupt thread
-is mapped to the master lcore.
+is mapped to the main lcore.
 
 Rx Callback for SW Rx Adapter
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -190,3 +186,60 @@ the event buffer fill level is low. The
 ``rte_event_eth_rx_adapter_cb_register()`` function allow the application
 to register a callback that selects which packets to enqueue to the event
 device.
+
+Rx event vectorization
+~~~~~~~~~~~~~~~~~~~~~~
+
+The event devices, ethernet device pairs which support the capability
+``RTE_EVENT_ETH_RX_ADAPTER_CAP_EVENT_VECTOR`` can aggregate packets based on
+flow characteristics and generate a ``rte_event`` containing ``rte_event_vector``
+whose event type is either ``RTE_EVENT_TYPE_ETHDEV_VECTOR`` or
+``RTE_EVENT_TYPE_ETH_RX_ADAPTER_VECTOR``.
+The aggregation size and timeout are configurable at a queue level and the
+maximum, minimum vector sizes and timeouts vary based on the device capability
+and can be queried using ``rte_event_eth_rx_adapter_vector_limits_get``.
+The Rx adapter additionally might include useful data such as ethernet device
+port and queue identifier in the ``rte_event_vector::port`` and
+``rte_event_vector::queue`` and mark ``rte_event_vector::attr_valid`` as true.
+
+A loop processing ``rte_event_vector`` containing mbufs is shown below.
+
+.. code-block:: c
+
+        event = rte_event_dequeue_burst(event_dev, event_port, &event,
+                                        1, 0);
+        if (!event)
+                continue;
+
+        switch (ev.event_type) {
+        case RTE_EVENT_TYPE_ETH_RX_ADAPTER_VECTOR:
+        case RTE_EVENT_TYPE_ETHDEV_VECTOR:
+                struct rte_mbufs **mbufs;
+
+                mbufs = (struct rte_mbufs **)ev[i].vec->mbufs;
+                for (i = 0; i < ev.vec->nb_elem; i++) {
+                        /* Process each mbuf. */
+                }
+        break;
+        case ...
+        ...
+        }
+
+Rx event vectorization for SW Rx adapter
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+For SW based event vectorization, i.e., when the
+``RTE_EVENT_ETH_RX_ADAPTER_CAP_INTERNAL_PORT`` is not set in the adapter's
+capabilities flags for a particular ethernet device, the service function
+creates a single event vector flow for all the mbufs arriving on the given
+Rx queue.
+The 20-bit event flow identifier is set to 12-bits of Rx queue identifier
+and 8-bits of ethernet device identifier.
+Flow identifier is formatted as follows:
+
+.. code-block:: console
+
+    19      12,11            0
+    +---------+--------------+
+    | port_id |   queue_id   |
+    +---------+--------------+

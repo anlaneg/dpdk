@@ -10,8 +10,7 @@
 #include <stdlib.h>
 #include <errno.h>
 
-#include <rte_atomic.h>
-#include <rte_ethdev_driver.h>
+#include <ethdev_driver.h>
 #include <rte_bus_pci.h>
 #include <rte_mbuf.h>
 #include <rte_common.h>
@@ -24,6 +23,8 @@
 #include <mlx5_malloc.h>
 
 #include "mlx5_rxtx.h"
+#include "mlx5_rx.h"
+#include "mlx5_tx.h"
 #include "mlx5_autoconf.h"
 
 /**
@@ -43,7 +44,10 @@ mlx5_ifindex(const struct rte_eth_dev *dev)
 
 	MLX5_ASSERT(priv);
 	MLX5_ASSERT(priv->if_index);
-	ifindex = priv->if_index;
+	if (priv->master && priv->sh->bond.ifindex > 0)
+		ifindex = priv->sh->bond.ifindex;
+	else
+		ifindex = priv->if_index;
 	if (!ifindex)
 		rte_errno = ENXIO;
 	return ifindex;
@@ -86,9 +90,13 @@ mlx5_dev_configure(struct rte_eth_dev *dev)
 		return -rte_errno;
 	}
 
-	if (dev->data->dev_conf.rxmode.mq_mode & ETH_MQ_RX_RSS_FLAG)
-		dev->data->dev_conf.rxmode.offloads |= DEV_RX_OFFLOAD_RSS_HASH;
-
+	if ((dev->data->dev_conf.txmode.offloads &
+			DEV_TX_OFFLOAD_SEND_ON_TIMESTAMP) &&
+			rte_mbuf_dyn_tx_timestamp_register(NULL, NULL) != 0) {
+		DRV_LOG(ERR, "port %u cannot register Tx timestamp field/flag",
+			dev->data->port_id);
+		return -rte_errno;
+	}
 	memcpy(priv->rss_conf.rss_key,
 	       use_app_rss_key ?
 	       dev->data->dev_conf.rx_adv_conf.rss_conf.rss_key :
@@ -307,6 +315,10 @@ mlx5_dev_infos_get(struct rte_eth_dev *dev, struct rte_eth_dev_info *info)
 	info->max_tx_queues = max;
 	info->max_mac_addrs = MLX5_MAX_UC_MAC_ADDRESSES;
 	info->rx_queue_offload_capa = mlx5_get_rx_queue_offloads(dev);
+	info->rx_seg_capa.max_nseg = MLX5_MAX_RXQ_NSEG;
+	info->rx_seg_capa.multi_pools = !config->mprq.enabled;
+	info->rx_seg_capa.offset_allowed = !config->mprq.enabled;
+	info->rx_seg_capa.offset_align_log2 = 0;
 	info->rx_offload_capa = (mlx5_get_rx_port_offloads() |
 				 info->rx_queue_offload_capa);
 	info->tx_offload_capa = mlx5_get_tx_port_offloads(dev);
@@ -324,25 +336,6 @@ mlx5_dev_infos_get(struct rte_eth_dev *dev, struct rte_eth_dev_info *info)
 	if (priv->representor) {
 		uint16_t port_id;
 
-		if (priv->pf_bond >= 0) {
-			/*
-			 * Switch port ID is opaque value with driver defined
-			 * format. Push the PF index in bonding configurations
-			 * in upper four bits of port ID. If we get too many
-			 * representors (more than 4K) or PFs (more than 15)
-			 * this approach must be reconsidered.
-			 */
-			if ((info->switch_info.port_id >>
-				MLX5_PORT_ID_BONDING_PF_SHIFT) ||
-			    priv->pf_bond > MLX5_PORT_ID_BONDING_PF_MASK) {
-				DRV_LOG(ERR, "can't update switch port ID"
-					     " for bonding device");
-				MLX5_ASSERT(false);
-				return -ENODEV;
-			}
-			info->switch_info.port_id |=
-				priv->pf_bond << MLX5_PORT_ID_BONDING_PF_SHIFT;
-		}
 		MLX5_ETH_FOREACH_DEV(port_id, priv->pci_dev) {
 			struct mlx5_priv *opriv =
 				rte_eth_devices[port_id].data->dev_private;
@@ -361,6 +354,123 @@ mlx5_dev_infos_get(struct rte_eth_dev *dev, struct rte_eth_dev_info *info)
 		}
 	}
 	return 0;
+}
+
+/**
+ * Calculate representor ID from port switch info.
+ *
+ * Uint16 representor ID bits definition:
+ *   pf: 2
+ *   type: 2
+ *   vf/sf: 12
+ *
+ * @param info
+ *   Port switch info.
+ * @param hpf_type
+ *   Use this type if port is HPF.
+ *
+ * @return
+ *   Encoded representor ID.
+ */
+uint16_t
+mlx5_representor_id_encode(const struct mlx5_switch_info *info,
+			   enum rte_eth_representor_type hpf_type)
+{
+	enum rte_eth_representor_type type = RTE_ETH_REPRESENTOR_VF;
+	uint16_t repr = info->port_name;
+
+	if (info->representor == 0)
+		return UINT16_MAX;
+	if (info->name_type == MLX5_PHYS_PORT_NAME_TYPE_PFSF)
+		type = RTE_ETH_REPRESENTOR_SF;
+	if (info->name_type == MLX5_PHYS_PORT_NAME_TYPE_PFHPF) {
+		type = hpf_type;
+		repr = UINT16_MAX;
+	}
+	return MLX5_REPRESENTOR_ID(info->pf_num, type, repr);
+}
+
+/**
+ * DPDK callback to get information about representor.
+ *
+ * Representor ID bits definition:
+ *   vf/sf: 12
+ *   type: 2
+ *   pf: 2
+ *
+ * @param dev
+ *   Pointer to Ethernet device structure.
+ * @param[out] info
+ *   Nullable info structure output buffer.
+ *
+ * @return
+ *   negative on error, or the number of representor ranges.
+ */
+int
+mlx5_representor_info_get(struct rte_eth_dev *dev,
+			  struct rte_eth_representor_info *info)
+{
+	struct mlx5_priv *priv = dev->data->dev_private;
+	int n_type = 4; /* Representor types, VF, HPF@VF, SF and HPF@SF. */
+	int n_pf = 2; /* Number of PFs. */
+	int i = 0, pf;
+
+	if (info == NULL)
+		goto out;
+	info->controller = 0;
+	info->pf = priv->pf_bond >= 0 ? priv->pf_bond : 0;
+	for (pf = 0; pf < n_pf; ++pf) {
+		/* VF range. */
+		info->ranges[i].type = RTE_ETH_REPRESENTOR_VF;
+		info->ranges[i].controller = 0;
+		info->ranges[i].pf = pf;
+		info->ranges[i].vf = 0;
+		info->ranges[i].id_base =
+			MLX5_REPRESENTOR_ID(pf, info->ranges[i].type, 0);
+		info->ranges[i].id_end =
+			MLX5_REPRESENTOR_ID(pf, info->ranges[i].type, -1);
+		snprintf(info->ranges[i].name,
+			 sizeof(info->ranges[i].name), "pf%dvf", pf);
+		i++;
+		/* HPF range of VF type. */
+		info->ranges[i].type = RTE_ETH_REPRESENTOR_VF;
+		info->ranges[i].controller = 0;
+		info->ranges[i].pf = pf;
+		info->ranges[i].vf = UINT16_MAX;
+		info->ranges[i].id_base =
+			MLX5_REPRESENTOR_ID(pf, info->ranges[i].type, -1);
+		info->ranges[i].id_end =
+			MLX5_REPRESENTOR_ID(pf, info->ranges[i].type, -1);
+		snprintf(info->ranges[i].name,
+			 sizeof(info->ranges[i].name), "pf%dvf", pf);
+		i++;
+		/* SF range. */
+		info->ranges[i].type = RTE_ETH_REPRESENTOR_SF;
+		info->ranges[i].controller = 0;
+		info->ranges[i].pf = pf;
+		info->ranges[i].vf = 0;
+		info->ranges[i].id_base =
+			MLX5_REPRESENTOR_ID(pf, info->ranges[i].type, 0);
+		info->ranges[i].id_end =
+			MLX5_REPRESENTOR_ID(pf, info->ranges[i].type, -1);
+		snprintf(info->ranges[i].name,
+			 sizeof(info->ranges[i].name), "pf%dsf", pf);
+		i++;
+		/* HPF range of SF type. */
+		info->ranges[i].type = RTE_ETH_REPRESENTOR_SF;
+		info->ranges[i].controller = 0;
+		info->ranges[i].pf = pf;
+		info->ranges[i].vf = UINT16_MAX;
+		info->ranges[i].id_base =
+			MLX5_REPRESENTOR_ID(pf, info->ranges[i].type, -1);
+		info->ranges[i].id_end =
+			MLX5_REPRESENTOR_ID(pf, info->ranges[i].type, -1);
+		snprintf(info->ranges[i].name,
+			 sizeof(info->ranges[i].name), "pf%dsf", pf);
+		i++;
+	}
+out:
+	return n_type * n_pf;
 }
 
 /**
@@ -422,7 +532,8 @@ mlx5_dev_supported_ptypes_get(struct rte_eth_dev *dev)
 
 	if (dev->rx_pkt_burst == mlx5_rx_burst ||
 	    dev->rx_pkt_burst == mlx5_rx_burst_mprq ||
-	    dev->rx_pkt_burst == mlx5_rx_burst_vec)
+	    dev->rx_pkt_burst == mlx5_rx_burst_vec ||
+	    dev->rx_pkt_burst == mlx5_rx_burst_mprq_vec)
 		return ptypes;
 	return NULL;
 }
@@ -481,11 +592,22 @@ mlx5_select_rx_function(struct rte_eth_dev *dev)
 
 	MLX5_ASSERT(dev != NULL);
 	if (mlx5_check_vec_rx_support(dev) > 0) {
-		rx_pkt_burst = mlx5_rx_burst_vec;
-		DRV_LOG(DEBUG, "port %u selected Rx vectorized function",
-			dev->data->port_id);
+		if (mlx5_mprq_enabled(dev)) {
+			rx_pkt_burst = mlx5_rx_burst_mprq_vec;
+			DRV_LOG(DEBUG, "port %u selected vectorized"
+				" MPRQ Rx function", dev->data->port_id);
+		} else {
+			rx_pkt_burst = mlx5_rx_burst_vec;
+			DRV_LOG(DEBUG, "port %u selected vectorized"
+				" SPRQ Rx function", dev->data->port_id);
+		}
 	} else if (mlx5_mprq_enabled(dev)) {
 		rx_pkt_burst = mlx5_rx_burst_mprq;
+		DRV_LOG(DEBUG, "port %u selected MPRQ Rx function",
+			dev->data->port_id);
+	} else {
+		DRV_LOG(DEBUG, "port %u selected SPRQ Rx function",
+			dev->data->port_id);
 	}
 	return rx_pkt_burst;
 }
@@ -570,13 +692,13 @@ mlx5_dev_to_eswitch_info(struct rte_eth_dev *dev)
  *   0 on success, a negative errno value otherwise and rte_errno is set.
  */
 int
-mlx5_hairpin_cap_get(struct rte_eth_dev *dev,
-			 struct rte_eth_hairpin_cap *cap)
+mlx5_hairpin_cap_get(struct rte_eth_dev *dev, struct rte_eth_hairpin_cap *cap)
 {
     //返回cx5网卡的hairpin能力
 	struct mlx5_priv *priv = dev->data->dev_private;
+	struct mlx5_dev_config *config = &priv->config;
 
-	if (priv->sh->devx == 0) {
+	if (!priv->sh->devx || !config->dest_tir || !config->dv_flow_en) {
 		rte_errno = ENOTSUP;
 		return -rte_errno;
 	}

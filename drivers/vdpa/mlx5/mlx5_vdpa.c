@@ -44,7 +44,7 @@
 
 #define MLX5_VDPA_MAX_RETRIES 20
 #define MLX5_VDPA_USEC 1000
-#define MLX5_VDPA_DEFAULT_NO_TRAFFIC_TIME_S 2LLU
+#define MLX5_VDPA_DEFAULT_NO_TRAFFIC_MAX 16LLU
 
 TAILQ_HEAD(mlx5_vdpa_privs, mlx5_vdpa_priv) priv_list =
 					      TAILQ_HEAD_INITIALIZER(priv_list);
@@ -283,6 +283,7 @@ mlx5_vdpa_dev_close(int vid)
 	}
 	if (priv->configured)
 		ret |= mlx5_vdpa_lm_log(priv);
+	mlx5_vdpa_err_event_unset(priv);
 	mlx5_vdpa_cqe_event_unset(priv);
 	mlx5_vdpa_steer_unset(priv);
 	mlx5_vdpa_virtqs_release(priv);
@@ -294,6 +295,8 @@ mlx5_vdpa_dev_close(int vid)
 	}
 	priv->configured = 0;
 	priv->vid = 0;
+	/* The mutex may stay locked after event thread cancel - initiate it. */
+	pthread_mutex_init(&priv->vq_config_lock, NULL);
 	DRV_LOG(INFO, "vDPA device %d was closed.", vid);
 	return ret;
 }
@@ -318,6 +321,7 @@ mlx5_vdpa_dev_config(int vid)
 		DRV_LOG(WARNING, "MTU cannot be set on device %s.",
 				vdev->device->name);
 	if (mlx5_vdpa_pd_create(priv) || mlx5_vdpa_mem_register(priv) ||
+	    mlx5_vdpa_err_event_setup(priv) ||
 	    mlx5_vdpa_virtqs_prepare(priv) || mlx5_vdpa_steer_setup(priv) ||
 	    mlx5_vdpa_cqe_event_setup(priv)) {
 		mlx5_vdpa_dev_close(vid);
@@ -468,34 +472,6 @@ static struct rte_vdpa_dev_ops mlx5_vdpa_ops = {
 	.reset_stats = mlx5_vdpa_reset_stats,
 };
 
-static struct ibv_device *
-mlx5_vdpa_get_ib_device_match(struct rte_pci_addr *addr)
-{
-	int n;
-	struct ibv_device **ibv_list = mlx5_glue->get_device_list(&n);
-	struct ibv_device *ibv_match = NULL;
-
-	if (!ibv_list) {
-		rte_errno = ENOSYS;
-		return NULL;
-	}
-	while (n-- > 0) {
-		struct rte_pci_addr pci_addr;
-
-		DRV_LOG(DEBUG, "Checking device \"%s\"..", ibv_list[n]->name);
-		if (mlx5_dev_to_pci_addr(ibv_list[n]->ibdev_path, &pci_addr))
-			continue;
-		if (rte_pci_addr_cmp(addr, &pci_addr))
-			continue;
-		ibv_match = ibv_list[n];
-		break;
-	}
-	if (!ibv_match)
-		rte_errno = ENOENT;
-	mlx5_glue->free_device_list(ibv_list);
-	return ibv_match;
-}
-
 /* Try to disable ROCE by Netlink\Devlink. */
 static int
 mlx5_vdpa_nl_roce_disable(const char *addr)
@@ -591,7 +567,7 @@ mlx5_vdpa_roce_disable(struct rte_pci_addr *addr, struct ibv_device **ibv)
 		struct ibv_device *ibv_new;
 
 		for (r = MLX5_VDPA_MAX_RETRIES; r; r--) {
-			ibv_new = mlx5_vdpa_get_ib_device_match(addr);
+			ibv_new = mlx5_os_get_ibv_device(addr);
 			if (ibv_new) {
 				*ibv = ibv_new;
 				return 0;
@@ -610,6 +586,7 @@ mlx5_vdpa_args_check_handler(const char *key, const char *val, void *opaque)
 {
 	struct mlx5_vdpa_priv *priv = opaque;
 	unsigned long tmp;
+	int n_cores = sysconf(_SC_NPROCESSORS_ONLN);
 
 	if (strcmp(key, "class") == 0)
 		return 0;
@@ -627,7 +604,18 @@ mlx5_vdpa_args_check_handler(const char *key, const char *val, void *opaque)
 	} else if (strcmp(key, "event_us") == 0) {
 		priv->event_us = (uint32_t)tmp;
 	} else if (strcmp(key, "no_traffic_time") == 0) {
-		priv->no_traffic_time_s = (uint32_t)tmp;
+		priv->no_traffic_max = (uint32_t)tmp;
+	} else if (strcmp(key, "event_core") == 0) {
+		if (tmp >= (unsigned long)n_cores)
+			DRV_LOG(WARNING, "Invalid event_core %s.", val);
+		else
+			priv->event_core = tmp;
+	} else if (strcmp(key, "hw_latency_mode") == 0) {
+		priv->hw_latency_mode = (uint32_t)tmp;
+	} else if (strcmp(key, "hw_max_latency_us") == 0) {
+		priv->hw_max_latency_us = (uint32_t)tmp;
+	} else if (strcmp(key, "hw_max_pending_comp") == 0) {
+		priv->hw_max_pending_comp = (uint32_t)tmp;
 	} else {
 		DRV_LOG(WARNING, "Invalid key %s.", key);
 	}
@@ -639,9 +627,10 @@ mlx5_vdpa_config_get(struct rte_devargs *devargs, struct mlx5_vdpa_priv *priv)
 {
 	struct rte_kvargs *kvlist;
 
-	priv->event_mode = MLX5_VDPA_EVENT_MODE_DYNAMIC_TIMER;
+	priv->event_mode = MLX5_VDPA_EVENT_MODE_FIXED_TIMER;
 	priv->event_us = 0;
-	priv->no_traffic_time_s = MLX5_VDPA_DEFAULT_NO_TRAFFIC_TIME_S;
+	priv->event_core = -1;
+	priv->no_traffic_max = MLX5_VDPA_DEFAULT_NO_TRAFFIC_MAX;
 	if (devargs == NULL)
 		return;
 	kvlist = rte_kvargs_parse(devargs->args, NULL);
@@ -649,15 +638,12 @@ mlx5_vdpa_config_get(struct rte_devargs *devargs, struct mlx5_vdpa_priv *priv)
 		return;
 	rte_kvargs_process(kvlist, NULL, mlx5_vdpa_args_check_handler, priv);
 	rte_kvargs_free(kvlist);
-	if (!priv->event_us) {
-		if (priv->event_mode == MLX5_VDPA_EVENT_MODE_DYNAMIC_TIMER)
-			priv->event_us = MLX5_VDPA_DEFAULT_TIMER_STEP_US;
-		else if (priv->event_mode == MLX5_VDPA_EVENT_MODE_FIXED_TIMER)
-			priv->event_us = MLX5_VDPA_DEFAULT_TIMER_DELAY_US;
-	}
+	if (!priv->event_us &&
+	    priv->event_mode == MLX5_VDPA_EVENT_MODE_DYNAMIC_TIMER)
+		priv->event_us = MLX5_VDPA_DEFAULT_TIMER_STEP_US;
 	DRV_LOG(DEBUG, "event mode is %d.", priv->event_mode);
 	DRV_LOG(DEBUG, "event_us is %u us.", priv->event_us);
-	DRV_LOG(DEBUG, "no traffic time is %u s.", priv->no_traffic_time_s);
+	DRV_LOG(DEBUG, "no traffic max is %u.", priv->no_traffic_max);
 }
 
 /**
@@ -684,7 +670,7 @@ mlx5_vdpa_pci_probe(struct rte_pci_driver *pci_drv __rte_unused,
 	struct mlx5_hca_attr attr;
 	int ret;
 
-	ibv = mlx5_vdpa_get_ib_device_match(&pci_dev->addr);
+	ibv = mlx5_os_get_ibv_device(&pci_dev->addr);
 	if (!ibv) {
 		DRV_LOG(ERR, "No matching IB device for PCI slot "
 			PCI_PRI_FMT ".", pci_dev->addr.domain,
@@ -730,11 +716,15 @@ mlx5_vdpa_pci_probe(struct rte_pci_driver *pci_drv __rte_unused,
 	}
 	priv->caps = attr.vdpa;
 	priv->log_max_rqt_size = attr.log_max_rqt_size;
+	priv->num_lag_ports = attr.num_lag_ports;
+	priv->qp_ts_format = attr.qp_ts_format;
+	if (attr.num_lag_ports == 0)
+		priv->num_lag_ports = 1;
 	priv->ctx = ctx;
 	priv->pci_dev = pci_dev;
 	priv->var = mlx5_glue->dv_alloc_var(ctx, 0);
 	if (!priv->var) {
-		DRV_LOG(ERR, "Failed to allocate VAR %u.\n", errno);
+		DRV_LOG(ERR, "Failed to allocate VAR %u.", errno);
 		goto error;
 	}
 	//注册vdpa设备
@@ -820,11 +810,19 @@ static const struct rte_pci_id mlx5_vdpa_pci_id_map[] = {
 	},
 	{
 		RTE_PCI_DEVICE(PCI_VENDOR_ID_MELLANOX,
-				PCI_DEVICE_ID_MELLANOX_CONNECTX6DXVF)
+				PCI_DEVICE_ID_MELLANOX_CONNECTXVF)
 	},
 	{
 		RTE_PCI_DEVICE(PCI_VENDOR_ID_MELLANOX,
 				PCI_DEVICE_ID_MELLANOX_CONNECTX6DXBF)
+	},
+	{
+		RTE_PCI_DEVICE(PCI_VENDOR_ID_MELLANOX,
+				PCI_DEVICE_ID_MELLANOX_CONNECTX7)
+	},
+	{
+		RTE_PCI_DEVICE(PCI_VENDOR_ID_MELLANOX,
+				PCI_DEVICE_ID_MELLANOX_CONNECTX7BF)
 	},
 	{
 		.vendor_id = 0

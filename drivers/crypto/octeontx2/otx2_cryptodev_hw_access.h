@@ -42,10 +42,11 @@
 #define OTX2_CPT_LF_NQ(a)		(0x400ull | (uint64_t)(a) << 3)
 
 #define OTX2_CPT_AF_LF_CTL(a)		(0x27000ull | (uint64_t)(a) << 3)
+#define OTX2_CPT_AF_LF_CTL2(a)		(0x29000ull | (uint64_t)(a) << 3)
 
-#define OTX2_CPT_LF_BAR2(vf, q_id) \
+#define OTX2_CPT_LF_BAR2(vf, blk_addr, q_id) \
 		((vf)->otx2_dev.bar2 + \
-		 ((RVU_BLOCK_ADDR_CPT0 << 20) | ((q_id) << 12)))
+		 ((blk_addr << 20) | ((q_id) << 12)))
 
 #define OTX2_CPT_QUEUE_HI_PRIO 0x1
 
@@ -107,6 +108,17 @@ union otx2_cpt_af_lf_ctl {
 		uint64_t reserved_17_47              : 31;
 		uint64_t grp                         : 8;
 		uint64_t reserved_56_63              : 8;
+	} s;
+};
+
+union otx2_cpt_af_lf_ctl2 {
+	uint64_t u;
+	struct {
+		uint64_t exe_no_swap                 : 1;
+		uint64_t exe_ldwb                    : 1;
+		uint64_t reserved_2_31               : 30;
+		uint64_t sso_pf_func                 : 16;
+		uint64_t nix_pf_func                 : 16;
 	} s;
 };
 

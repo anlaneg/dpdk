@@ -16,7 +16,30 @@
 
 #include "vhost_kernel_tap.h"
 #include "../virtio_logs.h"
-#include "../virtio_pci.h"
+#include "../virtio.h"
+
+
+int
+tap_support_features(unsigned int *tap_features)
+{
+	int tapfd;
+
+	tapfd = open(PATH_NET_TUN, O_RDWR);
+	if (tapfd < 0) {
+		PMD_DRV_LOG(ERR, "fail to open %s: %s",
+			    PATH_NET_TUN, strerror(errno));
+		return -1;
+	}
+
+	if (ioctl(tapfd, TUNGETFEATURES, tap_features) == -1) {
+		PMD_DRV_LOG(ERR, "TUNGETFEATURES failed: %s", strerror(errno));
+		close(tapfd);
+		return -1;
+	}
+
+	close(tapfd);
+	return 0;
+}
 
 int
 vhost_kernel_tap_set_offload(int fd, uint64_t features)
@@ -39,7 +62,7 @@ vhost_kernel_tap_set_offload(int fd, uint64_t features)
 
 	/* Check if our kernel supports TUNSETOFFLOAD */
 	if (ioctl(fd, TUNSETOFFLOAD, 0) != 0 && errno == EINVAL) {
-		PMD_DRV_LOG(ERR, "Kernel does't support TUNSETOFFLOAD\n");
+		PMD_DRV_LOG(ERR, "Kernel doesn't support TUNSETOFFLOAD\n");
 		return -ENOTSUP;
 	}
 

@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: BSD-3-Clause
- * Copyright(c) 2001-2020 Intel Corporation
+ * Copyright(c) 2001-2021 Intel Corporation
  */
 
 #ifndef _ICE_FLOW_H_
@@ -71,6 +71,9 @@
 	(ICE_FLOW_HASH_IPV6_PRE64 | ICE_FLOW_HASH_UDP_PORT)
 #define ICE_HASH_SCTP_IPV6_PRE64 \
 	(ICE_FLOW_HASH_IPV6_PRE64 | ICE_FLOW_HASH_SCTP_PORT)
+
+#define ICE_FLOW_HASH_VXLAN_VNI \
+	(BIT_ULL(ICE_FLOW_FIELD_IDX_VXLAN_VNI))
 
 #define ICE_FLOW_HASH_GTP_TEID \
 	(BIT_ULL(ICE_FLOW_FIELD_IDX_GTPC_TEID))
@@ -178,10 +181,17 @@ enum ice_flow_seg_hdr {
 	ICE_FLOW_SEG_HDR_AH		= 0x00200000,
 	ICE_FLOW_SEG_HDR_NAT_T_ESP	= 0x00400000,
 	ICE_FLOW_SEG_HDR_ETH_NON_IP	= 0x00800000,
+	ICE_FLOW_SEG_HDR_GTPU_NON_IP	= 0x01000000,
+	ICE_FLOW_SEG_HDR_VXLAN		= 0x02000000,
+	ICE_FLOW_SEG_HDR_ECPRI_TP0	= 0x04000000,
+	ICE_FLOW_SEG_HDR_UDP_ECPRI_TP0	= 0x08000000,
+	ICE_FLOW_SEG_HDR_L2TPV2		= 0x10000000,
+	ICE_FLOW_SEG_HDR_PPP		= 0x20000000,
 	/* The following is an additive bit for ICE_FLOW_SEG_HDR_IPV4 and
-	 * ICE_FLOW_SEG_HDR_IPV6 which include the IPV4 other PTYPEs
+	 * ICE_FLOW_SEG_HDR_IPV6.
 	 */
-	ICE_FLOW_SEG_HDR_IPV_OTHER	= 0x20000000,
+	ICE_FLOW_SEG_HDR_IPV_FRAG	= 0x40000000,
+	ICE_FLOW_SEG_HDR_IPV_OTHER	= 0x80000000,
 };
 
 /* These segements all have the same PTYPES, but are otherwise distinguished by
@@ -218,6 +228,8 @@ enum ice_flow_field {
 	ICE_FLOW_FIELD_IDX_IPV4_DA,
 	ICE_FLOW_FIELD_IDX_IPV6_SA,
 	ICE_FLOW_FIELD_IDX_IPV6_DA,
+	ICE_FLOW_FIELD_IDX_IPV4_ID,
+	ICE_FLOW_FIELD_IDX_IPV6_ID,
 	ICE_FLOW_FIELD_IDX_IPV6_PRE32_SA,
 	ICE_FLOW_FIELD_IDX_IPV6_PRE32_DA,
 	ICE_FLOW_FIELD_IDX_IPV6_PRE48_SA,
@@ -266,6 +278,12 @@ enum ice_flow_field {
 	ICE_FLOW_FIELD_IDX_AH_SPI,
 	/* NAT_T ESP */
 	ICE_FLOW_FIELD_IDX_NAT_T_ESP_SPI,
+	/* VXLAN VNI */
+	ICE_FLOW_FIELD_IDX_VXLAN_VNI,
+	/* ECPRI_TP0 */
+	ICE_FLOW_FIELD_IDX_ECPRI_TP0_PC_ID,
+	/* UDP_ECPRI_TP0 */
+	ICE_FLOW_FIELD_IDX_UDP_ECPRI_TP0_PC_ID,
 	 /* The total number of enums must not exceed 64 */
 	ICE_FLOW_FIELD_IDX_MAX
 };
@@ -322,6 +340,24 @@ enum ice_flow_avf_hdr_field {
 	BIT_ULL(ICE_AVF_FLOW_FIELD_UNICAST_IPV6_UDP) | \
 	BIT_ULL(ICE_AVF_FLOW_FIELD_MULTICAST_IPV6_UDP))
 
+enum ice_rss_cfg_hdr_type {
+	ICE_RSS_OUTER_HEADERS, /* take outer headers as inputset. */
+	ICE_RSS_INNER_HEADERS, /* take inner headers as inputset. */
+	/* take inner headers as inputset for packet with outer ipv4. */
+	ICE_RSS_INNER_HEADERS_W_OUTER_IPV4,
+	/* take inner headers as inputset for packet with outer ipv6. */
+	ICE_RSS_INNER_HEADERS_W_OUTER_IPV6,
+	/* take outer headers first then inner headers as inputset */
+	ICE_RSS_ANY_HEADERS
+};
+
+struct ice_rss_hash_cfg {
+	u32 addl_hdrs; /* protocol header fields */
+	u64 hash_flds; /* hash bit field (ICE_FLOW_HASH_*) to configure */
+	enum ice_rss_cfg_hdr_type hdr_type; /* to specify inner or outer */
+	bool symm; /* symmetric or asymmetric hash */
+};
+
 enum ice_flow_dir {
 	ICE_FLOW_DIR_UNDEFINED	= 0,
 	ICE_FLOW_TX		= 0x01,
@@ -335,6 +371,7 @@ enum ice_flow_priority {
 	ICE_FLOW_PRIO_HIGH
 };
 
+#define ICE_FLOW_SEG_SINGLE		1
 #define ICE_FLOW_SEG_MAX		2
 #define ICE_FLOW_SEG_RAW_FLD_MAX	2
 #define ICE_FLOW_PROFILE_MAX		1024
@@ -414,7 +451,7 @@ struct ice_flow_entry {
 	u8 acts_cnt;
 };
 
-#define ICE_FLOW_ENTRY_HNDL(e)	((unsigned long)e)
+#define ICE_FLOW_ENTRY_HNDL(e)	((intptr_t)e)
 #define ICE_FLOW_ENTRY_PTR(h)	((struct ice_flow_entry *)(h))
 
 struct ice_flow_prof {
@@ -439,8 +476,7 @@ struct ice_flow_prof {
 		struct ice_acl_scen *scen;
 		/* struct fd */
 		u32 data;
-		/* Symmetric Hash for RSS */
-		bool symm;
+		bool symm; /* Symmetric Hash for RSS */
 	} cfg;
 
 	/* Default actions */
@@ -451,9 +487,7 @@ struct ice_rss_cfg {
 	struct LIST_ENTRY_TYPE l_entry;
 	/* bitmap of VSIs added to the RSS entry */
 	ice_declare_bitmap(vsis, ICE_MAX_VSI);
-	u64 hashed_flds;
-	u32 packet_hdr;
-	bool symm;
+	struct ice_rss_hash_cfg hash;
 };
 
 enum ice_flow_action_type {
@@ -498,6 +532,9 @@ ice_flow_add_prof(struct ice_hw *hw, enum ice_block blk, enum ice_flow_dir dir,
 enum ice_status
 ice_flow_rem_prof(struct ice_hw *hw, enum ice_block blk, u64 prof_id);
 enum ice_status
+ice_flow_assoc_prof(struct ice_hw *hw, enum ice_block blk,
+		    struct ice_flow_prof *prof, u16 vsi_handle);
+enum ice_status
 ice_flow_assoc_vsig_vsi(struct ice_hw *hw, enum ice_block blk, u16 vsi_handle,
 			u16 vsig);
 enum ice_status
@@ -521,16 +558,18 @@ ice_flow_set_fld_prefix(struct ice_flow_seg_info *seg, enum ice_flow_field fld,
 void
 ice_flow_add_fld_raw(struct ice_flow_seg_info *seg, u16 off, u8 len,
 		     u16 val_loc, u16 mask_loc);
+enum ice_status ice_flow_rem_vsi_prof(struct ice_hw *hw, enum ice_block blk,
+				      u16 vsi_handle, u64 prof_id);
 void ice_rem_vsi_rss_list(struct ice_hw *hw, u16 vsi_handle);
 enum ice_status ice_replay_rss_cfg(struct ice_hw *hw, u16 vsi_handle);
 enum ice_status
 ice_add_avf_rss_cfg(struct ice_hw *hw, u16 vsi_handle, u64 hashed_flds);
 enum ice_status ice_rem_vsi_rss_cfg(struct ice_hw *hw, u16 vsi_handle);
 enum ice_status
-ice_add_rss_cfg(struct ice_hw *hw, u16 vsi_handle, u64 hashed_flds,
-		u32 addl_hdrs, bool symm);
+ice_add_rss_cfg(struct ice_hw *hw, u16 vsi_handle,
+		const struct ice_rss_hash_cfg *cfg);
 enum ice_status
-ice_rem_rss_cfg(struct ice_hw *hw, u16 vsi_handle, u64 hashed_flds,
-		u32 addl_hdrs);
+ice_rem_rss_cfg(struct ice_hw *hw, u16 vsi_handle,
+		const struct ice_rss_hash_cfg *cfg);
 u64 ice_get_rss_cfg(struct ice_hw *hw, u16 vsi_handle, u32 hdrs);
 #endif /* _ICE_FLOW_H_ */

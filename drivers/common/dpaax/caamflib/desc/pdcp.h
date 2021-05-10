@@ -44,6 +44,14 @@
 #define PDCP_C_PLANE_SN_MASK_BE		0x0000001F
 
 /**
+ * PDCP_7BIT_SN_MASK - This mask is used in the PDCP descriptors for
+ *                              extracting the sequence number (SN) from the
+ *                              PDCP User Plane header.
+ */
+#define PDCP_7BIT_SN_MASK		0x7F000000
+#define PDCP_7BIT_SN_MASK_BE		0x0000007F
+
+/**
  * PDCP_12BIT_SN_MASK - This mask is used in the PDCP descriptors for
  *                              extracting the sequence number (SN) from the
  *                              PDCP User Plane header.
@@ -3274,7 +3282,7 @@ cnstr_shdsc_pdcp_u_plane_encap(uint32_t *descbuf,
 			SHR_ALWAYS,	/* NULL */
 			SHR_WAIT,	/* SNOW f9 */
 			SHR_WAIT,	/* AES CMAC */
-			SHR_ALWAYS	/* ZUC-I */
+			SHR_WAIT	/* ZUC-I */
 		},
 	};
 	LABEL(pdb_end);
@@ -3477,7 +3485,7 @@ cnstr_shdsc_pdcp_u_plane_decap(uint32_t *descbuf,
 			SHR_ALWAYS,	/* NULL */
 			SHR_WAIT,	/* SNOW f9 */
 			SHR_WAIT,	/* AES CMAC */
-			SHR_ALWAYS	/* ZUC-I */
+			SHR_WAIT	/* ZUC-I */
 		},
 	};
 

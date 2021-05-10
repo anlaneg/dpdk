@@ -24,8 +24,7 @@
 #include <sys/un.h>
 #include <time.h>
 
-#include <rte_atomic.h>
-#include <rte_ethdev_driver.h>
+#include <ethdev_driver.h>
 #include <rte_bus_pci.h>
 #include <rte_mbuf.h>
 #include <rte_common.h>
@@ -144,13 +143,17 @@ struct ethtool_link_settings {
  *   0 on success, a negative errno value otherwise and rte_errno is set.
  */
 int
-mlx5_get_ifname(const struct rte_eth_dev *dev, char (*ifname)[IF_NAMESIZE])
+mlx5_get_ifname(const struct rte_eth_dev *dev, char (*ifname)[MLX5_NAMESIZE])
 {
 	struct mlx5_priv *priv = dev->data->dev_private;
 	unsigned int ifindex;
 
 	MLX5_ASSERT(priv);
 	MLX5_ASSERT(priv->sh);
+	if (priv->master && priv->sh->bond.ifindex > 0) {
+		memcpy(ifname, priv->sh->bond.ifname, MLX5_NAMESIZE);
+		return 0;
+	}
 	ifindex = mlx5_ifindex(dev);
 	if (!ifindex) {
 		if (!priv->representor)
@@ -162,6 +165,42 @@ mlx5_get_ifname(const struct rte_eth_dev *dev, char (*ifname)[IF_NAMESIZE])
 	if (if_indextoname(ifindex, &(*ifname)[0]))
 		return 0;
 	rte_errno = errno;
+	return -rte_errno;
+}
+
+/**
+ * Perform ifreq ioctl() on associated netdev ifname.
+ *
+ * @param[in] ifname
+ *   Pointer to netdev name.
+ * @param req
+ *   Request number to pass to ioctl().
+ * @param[out] ifr
+ *   Interface request structure output buffer.
+ *
+ * @return
+ *   0 on success, a negative errno value otherwise and rte_errno is set.
+ */
+static int
+mlx5_ifreq_by_ifname(const char *ifname, int req, struct ifreq *ifr)
+{
+	int sock = socket(PF_INET, SOCK_DGRAM, IPPROTO_IP);
+	int ret = 0;
+
+	if (sock == -1) {
+		rte_errno = errno;
+		return -rte_errno;
+	}
+	rte_strscpy(ifr->ifr_name, ifname, sizeof(ifr->ifr_name));
+	ret = ioctl(sock, req, ifr);
+	if (ret == -1) {
+		rte_errno = errno;
+		goto error;
+	}
+	close(sock);
+	return 0;
+error:
+	close(sock);
 	return -rte_errno;
 }
 
@@ -181,26 +220,13 @@ mlx5_get_ifname(const struct rte_eth_dev *dev, char (*ifname)[IF_NAMESIZE])
 static int
 mlx5_ifreq(const struct rte_eth_dev *dev, int req, struct ifreq *ifr)
 {
-	int sock = socket(PF_INET, SOCK_DGRAM, IPPROTO_IP);
-	int ret = 0;
+	char ifname[sizeof(ifr->ifr_name)];
+	int ret;
 
-	if (sock == -1) {
-		rte_errno = errno;
-		return -rte_errno;
-	}
-	ret = mlx5_get_ifname(dev, &ifr->ifr_name);
+	ret = mlx5_get_ifname(dev, &ifname);
 	if (ret)
-		goto error;
-	ret = ioctl(sock, req, ifr);
-	if (ret == -1) {
-		rte_errno = errno;
-		goto error;
-	}
-	close(sock);
-	return 0;
-error:
-	close(sock);
-	return -rte_errno;
+		return -rte_errno;
+	return mlx5_ifreq_by_ifname(ifname, req, ifr);
 }
 
 /**
@@ -402,12 +428,10 @@ mlx5_link_update_unlocked_gset(struct rte_eth_dev *dev,
 	}
 	link_speed = ethtool_cmd_speed(&edata);
 	if (link_speed == -1)
-		dev_link.link_speed = ETH_SPEED_NUM_NONE;
+		dev_link.link_speed = ETH_SPEED_NUM_UNKNOWN;
 	else
 		dev_link.link_speed = link_speed;
 	priv->link_speed_capa = 0;
-	if (edata.supported & SUPPORTED_Autoneg)
-		priv->link_speed_capa |= ETH_LINK_SPEED_AUTONEG;
 	if (edata.supported & (SUPPORTED_1000baseT_Full |
 			       SUPPORTED_1000baseKX_Full))
 		priv->link_speed_capa |= ETH_LINK_SPEED_1G;
@@ -422,11 +446,6 @@ mlx5_link_update_unlocked_gset(struct rte_eth_dev *dev,
 				ETH_LINK_HALF_DUPLEX : ETH_LINK_FULL_DUPLEX);
 	dev_link.link_autoneg = !(dev->data->dev_conf.link_speeds &
 			ETH_LINK_SPEED_FIXED);
-	if (((dev_link.link_speed && !dev_link.link_status) ||
-	     (!dev_link.link_speed && dev_link.link_status))) {
-		rte_errno = EAGAIN;
-		return -rte_errno;
-	}
 	*link = dev_link;
 	return 0;
 }
@@ -514,13 +533,11 @@ mlx5_link_update_unlocked_gs(struct rte_eth_dev *dev,
 			dev->data->port_id, strerror(rte_errno));
 		return ret;
 	}
-	dev_link.link_speed = (ecmd->speed == UINT32_MAX) ? ETH_SPEED_NUM_NONE :
-							    ecmd->speed;
+	dev_link.link_speed = (ecmd->speed == UINT32_MAX) ?
+				ETH_SPEED_NUM_UNKNOWN : ecmd->speed;
 	sc = ecmd->link_mode_masks[0] |
 		((uint64_t)ecmd->link_mode_masks[1] << 32);
 	priv->link_speed_capa = 0;
-	if (sc & MLX5_BITSHIFT(ETHTOOL_LINK_MODE_Autoneg_BIT))
-		priv->link_speed_capa |= ETH_LINK_SPEED_AUTONEG;
 	if (sc & (MLX5_BITSHIFT(ETHTOOL_LINK_MODE_1000baseT_Full_BIT) |
 		  MLX5_BITSHIFT(ETHTOOL_LINK_MODE_1000baseKX_Full_BIT)))
 		priv->link_speed_capa |= ETH_LINK_SPEED_1G;
@@ -568,11 +585,6 @@ mlx5_link_update_unlocked_gs(struct rte_eth_dev *dev,
 				ETH_LINK_HALF_DUPLEX : ETH_LINK_FULL_DUPLEX);
 	dev_link.link_autoneg = !(dev->data->dev_conf.link_speeds &
 				  ETH_LINK_SPEED_FIXED);
-	if (((dev_link.link_speed && !dev_link.link_status) ||
-	     (!dev_link.link_speed && dev_link.link_status))) {
-		rte_errno = EAGAIN;
-		return -rte_errno;
-	}
 	*link = dev_link;
 	return 0;
 }
@@ -732,7 +744,7 @@ mlx5_dev_interrupt_device_fatal(struct mlx5_dev_ctx_shared *sh)
 		dev = &rte_eth_devices[sh->port[i].ih_port_id];
 		MLX5_ASSERT(dev);
 		if (dev->data->dev_conf.intr_conf.rmv)
-			_rte_eth_dev_callback_process
+			rte_eth_dev_callback_process
 				(dev, RTE_ETH_EVENT_INTR_RMV, NULL);
 	}
 }
@@ -808,7 +820,7 @@ mlx5_dev_interrupt_handler(void *cb_arg)
 				usleep(0);
 				continue;
 			}
-			_rte_eth_dev_callback_process
+			rte_eth_dev_callback_process
 				(dev, RTE_ETH_EVENT_INTR_LSC, NULL);
 			continue;
 		}
@@ -1017,8 +1029,13 @@ mlx5_sysfs_check_switch_info(bool device_dir,
 	case MLX5_PHYS_PORT_NAME_TYPE_PFHPF:
 		/* Fallthrough */
 	case MLX5_PHYS_PORT_NAME_TYPE_PFVF:
+		/* Fallthrough */
+	case MLX5_PHYS_PORT_NAME_TYPE_PFSF:
 		/* New representors naming schema. */
 		switch_info->representor = 1;
+		break;
+	default:
+		switch_info->master = device_dir;
 		break;
 	}
 }
@@ -1102,6 +1119,58 @@ mlx5_sysfs_switch_info(unsigned int ifindex, struct mlx5_switch_info *info)
 }
 
 /**
+ * Get bond information associated with network interface.
+ *
+ * @param pf_ifindex
+ *   Network interface index of bond slave interface
+ * @param[out] ifindex
+ *   Pointer to bond ifindex.
+ * @param[out] ifname
+ *   Pointer to bond ifname.
+ *
+ * @return
+ *   0 on success, a negative errno value otherwise and rte_errno is set.
+ */
+int
+mlx5_sysfs_bond_info(unsigned int pf_ifindex, unsigned int *ifindex,
+		     char *ifname)
+{
+	char name[IF_NAMESIZE];
+	FILE *file;
+	unsigned int index;
+	int ret;
+
+	if (!if_indextoname(pf_ifindex, name) || !strlen(name)) {
+		rte_errno = errno;
+		return -rte_errno;
+	}
+	MKSTR(bond_if, "/sys/class/net/%s/master/ifindex", name);
+	/* read bond ifindex */
+	file = fopen(bond_if, "rb");
+	if (file == NULL) {
+		rte_errno = errno;
+		return -rte_errno;
+	}
+	ret = fscanf(file, "%u", &index);
+	fclose(file);
+	if (ret <= 0) {
+		rte_errno = errno;
+		return -rte_errno;
+	}
+	if (ifindex)
+		*ifindex = index;
+
+	/* read bond device name from symbol link */
+	if (ifname) {
+		if (!if_indextoname(index, ifname)) {
+			rte_errno = errno;
+			return -rte_errno;
+		}
+	}
+	return 0;
+}
+
+/**
  * DPDK callback to retrieve plug-in module EEPROM information (type and size).
  *
  * @param dev
@@ -1124,7 +1193,7 @@ mlx5_get_module_info(struct rte_eth_dev *dev,
 	};
 	int ret = 0;
 
-	if (!dev || !modinfo) {
+	if (!dev) {
 		DRV_LOG(WARNING, "missing argument, cannot get module info");
 		rte_errno = EINVAL;
 		return -rte_errno;
@@ -1158,7 +1227,7 @@ int mlx5_get_module_eeprom(struct rte_eth_dev *dev,
 	struct ifreq ifr;
 	int ret = 0;
 
-	if (!dev || !info) {
+	if (!dev) {
 		DRV_LOG(WARNING, "missing argument, cannot get module eeprom");
 		rte_errno = EINVAL;
 		return -rte_errno;
@@ -1193,6 +1262,8 @@ int mlx5_get_module_eeprom(struct rte_eth_dev *dev,
  *
  * @param dev
  *   Pointer to Ethernet device.
+ * @param[in] pf
+ *   PF index in case of bonding device, -1 otherwise
  * @param[out] stats
  *   Counters table output buffer.
  *
@@ -1200,8 +1271,8 @@ int mlx5_get_module_eeprom(struct rte_eth_dev *dev,
  *   0 on success and stats is filled, negative errno value otherwise and
  *   rte_errno is set.
  */
-int
-mlx5_os_read_dev_counters(struct rte_eth_dev *dev, uint64_t *stats)
+static int
+_mlx5_os_read_dev_counters(struct rte_eth_dev *dev, int pf, uint64_t *stats)
 {
 	struct mlx5_priv *priv = dev->data->dev_private;
 	struct mlx5_xstats_ctrl *xstats_ctrl = &priv->xstats_ctrl;
@@ -1215,7 +1286,11 @@ mlx5_os_read_dev_counters(struct rte_eth_dev *dev, uint64_t *stats)
 	et_stats->cmd = ETHTOOL_GSTATS;
 	et_stats->n_stats = xstats_ctrl->stats_n;
 	ifr.ifr_data = (caddr_t)et_stats;
-	ret = mlx5_ifreq(dev, SIOCETHTOOL, &ifr);
+	if (pf >= 0)
+		ret = mlx5_ifreq_by_ifname(priv->sh->bond.ports[pf].ifname,
+					   SIOCETHTOOL, &ifr);
+	else
+		ret = mlx5_ifreq(dev, SIOCETHTOOL, &ifr);
 	if (ret) {
 		DRV_LOG(WARNING,
 			"port %u unable to read statistic values from device",
@@ -1223,21 +1298,58 @@ mlx5_os_read_dev_counters(struct rte_eth_dev *dev, uint64_t *stats)
 		return ret;
 	}
 	for (i = 0; i != xstats_ctrl->mlx5_stats_n; ++i) {
-		if (xstats_ctrl->info[i].dev) {
-			ret = mlx5_os_read_dev_stat(priv,
-					    xstats_ctrl->info[i].ctr_name,
-					    &stats[i]);
-			/* return last xstats counter if fail to read. */
-			if (ret == 0)
-				xstats_ctrl->xstats[i] = stats[i];
-			else
-				stats[i] = xstats_ctrl->xstats[i];
-		} else {
-			stats[i] = (uint64_t)
-				et_stats->data[xstats_ctrl->dev_table_idx[i]];
-		}
+		if (xstats_ctrl->info[i].dev)
+			continue;
+		stats[i] += (uint64_t)
+			    et_stats->data[xstats_ctrl->dev_table_idx[i]];
 	}
 	return 0;
+}
+
+/**
+ * Read device counters.
+ *
+ * @param dev
+ *   Pointer to Ethernet device.
+ * @param[out] stats
+ *   Counters table output buffer.
+ *
+ * @return
+ *   0 on success and stats is filled, negative errno value otherwise and
+ *   rte_errno is set.
+ */
+int
+mlx5_os_read_dev_counters(struct rte_eth_dev *dev, uint64_t *stats)
+{
+	struct mlx5_priv *priv = dev->data->dev_private;
+	struct mlx5_xstats_ctrl *xstats_ctrl = &priv->xstats_ctrl;
+	int ret = 0, i;
+
+	memset(stats, 0, sizeof(*stats) * xstats_ctrl->mlx5_stats_n);
+	/* Read ifreq counters. */
+	if (priv->master && priv->pf_bond >= 0) {
+		/* Sum xstats from bonding device member ports. */
+		for (i = 0; i < priv->sh->bond.n_port; i++) {
+			ret = _mlx5_os_read_dev_counters(dev, i, stats);
+			if (ret)
+				return ret;
+		}
+	} else {
+		ret = _mlx5_os_read_dev_counters(dev, -1, stats);
+	}
+	/* Read IB counters. */
+	for (i = 0; i != xstats_ctrl->mlx5_stats_n; ++i) {
+		if (!xstats_ctrl->info[i].dev)
+			continue;
+		ret = mlx5_os_read_dev_stat(priv, xstats_ctrl->info[i].ctr_name,
+					    &stats[i]);
+		/* return last xstats counter if fail to read. */
+		if (ret != 0)
+			xstats_ctrl->xstats[i] = stats[i];
+		else
+			stats[i] = xstats_ctrl->xstats[i];
+	}
+	return ret;
 }
 
 /**
@@ -1253,13 +1365,19 @@ mlx5_os_read_dev_counters(struct rte_eth_dev *dev, uint64_t *stats)
 int
 mlx5_os_get_stats_n(struct rte_eth_dev *dev)
 {
+	struct mlx5_priv *priv = dev->data->dev_private;
 	struct ethtool_drvinfo drvinfo;
 	struct ifreq ifr;
 	int ret;
 
 	drvinfo.cmd = ETHTOOL_GDRVINFO;
 	ifr.ifr_data = (caddr_t)&drvinfo;
-	ret = mlx5_ifreq(dev, SIOCETHTOOL, &ifr);
+	if (priv->master && priv->pf_bond >= 0)
+		/* Bonding PF. */
+		ret = mlx5_ifreq_by_ifname(priv->sh->bond.ports[0].ifname,
+					   SIOCETHTOOL, &ifr);
+	else
+		ret = mlx5_ifreq(dev, SIOCETHTOOL, &ifr);
 	if (ret) {
 		DRV_LOG(WARNING, "port %u unable to query number of statistics",
 			dev->data->port_id);
@@ -1270,71 +1388,71 @@ mlx5_os_get_stats_n(struct rte_eth_dev *dev)
 
 static const struct mlx5_counter_ctrl mlx5_counters_init[] = {
 	{
-		.dpdk_name = "rx_port_unicast_bytes",
+		.dpdk_name = "rx_unicast_bytes",
 		.ctr_name = "rx_vport_unicast_bytes",
 	},
 	{
-		.dpdk_name = "rx_port_multicast_bytes",
+		.dpdk_name = "rx_multicast_bytes",
 		.ctr_name = "rx_vport_multicast_bytes",
 	},
 	{
-		.dpdk_name = "rx_port_broadcast_bytes",
+		.dpdk_name = "rx_broadcast_bytes",
 		.ctr_name = "rx_vport_broadcast_bytes",
 	},
 	{
-		.dpdk_name = "rx_port_unicast_packets",
+		.dpdk_name = "rx_unicast_packets",
 		.ctr_name = "rx_vport_unicast_packets",
 	},
 	{
-		.dpdk_name = "rx_port_multicast_packets",
+		.dpdk_name = "rx_multicast_packets",
 		.ctr_name = "rx_vport_multicast_packets",
 	},
 	{
-		.dpdk_name = "rx_port_broadcast_packets",
+		.dpdk_name = "rx_broadcast_packets",
 		.ctr_name = "rx_vport_broadcast_packets",
 	},
 	{
-		.dpdk_name = "tx_port_unicast_bytes",
+		.dpdk_name = "tx_unicast_bytes",
 		.ctr_name = "tx_vport_unicast_bytes",
 	},
 	{
-		.dpdk_name = "tx_port_multicast_bytes",
+		.dpdk_name = "tx_multicast_bytes",
 		.ctr_name = "tx_vport_multicast_bytes",
 	},
 	{
-		.dpdk_name = "tx_port_broadcast_bytes",
+		.dpdk_name = "tx_broadcast_bytes",
 		.ctr_name = "tx_vport_broadcast_bytes",
 	},
 	{
-		.dpdk_name = "tx_port_unicast_packets",
+		.dpdk_name = "tx_unicast_packets",
 		.ctr_name = "tx_vport_unicast_packets",
 	},
 	{
-		.dpdk_name = "tx_port_multicast_packets",
+		.dpdk_name = "tx_multicast_packets",
 		.ctr_name = "tx_vport_multicast_packets",
 	},
 	{
-		.dpdk_name = "tx_port_broadcast_packets",
+		.dpdk_name = "tx_broadcast_packets",
 		.ctr_name = "tx_vport_broadcast_packets",
 	},
 	{
-		.dpdk_name = "rx_wqe_err",
+		.dpdk_name = "rx_wqe_errors",
 		.ctr_name = "rx_wqe_err",
 	},
 	{
-		.dpdk_name = "rx_crc_errors_phy",
+		.dpdk_name = "rx_phy_crc_errors",
 		.ctr_name = "rx_crc_errors_phy",
 	},
 	{
-		.dpdk_name = "rx_in_range_len_errors_phy",
+		.dpdk_name = "rx_phy_in_range_len_errors",
 		.ctr_name = "rx_in_range_len_errors_phy",
 	},
 	{
-		.dpdk_name = "rx_symbol_err_phy",
+		.dpdk_name = "rx_phy_symbol_errors",
 		.ctr_name = "rx_symbol_err_phy",
 	},
 	{
-		.dpdk_name = "tx_errors_phy",
+		.dpdk_name = "tx_phy_errors",
 		.ctr_name = "tx_errors_phy",
 	},
 	{
@@ -1343,44 +1461,44 @@ static const struct mlx5_counter_ctrl mlx5_counters_init[] = {
 		.dev = 1,
 	},
 	{
-		.dpdk_name = "tx_packets_phy",
+		.dpdk_name = "tx_phy_packets",
 		.ctr_name = "tx_packets_phy",
 	},
 	{
-		.dpdk_name = "rx_packets_phy",
+		.dpdk_name = "rx_phy_packets",
 		.ctr_name = "rx_packets_phy",
 	},
 	{
-		.dpdk_name = "tx_discards_phy",
+		.dpdk_name = "tx_phy_discard_packets",
 		.ctr_name = "tx_discards_phy",
 	},
 	{
-		.dpdk_name = "rx_discards_phy",
+		.dpdk_name = "rx_phy_discard_packets",
 		.ctr_name = "rx_discards_phy",
 	},
 	{
-		.dpdk_name = "tx_bytes_phy",
+		.dpdk_name = "tx_phy_bytes",
 		.ctr_name = "tx_bytes_phy",
 	},
 	{
-		.dpdk_name = "rx_bytes_phy",
+		.dpdk_name = "rx_phy_bytes",
 		.ctr_name = "rx_bytes_phy",
 	},
 	/* Representor only */
 	{
-		.dpdk_name = "rx_packets",
+		.dpdk_name = "rx_vport_packets",
 		.ctr_name = "vport_rx_packets",
 	},
 	{
-		.dpdk_name = "rx_bytes",
+		.dpdk_name = "rx_vport_bytes",
 		.ctr_name = "vport_rx_bytes",
 	},
 	{
-		.dpdk_name = "tx_packets",
+		.dpdk_name = "tx_vport_packets",
 		.ctr_name = "vport_tx_packets",
 	},
 	{
-		.dpdk_name = "tx_bytes",
+		.dpdk_name = "tx_vport_bytes",
 		.ctr_name = "vport_tx_bytes",
 	},
 };
@@ -1430,7 +1548,12 @@ mlx5_os_stats_init(struct rte_eth_dev *dev)
 	strings->string_set = ETH_SS_STATS;
 	strings->len = dev_stats_n;
 	ifr.ifr_data = (caddr_t)strings;
-	ret = mlx5_ifreq(dev, SIOCETHTOOL, &ifr);
+	if (priv->master && priv->pf_bond >= 0)
+		/* Bonding master. */
+		ret = mlx5_ifreq_by_ifname(priv->sh->bond.ports[0].ifname,
+					   SIOCETHTOOL, &ifr);
+	else
+		ret = mlx5_ifreq(dev, SIOCETHTOOL, &ifr);
 	if (ret) {
 		DRV_LOG(WARNING, "port %u unable to get statistic names",
 			dev->data->port_id);

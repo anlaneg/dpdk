@@ -185,6 +185,20 @@ Supports receiving segmented mbufs.
 * **[related]    eth_dev_ops**: ``rx_pkt_burst``.
 
 
+.. _nic_features_buffer_split:
+
+Buffer Split on Rx
+------------------
+
+Scatters the packets being received on specified boundaries to segmented mbufs.
+
+* **[uses]       rte_eth_rxconf,rte_eth_rxmode**: ``offloads:RTE_ETH_RX_OFFLOAD_BUFFER_SPLIT``.
+* **[uses]       rte_eth_rxconf**: ``rx_conf.rx_seg, rx_conf.rx_nseg``.
+* **[implements] datapath**: ``Buffer Split functionality``.
+* **[provides]   rte_eth_dev_info**: ``rx_offload_capa:RTE_ETH_RX_OFFLOAD_BUFFER_SPLIT``.
+* **[related] API**: ``rte_eth_rx_queue_setup()``.
+
+
 .. _nic_features_lro:
 
 LRO
@@ -247,7 +261,7 @@ Supports enabling/disabling receiving multicast frames.
 Unicast MAC filter
 ------------------
 
-Supports adding MAC addresses to enable whitelist filtering to accept packets.
+Supports adding MAC addresses to enable incoming filtering of packets.
 
 * **[implements] eth_dev_ops**: ``mac_addr_set``, ``mac_addr_add``, ``mac_addr_remove``.
 * **[implements] rte_eth_dev_data**: ``mac_addrs``.
@@ -388,9 +402,9 @@ Supports configuring link flow control.
 Flow API
 --------
 
-Supports the DPDK Flow API for generic filtering.
+Supports flow API family.
 
-* **[implements] eth_dev_ops**: ``filter_ctrl:RTE_ETH_FILTER_GENERIC``.
+* **[implements] eth_dev_ops**: ``flow_ops_get``.
 * **[implements] rte_flow_ops**: ``All``.
 
 
@@ -504,6 +518,21 @@ Supports QinQ (queue in queue) offload.
   ``tx_offload_capa,tx_queue_offload_capa:DEV_TX_OFFLOAD_QINQ_INSERT``.
 
 
+.. _nic_features_fec:
+
+FEC
+---
+
+Supports Forward error correction. Forward error correction (FEC) is a bit error correction mode.
+It adds error correction information to data packets at the transmit end, and uses the error correction
+information to correct the bit errors generated during data packet transmission at the receive end. This
+improves signal quality but also brings a delay to signals. This function can be enabled or disabled as required.
+
+* **[implements] eth_dev_ops**: ``fec_get_capability``, ``fec_get``, ``fec_set``.
+* **[provides]   rte_eth_fec_capa**: ``speed:ETH_SPEED_NUM_*``, ``capa:RTE_ETH_FEC_MODE_TO_CAPA()``.
+* **[related]    API**: ``rte_eth_fec_get_capability()``, ``rte_eth_fec_get()``, ``rte_eth_fec_set()``.
+
+
 .. _nic_features_l3_checksum_offload:
 
 L3 checksum offload
@@ -583,7 +612,7 @@ Supports inner packet L3 checksum.
   ``mbuf.ol_flags:PKT_TX_OUTER_IP_CKSUM``,
   ``mbuf.ol_flags:PKT_TX_OUTER_IPV4`` | ``PKT_TX_OUTER_IPV6``.
 * **[uses]     mbuf**: ``mbuf.outer_l2_len``, ``mbuf.outer_l3_len``.
-* **[provides] mbuf**: ``mbuf.ol_flags:PKT_RX_EIP_CKSUM_BAD``.
+* **[provides] mbuf**: ``mbuf.ol_flags:PKT_RX_OUTER_IP_CKSUM_BAD``.
 * **[provides] rte_eth_dev_info**: ``rx_offload_capa,rx_queue_offload_capa:DEV_RX_OFFLOAD_OUTER_IPV4_CKSUM``,
   ``tx_offload_capa,tx_queue_offload_capa:DEV_TX_OFFLOAD_OUTER_IPV4_CKSUM``.
 
@@ -646,9 +675,9 @@ used, status can be "Available", "Done" or "Unavailable". When
 ``rx_descriptor_done`` is used, status can be "DD bit is set" or "DD bit is
 not set".
 
-* **[implements] eth_dev_ops**: ``rx_descriptor_status``.
+* **[implements] rte_eth_dev**: ``rx_descriptor_status``.
 * **[related]    API**: ``rte_eth_rx_descriptor_status()``.
-* **[implements] eth_dev_ops**: ``rx_descriptor_done``.
+* **[implements] rte_eth_dev**: ``rx_descriptor_done``.
 * **[related]    API**: ``rte_eth_rx_descriptor_done()``.
 
 
@@ -660,7 +689,7 @@ Tx descriptor status
 Supports checking the status of a Tx descriptor. Status can be "Full", "Done"
 or "Unavailable."
 
-* **[implements] eth_dev_ops**: ``tx_descriptor_status``.
+* **[implements] rte_eth_dev**: ``tx_descriptor_status``.
 * **[related]    API**: ``rte_eth_tx_descriptor_status()``.
 
 
@@ -771,38 +800,28 @@ Multiprocess aware
 Driver can be used for primary-secondary process model.
 
 
-.. _nic_features_bsd_nic_uio:
+.. _nic_features_freebsd:
 
-BSD nic_uio
------------
+FreeBSD
+-------
 
-BSD ``nic_uio`` module supported.
+Supports running on FreeBSD.
 
 
-.. _nic_features_linux_uio:
+.. _nic_features_linux:
 
-Linux UIO
----------
+Linux
+-----
 
-Works with ``igb_uio`` kernel module.
+Supports running on Linux.
 
-* **[provides] RTE_PMD_REGISTER_KMOD_DEP**: ``igb_uio``.
 
-.. _nic_features_linux_vfio:
+.. _nic_features_windows:
 
-Linux VFIO
-----------
+Windows
+-------
 
-Works with ``vfio-pci`` kernel module.
-
-* **[provides] RTE_PMD_REGISTER_KMOD_DEP**: ``vfio-pci``.
-
-.. _nic_features_other_kdrv:
-
-Other kdrv
-----------
-
-Kernel module other than above ones supported.
+Supports running on Windows.
 
 
 .. _nic_features_armv7:
@@ -812,8 +831,6 @@ ARMv7
 
 Support armv7 architecture.
 
-Use ``defconfig_arm-armv7a-*-*``.
-
 
 .. _nic_features_armv8:
 
@@ -821,8 +838,6 @@ ARMv8
 -----
 
 Support armv8a (64bit) architecture.
-
-Use ``defconfig_arm64-armv8a-*-*``
 
 
 .. _nic_features_power8:
@@ -832,7 +847,6 @@ Power8
 
 Support PowerPC architecture.
 
-Use ``defconfig_ppc_64-power8-*-*``
 
 .. _nic_features_x86-32:
 
@@ -841,8 +855,6 @@ x86-32
 
 Support 32bits x86 architecture.
 
-Use ``defconfig_x86_x32-native-*-*`` and ``defconfig_i686-native-*-*``.
-
 
 .. _nic_features_x86-64:
 
@@ -850,8 +862,6 @@ x86-64
 ------
 
 Support 64bits x86 architecture.
-
-Use ``defconfig_x86_64-native-*-*``.
 
 
 .. _nic_features_usage_doc:
@@ -924,11 +934,8 @@ Other dev ops not represented by a Feature
 * ``vlan_strip_queue_set``
 * ``vlan_pvid_set``
 * ``rx_queue_count``
-* ``l2_tunnel_offload_set``
 * ``uc_hash_table_set``
 * ``uc_all_hash_table_set``
 * ``udp_tunnel_port_add``
 * ``udp_tunnel_port_del``
-* ``l2_tunnel_eth_type_conf``
-* ``l2_tunnel_offload_set``
 * ``tx_pkt_prepare``

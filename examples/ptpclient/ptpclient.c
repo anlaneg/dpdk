@@ -197,6 +197,9 @@ port_init(uint16_t port, struct rte_mempool *mbuf_pool)
 		return retval;
 	}
 
+	if (dev_info.rx_offload_capa & DEV_RX_OFFLOAD_TIMESTAMP)
+		port_conf.rxmode.offloads |= DEV_RX_OFFLOAD_TIMESTAMP;
+
 	if (dev_info.tx_offload_capa & DEV_TX_OFFLOAD_MBUF_FAST_FREE)
 		port_conf.txmode.offloads |=
 			DEV_TX_OFFLOAD_MBUF_FAST_FREE;
@@ -372,7 +375,7 @@ parse_sync(struct ptpv2_data_slave_ordinary *ptp_data, uint16_t rx_tstamp_idx)
 }
 
 /*
- * Parse the PTP FOLLOWUP message and send DELAY_REQ to the master clock.
+ * Parse the PTP FOLLOWUP message and send DELAY_REQ to the main clock.
  */
 static void
 parse_fup(struct ptpv2_data_slave_ordinary *ptp_data)
@@ -603,10 +606,6 @@ lcore_main(void)
 	unsigned nb_rx;
 	struct rte_mbuf *m;
 
-	/*
-	 * Check that the port is on the same NUMA node as the polling thread
-	 * for best performance.
-	 */
 	printf("\nCore %u Waiting for SYNC packets. [Ctrl+C to quit]\n",
 			rte_lcore_id());
 
@@ -782,8 +781,11 @@ main(int argc, char *argv[])
 	if (rte_lcore_count() > 1)
 		printf("\nWARNING: Too many lcores enabled. Only 1 used.\n");
 
-	/* Call lcore_main on the master core only. */
+	/* Call lcore_main on the main core only. */
 	lcore_main();
+
+	/* clean up the EAL */
+	rte_eal_cleanup();
 
 	return 0;
 }

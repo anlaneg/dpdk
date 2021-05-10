@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: BSD-3-Clause
- * Copyright(c) 2001-2020 Intel Corporation
+ * Copyright(c) 2001-2021 Intel Corporation
  */
 
 #ifndef _IAVF_TYPE_H_
@@ -224,6 +224,7 @@ struct iavf_hw_capabilities {
 	u32 num_tx_qp;
 	u32 base_queue;
 	u32 num_msix_vectors_vf;
+	u32 max_mtu;
 	bool apm_wol_support;
 	enum iavf_acpi_programming_method acpi_prog_method;
 	bool proxy_support;

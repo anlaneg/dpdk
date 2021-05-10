@@ -4,7 +4,7 @@
 
 #include <inttypes.h>
 
-#include <rte_ethdev_pci.h>
+#include <ethdev_pci.h>
 #include <rte_io.h>
 #include <rte_malloc.h>
 #include <rte_mbuf.h>
@@ -112,15 +112,26 @@ nix_lf_switch_header_type_enable(struct otx2_eth_dev *dev, bool enable)
 	if (dev->npc_flow.switch_header_type == 0)
 		return 0;
 
-	if (dev->npc_flow.switch_header_type == OTX2_PRIV_FLAGS_LEN_90B &&
-	    !otx2_dev_is_sdp(dev)) {
-		otx2_err("chlen90b is not supported on non-SDP device");
-		return -EINVAL;
-	}
-
 	/* Notify AF about higig2 config */
 	req = otx2_mbox_alloc_msg_npc_set_pkind(mbox);
 	req->mode = dev->npc_flow.switch_header_type;
+	if (dev->npc_flow.switch_header_type == OTX2_PRIV_FLAGS_CH_LEN_90B) {
+		req->mode = OTX2_PRIV_FLAGS_CUSTOM;
+		req->pkind = NPC_RX_CHLEN90B_PKIND;
+	} else if (dev->npc_flow.switch_header_type ==
+		   OTX2_PRIV_FLAGS_CH_LEN_24B) {
+		req->mode = OTX2_PRIV_FLAGS_CUSTOM;
+		req->pkind = NPC_RX_CHLEN24B_PKIND;
+	} else if (dev->npc_flow.switch_header_type ==
+		   OTX2_PRIV_FLAGS_EXDSA) {
+		req->mode = OTX2_PRIV_FLAGS_CUSTOM;
+		req->pkind = NPC_RX_EXDSA_PKIND;
+	} else if (dev->npc_flow.switch_header_type ==
+		   OTX2_PRIV_FLAGS_VLAN_EXDSA) {
+		req->mode = OTX2_PRIV_FLAGS_CUSTOM;
+		req->pkind = NPC_RX_VLAN_EXDSA_PKIND;
+	}
+
 	if (enable == 0)
 		req->mode = OTX2_PRIV_FLAGS_DEFAULT;
 	req->dir = PKIND_RX;
@@ -129,6 +140,10 @@ nix_lf_switch_header_type_enable(struct otx2_eth_dev *dev, bool enable)
 		return rc;
 	req = otx2_mbox_alloc_msg_npc_set_pkind(mbox);
 	req->mode = dev->npc_flow.switch_header_type;
+	if (dev->npc_flow.switch_header_type == OTX2_PRIV_FLAGS_CH_LEN_90B ||
+	    dev->npc_flow.switch_header_type == OTX2_PRIV_FLAGS_CH_LEN_24B)
+		req->mode = OTX2_PRIV_FLAGS_DEFAULT;
+
 	if (enable == 0)
 		req->mode = OTX2_PRIV_FLAGS_DEFAULT;
 	req->dir = PKIND_TX;
@@ -657,6 +672,9 @@ otx2_nix_rx_queue_setup(struct rte_eth_dev *eth_dev, uint16_t rq,
 		}
 	}
 
+	/* Setup scatter mode if needed by jumbo */
+	otx2_nix_enable_mseg_on_jumbo(rxq);
+
 	return 0;
 
 free_rxq:
@@ -876,6 +894,33 @@ nix_sqb_unlock(struct rte_mempool *mp)
 	}
 
 	return 0;
+}
+
+void
+otx2_nix_enable_mseg_on_jumbo(struct otx2_eth_rxq *rxq)
+{
+	struct rte_pktmbuf_pool_private *mbp_priv;
+	struct rte_eth_dev *eth_dev;
+	struct otx2_eth_dev *dev;
+	uint32_t buffsz;
+
+	eth_dev = rxq->eth_dev;
+	dev = otx2_eth_pmd_priv(eth_dev);
+
+	/* Get rx buffer size */
+	mbp_priv = rte_mempool_get_priv(rxq->pool);
+	buffsz = mbp_priv->mbuf_data_room_size - RTE_PKTMBUF_HEADROOM;
+
+	if (eth_dev->data->dev_conf.rxmode.max_rx_pkt_len > buffsz) {
+		dev->rx_offloads |= DEV_RX_OFFLOAD_SCATTER;
+		dev->tx_offloads |= DEV_TX_OFFLOAD_MULTI_SEGS;
+
+		/* Setting up the rx[tx]_offload_flags due to change
+		 * in rx[tx]_offloads.
+		 */
+		dev->rx_offload_flags |= nix_rx_offload_flags(eth_dev);
+		dev->tx_offload_flags |= nix_tx_offload_flags(eth_dev);
+	}
 }
 
 static int
@@ -1353,10 +1398,8 @@ nix_store_queue_cfg_and_then_release(struct rte_eth_dev *eth_dev)
 	return 0;
 
 fail:
-	if (tx_qconf)
-		free(tx_qconf);
-	if (rx_qconf)
-		free(rx_qconf);
+	free(tx_qconf);
+	free(rx_qconf);
 
 	return -ENOMEM;
 }
@@ -2111,7 +2154,7 @@ done:
 	return rc;
 }
 
-static void
+static int
 otx2_nix_dev_stop(struct rte_eth_dev *eth_dev)
 {
 	struct otx2_eth_dev *dev = otx2_eth_pmd_priv(eth_dev);
@@ -2141,6 +2184,8 @@ otx2_nix_dev_stop(struct rte_eth_dev *eth_dev)
 	/* Stop tx queues  */
 	for (i = 0; i < eth_dev->data->nb_tx_queues; i++)
 		otx2_nix_tx_queue_stop(eth_dev, i);
+
+	return 0;
 }
 
 static int
@@ -2195,6 +2240,16 @@ otx2_nix_dev_start(struct rte_eth_dev *eth_dev)
 	if (otx2_ethdev_is_ptp_en(dev) && otx2_dev_is_vf(dev))
 		otx2_nix_ptp_enable_vf(eth_dev);
 
+	if (dev->rx_offload_flags & NIX_RX_OFFLOAD_TSTAMP_F) {
+		rc = rte_mbuf_dyn_rx_timestamp_register(
+				&dev->tstamp.tstamp_dynfield_offset,
+				&dev->tstamp.rx_tstamp_dynflag);
+		if (rc != 0) {
+			otx2_err("Failed to register Rx timestamp field/flag");
+			return -rte_errno;
+		}
+	}
+
 	rc = npc_rx_enable(dev);
 	if (rc) {
 		otx2_err("Failed to enable NPC rx %d", rc);
@@ -2222,7 +2277,7 @@ rx_disable:
 }
 
 static int otx2_nix_dev_reset(struct rte_eth_dev *eth_dev);
-static void otx2_nix_dev_close(struct rte_eth_dev *eth_dev);
+static int otx2_nix_dev_close(struct rte_eth_dev *eth_dev);
 
 /* Initialize and register driver with DPDK Application */
 static const struct eth_dev_ops otx2_eth_dev_ops = {
@@ -2272,14 +2327,10 @@ static const struct eth_dev_ops otx2_eth_dev_ops = {
 	.txq_info_get             = otx2_nix_txq_info_get,
 	.rx_burst_mode_get        = otx2_rx_burst_mode_get,
 	.tx_burst_mode_get        = otx2_tx_burst_mode_get,
-	.rx_queue_count           = otx2_nix_rx_queue_count,
-	.rx_descriptor_done       = otx2_nix_rx_descriptor_done,
-	.rx_descriptor_status     = otx2_nix_rx_descriptor_status,
-	.tx_descriptor_status     = otx2_nix_tx_descriptor_status,
 	.tx_done_cleanup          = otx2_nix_tx_done_cleanup,
 	.set_queue_rate_limit     = otx2_nix_tm_set_queue_rate_limit,
 	.pool_ops_supported       = otx2_nix_pool_ops_supported,
-	.filter_ctrl              = otx2_nix_dev_filter_ctrl,
+	.flow_ops_get             = otx2_nix_dev_flow_ops_get,
 	.get_module_info          = otx2_nix_get_module_info,
 	.get_module_eeprom        = otx2_nix_get_module_eeprom,
 	.fw_version_get           = otx2_nix_fw_version_get,
@@ -2382,6 +2433,10 @@ otx2_eth_dev_init(struct rte_eth_dev *eth_dev)
 	int rc, max_entries;
 
 	eth_dev->dev_ops = &otx2_eth_dev_ops;
+	eth_dev->rx_descriptor_done = otx2_nix_rx_descriptor_done;
+	eth_dev->rx_queue_count = otx2_nix_rx_queue_count;
+	eth_dev->rx_descriptor_status = otx2_nix_rx_descriptor_status;
+	eth_dev->tx_descriptor_status = otx2_nix_tx_descriptor_status;
 
 	/* For secondary processes, the primary has done all the work */
 	if (rte_eal_process_type() != RTE_PROC_PRIMARY) {
@@ -2394,7 +2449,7 @@ otx2_eth_dev_init(struct rte_eth_dev *eth_dev)
 	pci_dev = RTE_ETH_DEV_TO_PCI(eth_dev);
 
 	rte_eth_copy_pci_info(eth_dev, pci_dev);
-	eth_dev->data->dev_flags |= RTE_ETH_DEV_CLOSE_REMOVE;
+	eth_dev->data->dev_flags |= RTE_ETH_DEV_AUTOFILL_QUEUE_XSTATS;
 
 	/* Zero out everything after OTX2_DEV to allow proper dev_reset() */
 	memset(&dev->otx2_eth_dev_data_start, 0, sizeof(*dev) -
@@ -2635,10 +2690,11 @@ otx2_eth_dev_uninit(struct rte_eth_dev *eth_dev, bool mbox_close)
 	return 0;
 }
 
-static void
+static int
 otx2_nix_dev_close(struct rte_eth_dev *eth_dev)
 {
 	otx2_eth_dev_uninit(eth_dev, true);
+	return 0;
 }
 
 static int
@@ -2668,7 +2724,7 @@ nix_remove(struct rte_pci_device *pci_dev)
 		if (rc)
 			return rc;
 
-		rte_eth_dev_pci_release(eth_dev);
+		rte_eth_dev_release_port(eth_dev);
 	}
 
 	/* Nothing to be done for secondary processes */
@@ -2746,6 +2802,6 @@ static struct rte_pci_driver pci_nix = {
 	.remove = nix_remove,
 };
 
-RTE_PMD_REGISTER_PCI(net_octeontx2, pci_nix);
-RTE_PMD_REGISTER_PCI_TABLE(net_octeontx2, pci_nix_map);
-RTE_PMD_REGISTER_KMOD_DEP(net_octeontx2, "vfio-pci");
+RTE_PMD_REGISTER_PCI(OCTEONTX2_PMD, pci_nix);
+RTE_PMD_REGISTER_PCI_TABLE(OCTEONTX2_PMD, pci_nix_map);
+RTE_PMD_REGISTER_KMOD_DEP(OCTEONTX2_PMD, "vfio-pci");

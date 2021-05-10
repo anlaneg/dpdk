@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright(c) 2019 Intel Corporation
 
@@ -9,19 +9,22 @@ ABI version is supplied via command-line parameter. This script is to be called
 from the devtools/update-abi.sh utility.
 """
 
-from __future__ import print_function
 import argparse
 import sys
 import re
 
 
 def __parse_map_file(f_in):
-    # match function name, followed by semicolon, followed by EOL, optionally
-    # with whitespace in between each item
+    # match function name, followed by semicolon, followed by EOL or comments,
+    # optionally with whitespace in between each item
     func_line_regex = re.compile(r"\s*"
+                                 r"(?P<line>"
                                  r"(?P<func>[a-zA-Z_0-9]+)"
                                  r"\s*"
                                  r";"
+                                 r"\s*"
+                                 r"(?P<comment>#.+)?"
+                                 r")"
                                  r"\s*"
                                  r"$")
     # match section name, followed by opening bracked, followed by EOL,
@@ -100,7 +103,7 @@ def __parse_map_file(f_in):
         # is this a function?
         match = func_line_regex.match(line)
         if match:
-            stable_lines.add(match.group("func"))
+            stable_lines.add(match.group("line"))
 
     return has_stable, stable_lines, experimental_lines, internal_lines
 
@@ -117,7 +120,7 @@ def __generate_stable_abi(f_out, abi_major, lines):
 
         # print all stable lines, alphabetically sorted
         for line in sorted(lines):
-            print("\t{};".format(line), file=f_out)
+            print("\t{}".format(line), file=f_out)
 
         # another blank line
         print(file=f_out)
@@ -160,16 +163,12 @@ def __generate_internal_abi(f_out, lines):
     print("};", file=f_out)
 
 def __main():
-    if sys.version_info.major < 3:
-        print("WARNING: Python 2 is deprecated for use in DPDK, and will not work in future releases.", file=sys.stderr)
-        print("Please use Python 3 instead", file=sys.stderr)
-
     arg_parser = argparse.ArgumentParser(
         description='Merge versions in linker version script.')
 
     arg_parser.add_argument("map_file", type=str,
                             help='path to linker version script file '
-                                 '(pattern: *version.map)')
+                                 '(pattern: version.map)')
     arg_parser.add_argument("abi_version", type=str,
                             help='target ABI version (pattern: MAJOR.MINOR)')
 

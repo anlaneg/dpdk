@@ -14,10 +14,11 @@ The following FreeBSD packages are required to build DPDK:
 * meson
 * ninja
 * pkgconf
+* py37-pyelftools
 
 These can be installed using (as root)::
 
-  pkg install meson pkgconf
+  pkg install meson pkgconf py37-pyelftools
 
 To compile the required kernel modules for memory management and working
 with physical NIC devices, the kernel sources for FreeBSD also
@@ -122,7 +123,7 @@ up time.  This can be achieved by placing lines similar to the following into
 
 An error such as::
 
-    kldload: can't load ./x86_64-native-freebsd-gcc/kmod/contigmem.ko:
+    kldload: can't load <build_dir>/kernel/freebsd/contigmem.ko:
              Exec format error
 
 is generally attributed to not having enough contiguous memory

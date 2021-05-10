@@ -1,3 +1,6 @@
+..  SPDX-License-Identifier: BSD-3-Clause
+    Copyright(c) 2018 Intel Corporation.
+
 Installing DPDK Using the meson build system
 ============================================
 
@@ -32,7 +35,7 @@ The ``meson`` tool is used to configure a DPDK build. On most Linux
 distributions this can be got using the local package management system,
 e.g. ``dnf install meson`` or ``apt-get install meson``. If meson is not
 available as a suitable package, it can also be installed using the Python
-3 ``pip`` tool, e.g. ``pip3 install meson``. Version 0.47.1 of meson is
+3 ``pip`` tool, e.g. ``pip3 install meson``. Version 0.49.2 of meson is
 required - if the version packaged is too old, the latest version is
 generally available from "pip".
 
@@ -42,6 +45,12 @@ Installing meson will, in many cases, also install ninja, but, if not
 already installed, it too is generally packaged by most Linux distributions.
 If not available as a package, it can be downloaded as source or binary from
 https://ninja-build.org/
+
+It is best advised to go over the following links for the complete dependencies:
+
+* :doc:`Linux <../linux_gsg/sys_reqs>`
+* :doc:`FreeBSD <../freebsd_gsg/build_dpdk>`
+* :doc:`Windows <../windows_gsg/build_dpdk>`
 
 
 Configuring the Build
@@ -82,7 +91,7 @@ Project-specific options are passed used -Doption=value::
 
 	meson -Denable_docs=true fullbuild  # build and install docs
 
-	meson -Dmachine=default  # use builder-independent baseline -march
+	meson -Dmachine=generic  # use builder-independent baseline -march
 
 	meson -Ddisable_drivers=event/*,net/tap  # disable tap driver and all
 					# eventdev PMDs for a smaller build
@@ -102,14 +111,17 @@ Examples of setting some of the same options using meson configure::
 
 	meson configure -Denable_trace_fp=true
 
-NOTE: once meson has been run to configure a build in a directory, it
-cannot be run again on the same directory. Instead ``meson configure``
-should be used to change the build settings within the directory, and when
-``ninja`` is called to do the build itself, it will trigger the necessary
-re-scan from meson.
+.. note::
 
-NOTE: machine=default uses a config that works on all supported architectures
-regardless of the capabilities of the machine where the build is happening.
+        once meson has been run to configure a build in a directory, it
+        cannot be run again on the same directory. Instead ``meson configure``
+        should be used to change the build settings within the directory, and when
+        ``ninja`` is called to do the build itself, it will trigger the necessary
+        re-scan from meson.
+
+.. note::
+        machine=generic uses a config that works on all supported architectures
+        regardless of the capabilities of the machine where the build is happening.
 
 As well as those settings taken from ``meson configure``, other options
 such as the compiler to use can be passed via environment variables. For
@@ -117,9 +129,11 @@ example::
 
 	CC=clang meson clang-build
 
-NOTE: for more comprehensive overriding of compilers or other environment
-settings, the tools for cross-compilation may be considered. However, for
-basic overriding of the compiler etc., the above form works as expected.
+.. note::
+
+        for more comprehensive overriding of compilers or other environment
+        settings, the tools for cross-compilation may be considered. However, for
+        basic overriding of the compiler etc., the above form works as expected.
 
 
 Performing the Build

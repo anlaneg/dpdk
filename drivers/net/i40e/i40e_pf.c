@@ -14,7 +14,7 @@
 #include <rte_string_fns.h>
 #include <rte_pci.h>
 #include <rte_ether.h>
-#include <rte_ethdev_driver.h>
+#include <ethdev_driver.h>
 #include <rte_malloc.h>
 #include <rte_memcpy.h>
 
@@ -333,6 +333,10 @@ i40e_pf_host_process_cmd_get_vf_resource(struct i40e_pf_vf *vf, uint8_t *msg,
 
 	vf_res->vf_cap_flags = vf->request_caps &
 				   I40E_VIRTCHNL_OFFLOAD_CAPS;
+
+	if (vf->request_caps & VIRTCHNL_VF_OFFLOAD_REQ_QUEUES)
+		vf_res->vf_cap_flags |= VIRTCHNL_VF_OFFLOAD_REQ_QUEUES;
+
 	/* For X722, it supports write back on ITR
 	 * without binding queue to interrupt vector.
 	 */
@@ -844,7 +848,7 @@ i40e_pf_host_process_cmd_add_ether_address(struct i40e_pf_vf *vf,
 	for (i = 0; i < addr_list->num_elements; i++) {
 		mac = (struct rte_ether_addr *)(addr_list->list[i].addr);
 		rte_memcpy(&filter.mac_addr, mac, RTE_ETHER_ADDR_LEN);
-		filter.filter_type = RTE_MACVLAN_PERFECT_MATCH;
+		filter.filter_type = I40E_MACVLAN_PERFECT_MATCH;
 		if (rte_is_zero_ether_addr(mac) ||
 		    i40e_vsi_add_mac(vf->vsi, &filter)) {
 			ret = I40E_ERR_INVALID_MAC_ADDR;
@@ -1363,7 +1367,7 @@ i40e_pf_host_handle_vf_msg(struct rte_eth_dev *dev,
 	 * do nothing and send not_supported to VF. As PF must send a response
 	 * to VF and ACK/NACK is not defined.
 	 */
-	_rte_eth_dev_callback_process(dev, RTE_ETH_EVENT_VF_MBOX, &ret_param);
+	rte_eth_dev_callback_process(dev, RTE_ETH_EVENT_VF_MBOX, &ret_param);
 	if (ret_param.retval != RTE_PMD_I40E_MB_EVENT_PROCEED) {
 		PMD_DRV_LOG(WARNING, "VF to PF message(%d) is not permitted!",
 			    opcode);

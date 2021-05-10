@@ -35,17 +35,18 @@
 #include <rte_ethdev.h>
 #include <rte_dev.h>
 #include <rte_errno.h>
-#include <rte_ethdev_pci.h>
+#include <ethdev_pci.h>
 #include <rte_common.h>
 #include <rte_cycles.h>
 #include <rte_io.h>
 
 #define BIT(nr)	                       (1 << (nr))
 #ifndef ARRAY_SIZE
-#define ARRAY_SIZE(arr) (sizeof(arr) / sizeof((arr)[0]))
+#define ARRAY_SIZE(arr) RTE_DIM(arr)
 #endif
 
 #define AXGBE_HZ				250
+#define NSEC_PER_SEC    1000000000L
 
 /* DMA register offsets */
 #define DMA_MR				0x3000
@@ -258,6 +259,7 @@
 #define MAC_HWF0R			0x011c
 #define MAC_HWF1R			0x0120
 #define MAC_HWF2R			0x0124
+#define MAC_HWF3R			0x0128
 #define MAC_MDIOSCAR			0x0200
 #define MAC_MDIOSCCDR			0x0204
 #define MAC_MDIOISR			0x0214
@@ -282,6 +284,19 @@
 #define MAC_TSSR			0x0d20
 #define MAC_TXSNR			0x0d30
 #define MAC_TXSSR			0x0d34
+
+/*VLAN control bit mask*/
+#define AXGBE_VLNCTRL_MASK		0x0000FFFF
+#define VLAN_PRIO_MASK			0xe000 /* Priority Code Point */
+#define VLAN_PRIO_SHIFT			13
+#define VLAN_CFI_MASK			0x1000 /* Canonical Format Indicator */
+#define VLAN_TAG_PRESENT		VLAN_CFI_MASK
+#define VLAN_VID_MASK			0x0fff /* VLAN Identifier */
+#define VLAN_N_VID			4096
+#define VLAN_TABLE_SIZE			64
+#define VLAN_TABLE_BIT(vlan_id)	(1UL << ((vlan_id) & 0x3F))
+#define VLAN_TABLE_IDX(vlan_id)	((vlan_id) >> 6)
+#define RX_CVLAN_TAG_PRESENT                   9
 
 #define MAC_QTFCR_INC			4
 #define MAC_MACA_INC			4
@@ -360,6 +375,10 @@
 #define MAC_HWF2R_TXCHCNT_WIDTH		4
 #define MAC_HWF2R_TXQCNT_INDEX		6
 #define MAC_HWF2R_TXQCNT_WIDTH		4
+#define MAC_HWF3R_CBTISEL_INDEX		4
+#define MAC_HWF3R_CBTISEL_WIDTH		1
+#define MAC_HWF3R_NRVF_INDEX		0
+#define MAC_HWF3R_NRVF_WIDTH		3
 #define MAC_IER_TSIE_INDEX		12
 #define MAC_IER_TSIE_WIDTH		1
 #define MAC_ISR_MMCRXIS_INDEX		9
@@ -492,6 +511,8 @@
 #define MAC_TSCR_TSEVNTENA_WIDTH	1
 #define MAC_TSCR_TSINIT_INDEX		2
 #define MAC_TSCR_TSINIT_WIDTH		1
+#define MAC_TSCR_TSUPDT_INDEX		3
+#define MAC_TSCR_TSUPDT_WIDTH		1
 #define MAC_TSCR_TSIPENA_INDEX		11
 #define MAC_TSCR_TSIPENA_WIDTH		1
 #define MAC_TSCR_TSIPV4ENA_INDEX	13
@@ -506,6 +527,8 @@
 #define MAC_TSCR_TXTSSTSM_WIDTH		1
 #define MAC_TSSR_TXTSC_INDEX		15
 #define MAC_TSSR_TXTSC_WIDTH		1
+#define MAC_STNUR_ADDSUB_INDEX          31
+#define MAC_STNUR_ADDSUB_WIDTH          1
 #define MAC_TXSNR_TXTSSTSMIS_INDEX	31
 #define MAC_TXSNR_TXTSSTSMIS_WIDTH	1
 #define MAC_VLANHTR_VLHT_INDEX		0
@@ -514,6 +537,8 @@
 #define MAC_VLANIR_VLTI_WIDTH		1
 #define MAC_VLANIR_CSVL_INDEX		19
 #define MAC_VLANIR_CSVL_WIDTH		1
+#define MAC_VLANIR_VLC_INDEX		16
+#define MAC_VLANIR_VLC_WIDTH		2
 #define MAC_VLANTR_DOVLTC_INDEX		20
 #define MAC_VLANTR_DOVLTC_WIDTH		1
 #define MAC_VLANTR_ERSVLM_INDEX		19
@@ -524,12 +549,18 @@
 #define MAC_VLANTR_ETV_WIDTH		1
 #define MAC_VLANTR_EVLS_INDEX		21
 #define MAC_VLANTR_EVLS_WIDTH		2
+#define MAC_VLANTR_EIVLS_INDEX		21
+#define MAC_VLANTR_EIVLS_WIDTH		2
 #define MAC_VLANTR_EVLRXS_INDEX		24
 #define MAC_VLANTR_EVLRXS_WIDTH		1
+#define MAC_VLANTR_EIVLRXS_INDEX	31
+#define MAC_VLANTR_EIVLRXS_WIDTH	1
 #define MAC_VLANTR_VL_INDEX		0
 #define MAC_VLANTR_VL_WIDTH		16
 #define MAC_VLANTR_VTHM_INDEX		25
 #define MAC_VLANTR_VTHM_WIDTH		1
+#define MAC_VLANTR_EDVLP_INDEX		26
+#define MAC_VLANTR_EDVLP_WIDTH		1
 #define MAC_VLANTR_VTIM_INDEX		17
 #define MAC_VLANTR_VTIM_WIDTH		1
 #define MAC_VR_DEVID_INDEX		8
@@ -538,6 +569,11 @@
 #define MAC_VR_SNPSVER_WIDTH		8
 #define MAC_VR_USERVER_INDEX		16
 #define MAC_VR_USERVER_WIDTH		8
+#define MAC_VLANIR_VLT_INDEX		0
+#define MAC_VLANIR_VLT_WIDTH		16
+#define MAC_VLANTR_ERIVLT_INDEX		27
+#define MAC_VLANTR_ERIVLT_WIDTH		1
+
 
 /* MMC register offsets */
 #define MMC_CR				0x0800
@@ -1171,6 +1207,8 @@
 #define RX_CONTEXT_DESC3_TSA_WIDTH		1
 #define RX_CONTEXT_DESC3_TSD_INDEX		6
 #define RX_CONTEXT_DESC3_TSD_WIDTH		1
+#define RX_CONTEXT_DESC3_PMT_INDEX		0
+#define RX_CONTEXT_DESC3_PMT_WIDTH		4
 
 #define TX_PACKET_ATTRIBUTES_CSUM_ENABLE_INDEX	0
 #define TX_PACKET_ATTRIBUTES_CSUM_ENABLE_WIDTH	1

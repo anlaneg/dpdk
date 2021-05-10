@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: BSD-3-Clause
- * Copyright(c) 2001-2020 Intel Corporation
+ * Copyright(c) 2001-2021 Intel Corporation
  */
 
 #ifndef _ICE_DCB_H_
@@ -28,6 +28,13 @@
 
 #define ICE_CEE_DCBX_OUI		0x001B21
 #define ICE_CEE_DCBX_TYPE		2
+
+#define ICE_DSCP_OUI			0xFFFFFF
+#define ICE_DSCP_SUBTYPE_DSCP2UP	0x41
+#define ICE_DSCP_SUBTYPE_ENFORCE	0x42
+#define ICE_DSCP_SUBTYPE_TCBW		0x43
+#define ICE_DSCP_SUBTYPE_PFC		0x44
+#define ICE_DSCP_IPV6_OFFSET		80
 
 #define ICE_CEE_SUBTYPE_CTRL		1
 #define ICE_CEE_SUBTYPE_PG_CFG		2
@@ -97,23 +104,26 @@
 #define ICE_IEEE_TLV_ID_APP_PRI		6
 #define ICE_TLV_ID_END_OF_LLDPPDU	7
 #define ICE_TLV_ID_START		ICE_IEEE_TLV_ID_ETS_CFG
+#define ICE_TLV_ID_DSCP_UP		3
+#define ICE_TLV_ID_DSCP_ENF		4
+#define ICE_TLV_ID_DSCP_TC_BW		5
+#define ICE_TLV_ID_DSCP_TO_PFC		6
 
 #define ICE_IEEE_ETS_TLV_LEN		25
 #define ICE_IEEE_PFC_TLV_LEN		6
 #define ICE_IEEE_APP_TLV_LEN		11
 
-#pragma pack(1)
-/* IEEE 802.1AB LLDP TLV structure */
-struct ice_lldp_generic_tlv {
-	__be16 typelen;
-	u8 tlvinfo[1];
-};
+#define ICE_DSCP_UP_TLV_LEN		148
+#define ICE_DSCP_ENF_TLV_LEN		132
+#define ICE_DSCP_TC_BW_TLV_LEN		25
+#define ICE_DSCP_PFC_TLV_LEN		6
 
+#pragma pack(1)
 /* IEEE 802.1AB LLDP Organization specific TLV */
 struct ice_lldp_org_tlv {
 	__be16 typelen;
 	__be32 ouisubtype;
-	u8 tlvinfo[1];
+	u8 tlvinfo[STRUCT_HACK_VAR_LEN];
 };
 #pragma pack()
 
@@ -136,7 +146,7 @@ struct ice_cee_feat_tlv {
 #define ICE_CEE_FEAT_TLV_WILLING_M	0x40
 #define ICE_CEE_FEAT_TLV_ERR_M		0x20
 	u8 subtype;
-	u8 tlvinfo[1];
+	u8 tlvinfo[STRUCT_HACK_VAR_LEN];
 };
 
 #pragma pack(1)

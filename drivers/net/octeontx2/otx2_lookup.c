@@ -169,14 +169,14 @@ nix_create_non_tunnel_ptype_array(uint16_t *ptype)
 		case NPC_LT_LD_NVGRE:
 			val |= RTE_PTYPE_TUNNEL_NVGRE;
 			break;
-		case NPC_LT_LD_ESP:
-			val |= RTE_PTYPE_TUNNEL_ESP;
-			break;
 		}
 
 		switch (le) {
 		case NPC_LT_LE_VXLAN:
 			val |= RTE_PTYPE_TUNNEL_VXLAN;
+			break;
+		case NPC_LT_LE_ESP:
+			val |= RTE_PTYPE_TUNNEL_ESP;
 			break;
 		case NPC_LT_LE_VXLANGPE:
 			val |= RTE_PTYPE_TUNNEL_VXLAN_GPE;
@@ -285,7 +285,7 @@ nix_create_rx_ol_flags_array(void *mem)
 			if (errcode == NPC_EC_OIP4_CSUM ||
 			    errcode == NPC_EC_IP_FRAG_OFFSET_1) {
 				val |= PKT_RX_IP_CKSUM_BAD;
-				val |= PKT_RX_EIP_CKSUM_BAD;
+				val |= PKT_RX_OUTER_IP_CKSUM_BAD;
 			} else {
 				val |= PKT_RX_IP_CKSUM_GOOD;
 			}

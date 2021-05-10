@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: BSD-3-Clause
- * Copyright(c) 2018-2020 Intel Corporation
+ * Copyright(c) 2018-2021 Intel Corporation
  */
 
 #ifndef _ICE_OSDEP_H_
@@ -62,8 +62,23 @@ typedef uint64_t        s64;
 #define __be64          uint64_t
 #endif
 
+/* Avoid macro redefinition warning on Windows */
+#ifdef RTE_EXEC_ENV_WINDOWS
+#ifdef min
+#undef min
+#endif
+#ifdef max
+#undef max
+#endif
+#endif
 #define min(a, b) RTE_MIN(a, b)
 #define max(a, b) RTE_MAX(a, b)
+
+#ifdef RTE_EXEC_ENV_WINDOWS
+#define ice_access _access
+#else
+#define ice_access access
+#endif
 
 #define FIELD_SIZEOF(t, f) RTE_SIZEOF_FIELD(t, f)
 #define ARRAY_SIZE(arr) RTE_DIM(arr)
@@ -165,6 +180,7 @@ do {									\
 #endif
 
 #define ICE_PCI_REG_WRITE(reg, value) writel(value, reg)
+#define ICE_PCI_REG_WC_WRITE(reg, value) rte_write32_wc(value, reg)
 
 #define ICE_READ_REG(hw, reg)         rd32(hw, reg)
 #define ICE_WRITE_REG(hw, reg, value) wr32(hw, reg, value)
@@ -258,7 +274,7 @@ ice_alloc_dma_mem(__rte_unused struct ice_hw *hw,
 
 	mem->size = size;
 	mem->va = mz->addr;
-	mem->pa = mz->phys_addr;
+	mem->pa = mz->iova;
 	mem->zone = (const void *)mz;
 	PMD_DRV_LOG(DEBUG, "memzone %s allocated with physical address: "
 		    "%"PRIu64, mz->name, mem->pa);

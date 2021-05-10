@@ -245,6 +245,11 @@ otx2_flow_parse_le(struct otx2_parse_state *pst)
 		info.len = sizeof(struct rte_flow_item_vxlan);
 		lt = NPC_LT_LE_VXLAN;
 		break;
+	case RTE_FLOW_ITEM_TYPE_ESP:
+		lt = NPC_LT_LE_ESP;
+		info.def_mask = &rte_flow_item_esp_mask;
+		info.len = sizeof(struct rte_flow_item_esp);
+		break;
 	case RTE_FLOW_ITEM_TYPE_GTPC:
 		lflags = NPC_F_UDP_GTP_GTPC;
 		info.def_mask = &rte_flow_item_gtp_mask;
@@ -441,11 +446,6 @@ otx2_flow_parse_ld(struct otx2_parse_state *pst)
 		info.def_mask = &rte_flow_item_sctp_mask;
 		info.len = sizeof(struct rte_flow_item_sctp);
 		break;
-	case RTE_FLOW_ITEM_TYPE_ESP:
-		lt = NPC_LT_LD_ESP;
-		info.def_mask = &rte_flow_item_esp_mask;
-		info.len = sizeof(struct rte_flow_item_esp);
-		break;
 	case RTE_FLOW_ITEM_TYPE_GRE:
 		lt = NPC_LT_LD_GRE;
 		info.def_mask = &rte_flow_item_gre_mask;
@@ -489,13 +489,45 @@ flow_check_lc_ip_tunnel(struct otx2_parse_state *pst)
 		pst->tunnel = 1;
 }
 
+static int
+otx2_flow_raw_item_prepare(const struct rte_flow_item_raw *raw_spec,
+			   const struct rte_flow_item_raw *raw_mask,
+			   struct otx2_flow_item_info *info,
+			   uint8_t *spec_buf, uint8_t *mask_buf)
+{
+	uint32_t custom_hdr_size = 0;
+
+	memset(spec_buf, 0, NPC_MAX_RAW_ITEM_LEN);
+	memset(mask_buf, 0, NPC_MAX_RAW_ITEM_LEN);
+	custom_hdr_size = raw_spec->offset + raw_spec->length;
+
+	memcpy(spec_buf + raw_spec->offset, raw_spec->pattern,
+	       raw_spec->length);
+
+	if (raw_mask->pattern) {
+		memcpy(mask_buf + raw_spec->offset, raw_mask->pattern,
+		       raw_spec->length);
+	} else {
+		memset(mask_buf + raw_spec->offset, 0xFF, raw_spec->length);
+	}
+
+	info->len = custom_hdr_size;
+	info->spec = spec_buf;
+	info->mask = mask_buf;
+
+	return 0;
+}
+
 /* Outer IPv4, Outer IPv6, MPLS, ARP */
 int
 otx2_flow_parse_lc(struct otx2_parse_state *pst)
 {
+	uint8_t raw_spec_buf[NPC_MAX_RAW_ITEM_LEN];
+	uint8_t raw_mask_buf[NPC_MAX_RAW_ITEM_LEN];
 	uint8_t hw_mask[NPC_MAX_EXTRACT_DATA_LEN];
+	const struct rte_flow_item_raw *raw_spec;
 	struct otx2_flow_item_info info;
-	int lid, lt;
+	int lid, lt, len;
 	int rc;
 
 	if (pst->pattern->type == RTE_FLOW_ITEM_TYPE_MPLS)
@@ -531,6 +563,30 @@ otx2_flow_parse_lc(struct otx2_parse_state *pst)
 		info.len = sizeof(struct rte_flow_item_ipv6_ext);
 		info.hw_hdr_len = 40;
 		break;
+	case RTE_FLOW_ITEM_TYPE_RAW:
+		raw_spec = pst->pattern->spec;
+		if (!raw_spec->relative)
+			return 0;
+
+		len = raw_spec->length + raw_spec->offset;
+		if (len > NPC_MAX_RAW_ITEM_LEN) {
+			rte_flow_error_set(pst->error, EINVAL,
+					   RTE_FLOW_ERROR_TYPE_ITEM, NULL,
+					   "Spec length too big");
+			return -rte_errno;
+		}
+
+		otx2_flow_raw_item_prepare((const struct rte_flow_item_raw *)
+					   pst->pattern->spec,
+					   (const struct rte_flow_item_raw *)
+					   pst->pattern->mask, &info,
+					   raw_spec_buf, raw_mask_buf);
+
+		lid = NPC_LID_LC;
+		lt = NPC_LT_LC_NGIO;
+		info.hw_mask = &hw_mask;
+		otx2_flow_get_hw_supp_mask(pst, &info, lid, lt);
+		break;
 	default:
 		/* No match at this layer */
 		return 0;
@@ -552,10 +608,13 @@ int
 otx2_flow_parse_lb(struct otx2_parse_state *pst)
 {
 	const struct rte_flow_item *pattern = pst->pattern;
+	uint8_t raw_spec_buf[NPC_MAX_RAW_ITEM_LEN];
+	uint8_t raw_mask_buf[NPC_MAX_RAW_ITEM_LEN];
 	const struct rte_flow_item *last_pattern;
+	const struct rte_flow_item_raw *raw_spec;
 	char hw_mask[NPC_MAX_EXTRACT_DATA_LEN];
 	struct otx2_flow_item_info info;
-	int lid, lt, lflags;
+	int lid, lt, lflags, len;
 	int nr_vlans = 0;
 	int rc;
 
@@ -638,13 +697,44 @@ otx2_flow_parse_lb(struct otx2_parse_state *pst)
 
 		info.def_mask = &rte_flow_item_e_tag_mask;
 		info.len = sizeof(struct rte_flow_item_e_tag);
+	} else if (pst->pattern->type == RTE_FLOW_ITEM_TYPE_RAW) {
+		raw_spec = pst->pattern->spec;
+		if (raw_spec->relative)
+			return 0;
+		len = raw_spec->length + raw_spec->offset;
+		if (len > NPC_MAX_RAW_ITEM_LEN) {
+			rte_flow_error_set(pst->error, EINVAL,
+					   RTE_FLOW_ERROR_TYPE_ITEM, NULL,
+					   "Spec length too big");
+			return -rte_errno;
+		}
+
+		if (pst->npc->switch_header_type ==
+		    OTX2_PRIV_FLAGS_VLAN_EXDSA) {
+			lt = NPC_LT_LB_VLAN_EXDSA;
+		} else if (pst->npc->switch_header_type ==
+			   OTX2_PRIV_FLAGS_EXDSA) {
+			lt = NPC_LT_LB_EXDSA;
+		} else {
+			rte_flow_error_set(pst->error, ENOTSUP,
+					   RTE_FLOW_ERROR_TYPE_ITEM, NULL,
+					   "exdsa or vlan_exdsa not enabled on"
+					   " port");
+			return -rte_errno;
+		}
+
+		otx2_flow_raw_item_prepare((const struct rte_flow_item_raw *)
+					   pst->pattern->spec,
+					   (const struct rte_flow_item_raw *)
+					   pst->pattern->mask, &info,
+					   raw_spec_buf, raw_mask_buf);
+
+		info.hw_hdr_len = 0;
 	} else {
 		return 0;
 	}
 
 	info.hw_mask = &hw_mask;
-	info.spec = NULL;
-	info.mask = NULL;
 	otx2_flow_get_hw_supp_mask(pst, &info, lid, lt);
 
 	rc = otx2_flow_parse_item_basic(pst->pattern, &info, pst->error);
@@ -655,6 +745,7 @@ otx2_flow_parse_lb(struct otx2_parse_state *pst)
 	pst->pattern = last_pattern;
 	return otx2_flow_update_parse_state(pst, &info, lid, lt, lflags);
 }
+
 
 int
 otx2_flow_parse_la(struct otx2_parse_state *pst)
@@ -809,13 +900,17 @@ otx2_flow_parse_actions(struct rte_eth_dev *dev,
 {
 	struct otx2_eth_dev *hw = dev->data->dev_private;
 	struct otx2_npc_flow_info *npc = &hw->npc_flow;
+	const struct rte_flow_action_port_id *port_act;
 	const struct rte_flow_action_count *act_count;
 	const struct rte_flow_action_mark *act_mark;
 	const struct rte_flow_action_queue *act_q;
 	const struct rte_flow_action_vf *vf_act;
+	uint16_t pf_func, vf_id, port_id, pf_id;
+	char if_name[RTE_ETH_NAME_MAX_LEN];
+	bool vlan_insert_action = false;
+	struct rte_eth_dev *eth_dev;
 	const char *errmsg = NULL;
 	int sel_act, req_act = 0;
-	uint16_t pf_func, vf_id;
 	int errcode = 0;
 	int mark = 0;
 	int rq = 0;
@@ -891,6 +986,48 @@ otx2_flow_parse_actions(struct rte_eth_dev *dev,
 			}
 			break;
 
+		case RTE_FLOW_ACTION_TYPE_PORT_ID:
+			port_act = (const struct rte_flow_action_port_id *)
+				actions->conf;
+			port_id = port_act->id;
+			if (rte_eth_dev_get_name_by_port(port_id, if_name)) {
+				errmsg = "Name not found for output port id";
+				errcode = EINVAL;
+				goto err_exit;
+			}
+			eth_dev = rte_eth_dev_allocated(if_name);
+			if (!eth_dev) {
+				errmsg = "eth_dev not found for output port id";
+				errcode = EINVAL;
+				goto err_exit;
+			}
+			if (!otx2_ethdev_is_same_driver(eth_dev)) {
+				errmsg = "Output port id unsupported type";
+				errcode = ENOTSUP;
+				goto err_exit;
+			}
+			if (!otx2_dev_is_vf(otx2_eth_pmd_priv(eth_dev))) {
+				errmsg = "Output port should be VF";
+				errcode = ENOTSUP;
+				goto err_exit;
+			}
+			vf_id = otx2_eth_pmd_priv(eth_dev)->vf;
+			if (vf_id  >= hw->maxvf) {
+				errmsg = "Invalid vf for output port";
+				errcode = EINVAL;
+				goto err_exit;
+			}
+			pf_id = otx2_eth_pmd_priv(eth_dev)->pf;
+			if (pf_id != hw->pf) {
+				errmsg = "Output port unsupported PF";
+				errcode = ENOTSUP;
+				goto err_exit;
+			}
+			pf_func &= (0xfc00);
+			pf_func = (pf_func | (vf_id + 1));
+			req_act |= OTX2_FLOW_ACT_VF;
+			break;
+
 		case RTE_FLOW_ACTION_TYPE_QUEUE:
 			/* Applicable only to ingress flow */
 			act_q = (const struct rte_flow_action_queue *)
@@ -932,6 +1069,18 @@ otx2_flow_parse_actions(struct rte_eth_dev *dev,
 			req_act |= OTX2_FLOW_ACT_SEC;
 			rq = 0;
 			break;
+		case RTE_FLOW_ACTION_TYPE_OF_SET_VLAN_VID:
+			req_act |= OTX2_FLOW_ACT_VLAN_INSERT;
+			break;
+		case RTE_FLOW_ACTION_TYPE_OF_POP_VLAN:
+			req_act |= OTX2_FLOW_ACT_VLAN_STRIP;
+			break;
+		case RTE_FLOW_ACTION_TYPE_OF_PUSH_VLAN:
+			req_act |= OTX2_FLOW_ACT_VLAN_ETHTYPE_INSERT;
+			break;
+		case RTE_FLOW_ACTION_TYPE_OF_SET_VLAN_PCP:
+			req_act |= OTX2_FLOW_ACT_VLAN_PCP_INSERT;
+			break;
 		default:
 			errmsg = "Unsupported action specified";
 			errcode = ENOTSUP;
@@ -939,20 +1088,46 @@ otx2_flow_parse_actions(struct rte_eth_dev *dev,
 		}
 	}
 
+	if (req_act &
+	    (OTX2_FLOW_ACT_VLAN_INSERT | OTX2_FLOW_ACT_VLAN_ETHTYPE_INSERT |
+	     OTX2_FLOW_ACT_VLAN_PCP_INSERT))
+		vlan_insert_action = true;
+
+	if ((req_act &
+	     (OTX2_FLOW_ACT_VLAN_INSERT | OTX2_FLOW_ACT_VLAN_ETHTYPE_INSERT |
+	      OTX2_FLOW_ACT_VLAN_PCP_INSERT)) ==
+	    OTX2_FLOW_ACT_VLAN_PCP_INSERT) {
+		errmsg = " PCP insert action can't be supported alone";
+		errcode = ENOTSUP;
+		goto err_exit;
+	}
+
+	/* Both STRIP and INSERT actions are not supported */
+	if (vlan_insert_action && (req_act & OTX2_FLOW_ACT_VLAN_STRIP)) {
+		errmsg = "Both VLAN insert and strip actions not supported"
+			" together";
+		errcode = ENOTSUP;
+		goto err_exit;
+	}
+
 	/* Check if actions specified are compatible */
 	if (attr->egress) {
-		/* Only DROP/COUNT is supported */
-		if (!(req_act & OTX2_FLOW_ACT_DROP)) {
-			errmsg = "DROP is required action for egress";
-			errcode = EINVAL;
-			goto err_exit;
-		} else if (req_act & ~(OTX2_FLOW_ACT_DROP |
-				       OTX2_FLOW_ACT_COUNT)) {
-			errmsg = "Unsupported action specified";
+		if (req_act & OTX2_FLOW_ACT_VLAN_STRIP) {
+			errmsg = "VLAN pop action is not supported on Egress";
 			errcode = ENOTSUP;
 			goto err_exit;
 		}
-		flow->npc_action = NIX_TX_ACTIONOP_DROP;
+
+		if (req_act & OTX2_FLOW_ACT_DROP) {
+			flow->npc_action = NIX_TX_ACTIONOP_DROP;
+		} else if ((req_act & OTX2_FLOW_ACT_COUNT) ||
+			   vlan_insert_action) {
+			flow->npc_action = NIX_TX_ACTIONOP_UCAST_DEFAULT;
+		} else {
+			errmsg = "Unsupported action for egress";
+			errcode = EINVAL;
+			goto err_exit;
+		}
 		goto set_pf_func;
 	}
 
@@ -985,8 +1160,20 @@ otx2_flow_parse_actions(struct rte_eth_dev *dev,
 		goto err_exit;
 	}
 
+	if (vlan_insert_action) {
+		errmsg = "VLAN push/Insert action is not supported on Ingress";
+		errcode = ENOTSUP;
+		goto err_exit;
+	}
+
+	if (req_act & OTX2_FLOW_ACT_VLAN_STRIP)
+		npc->vtag_actions++;
+
+	/* Only VLAN action is provided */
+	if (req_act == OTX2_FLOW_ACT_VLAN_STRIP)
+		flow->npc_action = NIX_RX_ACTIONOP_UCAST;
 	/* Set NIX_RX_ACTIONOP */
-	if (req_act & (OTX2_FLOW_ACT_PF | OTX2_FLOW_ACT_VF)) {
+	else if (req_act & (OTX2_FLOW_ACT_PF | OTX2_FLOW_ACT_VF)) {
 		flow->npc_action = NIX_RX_ACTIONOP_UCAST;
 		if (req_act & OTX2_FLOW_ACT_QUEUE)
 			flow->npc_action |= (uint64_t)rq << 20;
@@ -1032,9 +1219,17 @@ otx2_flow_parse_actions(struct rte_eth_dev *dev,
 		otx2_eth_set_rx_function(dev);
 	}
 
+	if (npc->vtag_actions == 1) {
+		hw->rx_offload_flags |= NIX_RX_OFFLOAD_VLAN_STRIP_F;
+		otx2_eth_set_rx_function(dev);
+	}
+
 set_pf_func:
 	/* Ideally AF must ensure that correct pf_func is set */
-	flow->npc_action |= (uint64_t)pf_func << 4;
+	if (attr->egress)
+		flow->npc_action |= (uint64_t)pf_func << 48;
+	else
+		flow->npc_action |= (uint64_t)pf_func << 4;
 
 	return 0;
 

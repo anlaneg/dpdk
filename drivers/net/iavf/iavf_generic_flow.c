@@ -11,7 +11,7 @@
 #include <stdarg.h>
 
 #include <rte_ether.h>
-#include <rte_ethdev_driver.h>
+#include <ethdev_driver.h>
 #include <rte_malloc.h>
 #include <rte_tailq.h>
 
@@ -219,6 +219,30 @@ enum rte_flow_item_type iavf_pattern_eth_qinq_ipv6[] = {
 	RTE_FLOW_ITEM_TYPE_END,
 };
 
+enum rte_flow_item_type iavf_pattern_eth_ipv6_frag_ext[] = {
+	RTE_FLOW_ITEM_TYPE_ETH,
+	RTE_FLOW_ITEM_TYPE_IPV6,
+	RTE_FLOW_ITEM_TYPE_IPV6_FRAG_EXT,
+	RTE_FLOW_ITEM_TYPE_END,
+};
+
+enum rte_flow_item_type iavf_pattern_eth_vlan_ipv6_frag_ext[] = {
+	RTE_FLOW_ITEM_TYPE_ETH,
+	RTE_FLOW_ITEM_TYPE_VLAN,
+	RTE_FLOW_ITEM_TYPE_IPV6,
+	RTE_FLOW_ITEM_TYPE_IPV6_FRAG_EXT,
+	RTE_FLOW_ITEM_TYPE_END,
+};
+
+enum rte_flow_item_type iavf_pattern_eth_qinq_ipv6_frag_ext[] = {
+	RTE_FLOW_ITEM_TYPE_ETH,
+	RTE_FLOW_ITEM_TYPE_VLAN,
+	RTE_FLOW_ITEM_TYPE_VLAN,
+	RTE_FLOW_ITEM_TYPE_IPV6,
+	RTE_FLOW_ITEM_TYPE_IPV6_FRAG_EXT,
+	RTE_FLOW_ITEM_TYPE_END,
+};
+
 enum rte_flow_item_type iavf_pattern_eth_ipv6_udp[] = {
 	RTE_FLOW_ITEM_TYPE_ETH,
 	RTE_FLOW_ITEM_TYPE_IPV6,
@@ -315,6 +339,15 @@ enum rte_flow_item_type iavf_pattern_eth_qinq_ipv6_icmp6[] = {
 	RTE_FLOW_ITEM_TYPE_END,
 };
 
+/* IPv4 GTPC */
+enum rte_flow_item_type iavf_pattern_eth_ipv4_gtpc[] = {
+	RTE_FLOW_ITEM_TYPE_ETH,
+	RTE_FLOW_ITEM_TYPE_IPV4,
+	RTE_FLOW_ITEM_TYPE_UDP,
+	RTE_FLOW_ITEM_TYPE_GTPC,
+	RTE_FLOW_ITEM_TYPE_END,
+};
+
 /* IPV4 GTPU (EH) */
 enum rte_flow_item_type iavf_pattern_eth_ipv4_gtpu[] = {
 	RTE_FLOW_ITEM_TYPE_ETH,
@@ -330,6 +363,15 @@ enum rte_flow_item_type iavf_pattern_eth_ipv4_gtpu_eh[] = {
 	RTE_FLOW_ITEM_TYPE_UDP,
 	RTE_FLOW_ITEM_TYPE_GTPU,
 	RTE_FLOW_ITEM_TYPE_GTP_PSC,
+	RTE_FLOW_ITEM_TYPE_END,
+};
+
+/* IPv6 GTPC */
+enum rte_flow_item_type iavf_pattern_eth_ipv6_gtpc[] = {
+	RTE_FLOW_ITEM_TYPE_ETH,
+	RTE_FLOW_ITEM_TYPE_IPV6,
+	RTE_FLOW_ITEM_TYPE_UDP,
+	RTE_FLOW_ITEM_TYPE_GTPC,
 	RTE_FLOW_ITEM_TYPE_END,
 };
 
@@ -762,6 +804,21 @@ enum rte_flow_item_type iavf_pattern_eth_ipv6_pfcp[] = {
 	RTE_FLOW_ITEM_TYPE_IPV6,
 	RTE_FLOW_ITEM_TYPE_UDP,
 	RTE_FLOW_ITEM_TYPE_PFCP,
+	RTE_FLOW_ITEM_TYPE_END,
+};
+
+/* ECPRI */
+enum rte_flow_item_type iavf_pattern_eth_ecpri[] = {
+	RTE_FLOW_ITEM_TYPE_ETH,
+	RTE_FLOW_ITEM_TYPE_ECPRI,
+	RTE_FLOW_ITEM_TYPE_END,
+};
+
+enum rte_flow_item_type iavf_pattern_eth_ipv4_ecpri[] = {
+	RTE_FLOW_ITEM_TYPE_ETH,
+	RTE_FLOW_ITEM_TYPE_IPV4,
+	RTE_FLOW_ITEM_TYPE_UDP,
+	RTE_FLOW_ITEM_TYPE_ECPRI,
 	RTE_FLOW_ITEM_TYPE_END,
 };
 

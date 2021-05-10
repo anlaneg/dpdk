@@ -210,12 +210,28 @@ struct dpaa2_dpcon_dev {
 };
 
 /* Refer to Table 7-3 in SEC BG */
+#define QBMAN_FLE_WORD4_FMT_SBF 0x0    /* Single buffer frame */
+#define QBMAN_FLE_WORD4_FMT_SGE 0x2 /* Scatter gather frame */
+
+struct qbman_fle_word4 {
+	uint32_t bpid:14; /* Frame buffer pool ID */
+	uint32_t ivp:1; /* Invalid Pool ID. */
+	uint32_t bmt:1; /* Bypass Memory Translation */
+	uint32_t offset:12; /* Frame offset */
+	uint32_t fmt:2; /* Frame Format */
+	uint32_t sl:1; /* Short Length */
+	uint32_t f:1; /* Final bit */
+};
+
 struct qbman_fle {
 	uint32_t addr_lo;
 	uint32_t addr_hi;
 	uint32_t length;
 	/* FMT must be 00, MSB is final bit  */
-	uint32_t fin_bpid_offset;
+	union {
+		uint32_t fin_bpid_offset;
+		struct qbman_fle_word4 word4;
+	};
 	uint32_t frc;
 	uint32_t reserved[3]; /* Not used currently */
 };
@@ -298,6 +314,7 @@ enum qbman_fd_format {
 #define DPAA2_GET_FD_FLC(fd) \
 	(((uint64_t)((fd)->simple.flc_hi) << 32) + (fd)->simple.flc_lo)
 #define DPAA2_GET_FD_ERR(fd)   ((fd)->simple.ctrl & 0x000000FF)
+#define DPAA2_GET_FD_FA_ERR(fd)   ((fd)->simple.ctrl & 0x00000040)
 #define DPAA2_GET_FLE_OFFSET(fle) (((fle)->fin_bpid_offset & 0x0FFF0000) >> 16)
 #define DPAA2_SET_FLE_SG_EXT(fle) ((fle)->fin_bpid_offset |= (uint64_t)1 << 29)
 #define DPAA2_IS_SET_FLE_SG_EXT(fle)	\
@@ -313,6 +330,11 @@ enum qbman_fd_format {
 		(fd)->simple.bpid_offset |= (uint32_t)format << 28;	\
 } while (0)
 #define DPAA2_FD_GET_FORMAT(fd)	(((fd)->simple.bpid_offset >> 28) & 0x3)
+
+#define DPAA2_SG_SET_FORMAT(sg, format)	do {				\
+		(sg)->fin_bpid_offset &= 0xCFFFFFFF;			\
+		(sg)->fin_bpid_offset |= (uint32_t)format << 28;	\
+} while (0)
 
 #define DPAA2_SG_SET_FINAL(sg, fin)	do {				\
 		(sg)->fin_bpid_offset &= 0x7FFFFFFF;			\
@@ -368,7 +390,7 @@ static phys_addr_t dpaa2_mem_vtop(uint64_t vaddr)
 
 	memseg = rte_mem_virt2memseg((void *)(uintptr_t)vaddr, NULL);
 	if (memseg)
-		return memseg->phys_addr + RTE_PTR_DIFF(vaddr, memseg->addr);
+		return memseg->iova + RTE_PTR_DIFF(vaddr, memseg->addr);
 	return (size_t)NULL;
 }
 

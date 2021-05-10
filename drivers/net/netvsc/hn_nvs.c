@@ -97,8 +97,13 @@ __hn_nvs_execute(struct hn_data *hv,
 	hdr = (struct hn_nvs_hdr *)buffer;
 
 	/* Silently drop received packets while waiting for response */
-	if (hdr->type == NVS_TYPE_RNDIS) {
+	switch (hdr->type) {
+	case NVS_TYPE_RNDIS:
 		hn_nvs_ack_rxbuf(chan, xactid);
+		/* fallthrough */
+
+	case NVS_TYPE_TXTBL_NOTE:
+		PMD_DRV_LOG(DEBUG, "discard packet type 0x%x", hdr->type);
 		goto retry;
 	}
 
@@ -223,9 +228,15 @@ hn_nvs_conn_rxbuf(struct hn_data *hv)
 		    resp.nvs_sect[0].slotcnt);
 	hv->rxbuf_section_cnt = resp.nvs_sect[0].slotcnt;
 
-	hv->rxbuf_info = rte_calloc("HN_RXBUF_INFO", hv->rxbuf_section_cnt,
-				    sizeof(*hv->rxbuf_info), RTE_CACHE_LINE_SIZE);
-	if (!hv->rxbuf_info) {
+	/*
+	 * Pimary queue's rxbuf_info is not allocated at creation time.
+	 * Now we can allocate it after we figure out the slotcnt.
+	 */
+	hv->primary->rxbuf_info = rte_calloc("HN_RXBUF_INFO",
+			hv->rxbuf_section_cnt,
+			sizeof(*hv->primary->rxbuf_info),
+			RTE_CACHE_LINE_SIZE);
+	if (!hv->primary->rxbuf_info) {
 		PMD_DRV_LOG(ERR,
 			    "could not allocate rxbuf info");
 		return -ENOMEM;
@@ -255,7 +266,6 @@ hn_nvs_disconn_rxbuf(struct hn_data *hv)
 			    error);
 	}
 
-	rte_free(hv->rxbuf_info);
 	/*
 	 * Linger long enough for NVS to disconnect RXBUF.
 	 */
@@ -564,7 +574,7 @@ hn_nvs_alloc_subchans(struct hn_data *hv, uint32_t *nsubch)
 	return 0;
 }
 
-void
+int
 hn_nvs_set_datapath(struct hn_data *hv, uint32_t path)
 {
 	struct hn_nvs_datapath dp;
@@ -583,4 +593,6 @@ hn_nvs_set_datapath(struct hn_data *hv, uint32_t path)
 			    "send set datapath failed: %d",
 			    error);
 	}
+
+	return error;
 }

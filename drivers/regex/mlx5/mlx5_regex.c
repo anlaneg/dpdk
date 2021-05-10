@@ -11,6 +11,7 @@
 #include <rte_regexdev_driver.h>
 
 #include <mlx5_common_pci.h>
+#include <mlx5_common.h>
 #include <mlx5_glue.h>
 #include <mlx5_devx_cmds.h>
 #include <mlx5_prm.h>
@@ -52,33 +53,6 @@ mlx5_regex_close(struct rte_regexdev *dev __rte_unused)
 	return 0;
 }
 
-static struct ibv_device *
-mlx5_regex_get_ib_device_match(struct rte_pci_addr *addr)
-{
-	int n;
-	struct ibv_device **ibv_list = mlx5_glue->get_device_list(&n);
-	struct ibv_device *ibv_match = NULL;
-
-	if (!ibv_list) {
-		rte_errno = ENOSYS;
-		return NULL;
-	}
-	while (n-- > 0) {
-		struct rte_pci_addr pci_addr;
-
-		DRV_LOG(DEBUG, "Checking device \"%s\"..", ibv_list[n]->name);
-		if (mlx5_dev_to_pci_addr(ibv_list[n]->ibdev_path, &pci_addr))
-			continue;
-		if (rte_pci_addr_cmp(addr, &pci_addr))
-			continue;
-		ibv_match = ibv_list[n];
-		break;
-	}
-	if (!ibv_match)
-		rte_errno = ENOENT;
-	mlx5_glue->free_device_list(ibv_list);
-	return ibv_match;
-}
 static int
 mlx5_regex_engines_status(struct ibv_context *ctx, int num_engines)
 {
@@ -119,8 +93,9 @@ mlx5_regex_pci_probe(struct rte_pci_driver *pci_drv __rte_unused,
 	struct mlx5_hca_attr attr;
 	char name[RTE_REGEXDEV_NAME_MAX_LEN];
 	int ret;
+	uint32_t val;
 
-	ibv = mlx5_regex_get_ib_device_match(&pci_dev->addr);
+	ibv = mlx5_os_get_ibv_device(&pci_dev->addr);
 	if (!ibv) {
 		DRV_LOG(ERR, "No matching IB device for PCI slot "
 			PCI_PRI_FMT ".", pci_dev->addr.domain,
@@ -157,10 +132,19 @@ mlx5_regex_pci_probe(struct rte_pci_driver *pci_drv __rte_unused,
 	if (!priv) {
 		DRV_LOG(ERR, "Failed to allocate private memory.");
 		rte_errno = ENOMEM;
-		goto error;
+		goto dev_error;
 	}
+	priv->sq_ts_format = attr.sq_ts_format;
 	priv->ctx = ctx;
 	priv->nb_engines = 2; /* attr.regexp_num_of_engines */
+	ret = mlx5_devx_regex_register_read(priv->ctx, 0,
+					    MLX5_RXP_CSR_IDENTIFIER, &val);
+	if (ret) {
+		DRV_LOG(ERR, "CSR read failed!");
+		return -1;
+	}
+	if (val == MLX5_RXP_BF2_IDENTIFIER)
+		priv->is_bf2 = 1;
 	/* Default RXP programming mode to Shared. */
 	priv->prog_mode = MLX5_RXP_SHARED_PROG_MODE;
 	mlx5_regex_get_name(name, pci_dev);
@@ -170,13 +154,12 @@ mlx5_regex_pci_probe(struct rte_pci_driver *pci_drv __rte_unused,
 		rte_errno = rte_errno ? rte_errno : EINVAL;
 		goto error;
 	}
-	ret = mlx5_glue->devx_query_eqn(ctx, 0, &priv->eqn);
-	if (ret) {
-		DRV_LOG(ERR, "can't query event queue number.");
-		rte_errno = ENOMEM;
-		goto error;
-	}
-	priv->uar = mlx5_glue->devx_alloc_uar(ctx, 0);
+	/*
+	 * This PMD always claims the write memory barrier on UAR
+	 * registers writings, it is safe to allocate UAR with any
+	 * memory mapping type.
+	 */
+	priv->uar = mlx5_devx_alloc_uar(ctx, -1);
 	if (!priv->uar) {
 		DRV_LOG(ERR, "can't allocate uar.");
 		rte_errno = ENOMEM;
@@ -190,10 +173,29 @@ mlx5_regex_pci_probe(struct rte_pci_driver *pci_drv __rte_unused,
 	}
 	priv->regexdev->dev_ops = &mlx5_regexdev_ops;
 	priv->regexdev->enqueue = mlx5_regexdev_enqueue;
+#ifdef HAVE_MLX5_UMR_IMKEY
+	if (!attr.umr_indirect_mkey_disabled &&
+	    !attr.umr_modify_entity_size_disabled)
+		priv->has_umr = 1;
+	if (priv->has_umr)
+		priv->regexdev->enqueue = mlx5_regexdev_enqueue_gga;
+#endif
 	priv->regexdev->dequeue = mlx5_regexdev_dequeue;
 	priv->regexdev->device = (struct rte_device *)pci_dev;
 	priv->regexdev->data->dev_private = priv;
 	priv->regexdev->state = RTE_REGEXDEV_READY;
+	priv->mr_scache.reg_mr_cb = mlx5_common_verbs_reg_mr;
+	priv->mr_scache.dereg_mr_cb = mlx5_common_verbs_dereg_mr;
+	ret = mlx5_mr_btree_init(&priv->mr_scache.cache,
+				 MLX5_MR_BTREE_CACHE_N * 2,
+				 rte_socket_id());
+	if (ret) {
+		DRV_LOG(ERR, "MR init tree failed.");
+	    rte_errno = ENOMEM;
+		goto error;
+	}
+	DRV_LOG(INFO, "RegEx GGA is %s.",
+		priv->has_umr ? "supported" : "unsupported");
 	return 0;
 
 error:
@@ -243,6 +245,10 @@ static const struct rte_pci_id mlx5_regex_pci_id_map[] = {
 	{
 		RTE_PCI_DEVICE(PCI_VENDOR_ID_MELLANOX,
 				PCI_DEVICE_ID_MELLANOX_CONNECTX6DXBF)
+	},
+	{
+		RTE_PCI_DEVICE(PCI_VENDOR_ID_MELLANOX,
+				PCI_DEVICE_ID_MELLANOX_CONNECTX7BF)
 	},
 	{
 		.vendor_id = 0

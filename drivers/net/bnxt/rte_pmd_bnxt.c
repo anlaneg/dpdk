@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: BSD-3-Clause
- * Copyright(c) 2017-2018 Broadcom
+ * Copyright(c) 2017-2021 Broadcom
  * All rights reserved.
  */
 
@@ -8,7 +8,7 @@
 #include <unistd.h>
 
 #include <rte_dev.h>
-#include <rte_ethdev_driver.h>
+#include <ethdev_driver.h>
 #include <rte_malloc.h>
 #include <rte_cycles.h>
 #include <rte_byteorder.h>
@@ -28,8 +28,8 @@ int bnxt_rcv_msg_from_vf(struct bnxt *bp, uint16_t vf_id, void *msg)
 	ret_param.vf_id = vf_id;
 	ret_param.msg = msg;
 
-	_rte_eth_dev_callback_process(bp->eth_dev, RTE_ETH_EVENT_VF_MBOX,
-				      &ret_param);
+	rte_eth_dev_callback_process(bp->eth_dev, RTE_ETH_EVENT_VF_MBOX,
+				     &ret_param);
 
 	/* Default to approve */
 	if (ret_param.retval == RTE_PMD_BNXT_MB_EVENT_PROCEED)

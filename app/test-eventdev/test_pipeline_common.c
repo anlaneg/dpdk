@@ -36,6 +36,12 @@ pipeline_opt_dump(struct evt_options *opt, uint8_t nb_queues)
 	evt_dump_queue_priority(opt);
 	evt_dump_sched_type_list(opt);
 	evt_dump_producer_type(opt);
+	evt_dump("nb_eth_rx_queues", "%d", opt->eth_queues);
+	evt_dump("event_vector", "%d", opt->ena_vector);
+	if (opt->ena_vector) {
+		evt_dump("vector_size", "%d", opt->vector_size);
+		evt_dump("vector_tmo_ns", "%" PRIu64 "", opt->vector_tmo_nsec);
+	}
 }
 
 static inline uint64_t
@@ -44,7 +50,6 @@ processed_pkts(struct test_pipeline *t)
 	uint8_t i;
 	uint64_t total = 0;
 
-	rte_smp_rmb();
 	for (i = 0; i < t->nb_workers; i++)
 		total += t->worker[i].processed_pkts;
 
@@ -60,7 +65,7 @@ pipeline_launch_lcores(struct evt_test *test, struct evt_options *opt,
 
 	int port_idx = 0;
 	/* launch workers */
-	RTE_LCORE_FOREACH_SLAVE(lcore_id) {
+	RTE_LCORE_FOREACH_WORKER(lcore_id) {
 		if (!(opt->wlcores[lcore_id]))
 			continue;
 
@@ -106,9 +111,8 @@ int
 pipeline_opt_check(struct evt_options *opt, uint64_t nb_queues)
 {
 	unsigned int lcores;
-	/*
-	 * N worker + 1 master
-	 */
+
+	/* N worker + main */
 	lcores = 2;
 
 	if (opt->prod_type != EVT_PROD_TYPE_ETH_RX_ADPTR) {
@@ -129,8 +133,8 @@ pipeline_opt_check(struct evt_options *opt, uint64_t nb_queues)
 	}
 
 	/* Validate worker lcores */
-	if (evt_lcores_has_overlap(opt->wlcores, rte_get_master_lcore())) {
-		evt_err("worker lcores overlaps with master lcore");
+	if (evt_lcores_has_overlap(opt->wlcores, rte_get_main_lcore())) {
+		evt_err("worker lcores overlaps with main lcore");
 		return -1;
 	}
 	if (evt_has_disabled_lcore(opt->wlcores)) {
@@ -165,7 +169,7 @@ pipeline_opt_check(struct evt_options *opt, uint64_t nb_queues)
 int
 pipeline_ethdev_setup(struct evt_test *test, struct evt_options *opt)
 {
-	uint16_t i;
+	uint16_t i, j;
 	int ret;
 	uint8_t nb_queues = 1;
 	struct test_pipeline *t = evt_test_priv(test);
@@ -212,12 +216,27 @@ pipeline_ethdev_setup(struct evt_test *test, struct evt_options *opt)
 		if (!(caps & RTE_EVENT_ETH_TX_ADAPTER_CAP_INTERNAL_PORT))
 			t->internal_port = 0;
 
+		ret = rte_event_eth_rx_adapter_caps_get(opt->dev_id, i, &caps);
+		if (ret != 0) {
+			evt_err("failed to get event tx adapter[%d] caps", i);
+			return ret;
+		}
+
+		if (!(caps & RTE_EVENT_ETH_RX_ADAPTER_CAP_INTERNAL_PORT))
+			local_port_conf.rxmode.offloads |=
+				DEV_RX_OFFLOAD_RSS_HASH;
+
 		ret = rte_eth_dev_info_get(i, &dev_info);
 		if (ret != 0) {
 			evt_err("Error during getting device (port %u) info: %s\n",
 				i, strerror(-ret));
 			return ret;
 		}
+
+		/* Enable mbuf fast free if PMD has the capability. */
+		if (dev_info.tx_offload_capa & DEV_TX_OFFLOAD_MBUF_FAST_FREE)
+			local_port_conf.txmode.offloads |=
+				DEV_TX_OFFLOAD_MBUF_FAST_FREE;
 
 		rx_conf = dev_info.default_rxconf;
 		rx_conf.offloads = port_conf.rxmode.offloads;
@@ -233,19 +252,22 @@ pipeline_ethdev_setup(struct evt_test *test, struct evt_options *opt)
 				local_port_conf.rx_adv_conf.rss_conf.rss_hf);
 		}
 
-		if (rte_eth_dev_configure(i, nb_queues, nb_queues,
-					&local_port_conf)
-				< 0) {
+		if (rte_eth_dev_configure(i, opt->eth_queues, nb_queues,
+					  &local_port_conf) < 0) {
 			evt_err("Failed to configure eth port [%d]", i);
 			return -EINVAL;
 		}
 
-		if (rte_eth_rx_queue_setup(i, 0, NB_RX_DESC,
-				rte_socket_id(), &rx_conf, t->pool) < 0) {
-			evt_err("Failed to setup eth port [%d] rx_queue: %d.",
+		for (j = 0; j < opt->eth_queues; j++) {
+			if (rte_eth_rx_queue_setup(i, j, NB_RX_DESC,
+						   rte_socket_id(), &rx_conf,
+						   t->pool) < 0) {
+				evt_err("Failed to setup eth port [%d] rx_queue: %d.",
 					i, 0);
-			return -EINVAL;
+				return -EINVAL;
+			}
 		}
+
 		if (rte_eth_tx_queue_setup(i, 0, NB_TX_DESC,
 					rte_socket_id(), NULL) < 0) {
 			evt_err("Failed to setup eth port [%d] tx_queue: %d.",
@@ -307,12 +329,27 @@ pipeline_event_rx_adapter_setup(struct evt_options *opt, uint8_t stride,
 {
 	int ret = 0;
 	uint16_t prod;
+	struct rte_mempool *vector_pool = NULL;
 	struct rte_event_eth_rx_adapter_queue_conf queue_conf;
+	struct rte_event_eth_rx_adapter_event_vector_config vec_conf;
 
 	memset(&queue_conf, 0,
 			sizeof(struct rte_event_eth_rx_adapter_queue_conf));
 	queue_conf.ev.sched_type = opt->sched_type_list[0];
+	if (opt->ena_vector) {
+		unsigned int nb_elem = (opt->pool_sz / opt->vector_size) << 1;
+
+		nb_elem = nb_elem ? nb_elem : 1;
+		vector_pool = rte_event_vector_pool_create(
+			"vector_pool", nb_elem, 0, opt->vector_size,
+			opt->socket_id);
+		if (vector_pool == NULL) {
+			evt_err("failed to create event vector pool");
+			return -ENOMEM;
+		}
+	}
 	RTE_ETH_FOREACH_DEV(prod) {
+		struct rte_event_eth_rx_adapter_vector_limits limits;
 		uint32_t cap;
 
 		ret = rte_event_eth_rx_adapter_caps_get(opt->dev_id,
@@ -322,6 +359,50 @@ pipeline_event_rx_adapter_setup(struct evt_options *opt, uint8_t stride,
 					" capabilities",
 					opt->dev_id);
 			return ret;
+		}
+
+		if (opt->ena_vector) {
+			memset(&limits, 0, sizeof(limits));
+			ret = rte_event_eth_rx_adapter_vector_limits_get(
+				opt->dev_id, prod, &limits);
+			if (ret) {
+				evt_err("failed to get vector limits");
+				return ret;
+			}
+
+			if (opt->vector_size < limits.min_sz ||
+			    opt->vector_size > limits.max_sz) {
+				evt_err("Vector size [%d] not within limits max[%d] min[%d]",
+					opt->vector_size, limits.min_sz,
+					limits.max_sz);
+				return -EINVAL;
+			}
+
+			if (limits.log2_sz &&
+			    !rte_is_power_of_2(opt->vector_size)) {
+				evt_err("Vector size [%d] not power of 2",
+					opt->vector_size);
+				return -EINVAL;
+			}
+
+			if (opt->vector_tmo_nsec > limits.max_timeout_ns ||
+			    opt->vector_tmo_nsec < limits.min_timeout_ns) {
+				evt_err("Vector timeout [%" PRIu64
+					"] not within limits max[%" PRIu64
+					"] min[%" PRIu64 "]",
+					opt->vector_tmo_nsec,
+					limits.max_timeout_ns,
+					limits.min_timeout_ns);
+				return -EINVAL;
+			}
+
+			if (cap & RTE_EVENT_ETH_RX_ADAPTER_CAP_EVENT_VECTOR) {
+				queue_conf.rx_queue_flags |=
+				RTE_EVENT_ETH_RX_ADAPTER_QUEUE_EVENT_VECTOR;
+			} else {
+				evt_err("Rx adapter doesn't support event vector");
+				return -EINVAL;
+			}
 		}
 		queue_conf.ev.queue_id = prod * stride;
 		ret = rte_event_eth_rx_adapter_create(prod, opt->dev_id,
@@ -335,6 +416,17 @@ pipeline_event_rx_adapter_setup(struct evt_options *opt, uint8_t stride,
 		if (ret) {
 			evt_err("failed to add rx queues to adapter[%d]", prod);
 			return ret;
+		}
+
+		if (opt->ena_vector) {
+			vec_conf.vector_sz = opt->vector_size;
+			vec_conf.vector_timeout_ns = opt->vector_tmo_nsec;
+			vec_conf.vector_mp = vector_pool;
+			if (rte_event_eth_rx_adapter_queue_event_vector_config(
+				    prod, prod, -1, &vec_conf) < 0) {
+				evt_err("Failed to configure event vectorization for Rx adapter");
+				return -EINVAL;
+			}
 		}
 
 		if (!(cap & RTE_EVENT_ETH_RX_ADAPTER_CAP_INTERNAL_PORT)) {
@@ -373,6 +465,14 @@ pipeline_event_tx_adapter_setup(struct evt_options *opt,
 			evt_err("failed to get event tx adapter[%d] caps",
 					consm);
 			return ret;
+		}
+
+		if (opt->ena_vector) {
+			if (!(cap &
+			      RTE_EVENT_ETH_TX_ADAPTER_CAP_EVENT_VECTOR)) {
+				evt_err("Tx adapter doesn't support event vector");
+				return -EINVAL;
+			}
 		}
 
 		ret = rte_event_eth_tx_adapter_create(consm, opt->dev_id,

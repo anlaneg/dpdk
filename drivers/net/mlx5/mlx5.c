@@ -9,13 +9,10 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <errno.h>
-#include <net/if.h>
-#include <sys/mman.h>
-#include <linux/rtnetlink.h>
 
 #include <rte_malloc.h>
-#include <rte_ethdev_driver.h>
-#include <rte_ethdev_pci.h>
+#include <ethdev_driver.h>
+#include <ethdev_pci.h>
 #include <rte_pci.h>
 #include <rte_bus_pci.h>
 #include <rte_common.h>
@@ -24,6 +21,7 @@
 #include <rte_spinlock.h>
 #include <rte_string_fns.h>
 #include <rte_alarm.h>
+#include <rte_cycles.h>
 
 #include <mlx5_glue.h>
 #include <mlx5_devx_cmds.h>
@@ -37,16 +35,16 @@
 #include "mlx5.h"
 #include "mlx5_utils.h"
 #include "mlx5_rxtx.h"
+#include "mlx5_rx.h"
+#include "mlx5_tx.h"
 #include "mlx5_autoconf.h"
 #include "mlx5_mr.h"
 #include "mlx5_flow.h"
+#include "mlx5_flow_os.h"
 #include "rte_pmd_mlx5.h"
 
 /* Device parameter to enable RX completion queue compression. */
 #define MLX5_RXQ_CQE_COMP_EN "rxq_cqe_comp_en"
-
-/* Device parameter to enable RX completion entry padding to 128B. */
-#define MLX5_RXQ_CQE_PAD_EN "rxq_cqe_pad_en"
 
 /* Device parameter to enable padding Rx packet to cacheline size. */
 #define MLX5_RXQ_PKT_PAD_EN "rxq_pkt_pad_en"
@@ -185,100 +183,136 @@ int mlx5_logtype;
 
 static LIST_HEAD(, mlx5_dev_ctx_shared) mlx5_dev_ctx_list =
 						LIST_HEAD_INITIALIZER();
-static pthread_mutex_t mlx5_dev_ctx_list_mutex = PTHREAD_MUTEX_INITIALIZER;
-
+static pthread_mutex_t mlx5_dev_ctx_list_mutex;
 static const struct mlx5_indexed_pool_config mlx5_ipool_cfg[] = {
-#ifdef HAVE_IBV_FLOW_DV_SUPPORT
-	{
+#if defined(HAVE_IBV_FLOW_DV_SUPPORT) || !defined(HAVE_INFINIBAND_VERBS_H)
+	[MLX5_IPOOL_DECAP_ENCAP] = {
 		.size = sizeof(struct mlx5_flow_dv_encap_decap_resource),
 		.trunk_size = 64,
 		.grow_trunk = 3,
 		.grow_shift = 2,
-		.need_lock = 0,
+		.need_lock = 1,
 		.release_mem_en = 1,
 		.malloc = mlx5_malloc,
 		.free = mlx5_free,
 		.type = "mlx5_encap_decap_ipool",
 	},
-	{
+	[MLX5_IPOOL_PUSH_VLAN] = {
 		.size = sizeof(struct mlx5_flow_dv_push_vlan_action_resource),
 		.trunk_size = 64,
 		.grow_trunk = 3,
 		.grow_shift = 2,
-		.need_lock = 0,
+		.need_lock = 1,
 		.release_mem_en = 1,
 		.malloc = mlx5_malloc,
 		.free = mlx5_free,
 		.type = "mlx5_push_vlan_ipool",
 	},
-	{
+	[MLX5_IPOOL_TAG] = {
 		.size = sizeof(struct mlx5_flow_dv_tag_resource),
 		.trunk_size = 64,
 		.grow_trunk = 3,
 		.grow_shift = 2,
-		.need_lock = 0,
+		.need_lock = 1,
 		.release_mem_en = 1,
 		.malloc = mlx5_malloc,
 		.free = mlx5_free,
 		.type = "mlx5_tag_ipool",
 	},
-	{
+	[MLX5_IPOOL_PORT_ID] = {
 		.size = sizeof(struct mlx5_flow_dv_port_id_action_resource),
 		.trunk_size = 64,
 		.grow_trunk = 3,
 		.grow_shift = 2,
-		.need_lock = 0,
+		.need_lock = 1,
 		.release_mem_en = 1,
 		.malloc = mlx5_malloc,
 		.free = mlx5_free,
 		.type = "mlx5_port_id_ipool",
 	},
-	{
+	[MLX5_IPOOL_JUMP] = {
 		.size = sizeof(struct mlx5_flow_tbl_data_entry),
 		.trunk_size = 64,
 		.grow_trunk = 3,
 		.grow_shift = 2,
-		.need_lock = 0,
+		.need_lock = 1,
 		.release_mem_en = 1,
 		.malloc = mlx5_malloc,
 		.free = mlx5_free,
 		.type = "mlx5_jump_ipool",
 	},
-#endif
-	{
-		.size = sizeof(struct mlx5_flow_meter),
+	[MLX5_IPOOL_SAMPLE] = {
+		.size = sizeof(struct mlx5_flow_dv_sample_resource),
 		.trunk_size = 64,
 		.grow_trunk = 3,
 		.grow_shift = 2,
-		.need_lock = 0,
+		.need_lock = 1,
+		.release_mem_en = 1,
+		.malloc = mlx5_malloc,
+		.free = mlx5_free,
+		.type = "mlx5_sample_ipool",
+	},
+	[MLX5_IPOOL_DEST_ARRAY] = {
+		.size = sizeof(struct mlx5_flow_dv_dest_array_resource),
+		.trunk_size = 64,
+		.grow_trunk = 3,
+		.grow_shift = 2,
+		.need_lock = 1,
+		.release_mem_en = 1,
+		.malloc = mlx5_malloc,
+		.free = mlx5_free,
+		.type = "mlx5_dest_array_ipool",
+	},
+	[MLX5_IPOOL_TUNNEL_ID] = {
+		.size = sizeof(struct mlx5_flow_tunnel),
+		.trunk_size = MLX5_MAX_TUNNELS,
+		.need_lock = 1,
+		.release_mem_en = 1,
+		.type = "mlx5_tunnel_offload",
+	},
+	[MLX5_IPOOL_TNL_TBL_ID] = {
+		.size = 0,
+		.need_lock = 1,
+		.type = "mlx5_flow_tnl_tbl_ipool",
+	},
+#endif
+	[MLX5_IPOOL_MTR] = {
+		/**
+		 * The ipool index should grow continually from small to big,
+		 * for meter idx, so not set grow_trunk to avoid meter index
+		 * not jump continually.
+		 */
+		.size = sizeof(struct mlx5_legacy_flow_meter),
+		.trunk_size = 64,
+		.need_lock = 1,
 		.release_mem_en = 1,
 		.malloc = mlx5_malloc,
 		.free = mlx5_free,
 		.type = "mlx5_meter_ipool",
 	},
-	{
+	[MLX5_IPOOL_MCP] = {
 		.size = sizeof(struct mlx5_flow_mreg_copy_resource),
 		.trunk_size = 64,
 		.grow_trunk = 3,
 		.grow_shift = 2,
-		.need_lock = 0,
+		.need_lock = 1,
 		.release_mem_en = 1,
 		.malloc = mlx5_malloc,
 		.free = mlx5_free,
 		.type = "mlx5_mcp_ipool",
 	},
-	{
+	[MLX5_IPOOL_HRXQ] = {
 		.size = (sizeof(struct mlx5_hrxq) + MLX5_RSS_HASH_KEY_LEN),
 		.trunk_size = 64,
 		.grow_trunk = 3,
 		.grow_shift = 2,
-		.need_lock = 0,
+		.need_lock = 1,
 		.release_mem_en = 1,
 		.malloc = mlx5_malloc,
 		.free = mlx5_free,
 		.type = "mlx5_hrxq_ipool",
 	},
-	{
+	[MLX5_IPOOL_MLX5_FLOW] = {
 		/*
 		 * MLX5_IPOOL_MLX5_FLOW size varies for DV and VERBS flows.
 		 * It set in run time according to PCI function configuration.
@@ -287,13 +321,13 @@ static const struct mlx5_indexed_pool_config mlx5_ipool_cfg[] = {
 		.trunk_size = 64,
 		.grow_trunk = 3,
 		.grow_shift = 2,
-		.need_lock = 0,
+		.need_lock = 1,
 		.release_mem_en = 1,
 		.malloc = mlx5_malloc,
 		.free = mlx5_free,
 		.type = "mlx5_flow_handle_ipool",
 	},
-	{
+	[MLX5_IPOOL_RTE_FLOW] = {
 		.size = sizeof(struct rte_flow),
 		.trunk_size = 4096,
 		.need_lock = 1,
@@ -301,6 +335,36 @@ static const struct mlx5_indexed_pool_config mlx5_ipool_cfg[] = {
 		.malloc = mlx5_malloc,
 		.free = mlx5_free,
 		.type = "rte_flow_ipool",
+	},
+	[MLX5_IPOOL_RSS_EXPANTION_FLOW_ID] = {
+		.size = 0,
+		.need_lock = 1,
+		.type = "mlx5_flow_rss_id_ipool",
+	},
+	[MLX5_IPOOL_RSS_SHARED_ACTIONS] = {
+		.size = sizeof(struct mlx5_shared_action_rss),
+		.trunk_size = 64,
+		.grow_trunk = 3,
+		.grow_shift = 2,
+		.need_lock = 1,
+		.release_mem_en = 1,
+		.malloc = mlx5_malloc,
+		.free = mlx5_free,
+		.type = "mlx5_shared_action_rss",
+	},
+	[MLX5_IPOOL_MTR_POLICY] = {
+		/**
+		 * The ipool index should grow continually from small to big,
+		 * for policy idx, so not set grow_trunk to avoid policy index
+		 * not jump continually.
+		 */
+		.size = sizeof(struct mlx5_flow_meter_sub_policy),
+		.trunk_size = 64,
+		.need_lock = 1,
+		.release_mem_en = 1,
+		.malloc = mlx5_malloc,
+		.free = mlx5_free,
+		.type = "mlx5_meter_policy_ipool",
 	},
 };
 
@@ -311,125 +375,90 @@ static const struct mlx5_indexed_pool_config mlx5_ipool_cfg[] = {
 #define MLX5_FLOW_TABLE_HLIST_ARRAY_SIZE 4096
 
 /**
- * Allocate ID pool structure.
+ * Decide whether representor ID is a HPF(host PF) port on BF2.
  *
- * @param[in] max_id
- *   The maximum id can be allocated from the pool.
+ * @param dev
+ *   Pointer to Ethernet device structure.
  *
  * @return
- *   Pointer to pool object, NULL value otherwise.
+ *   Non-zero if HPF, otherwise 0.
  */
-struct mlx5_flow_id_pool *
-mlx5_flow_id_pool_alloc(uint32_t max_id)
+bool
+mlx5_is_hpf(struct rte_eth_dev *dev)
 {
-	struct mlx5_flow_id_pool *pool;
-	void *mem;
+	struct mlx5_priv *priv = dev->data->dev_private;
+	uint16_t repr = MLX5_REPRESENTOR_REPR(priv->representor_id);
+	int type = MLX5_REPRESENTOR_TYPE(priv->representor_id);
 
-	pool = mlx5_malloc(MLX5_MEM_ZERO, sizeof(*pool),
-			   RTE_CACHE_LINE_SIZE, SOCKET_ID_ANY);
-	if (!pool) {
-		DRV_LOG(ERR, "can't allocate id pool");
-		rte_errno  = ENOMEM;
-		return NULL;
-	}
-	mem = mlx5_malloc(MLX5_MEM_ZERO,
-			  MLX5_FLOW_MIN_ID_POOL_SIZE * sizeof(uint32_t),
-			  RTE_CACHE_LINE_SIZE, SOCKET_ID_ANY);
-	if (!mem) {
-		DRV_LOG(ERR, "can't allocate mem for id pool");
-		rte_errno  = ENOMEM;
-		goto error;
-	}
-	pool->free_arr = mem;
-	pool->curr = pool->free_arr;
-	pool->last = pool->free_arr + MLX5_FLOW_MIN_ID_POOL_SIZE;
-	pool->base_index = 0;
-	pool->max_id = max_id;
-	return pool;
-error:
-	mlx5_free(pool);
-	return NULL;
+	return priv->representor != 0 && type == RTE_ETH_REPRESENTOR_VF &&
+	       MLX5_REPRESENTOR_REPR(-1) == repr;
 }
 
 /**
- * Release ID pool structure.
+ * Initialize the ASO aging management structure.
  *
- * @param[in] pool
- *   Pointer to flow id pool object to free.
- */
-void
-mlx5_flow_id_pool_release(struct mlx5_flow_id_pool *pool)
-{
-	mlx5_free(pool->free_arr);
-	mlx5_free(pool);
-}
-
-/**
- * Generate ID.
- *
- * @param[in] pool
- *   Pointer to flow id pool.
- * @param[out] id
- *   The generated ID.
+ * @param[in] sh
+ *   Pointer to mlx5_dev_ctx_shared object to free
  *
  * @return
- *   0 on success, error value otherwise.
+ *   0 on success, a negative errno value otherwise and rte_errno is set.
  */
-uint32_t
-mlx5_flow_id_get(struct mlx5_flow_id_pool *pool, uint32_t *id)
+int
+mlx5_flow_aso_age_mng_init(struct mlx5_dev_ctx_shared *sh)
 {
-    //生成一个id号
-	if (pool->curr == pool->free_arr) {
-		if (pool->base_index == pool->max_id) {
-			rte_errno  = ENOMEM;
-			DRV_LOG(ERR, "no free id");
-			return -rte_errno;
-		}
-		*id = ++pool->base_index;
+    	//生成一个id号
+	int err;
+
+	if (sh->aso_age_mng)
 		return 0;
+	sh->aso_age_mng = mlx5_malloc(MLX5_MEM_ZERO, sizeof(*sh->aso_age_mng),
+				      RTE_CACHE_LINE_SIZE, SOCKET_ID_ANY);
+	if (!sh->aso_age_mng) {
+		DRV_LOG(ERR, "aso_age_mng allocation was failed.");
+		rte_errno = ENOMEM;
+		return -ENOMEM;
 	}
-	*id = *(--pool->curr);
+	err = mlx5_aso_queue_init(sh, ASO_OPC_MOD_FLOW_HIT);
+	if (err) {
+		mlx5_free(sh->aso_age_mng);
+		return -1;
+	}
+	rte_spinlock_init(&sh->aso_age_mng->resize_sl);
+	rte_spinlock_init(&sh->aso_age_mng->free_sl);
+	LIST_INIT(&sh->aso_age_mng->free);
 	return 0;
 }
 
 /**
- * Release ID.
+ * Close and release all the resources of the ASO aging management structure.
  *
- * @param[in] pool
- *   Pointer to flow id pool.
- * @param[out] id
- *   The generated ID.
- *
- * @return
- *   0 on success, error value otherwise.
+ * @param[in] sh
+ *   Pointer to mlx5_dev_ctx_shared object to free.
  */
-uint32_t
-mlx5_flow_id_release(struct mlx5_flow_id_pool *pool, uint32_t id)
+static void
+mlx5_flow_aso_age_mng_close(struct mlx5_dev_ctx_shared *sh)
 {
-	uint32_t size;
-	uint32_t size2;
-	void *mem;
+	int i, j;
 
-	if (pool->curr == pool->last) {
-		size = pool->curr - pool->free_arr;
-		size2 = size * MLX5_ID_GENERATION_ARRAY_FACTOR;
-		MLX5_ASSERT(size2 > size);
-		mem = mlx5_malloc(0, size2 * sizeof(uint32_t), 0,
-				  SOCKET_ID_ANY);
-		if (!mem) {
-			DRV_LOG(ERR, "can't allocate mem for id pool");
-			rte_errno  = ENOMEM;
-			return -rte_errno;
+	mlx5_aso_flow_hit_queue_poll_stop(sh);
+	mlx5_aso_queue_uninit(sh, ASO_OPC_MOD_FLOW_HIT);
+	if (sh->aso_age_mng->pools) {
+		struct mlx5_aso_age_pool *pool;
+
+		for (i = 0; i < sh->aso_age_mng->next; ++i) {
+			pool = sh->aso_age_mng->pools[i];
+			claim_zero(mlx5_devx_cmd_destroy
+						(pool->flow_hit_aso_obj));
+			for (j = 0; j < MLX5_COUNTERS_PER_POOL; ++j)
+				if (pool->actions[j].dr_action)
+					claim_zero
+					    (mlx5_flow_os_destroy_flow_action
+					      (pool->actions[j].dr_action));
+			mlx5_free(pool);
 		}
-		memcpy(mem, pool->free_arr, size * sizeof(uint32_t));
-		mlx5_free(pool->free_arr);
-		pool->free_arr = mem;
-		pool->curr = pool->free_arr + size;
-		pool->last = pool->free_arr + size2;
+		mlx5_free(sh->aso_age_mng->pools);
 	}
-	*pool->curr = id;
-	pool->curr++;
-	return 0;
+	mlx5_free(sh->aso_age_mng);
 }
 
 /**
@@ -448,6 +477,7 @@ mlx5_flow_aging_init(struct mlx5_dev_ctx_shared *sh)
 		age_info = &sh->port[i].age_info;
 		age_info->flags = 0;
 		TAILQ_INIT(&age_info->aged_counters);
+		LIST_INIT(&age_info->aged_aso);
 		rte_spinlock_init(&age_info->aged_sl);
 		MLX5_AGE_SET(age_info, MLX5_AGE_TRIGGER);
 	}
@@ -466,14 +496,13 @@ mlx5_flow_counters_mng_init(struct mlx5_dev_ctx_shared *sh)
 
 	memset(&sh->cmng, 0, sizeof(sh->cmng));
 	TAILQ_INIT(&sh->cmng.flow_counters);
-	for (i = 0; i < MLX5_CCONT_TYPE_MAX; ++i) {
-		sh->cmng.ccont[i].min_id = MLX5_CNT_BATCH_OFFSET;
-		sh->cmng.ccont[i].max_id = -1;
-		sh->cmng.ccont[i].last_pool_idx = POOL_IDX_INVALID;
-		TAILQ_INIT(&sh->cmng.ccont[i].pool_list);
-		rte_spinlock_init(&sh->cmng.ccont[i].resize_sl);
-		TAILQ_INIT(&sh->cmng.ccont[i].counters);
-		rte_spinlock_init(&sh->cmng.ccont[i].csl);
+	sh->cmng.min_id = MLX5_CNT_BATCH_OFFSET;
+	sh->cmng.max_id = -1;
+	sh->cmng.last_pool_idx = POOL_IDX_INVALID;
+	rte_spinlock_init(&sh->cmng.pool_update_sl);
+	for (i = 0; i < MLX5_COUNTER_TYPE_MAX; i++) {
+		TAILQ_INIT(&sh->cmng.counters[i]);
+		rte_spinlock_init(&sh->cmng.csl[i]);
 	}
 }
 
@@ -490,7 +519,7 @@ mlx5_flow_destroy_counter_stat_mem_mng(struct mlx5_counter_stats_mem_mng *mng)
 
 	LIST_REMOVE(mng, next);
 	claim_zero(mlx5_devx_cmd_destroy(mng->dm));
-	claim_zero(mlx5_glue->devx_umem_dereg(mng->umem));
+	claim_zero(mlx5_os_umem_dereg(mng->umem));
 	mlx5_free(mem);
 }
 
@@ -504,8 +533,7 @@ static void
 mlx5_flow_counters_mng_close(struct mlx5_dev_ctx_shared *sh)
 {
 	struct mlx5_counter_stats_mem_mng *mng;
-	int i;
-	int j;
+	int i, j;
 	int retries = 1024;
 
 	rte_errno = 0;
@@ -515,34 +543,33 @@ mlx5_flow_counters_mng_close(struct mlx5_dev_ctx_shared *sh)
 			break;
 		rte_pause();
 	}
-	for (i = 0; i < MLX5_CCONT_TYPE_MAX; ++i) {
-		struct mlx5_flow_counter_pool *pool;
-		uint32_t batch = !!(i > 1);
 
-		if (!sh->cmng.ccont[i].pools)
-			continue;
-		pool = TAILQ_FIRST(&sh->cmng.ccont[i].pool_list);
-		while (pool) {
-			if (batch && pool->min_dcs)
+	if (sh->cmng.pools) {
+		struct mlx5_flow_counter_pool *pool;
+		uint16_t n_valid = sh->cmng.n_valid;
+		bool fallback = sh->cmng.counter_fallback;
+
+		for (i = 0; i < n_valid; ++i) {
+			pool = sh->cmng.pools[i];
+			if (!fallback && pool->min_dcs)
 				claim_zero(mlx5_devx_cmd_destroy
 							       (pool->min_dcs));
 			for (j = 0; j < MLX5_COUNTERS_PER_POOL; ++j) {
-				if (MLX5_POOL_GET_CNT(pool, j)->action)
+				struct mlx5_flow_counter *cnt =
+						MLX5_POOL_GET_CNT(pool, j);
+
+				if (cnt->action)
 					claim_zero
-					 (mlx5_glue->destroy_flow_action
-					  (MLX5_POOL_GET_CNT
-					  (pool, j)->action));
-				if (!batch && MLX5_GET_POOL_CNT_EXT
-				    (pool, j)->dcs)
+					 (mlx5_flow_os_destroy_flow_action
+					  (cnt->action));
+				if (fallback && MLX5_POOL_GET_CNT
+				    (pool, j)->dcs_when_free)
 					claim_zero(mlx5_devx_cmd_destroy
-						   (MLX5_GET_POOL_CNT_EXT
-						    (pool, j)->dcs));
+						   (cnt->dcs_when_free));
 			}
-			TAILQ_REMOVE(&sh->cmng.ccont[i].pool_list, pool, next);
 			mlx5_free(pool);
-			pool = TAILQ_FIRST(&sh->cmng.ccont[i].pool_list);
 		}
-		mlx5_free(sh->cmng.ccont[i].pools);
+		mlx5_free(sh->cmng.pools);
 	}
 	mng = LIST_FIRST(&sh->cmng.mem_mngs);
 	while (mng) {
@@ -553,11 +580,195 @@ mlx5_flow_counters_mng_close(struct mlx5_dev_ctx_shared *sh)
 }
 
 /**
+ * Initialize the aso flow meters management structure.
+ *
+ * @param[in] sh
+ *   Pointer to mlx5_dev_ctx_shared object to free
+ */
+int
+mlx5_aso_flow_mtrs_mng_init(struct mlx5_dev_ctx_shared *sh)
+{
+	if (!sh->mtrmng) {
+		sh->mtrmng = mlx5_malloc(MLX5_MEM_ZERO,
+			sizeof(*sh->mtrmng),
+			RTE_CACHE_LINE_SIZE, SOCKET_ID_ANY);
+		if (!sh->mtrmng) {
+			DRV_LOG(ERR,
+			"meter management allocation was failed.");
+			rte_errno = ENOMEM;
+			return -ENOMEM;
+		}
+		if (sh->meter_aso_en) {
+			rte_spinlock_init(&sh->mtrmng->pools_mng.mtrsl);
+			LIST_INIT(&sh->mtrmng->pools_mng.meters);
+			sh->mtrmng->policy_idx_tbl =
+				mlx5_l3t_create(MLX5_L3T_TYPE_DWORD);
+		}
+		sh->mtrmng->def_policy_id = MLX5_INVALID_POLICY_ID;
+	}
+	return 0;
+}
+
+/**
+ * Close and release all the resources of
+ * the ASO flow meter management structure.
+ *
+ * @param[in] sh
+ *   Pointer to mlx5_dev_ctx_shared object to free.
+ */
+static void
+mlx5_aso_flow_mtrs_mng_close(struct mlx5_dev_ctx_shared *sh)
+{
+	struct mlx5_aso_mtr_pool *mtr_pool;
+	struct mlx5_flow_mtr_mng *mtrmng = sh->mtrmng;
+	uint32_t idx;
+#ifdef HAVE_MLX5_DR_CREATE_ACTION_ASO
+	struct mlx5_aso_mtr *aso_mtr;
+	int i;
+#endif /* HAVE_MLX5_DR_CREATE_ACTION_ASO */
+
+	if (sh->meter_aso_en) {
+		mlx5_aso_queue_uninit(sh, ASO_OPC_MOD_POLICER);
+		idx = mtrmng->pools_mng.n_valid;
+		while (idx--) {
+			mtr_pool = mtrmng->pools_mng.pools[idx];
+#ifdef HAVE_MLX5_DR_CREATE_ACTION_ASO
+			for (i = 0; i < MLX5_ASO_MTRS_PER_POOL; i++) {
+				aso_mtr = &mtr_pool->mtrs[i];
+				if (aso_mtr->fm.meter_action)
+					claim_zero
+					(mlx5_glue->destroy_flow_action
+					(aso_mtr->fm.meter_action));
+			}
+#endif /* HAVE_MLX5_DR_CREATE_ACTION_ASO */
+			claim_zero(mlx5_devx_cmd_destroy
+						(mtr_pool->devx_obj));
+			mtrmng->pools_mng.n_valid--;
+			mlx5_free(mtr_pool);
+		}
+		mlx5_free(sh->mtrmng->pools_mng.pools);
+	}
+	mlx5_free(sh->mtrmng);
+	sh->mtrmng = NULL;
+}
+
+/* Send FLOW_AGED event if needed. */
+void
+mlx5_age_event_prepare(struct mlx5_dev_ctx_shared *sh)
+{
+	struct mlx5_age_info *age_info;
+	uint32_t i;
+
+	for (i = 0; i < sh->max_port; i++) {
+		age_info = &sh->port[i].age_info;
+		if (!MLX5_AGE_GET(age_info, MLX5_AGE_EVENT_NEW))
+			continue;
+		MLX5_AGE_UNSET(age_info, MLX5_AGE_EVENT_NEW);
+		if (MLX5_AGE_GET(age_info, MLX5_AGE_TRIGGER)) {
+			MLX5_AGE_UNSET(age_info, MLX5_AGE_TRIGGER);
+			rte_eth_dev_callback_process
+				(&rte_eth_devices[sh->port[i].devx_ih_port_id],
+				RTE_ETH_EVENT_FLOW_AGED, NULL);
+		}
+	}
+}
+
+/*
+ * Initialize the ASO connection tracking structure.
+ *
+ * @param[in] sh
+ *   Pointer to mlx5_dev_ctx_shared object.
+ *
+ * @return
+ *   0 on success, a negative errno value otherwise and rte_errno is set.
+ */
+int
+mlx5_flow_aso_ct_mng_init(struct mlx5_dev_ctx_shared *sh)
+{
+	int err;
+
+	if (sh->ct_mng)
+		return 0;
+	sh->ct_mng = mlx5_malloc(MLX5_MEM_ZERO, sizeof(*sh->ct_mng),
+				 RTE_CACHE_LINE_SIZE, SOCKET_ID_ANY);
+	if (!sh->ct_mng) {
+		DRV_LOG(ERR, "ASO CT management allocation failed.");
+		rte_errno = ENOMEM;
+		return -rte_errno;
+	}
+	err = mlx5_aso_queue_init(sh, ASO_OPC_MOD_CONNECTION_TRACKING);
+	if (err) {
+		mlx5_free(sh->ct_mng);
+		/* rte_errno should be extracted from the failure. */
+		rte_errno = EINVAL;
+		return -rte_errno;
+	}
+	rte_spinlock_init(&sh->ct_mng->ct_sl);
+	rte_rwlock_init(&sh->ct_mng->resize_rwl);
+	LIST_INIT(&sh->ct_mng->free_cts);
+	return 0;
+}
+
+/*
+ * Close and release all the resources of the
+ * ASO connection tracking management structure.
+ *
+ * @param[in] sh
+ *   Pointer to mlx5_dev_ctx_shared object to free.
+ */
+static void
+mlx5_flow_aso_ct_mng_close(struct mlx5_dev_ctx_shared *sh)
+{
+	struct mlx5_aso_ct_pools_mng *mng = sh->ct_mng;
+	struct mlx5_aso_ct_pool *ct_pool;
+	struct mlx5_aso_ct_action *ct;
+	uint32_t idx;
+	uint32_t val;
+	uint32_t cnt;
+	int i;
+
+	mlx5_aso_queue_uninit(sh, ASO_OPC_MOD_CONNECTION_TRACKING);
+	idx = mng->next;
+	while (idx--) {
+		cnt = 0;
+		ct_pool = mng->pools[idx];
+		for (i = 0; i < MLX5_ASO_CT_ACTIONS_PER_POOL; i++) {
+			ct = &ct_pool->actions[i];
+			val = __atomic_fetch_sub(&ct->refcnt, 1,
+						 __ATOMIC_RELAXED);
+			MLX5_ASSERT(val == 1);
+			if (val > 1)
+				cnt++;
+#ifdef HAVE_MLX5_DR_ACTION_ASO_CT
+			if (ct->dr_action_orig)
+				claim_zero(mlx5_glue->destroy_flow_action
+							(ct->dr_action_orig));
+			if (ct->dr_action_rply)
+				claim_zero(mlx5_glue->destroy_flow_action
+							(ct->dr_action_rply));
+#endif
+		}
+		claim_zero(mlx5_devx_cmd_destroy(ct_pool->devx_obj));
+		if (cnt) {
+			DRV_LOG(DEBUG, "%u ASO CT objects are being used in the pool %u",
+				cnt, i);
+		}
+		mlx5_free(ct_pool);
+		/* in case of failure. */
+		mng->next--;
+	}
+	mlx5_free(mng->pools);
+	mlx5_free(mng);
+	/* Management structure must be cleared to 0s during allocation. */
+	sh->ct_mng = NULL;
+}
+
+/**
  * Initialize the flow resources' indexed mempool.
  *
  * @param[in] sh
  *   Pointer to mlx5_dev_ctx_shared object.
- * @param[in] sh
+ * @param[in] config
  *   Pointer to user dev config.
  */
 static void
@@ -727,6 +938,7 @@ mlx5_alloc_rxtx_uars(struct mlx5_dev_ctx_shared *sh,
 {
 	uint32_t uar_mapping, retry;
 	int err = 0;
+	void *base_addr;
 
 	for (retry = 0; retry < MLX5_ALLOC_UAR_RETRY; ++retry) {
 #ifdef MLX5DV_UAR_ALLOC_TYPE_NC
@@ -761,7 +973,7 @@ mlx5_alloc_rxtx_uars(struct mlx5_dev_ctx_shared *sh,
 			 * the UAR mapping type into account on UAR setup
 			 * on queue creation.
 			 */
-			DRV_LOG(WARNING, "Failed to allocate Tx DevX UAR (BF)");
+			DRV_LOG(DEBUG, "Failed to allocate Tx DevX UAR (BF)");
 			uar_mapping = MLX5DV_UAR_ALLOC_TYPE_NC;
 			sh->tx_uar = mlx5_glue->devx_alloc_uar
 							(sh->ctx, uar_mapping);
@@ -774,7 +986,7 @@ mlx5_alloc_rxtx_uars(struct mlx5_dev_ctx_shared *sh,
 			 * If Verbs/kernel does not support "Non-Cached"
 			 * try the "Write-Combining".
 			 */
-			DRV_LOG(WARNING, "Failed to allocate Tx DevX UAR (NC)");
+			DRV_LOG(DEBUG, "Failed to allocate Tx DevX UAR (NC)");
 			uar_mapping = MLX5DV_UAR_ALLOC_TYPE_BF;
 			sh->tx_uar = mlx5_glue->devx_alloc_uar
 							(sh->ctx, uar_mapping);
@@ -785,14 +997,15 @@ mlx5_alloc_rxtx_uars(struct mlx5_dev_ctx_shared *sh,
 			err = ENOMEM;
 			goto exit;
 		}
-		if (sh->tx_uar->base_addr)
+		base_addr = mlx5_os_get_devx_uar_base_addr(sh->tx_uar);
+		if (base_addr)
 			break;
 		/*
 		 * The UARs are allocated by rdma_core within the
 		 * IB device context, on context closure all UARs
 		 * will be freed, should be no memory/object leakage.
 		 */
-		DRV_LOG(WARNING, "Retrying to allocate Tx DevX UAR");
+		DRV_LOG(DEBUG, "Retrying to allocate Tx DevX UAR");
 		sh->tx_uar = NULL;
 	}
 	/* Check whether we finally succeeded with valid UAR allocation. */
@@ -813,7 +1026,7 @@ mlx5_alloc_rxtx_uars(struct mlx5_dev_ctx_shared *sh,
 			 * should be no datapath noticeable impact,
 			 * can try "Non-Cached" mapping safely.
 			 */
-			DRV_LOG(WARNING, "Failed to allocate Rx DevX UAR (BF)");
+			DRV_LOG(DEBUG, "Failed to allocate Rx DevX UAR (BF)");
 			uar_mapping = MLX5DV_UAR_ALLOC_TYPE_NC;
 			sh->devx_rx_uar = mlx5_glue->devx_alloc_uar
 							(sh->ctx, uar_mapping);
@@ -824,14 +1037,15 @@ mlx5_alloc_rxtx_uars(struct mlx5_dev_ctx_shared *sh,
 			err = ENOMEM;
 			goto exit;
 		}
-		if (sh->devx_rx_uar->base_addr)
+		base_addr = mlx5_os_get_devx_uar_base_addr(sh->devx_rx_uar);
+		if (base_addr)
 			break;
 		/*
 		 * The UARs are allocated by rdma_core within the
 		 * IB device context, on context closure all UARs
 		 * will be freed, should be no memory/object leakage.
 		 */
-		DRV_LOG(WARNING, "Retrying to allocate Rx DevX UAR");
+		DRV_LOG(DEBUG, "Retrying to allocate Rx DevX UAR");
 		sh->devx_rx_uar = NULL;
 	}
 	/* Check whether we finally succeeded with valid UAR allocation. */
@@ -896,6 +1110,8 @@ mlx5_alloc_shared_dev_ctx(const struct mlx5_dev_spawn_data *spawn,
 		rte_errno  = ENOMEM;
 		goto exit;
 	}
+	if (spawn->bond_info)
+		sh->bond = *spawn->bond_info;
 	err = mlx5_os_open_device(spawn, config, sh);
 	if (!sh->ctx)
 		goto error;
@@ -919,7 +1135,7 @@ mlx5_alloc_shared_dev_ctx(const struct mlx5_dev_spawn_data *spawn,
 		sh->port[i].ih_port_id = RTE_MAX_ETHPORTS;
 		sh->port[i].devx_ih_port_id = RTE_MAX_ETHPORTS;
 	}
-	sh->pd = mlx5_glue->alloc_pd(sh->ctx);
+	sh->pd = mlx5_os_alloc_pd(sh->ctx);
 	if (sh->pd == NULL) {
 		DRV_LOG(ERR, "PD allocation failure");
 		err = ENOMEM;
@@ -947,15 +1163,11 @@ mlx5_alloc_shared_dev_ctx(const struct mlx5_dev_spawn_data *spawn,
 		err = mlx5_alloc_rxtx_uars(sh, config);
 		if (err)
 			goto error;
-		MLX5_ASSERT(sh->tx_uar && sh->tx_uar->base_addr);
-		MLX5_ASSERT(sh->devx_rx_uar && sh->devx_rx_uar->base_addr);
-	}
-	sh->flow_id_pool = mlx5_flow_id_pool_alloc
-					((1 << HAIRPIN_FLOW_ID_BITS) - 1);
-	if (!sh->flow_id_pool) {
-		DRV_LOG(ERR, "can't create flow id pool");
-		err = ENOMEM;
-		goto error;
+		MLX5_ASSERT(sh->tx_uar);
+		MLX5_ASSERT(mlx5_os_get_devx_uar_base_addr(sh->tx_uar));
+
+		MLX5_ASSERT(sh->devx_rx_uar);
+		MLX5_ASSERT(mlx5_os_get_devx_uar_base_addr(sh->devx_rx_uar));
 	}
 #ifndef RTE_ARCH_64
 	/* Initialize UAR access locks for 32bit implementations. */
@@ -987,6 +1199,11 @@ mlx5_alloc_shared_dev_ctx(const struct mlx5_dev_spawn_data *spawn,
 		err = rte_errno;
 		goto error;
 	}
+	if (LIST_EMPTY(&mlx5_dev_ctx_list)) {
+		err = mlx5_flow_os_init_workspace_once();
+		if (err)
+			goto error;
+	}
 	mlx5_flow_aging_init(sh);
 	mlx5_flow_counters_mng_init(sh);
 	mlx5_flow_ipool_create(sh, config);
@@ -997,6 +1214,7 @@ mlx5_alloc_shared_dev_ctx(const struct mlx5_dev_spawn_data *spawn,
 	rte_rwlock_write_unlock(&mlx5_shared_data->mem_event_rwlock);
 	/* Add context to the global device list. */
 	LIST_INSERT_HEAD(&mlx5_dev_ctx_list, sh, next);
+	rte_spinlock_init(&sh->geneve_tlv_opt_sl);
 exit:
 	pthread_mutex_unlock(&mlx5_dev_ctx_list_mutex);
 	return sh;
@@ -1015,11 +1233,9 @@ error:
 	if (sh->tx_uar)
 		mlx5_glue->devx_free_uar(sh->tx_uar);
 	if (sh->pd)
-		claim_zero(mlx5_glue->dealloc_pd(sh->pd));
+		claim_zero(mlx5_os_dealloc_pd(sh->pd));
 	if (sh->ctx)
 		claim_zero(mlx5_glue->close_device(sh->ctx));
-	if (sh->flow_id_pool)
-		mlx5_flow_id_pool_release(sh->flow_id_pool);
 	mlx5_free(sh);
 	MLX5_ASSERT(err > 0);
 	rte_errno = err;
@@ -1064,12 +1280,21 @@ mlx5_free_shared_dev_ctx(struct mlx5_dev_ctx_shared *sh)
 	mlx5_mr_release_cache(&sh->share_cache);
 	/* Remove context from the global device list. */
 	LIST_REMOVE(sh, next);
+	/* Release flow workspaces objects on the last device. */
+	if (LIST_EMPTY(&mlx5_dev_ctx_list))
+		mlx5_flow_os_release_workspace();
 	pthread_mutex_unlock(&mlx5_dev_ctx_list_mutex);
 	/*
 	 *  Ensure there is no async event handler installed.
 	 *  Only primary process handles async device events.
 	 **/
 	mlx5_flow_counters_mng_close(sh);
+	if (sh->aso_age_mng) {
+		mlx5_flow_aso_age_mng_close(sh);
+		sh->aso_age_mng = NULL;
+	}
+	if (sh->mtrmng)
+		mlx5_aso_flow_mtrs_mng_close(sh);
 	mlx5_flow_ipool_destroy(sh);
 	mlx5_os_dev_shared_handler_uninstall(sh);
 	if (sh->cnt_id_tbl) {
@@ -1081,7 +1306,7 @@ mlx5_free_shared_dev_ctx(struct mlx5_dev_ctx_shared *sh)
 		sh->tx_uar = NULL;
 	}
 	if (sh->pd)
-		claim_zero(mlx5_glue->dealloc_pd(sh->pd));
+		claim_zero(mlx5_os_dealloc_pd(sh->pd));
 	if (sh->tis)
 		claim_zero(mlx5_devx_cmd_destroy(sh->tis));
 	if (sh->td)
@@ -1090,8 +1315,7 @@ mlx5_free_shared_dev_ctx(struct mlx5_dev_ctx_shared *sh)
 		mlx5_glue->devx_free_uar(sh->devx_rx_uar);
 	if (sh->ctx)
 		claim_zero(mlx5_glue->close_device(sh->ctx));
-	if (sh->flow_id_pool)
-		mlx5_flow_id_pool_release(sh->flow_id_pool);
+	MLX5_ASSERT(sh->geneve_tlv_option_resource == NULL);
 	pthread_mutex_destroy(&sh->txpp.mutex);
 	mlx5_free(sh);
 	return;
@@ -1100,7 +1324,7 @@ exit:
 }
 
 /**
- * Destroy table hash list and all the root entries per domain.
+ * Destroy table hash list.
  *
  * @param[in] priv
  *   Pointer to the private device data structure.
@@ -1109,47 +1333,10 @@ void
 mlx5_free_table_hash_list(struct mlx5_priv *priv)
 {
 	struct mlx5_dev_ctx_shared *sh = priv->sh;
-	struct mlx5_flow_tbl_data_entry *tbl_data;
-	union mlx5_flow_tbl_key table_key = {
-		{
-			.table_id = 0,
-			.reserved = 0,
-			.domain = 0,
-			.direction = 0,
-		}
-	};
-	struct mlx5_hlist_entry *pos;
 
 	if (!sh->flow_tbls)
 		return;
-	pos = mlx5_hlist_lookup(sh->flow_tbls, table_key.v64);
-	if (pos) {
-		tbl_data = container_of(pos, struct mlx5_flow_tbl_data_entry,
-					entry);
-		MLX5_ASSERT(tbl_data);
-		mlx5_hlist_remove(sh->flow_tbls, pos);
-		mlx5_free(tbl_data);
-	}
-	table_key.direction = 1;
-	pos = mlx5_hlist_lookup(sh->flow_tbls, table_key.v64);
-	if (pos) {
-		tbl_data = container_of(pos, struct mlx5_flow_tbl_data_entry,
-					entry);
-		MLX5_ASSERT(tbl_data);
-		mlx5_hlist_remove(sh->flow_tbls, pos);
-		mlx5_free(tbl_data);
-	}
-	table_key.direction = 0;
-	table_key.domain = 1;
-	pos = mlx5_hlist_lookup(sh->flow_tbls, table_key.v64);
-	if (pos) {
-		tbl_data = container_of(pos, struct mlx5_flow_tbl_data_entry,
-					entry);
-		MLX5_ASSERT(tbl_data);
-		mlx5_hlist_remove(sh->flow_tbls, pos);
-		mlx5_free(tbl_data);
-	}
-	mlx5_hlist_destroy(sh->flow_tbls, NULL, NULL);
+	mlx5_hlist_destroy(sh->flow_tbls);
 }
 
 /**
@@ -1163,79 +1350,49 @@ mlx5_free_table_hash_list(struct mlx5_priv *priv)
  *   Zero on success, positive error code otherwise.
  */
 int
-mlx5_alloc_table_hash_list(struct mlx5_priv *priv)
+mlx5_alloc_table_hash_list(struct mlx5_priv *priv __rte_unused)
 {
+	int err = 0;
+	/* Tables are only used in DV and DR modes. */
+#if defined(HAVE_IBV_FLOW_DV_SUPPORT) || !defined(HAVE_INFINIBAND_VERBS_H)
 	struct mlx5_dev_ctx_shared *sh = priv->sh;
 	char s[MLX5_HLIST_NAMESIZE];
-	int err = 0;
 
 	MLX5_ASSERT(sh);
 	snprintf(s, sizeof(s), "%s_flow_table", priv->sh->ibdev_name);
-	sh->flow_tbls = mlx5_hlist_create(s, MLX5_FLOW_TABLE_HLIST_ARRAY_SIZE);
+	sh->flow_tbls = mlx5_hlist_create(s, MLX5_FLOW_TABLE_HLIST_ARRAY_SIZE,
+					  0, 0, flow_dv_tbl_create_cb,
+					  flow_dv_tbl_match_cb,
+					  flow_dv_tbl_remove_cb);
 	if (!sh->flow_tbls) {
 		DRV_LOG(ERR, "flow tables with hash creation failed.");
 		err = ENOMEM;
 		return err;
 	}
+	sh->flow_tbls->ctx = sh;
 #ifndef HAVE_MLX5DV_DR
+	struct rte_flow_error error;
+	struct rte_eth_dev *dev = &rte_eth_devices[priv->dev_data->port_id];
+
 	/*
 	 * In case we have not DR support, the zero tables should be created
 	 * because DV expect to see them even if they cannot be created by
 	 * RDMA-CORE.
 	 */
-	union mlx5_flow_tbl_key table_key = {
-		{
-			.table_id = 0,
-			.reserved = 0,
-			.domain = 0,
-			.direction = 0,
-		}
-	};
-	struct mlx5_flow_tbl_data_entry *tbl_data = mlx5_malloc(MLX5_MEM_ZERO,
-							  sizeof(*tbl_data), 0,
-							  SOCKET_ID_ANY);
-
-	if (!tbl_data) {
+	if (!flow_dv_tbl_resource_get(dev, 0, 0, 0, 0,
+		NULL, 0, 1, 0, &error) ||
+	    !flow_dv_tbl_resource_get(dev, 0, 1, 0, 0,
+		NULL, 0, 1, 0, &error) ||
+	    !flow_dv_tbl_resource_get(dev, 0, 0, 1, 0,
+		NULL, 0, 1, 0, &error)) {
 		err = ENOMEM;
 		goto error;
 	}
-	tbl_data->entry.key = table_key.v64;
-	err = mlx5_hlist_insert(sh->flow_tbls, &tbl_data->entry);
-	if (err)
-		goto error;
-	rte_atomic32_init(&tbl_data->tbl.refcnt);
-	rte_atomic32_inc(&tbl_data->tbl.refcnt);
-	table_key.direction = 1;
-	tbl_data = mlx5_malloc(MLX5_MEM_ZERO, sizeof(*tbl_data), 0,
-			       SOCKET_ID_ANY);
-	if (!tbl_data) {
-		err = ENOMEM;
-		goto error;
-	}
-	tbl_data->entry.key = table_key.v64;
-	err = mlx5_hlist_insert(sh->flow_tbls, &tbl_data->entry);
-	if (err)
-		goto error;
-	rte_atomic32_init(&tbl_data->tbl.refcnt);
-	rte_atomic32_inc(&tbl_data->tbl.refcnt);
-	table_key.direction = 0;
-	table_key.domain = 1;
-	tbl_data = mlx5_malloc(MLX5_MEM_ZERO, sizeof(*tbl_data), 0,
-			       SOCKET_ID_ANY);
-	if (!tbl_data) {
-		err = ENOMEM;
-		goto error;
-	}
-	tbl_data->entry.key = table_key.v64;
-	err = mlx5_hlist_insert(sh->flow_tbls, &tbl_data->entry);
-	if (err)
-		goto error;
-	rte_atomic32_init(&tbl_data->tbl.refcnt);
-	rte_atomic32_inc(&tbl_data->tbl.refcnt);
 	return err;
 error:
 	mlx5_free_table_hash_list(priv);
 #endif /* HAVE_MLX5DV_DR */
+#endif
 	return err;
 }
 
@@ -1305,13 +1462,13 @@ mlx5_proc_priv_init(struct rte_eth_dev *dev)
 	 */
 	ppriv_size =
 		sizeof(struct mlx5_proc_priv) + priv->txqs_n * sizeof(void *);
-	ppriv = mlx5_malloc(MLX5_MEM_RTE, ppriv_size, RTE_CACHE_LINE_SIZE,
-			    dev->device->numa_node);
+	ppriv = mlx5_malloc(MLX5_MEM_RTE | MLX5_MEM_ZERO, ppriv_size,
+			    RTE_CACHE_LINE_SIZE, dev->device->numa_node);
 	if (!ppriv) {
 		rte_errno = ENOMEM;
 		return -rte_errno;
 	}
-	ppriv->uar_table_sz = ppriv_size;
+	ppriv->uar_table_sz = priv->txqs_n;
 	dev->process_private = ppriv;
 	return 0;
 }
@@ -1322,7 +1479,7 @@ mlx5_proc_priv_init(struct rte_eth_dev *dev)
  * @param dev
  *   Pointer to Ethernet device structure.
  */
-static void
+void
 mlx5_proc_priv_uninit(struct rte_eth_dev *dev)
 {
 	if (!dev->process_private)
@@ -1339,7 +1496,7 @@ mlx5_proc_priv_uninit(struct rte_eth_dev *dev)
  * @param dev
  *   Pointer to Ethernet device structure.
  */
-void
+int
 mlx5_dev_close(struct rte_eth_dev *dev)
 {
 	struct mlx5_priv *priv = dev->data->dev_private;
@@ -1349,14 +1506,14 @@ mlx5_dev_close(struct rte_eth_dev *dev)
 	if (rte_eal_process_type() == RTE_PROC_SECONDARY) {
 		/* Check if process_private released. */
 		if (!dev->process_private)
-			return;
+			return 0;
 		mlx5_tx_uar_uninit_secondary(dev);
 		mlx5_proc_priv_uninit(dev);
 		rte_eth_dev_release_port(dev);
-		return;
+		return 0;
 	}
 	if (!priv->sh)
-		return;
+		return 0;
 	DRV_LOG(DEBUG, "port %u closing device \"%s\"",
 		dev->data->port_id,
 		((priv->sh->ctx != NULL) ?
@@ -1372,9 +1529,8 @@ mlx5_dev_close(struct rte_eth_dev *dev)
 	 * then this will return directly without any action.
 	 */
 	mlx5_flow_list_flush(dev, &priv->flows, true);
+	mlx5_action_handle_flush(dev);
 	mlx5_flow_meter_flush(dev, NULL);
-	/* Free the intermediate buffers for flow creation. */
-	mlx5_flow_free_intermediate(dev);
 	/* Prevent crashes when queues are still in use. */
 	dev->rx_pkt_burst = removed_rx_burst;
 	dev->tx_pkt_burst = removed_tx_burst;
@@ -1385,7 +1541,7 @@ mlx5_dev_close(struct rte_eth_dev *dev)
 	mlx5_flex_parser_ecpri_release(dev);
 	if (priv->rxqs != NULL) {
 		/* XXX race condition if mlx5_rx_burst() is still running. */
-		usleep(1000);
+		rte_delay_us_sleep(1000);
 		for (i = 0; (i != priv->rxqs_n); ++i)
 			mlx5_rxq_release(dev, i);
 		priv->rxqs_n = 0;
@@ -1393,25 +1549,31 @@ mlx5_dev_close(struct rte_eth_dev *dev)
 	}
 	if (priv->txqs != NULL) {
 		/* XXX race condition if mlx5_tx_burst() is still running. */
-		usleep(1000);
+		rte_delay_us_sleep(1000);
 		for (i = 0; (i != priv->txqs_n); ++i)
 			mlx5_txq_release(dev, i);
 		priv->txqs_n = 0;
 		priv->txqs = NULL;
 	}
 	mlx5_proc_priv_uninit(dev);
+	if (priv->q_counters) {
+		mlx5_devx_cmd_destroy(priv->q_counters);
+		priv->q_counters = NULL;
+	}
+	if (priv->drop_queue.hrxq)
+		mlx5_drop_action_destroy(dev);
 	if (priv->mreg_cp_tbl)
-		mlx5_hlist_destroy(priv->mreg_cp_tbl, NULL, NULL);
+		mlx5_hlist_destroy(priv->mreg_cp_tbl);
 	mlx5_mprq_free_mp(dev);
+	if (priv->sh->ct_mng)
+		mlx5_flow_aso_ct_mng_close(priv->sh);
 	mlx5_os_free_shared_dr(priv);
 	if (priv->rss_conf.rss_key != NULL)
 		mlx5_free(priv->rss_conf.rss_key);
 	if (priv->reta_idx != NULL)
 		mlx5_free(priv->reta_idx);
 	if (priv->config.vf)
-		mlx5_nl_mac_addr_flush(priv->nl_socket_route, mlx5_ifindex(dev),
-				       dev->data->mac_addrs,
-				       MLX5_MAX_MAC_ADDRESSES, priv->mac_own);
+		mlx5_os_mac_addr_flush(dev);
 	if (priv->nl_socket_route >= 0)
 		close(priv->nl_socket_route);
 	if (priv->nl_socket_rdma >= 0)
@@ -1446,10 +1608,11 @@ mlx5_dev_close(struct rte_eth_dev *dev)
 	if (ret)
 		DRV_LOG(WARNING, "port %u some flows still remain",
 			dev->data->port_id);
+	mlx5_cache_list_destroy(&priv->hrxqs);
 	/*
 	 * Free the shared context in last turn, because the cleanup
 	 * routines above may use some shared fields, like
-	 * mlx5_nl_mac_addr_flush() uses ibdev_path for retrieveing
+	 * mlx5_os_mac_addr_flush() uses ibdev_path for retrieveing
 	 * ifindex if Netlink fails.
 	 */
 	mlx5_free_shared_dev_ctx(priv->sh);
@@ -1479,7 +1642,161 @@ mlx5_dev_close(struct rte_eth_dev *dev)
 	 * it is freed when dev_private is freed.
 	 */
 	dev->data->mac_addrs = NULL;
+	return 0;
 }
+
+const struct eth_dev_ops mlx5_dev_ops = {
+	.dev_configure = mlx5_dev_configure,
+	.dev_start = mlx5_dev_start,
+	.dev_stop = mlx5_dev_stop,
+	.dev_set_link_down = mlx5_set_link_down,
+	.dev_set_link_up = mlx5_set_link_up,
+	.dev_close = mlx5_dev_close,
+	.promiscuous_enable = mlx5_promiscuous_enable,
+	.promiscuous_disable = mlx5_promiscuous_disable,
+	.allmulticast_enable = mlx5_allmulticast_enable,
+	.allmulticast_disable = mlx5_allmulticast_disable,
+	.link_update = mlx5_link_update,
+	.stats_get = mlx5_stats_get,
+	.stats_reset = mlx5_stats_reset,
+	.xstats_get = mlx5_xstats_get,
+	.xstats_reset = mlx5_xstats_reset,
+	.xstats_get_names = mlx5_xstats_get_names,
+	.fw_version_get = mlx5_fw_version_get,
+	.dev_infos_get = mlx5_dev_infos_get,
+	.representor_info_get = mlx5_representor_info_get,
+	.read_clock = mlx5_txpp_read_clock,
+	.dev_supported_ptypes_get = mlx5_dev_supported_ptypes_get,
+	.vlan_filter_set = mlx5_vlan_filter_set,
+	.rx_queue_setup = mlx5_rx_queue_setup,
+	.rx_hairpin_queue_setup = mlx5_rx_hairpin_queue_setup,
+	.tx_queue_setup = mlx5_tx_queue_setup,
+	.tx_hairpin_queue_setup = mlx5_tx_hairpin_queue_setup,
+	.rx_queue_release = mlx5_rx_queue_release,
+	.tx_queue_release = mlx5_tx_queue_release,
+	.rx_queue_start = mlx5_rx_queue_start,
+	.rx_queue_stop = mlx5_rx_queue_stop,
+	.tx_queue_start = mlx5_tx_queue_start,
+	.tx_queue_stop = mlx5_tx_queue_stop,
+	.flow_ctrl_get = mlx5_dev_get_flow_ctrl,
+	.flow_ctrl_set = mlx5_dev_set_flow_ctrl,
+	.mac_addr_remove = mlx5_mac_addr_remove,
+	.mac_addr_add = mlx5_mac_addr_add,
+	.mac_addr_set = mlx5_mac_addr_set,
+	.set_mc_addr_list = mlx5_set_mc_addr_list,
+	.mtu_set = mlx5_dev_set_mtu,
+	.vlan_strip_queue_set = mlx5_vlan_strip_queue_set,
+	.vlan_offload_set = mlx5_vlan_offload_set,
+	.reta_update = mlx5_dev_rss_reta_update,
+	.reta_query = mlx5_dev_rss_reta_query,
+	.rss_hash_update = mlx5_rss_hash_update,
+	.rss_hash_conf_get = mlx5_rss_hash_conf_get,
+	.flow_ops_get = mlx5_flow_ops_get,
+	.rxq_info_get = mlx5_rxq_info_get,
+	.txq_info_get = mlx5_txq_info_get,
+	.rx_burst_mode_get = mlx5_rx_burst_mode_get,
+	.tx_burst_mode_get = mlx5_tx_burst_mode_get,
+	.rx_queue_intr_enable = mlx5_rx_intr_enable,
+	.rx_queue_intr_disable = mlx5_rx_intr_disable,
+	.is_removed = mlx5_is_removed,
+	.udp_tunnel_port_add  = mlx5_udp_tunnel_port_add,
+	.get_module_info = mlx5_get_module_info,
+	.get_module_eeprom = mlx5_get_module_eeprom,
+	.hairpin_cap_get = mlx5_hairpin_cap_get,
+	.mtr_ops_get = mlx5_flow_meter_ops_get,
+	.hairpin_bind = mlx5_hairpin_bind,
+	.hairpin_unbind = mlx5_hairpin_unbind,
+	.hairpin_get_peer_ports = mlx5_hairpin_get_peer_ports,
+	.hairpin_queue_peer_update = mlx5_hairpin_queue_peer_update,
+	.hairpin_queue_peer_bind = mlx5_hairpin_queue_peer_bind,
+	.hairpin_queue_peer_unbind = mlx5_hairpin_queue_peer_unbind,
+	.get_monitor_addr = mlx5_get_monitor_addr,
+};
+
+/* Available operations from secondary process. */
+const struct eth_dev_ops mlx5_dev_sec_ops = {
+	.stats_get = mlx5_stats_get,
+	.stats_reset = mlx5_stats_reset,
+	.xstats_get = mlx5_xstats_get,
+	.xstats_reset = mlx5_xstats_reset,
+	.xstats_get_names = mlx5_xstats_get_names,
+	.fw_version_get = mlx5_fw_version_get,
+	.dev_infos_get = mlx5_dev_infos_get,
+	.read_clock = mlx5_txpp_read_clock,
+	.rx_queue_start = mlx5_rx_queue_start,
+	.rx_queue_stop = mlx5_rx_queue_stop,
+	.tx_queue_start = mlx5_tx_queue_start,
+	.tx_queue_stop = mlx5_tx_queue_stop,
+	.rxq_info_get = mlx5_rxq_info_get,
+	.txq_info_get = mlx5_txq_info_get,
+	.rx_burst_mode_get = mlx5_rx_burst_mode_get,
+	.tx_burst_mode_get = mlx5_tx_burst_mode_get,
+	.get_module_info = mlx5_get_module_info,
+	.get_module_eeprom = mlx5_get_module_eeprom,
+};
+
+/* Available operations in flow isolated mode. */
+const struct eth_dev_ops mlx5_dev_ops_isolate = {
+	.dev_configure = mlx5_dev_configure,
+	.dev_start = mlx5_dev_start,
+	.dev_stop = mlx5_dev_stop,
+	.dev_set_link_down = mlx5_set_link_down,
+	.dev_set_link_up = mlx5_set_link_up,
+	.dev_close = mlx5_dev_close,
+	.promiscuous_enable = mlx5_promiscuous_enable,
+	.promiscuous_disable = mlx5_promiscuous_disable,
+	.allmulticast_enable = mlx5_allmulticast_enable,
+	.allmulticast_disable = mlx5_allmulticast_disable,
+	.link_update = mlx5_link_update,
+	.stats_get = mlx5_stats_get,
+	.stats_reset = mlx5_stats_reset,
+	.xstats_get = mlx5_xstats_get,
+	.xstats_reset = mlx5_xstats_reset,
+	.xstats_get_names = mlx5_xstats_get_names,
+	.fw_version_get = mlx5_fw_version_get,
+	.dev_infos_get = mlx5_dev_infos_get,
+	.read_clock = mlx5_txpp_read_clock,
+	.dev_supported_ptypes_get = mlx5_dev_supported_ptypes_get,
+	.vlan_filter_set = mlx5_vlan_filter_set,
+	.rx_queue_setup = mlx5_rx_queue_setup,
+	.rx_hairpin_queue_setup = mlx5_rx_hairpin_queue_setup,
+	.tx_queue_setup = mlx5_tx_queue_setup,
+	.tx_hairpin_queue_setup = mlx5_tx_hairpin_queue_setup,
+	.rx_queue_release = mlx5_rx_queue_release,
+	.tx_queue_release = mlx5_tx_queue_release,
+	.rx_queue_start = mlx5_rx_queue_start,
+	.rx_queue_stop = mlx5_rx_queue_stop,
+	.tx_queue_start = mlx5_tx_queue_start,
+	.tx_queue_stop = mlx5_tx_queue_stop,
+	.flow_ctrl_get = mlx5_dev_get_flow_ctrl,
+	.flow_ctrl_set = mlx5_dev_set_flow_ctrl,
+	.mac_addr_remove = mlx5_mac_addr_remove,
+	.mac_addr_add = mlx5_mac_addr_add,
+	.mac_addr_set = mlx5_mac_addr_set,
+	.set_mc_addr_list = mlx5_set_mc_addr_list,
+	.mtu_set = mlx5_dev_set_mtu,
+	.vlan_strip_queue_set = mlx5_vlan_strip_queue_set,
+	.vlan_offload_set = mlx5_vlan_offload_set,
+	.flow_ops_get = mlx5_flow_ops_get,
+	.rxq_info_get = mlx5_rxq_info_get,
+	.txq_info_get = mlx5_txq_info_get,
+	.rx_burst_mode_get = mlx5_rx_burst_mode_get,
+	.tx_burst_mode_get = mlx5_tx_burst_mode_get,
+	.rx_queue_intr_enable = mlx5_rx_intr_enable,
+	.rx_queue_intr_disable = mlx5_rx_intr_disable,
+	.is_removed = mlx5_is_removed,
+	.get_module_info = mlx5_get_module_info,
+	.get_module_eeprom = mlx5_get_module_eeprom,
+	.hairpin_cap_get = mlx5_hairpin_cap_get,
+	.mtr_ops_get = mlx5_flow_meter_ops_get,
+	.hairpin_bind = mlx5_hairpin_bind,
+	.hairpin_unbind = mlx5_hairpin_unbind,
+	.hairpin_get_peer_ports = mlx5_hairpin_get_peer_ports,
+	.hairpin_queue_peer_update = mlx5_hairpin_queue_peer_update,
+	.hairpin_queue_peer_bind = mlx5_hairpin_queue_peer_bind,
+	.hairpin_queue_peer_unbind = mlx5_hairpin_queue_peer_unbind,
+	.get_monitor_addr = mlx5_get_monitor_addr,
+};
 
 /**
  * Verify and store value for device argument.
@@ -1521,9 +1838,14 @@ mlx5_args_check(const char *key, const char *val, void *opaque)
 	mod = tmp >= 0 ? tmp : -tmp;
 	/*完成配置设定*/
 	if (strcmp(MLX5_RXQ_CQE_COMP_EN, key) == 0) {
+		if (tmp > MLX5_CQE_RESP_FORMAT_L34H_STRIDX) {
+			DRV_LOG(ERR, "invalid CQE compression "
+				     "format parameter");
+			rte_errno = EINVAL;
+			return -rte_errno;
+		}
 		config->cqe_comp = !!tmp;
-	} else if (strcmp(MLX5_RXQ_CQE_PAD_EN, key) == 0) {
-		config->cqe_pad = !!tmp;
+		config->cqe_comp_fmt = tmp;
 	} else if (strcmp(MLX5_RXQ_PKT_PAD_EN, key) == 0) {
 		config->hw_padding = !!tmp;
 	} else if (strcmp(MLX5_RX_MPRQ_EN, key) == 0) {
@@ -1592,13 +1914,17 @@ mlx5_args_check(const char *key, const char *val, void *opaque)
 	} else if (strcmp(MLX5_DV_XMETA_EN, key) == 0) {
 		if (tmp != MLX5_XMETA_MODE_LEGACY &&
 		    tmp != MLX5_XMETA_MODE_META16 &&
-		    tmp != MLX5_XMETA_MODE_META32) {
+		    tmp != MLX5_XMETA_MODE_META32 &&
+		    tmp != MLX5_XMETA_MODE_MISS_INFO) {
 			DRV_LOG(ERR, "invalid extensive "
 				     "metadata parameter");
 			rte_errno = EINVAL;
 			return -rte_errno;
 		}
-		config->dv_xmeta_en = tmp;
+		if (tmp != MLX5_XMETA_MODE_MISS_INFO)
+			config->dv_xmeta_en = tmp;
+		else
+			config->dv_miss_info = 1;
 	} else if (strcmp(MLX5_LACP_BY_USER, key) == 0) {
 		config->lacp_by_user = !!tmp;
 	} else if (strcmp(MLX5_MR_EXT_MEMSEG_EN, key) == 0) {
@@ -1648,7 +1974,6 @@ mlx5_args(struct mlx5_dev_config *config, struct rte_devargs *devargs)
 {
 	const char **params = (const char *[]){
 		MLX5_RXQ_CQE_COMP_EN,
-		MLX5_RXQ_CQE_PAD_EN,
 		MLX5_RXQ_PKT_PAD_EN,
 		MLX5_RX_MPRQ_EN,
 		MLX5_RX_MPRQ_LOG_STRIDE_NUM,
@@ -1989,7 +2314,7 @@ mlx5_eth_find_next(uint16_t port_id, struct rte_pci_device *pci_dev)
 		    (dev->device == &pci_dev->device ||
 		     (dev->device->driver &&
 		     dev->device->driver->name &&
-		     !strcmp(dev->device->driver->name, MLX5_DRIVER_NAME))))
+		     !strcmp(dev->device->driver->name, MLX5_PCI_DRIVER_NAME))))
 			break;
 		port_id++;
 	}
@@ -2013,6 +2338,7 @@ static int
 mlx5_pci_remove(struct rte_pci_device *pci_dev)
 {
 	uint16_t port_id;
+	int ret = 0;
 
 	RTE_ETH_FOREACH_DEV_OF(port_id, &pci_dev->device) {
 		/*
@@ -2020,11 +2346,11 @@ mlx5_pci_remove(struct rte_pci_device *pci_dev)
 		 * call the close function explicitly for secondary process.
 		 */
 		if (rte_eal_process_type() == RTE_PROC_SECONDARY)
-			mlx5_dev_close(&rte_eth_devices[port_id]);
+			ret |= mlx5_dev_close(&rte_eth_devices[port_id]);
 		else
-			rte_eth_dev_close(port_id);
+			ret |= rte_eth_dev_close(port_id);
 	}
-	return 0;
+	return ret == 0 ? 0 : -EIO;
 }
 
 static const struct rte_pci_id mlx5_pci_id_map[] = {
@@ -2082,7 +2408,7 @@ static const struct rte_pci_id mlx5_pci_id_map[] = {
 	},
 	{
 		RTE_PCI_DEVICE(PCI_VENDOR_ID_MELLANOX,
-				PCI_DEVICE_ID_MELLANOX_CONNECTX6DXVF)
+				PCI_DEVICE_ID_MELLANOX_CONNECTXVF)
 	},
 	{
 		RTE_PCI_DEVICE(PCI_VENDOR_ID_MELLANOX,
@@ -2093,6 +2419,14 @@ static const struct rte_pci_id mlx5_pci_id_map[] = {
 				PCI_DEVICE_ID_MELLANOX_CONNECTX6LX)
 	},
 	{
+		RTE_PCI_DEVICE(PCI_VENDOR_ID_MELLANOX,
+				PCI_DEVICE_ID_MELLANOX_CONNECTX7)
+	},
+	{
+		RTE_PCI_DEVICE(PCI_VENDOR_ID_MELLANOX,
+				PCI_DEVICE_ID_MELLANOX_CONNECTX7BF)
+	},
+	{
 		.vendor_id = 0
 	}
 };
@@ -2101,7 +2435,7 @@ static struct mlx5_pci_driver mlx5_driver = {
 	.driver_class = MLX5_CLASS_NET,
 	.pci_driver = {
 		.driver = {
-			.name = MLX5_DRIVER_NAME,
+			.name = MLX5_PCI_DRIVER_NAME,
 		},
 		.id_table = mlx5_pci_id_map,
 		.probe = mlx5_os_pci_probe,
@@ -2120,6 +2454,7 @@ RTE_LOG_REGISTER(mlx5_logtype, pmd.net.mlx5, NOTICE)
  */
 RTE_INIT(rte_mlx5_pmd_init)
 {
+	pthread_mutex_init(&mlx5_dev_ctx_list_mutex, NULL);
 	mlx5_common_init();
 	/* Build the static tables for Verbs conversion. */
 	mlx5_set_ptype_table();

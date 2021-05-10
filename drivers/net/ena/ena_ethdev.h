@@ -100,6 +100,10 @@ struct ena_ring {
 
 	enum ena_ring_type type;
 	enum ena_admin_placement_policy_type tx_mem_queue_type;
+
+	/* Indicate there are Tx packets pushed to the device and wait for db */
+	bool pkts_without_db;
+
 	/* Holds the empty requests for TX/RX OOO completions */
 	union {
 		uint16_t *empty_tx_reqs;
@@ -171,6 +175,32 @@ struct ena_stats_dev {
 	u64 tx_drops;
 };
 
+struct ena_stats_eni {
+	/*
+	 * The number of packets shaped due to inbound aggregate BW
+	 * allowance being exceeded
+	 */
+	uint64_t bw_in_allowance_exceeded;
+	/*
+	 * The number of packets shaped due to outbound aggregate BW
+	 * allowance being exceeded
+	 */
+	uint64_t bw_out_allowance_exceeded;
+	/* The number of packets shaped due to PPS allowance being exceeded */
+	uint64_t pps_allowance_exceeded;
+	/*
+	 * The number of packets shaped due to connection tracking
+	 * allowance being exceeded and leading to failure in establishment
+	 * of new connections
+	 */
+	uint64_t conntrack_allowance_exceeded;
+	/*
+	 * The number of packets shaped due to linklocal packet rate
+	 * allowance being exceeded
+	 */
+	uint64_t linklocal_allowance_exceeded;
+};
+
 struct ena_offloads {
 	bool tso4_supported;
 	bool tx_csum_supported;
@@ -200,6 +230,13 @@ struct ena_adapter {
 	u16 max_mtu;
 	struct ena_offloads offloads;
 
+	/* The admin queue isn't protected by the lock and is used to
+	 * retrieve statistics from the device. As there is no guarantee that
+	 * application won't try to get statistics from multiple threads, it is
+	 * safer to lock the queue to avoid admin queue failure.
+	 */
+	rte_spinlock_t admin_lock;
+
 	int id_number;
 	char name[ENA_NAME_MAX_LEN];
 	u8 mac_addr[RTE_ETHER_ADDR_LEN];
@@ -224,6 +261,7 @@ struct ena_adapter {
 	uint64_t keep_alive_timeout;
 
 	struct ena_stats_dev dev_stats;
+	struct ena_stats_eni eni_stats;
 
 	bool trigger_reset;
 

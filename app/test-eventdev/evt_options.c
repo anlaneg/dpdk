@@ -34,6 +34,9 @@ evt_options_default(struct evt_options *opt)
 	opt->max_tmo_nsec = 1E5;  /* 100000ns ~100us */
 	opt->expiry_nsec = 1E4;   /* 10000ns ~10us */
 	opt->prod_type = EVT_PROD_TYPE_SYNT;
+	opt->eth_queues = 1;
+	opt->vector_size = 64;
+	opt->vector_tmo_nsec = 100E3;
 }
 
 typedef int (*option_parser_t)(struct evt_options *opt,
@@ -197,6 +200,10 @@ evt_parse_nb_timer_adptrs(struct evt_options *opt, const char *arg)
 	int ret;
 
 	ret = parser_read_uint8(&(opt->nb_timer_adptrs), arg);
+	if (opt->nb_timer_adptrs <= 0) {
+		evt_err("Number of timer adapters cannot be <= 0");
+		return -EINVAL;
+	}
 
 	return ret;
 }
@@ -214,7 +221,7 @@ evt_parse_plcores(struct evt_options *opt, const char *corelist)
 {
 	int ret;
 
-	ret = parse_lcores_list(opt->plcores, corelist);
+	ret = parse_lcores_list(opt->plcores, RTE_MAX_LCORE, corelist);
 	if (ret == -E2BIG)
 		evt_err("duplicate lcores in plcores");
 
@@ -226,7 +233,7 @@ evt_parse_work_lcores(struct evt_options *opt, const char *corelist)
 {
 	int ret;
 
-	ret = parse_lcores_list(opt->wlcores, corelist);
+	ret = parse_lcores_list(opt->wlcores, RTE_MAX_LCORE, corelist);
 	if (ret == -E2BIG)
 		evt_err("duplicate lcores in wlcores");
 
@@ -249,6 +256,43 @@ evt_parse_max_pkt_sz(struct evt_options *opt, const char *arg)
 	int ret;
 
 	ret = parser_read_uint32(&(opt->max_pkt_sz), arg);
+
+	return ret;
+}
+
+static int
+evt_parse_ena_vector(struct evt_options *opt, const char *arg __rte_unused)
+{
+	opt->ena_vector = 1;
+	return 0;
+}
+
+static int
+evt_parse_vector_size(struct evt_options *opt, const char *arg)
+{
+	int ret;
+
+	ret = parser_read_uint16(&(opt->vector_size), arg);
+
+	return ret;
+}
+
+static int
+evt_parse_vector_tmo_ns(struct evt_options *opt, const char *arg)
+{
+	int ret;
+
+	ret = parser_read_uint64(&(opt->vector_tmo_nsec), arg);
+
+	return ret;
+}
+
+static int
+evt_parse_eth_queues(struct evt_options *opt, const char *arg)
+{
+	int ret;
+
+	ret = parser_read_uint16(&(opt->eth_queues), arg);
 
 	return ret;
 }
@@ -285,6 +329,10 @@ usage(char *program)
 		"\t--expiry_nsec      : event timer expiry ns.\n"
 		"\t--mbuf_sz          : packet mbuf size.\n"
 		"\t--max_pkt_sz       : max packet size.\n"
+		"\t--nb_eth_queues    : number of ethernet Rx queues.\n"
+		"\t--enable_vector    : enable event vectorization.\n"
+		"\t--vector_size      : Max vector size.\n"
+		"\t--vector_tmo_ns    : Max vector timeout in nanoseconds\n"
 		);
 	printf("available tests:\n");
 	evt_test_dump_names();
@@ -356,6 +404,10 @@ static struct option lgopts[] = {
 	{ EVT_EXPIRY_NSEC,         1, 0, 0 },
 	{ EVT_MBUF_SZ,             1, 0, 0 },
 	{ EVT_MAX_PKT_SZ,          1, 0, 0 },
+	{ EVT_NB_ETH_QUEUES,       1, 0, 0 },
+	{ EVT_ENA_VECTOR,          0, 0, 0 },
+	{ EVT_VECTOR_SZ,           1, 0, 0 },
+	{ EVT_VECTOR_TMO,          1, 0, 0 },
 	{ EVT_HELP,                0, 0, 0 },
 	{ NULL,                    0, 0, 0 }
 };
@@ -390,6 +442,10 @@ evt_opts_parse_long(int opt_idx, struct evt_options *opt)
 		{ EVT_EXPIRY_NSEC, evt_parse_expiry_nsec},
 		{ EVT_MBUF_SZ, evt_parse_mbuf_sz},
 		{ EVT_MAX_PKT_SZ, evt_parse_max_pkt_sz},
+		{ EVT_NB_ETH_QUEUES, evt_parse_eth_queues},
+		{ EVT_ENA_VECTOR, evt_parse_ena_vector},
+		{ EVT_VECTOR_SZ, evt_parse_vector_size},
+		{ EVT_VECTOR_TMO, evt_parse_vector_tmo_ns},
 	};
 
 	for (i = 0; i < RTE_DIM(parsermap); i++) {
@@ -438,7 +494,7 @@ evt_options_dump(struct evt_options *opt)
 	evt_dump("verbose_level", "%d", opt->verbose_level);
 	evt_dump("socket_id", "%d", opt->socket_id);
 	evt_dump("pool_sz", "%d", opt->pool_sz);
-	evt_dump("master lcore", "%d", rte_get_master_lcore());
+	evt_dump("main lcore", "%d", rte_get_main_lcore());
 	evt_dump("nb_pkts", "%"PRIu64, opt->nb_pkts);
 	evt_dump("nb_timers", "%"PRIu64, opt->nb_timers);
 	evt_dump_begin("available lcores");

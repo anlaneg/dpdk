@@ -19,7 +19,6 @@
 #include "t4_regs_values.h"
 
 enum {
-	MAX_ETH_QSETS = 64,           /* # of Ethernet Tx/Rx queue sets */
 	MAX_CTRL_QUEUES = NCHAN,      /* # of control Tx queues */
 };
 
@@ -40,16 +39,14 @@ struct port_info {
 	short int xact_addr_filt;       /* index of exact MAC address filter */
 
 	u16    viid;                    /* associated virtual interface id */
-	s8     mdio_addr;               /* address of the PHY */
-	u8     port_type;               /* firmware port type */
-	u8     mod_type;                /* firmware module type */
 	u8     port_id;                 /* physical port ID */
 	u8     pidx;			/* port index for this PF */
 	u8     tx_chan;                 /* associated channel */
 
-	u8     n_rx_qsets;              /* # of rx qsets */
-	u8     n_tx_qsets;              /* # of tx qsets */
-	u8     first_qset;              /* index of first qset */
+	u16    n_rx_qsets;              /* # of rx qsets */
+	u16    n_tx_qsets;              /* # of tx qsets */
+	u16    first_rxqset;            /* index of first rxqset */
+	u16    first_txqset;            /* index of first txqset */
 
 	u16    *rss;                    /* rss table */
 	u8     rss_mode;                /* rss mode */
@@ -61,13 +58,10 @@ struct port_info {
 	 */
 	u8 vin;
 	u8 vivld;
-};
 
-/* Enable or disable autonegotiation.  If this is set to enable,
- * the forced link modes above are completely ignored.
- */
-#define AUTONEG_DISABLE         0x00
-#define AUTONEG_ENABLE          0x01
+	u8 vi_en_rx; /* Enable/disable VI Rx */
+	u8 vi_en_tx; /* Enable/disable VI Tx */
+};
 
 enum {                                 /* adapter flags */
 	FULL_INIT_DONE     = (1 << 0),
@@ -162,6 +156,7 @@ struct sge_eth_rx_stats {	/* Ethernet rx queue statistics */
 };
 
 struct sge_eth_rxq {                /* a SW Ethernet Rx queue */
+	unsigned int flags;         /* flags for state of the queue */
 	struct sge_rspq rspq;
 	struct sge_fl fl;
 	struct sge_eth_rx_stats stats;
@@ -199,8 +194,12 @@ struct tx_sw_desc {                /* SW state per Tx descriptor */
 	struct tx_eth_coal_desc coalesce;
 };
 
-enum {
+enum cxgbe_txq_state {
 	EQ_STOPPED = (1 << 0),
+};
+
+enum cxgbe_rxq_state {
+	IQ_STOPPED = (1 << 0),
 };
 
 struct eth_coalesce {
@@ -274,8 +273,8 @@ struct sge_ctrl_txq {                /* State for an SGE control Tx queue */
 } __rte_cache_aligned;
 
 struct sge {
-	struct sge_eth_txq ethtxq[MAX_ETH_QSETS];
-	struct sge_eth_rxq ethrxq[MAX_ETH_QSETS];
+	struct sge_eth_txq *ethtxq;
+	struct sge_eth_rxq *ethrxq;
 	struct sge_rspq fw_evtq __rte_cache_aligned;
 	struct sge_ctrl_txq ctrlq[MAX_CTRL_QUEUES];
 
@@ -796,7 +795,7 @@ void t4_free_mem(void *addr);
 #define t4_os_free(_ptr)       t4_free_mem((_ptr))
 
 void t4_os_portmod_changed(const struct adapter *adap, int port_id);
-void t4_os_link_changed(struct adapter *adap, int port_id, int link_stat);
+void t4_os_link_changed(struct adapter *adap, int port_id);
 
 void reclaim_completed_tx(struct sge_txq *q);
 void t4_free_sge_resources(struct adapter *adap);
@@ -821,10 +820,11 @@ int t4_sge_alloc_rxq(struct adapter *adap, struct sge_rspq *rspq, bool fwevtq,
 int t4_sge_eth_txq_start(struct sge_eth_txq *txq);
 int t4_sge_eth_txq_stop(struct sge_eth_txq *txq);
 void t4_sge_eth_txq_release(struct adapter *adap, struct sge_eth_txq *txq);
-int t4_sge_eth_rxq_start(struct adapter *adap, struct sge_rspq *rq);
-int t4_sge_eth_rxq_stop(struct adapter *adap, struct sge_rspq *rq);
+int t4_sge_eth_rxq_start(struct adapter *adap, struct sge_eth_rxq *rxq);
+int t4_sge_eth_rxq_stop(struct adapter *adap, struct sge_eth_rxq *rxq);
 void t4_sge_eth_rxq_release(struct adapter *adap, struct sge_eth_rxq *rxq);
 void t4_sge_eth_clear_queues(struct port_info *pi);
+void t4_sge_eth_release_queues(struct port_info *pi);
 int cxgb4_set_rspq_intr_params(struct sge_rspq *q, unsigned int us,
 			       unsigned int cnt);
 int cxgbe_poll(struct sge_rspq *q, struct rte_mbuf **rx_pkts,

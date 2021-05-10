@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: BSD-3-Clause
- * Copyright(c) 2019-2020 Broadcom
+ * Copyright(c) 2019-2021 Broadcom
  * All rights reserved.
  */
 
@@ -267,5 +267,21 @@ int tfp_get_fid(struct tf *tfp, uint16_t *fw_fid);
  *   -EINVAL - Parameter error
  */
 int tfp_get_fid(struct tf *tfp, uint16_t *fw_fid);
+
+/**
+ * Get the PF associated with the fw communications channel.
+ *
+ * [in] session
+ *   Pointer to session handle
+ *
+ * [out] pf
+ *   Pointer to the pf id
+ *
+ * Returns:
+ *   0       - Success
+ *   -EINVAL - Failure
+ *
+ */
+int tfp_get_pf(struct tf *tfp, uint16_t *pf);
 
 #endif /* _TFP_H_ */

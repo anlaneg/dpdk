@@ -7,8 +7,8 @@
 
 #include <rte_mbuf.h>
 #include <rte_malloc.h>
-#include <rte_ethdev_driver.h>
-#include <rte_ethdev_vdev.h>
+#include <ethdev_driver.h>
+#include <ethdev_vdev.h>
 #include <rte_tcp.h>
 #include <rte_udp.h>
 #include <rte_ip.h>
@@ -69,7 +69,7 @@ bond_ethdev_rx_burst(void *queue, struct rte_mbuf **bufs, uint16_t nb_pkts)
 	struct bond_rx_queue *bd_rx_q = (struct bond_rx_queue *)queue;
 	internals = bd_rx_q->dev_private;
 	slave_count = internals->active_slave_count;
-	active_slave = internals->active_slave;
+	active_slave = bd_rx_q->active_slave;
 
 	//自slave端口收取报文
 	for (i = 0; i < slave_count && nb_pkts; i++) {
@@ -87,8 +87,8 @@ bond_ethdev_rx_burst(void *queue, struct rte_mbuf **bufs, uint16_t nb_pkts)
 			active_slave = 0;
 	}
 
-	if (++internals->active_slave >= slave_count)
-		internals->active_slave = 0;
+	if (++bd_rx_q->active_slave >= slave_count)
+		bd_rx_q->active_slave = 0;
 	return num_rx_total;
 }
 
@@ -306,9 +306,9 @@ rx_burst_8023ad(void *queue, struct rte_mbuf **bufs, uint16_t nb_pkts,
 	memcpy(slaves, internals->active_slaves,
 			sizeof(internals->active_slaves[0]) * slave_count);
 
-	idx = internals->active_slave;
+	idx = bd_rx_q->active_slave;
 	if (idx >= slave_count) {
-		internals->active_slave = 0;
+		bd_rx_q->active_slave = 0;
 		idx = 0;
 	}
 	for (i = 0; i < slave_count && num_rx_total < nb_pkts; i++) {
@@ -371,8 +371,8 @@ rx_burst_8023ad(void *queue, struct rte_mbuf **bufs, uint16_t nb_pkts,
 			idx = 0;
 	}
 
-	if (++internals->active_slave >= slave_count)
-		internals->active_slave = 0;
+	if (++bd_rx_q->active_slave >= slave_count)
+		bd_rx_q->active_slave = 0;
 
 	return num_rx_total;
 }
@@ -538,8 +538,8 @@ mode6_debug(const char __rte_unused *info,
 static uint16_t
 bond_ethdev_rx_burst_alb(void *queue, struct rte_mbuf **bufs, uint16_t nb_pkts)
 {
-	struct bond_tx_queue *bd_tx_q = (struct bond_tx_queue *)queue;
-	struct bond_dev_private *internals = bd_tx_q->dev_private;
+	struct bond_rx_queue *bd_rx_q = (struct bond_rx_queue *)queue;
+	struct bond_dev_private *internals = bd_rx_q->dev_private;
 	struct rte_ether_hdr *eth_h;
 	uint16_t ether_type, offset;
 	uint16_t nb_recv_pkts;
@@ -1723,7 +1723,10 @@ slave_configure(struct rte_eth_dev *bonded_eth_dev,
 	struct bond_dev_private *internals = bonded_eth_dev->data->dev_private;
 
 	/* Stop slave */
-	rte_eth_dev_stop(slave_eth_dev->data->port_id);
+	errval = rte_eth_dev_stop(slave_eth_dev->data->port_id);
+	if (errval != 0)
+		RTE_BOND_LOG(ERR, "rte_eth_dev_stop: port %u, err (%d)",
+			     slave_eth_dev->data->port_id, errval);
 
 	/* Enable interrupts on slave device if supported */
 	if (slave_eth_dev->data->dev_flags & RTE_ETH_DEV_INTR_LSC)
@@ -1753,6 +1756,17 @@ slave_configure(struct rte_eth_dev *bonded_eth_dev,
 	else
 		slave_eth_dev->data->dev_conf.rxmode.offloads &=
 				~DEV_RX_OFFLOAD_VLAN_FILTER;
+
+	slave_eth_dev->data->dev_conf.rxmode.max_rx_pkt_len =
+			bonded_eth_dev->data->dev_conf.rxmode.max_rx_pkt_len;
+
+	if (bonded_eth_dev->data->dev_conf.rxmode.offloads &
+			DEV_RX_OFFLOAD_JUMBO_FRAME)
+		slave_eth_dev->data->dev_conf.rxmode.offloads |=
+				DEV_RX_OFFLOAD_JUMBO_FRAME;
+	else
+		slave_eth_dev->data->dev_conf.rxmode.offloads &=
+				~DEV_RX_OFFLOAD_JUMBO_FRAME;
 
 	nb_rx_queues = bonded_eth_dev->data->nb_rx_queues;
 	nb_tx_queues = bonded_eth_dev->data->nb_tx_queues;
@@ -1908,7 +1922,7 @@ slave_remove(struct bond_dev_private *internals,
 	internals->slave_count--;
 
 	/* force reconfiguration of slave interfaces */
-	_rte_eth_dev_reset(slave_eth_dev);
+	rte_eth_dev_internal_reset(slave_eth_dev);
 }
 
 static void
@@ -2075,11 +2089,12 @@ bond_ethdev_free_queues(struct rte_eth_dev *dev)
 	}
 }
 
-void
+int
 bond_ethdev_stop(struct rte_eth_dev *eth_dev)
 {
 	struct bond_dev_private *internals = eth_dev->data->dev_private;
 	uint16_t i;
+	int ret;
 
 	if (internals->mode == BONDING_MODE_8023AD) {
 		struct port *port;
@@ -2118,13 +2133,20 @@ bond_ethdev_stop(struct rte_eth_dev *eth_dev)
 				internals->active_slave_count, slave_id) !=
 						internals->active_slave_count) {
 			internals->slaves[i].last_link_status = 0;
-			rte_eth_dev_stop(slave_id);
+			ret = rte_eth_dev_stop(slave_id);
+			if (ret != 0) {
+				RTE_BOND_LOG(ERR, "Failed to stop device on port %u",
+					     slave_id);
+				return ret;
+			}
 			deactivate_slave(eth_dev, slave_id);
 		}
 	}
+
+	return 0;
 }
 
-void
+int
 bond_ethdev_close(struct rte_eth_dev *dev)
 {
 	struct bond_dev_private *internals = dev->data->dev_private;
@@ -2132,11 +2154,18 @@ bond_ethdev_close(struct rte_eth_dev *dev)
 	int skipped = 0;
 	struct rte_flow_error ferror;
 
+	if (rte_eal_process_type() != RTE_PROC_PRIMARY)
+		return 0;
+
 	RTE_BOND_LOG(INFO, "Closing bonded device %s", dev->device->name);
 	while (internals->slave_count != skipped) {
 		uint16_t port_id = internals->slaves[skipped].port_id;
 
-		rte_eth_dev_stop(port_id);
+		if (rte_eth_dev_stop(port_id) != 0) {
+			RTE_BOND_LOG(ERR, "Failed to stop device on port %u",
+				     port_id);
+			skipped++;
+		}
 
 		if (rte_eth_bond_slave_remove(bond_port_id, port_id) != 0) {
 			RTE_BOND_LOG(ERR,
@@ -2148,6 +2177,15 @@ bond_ethdev_close(struct rte_eth_dev *dev)
 	bond_flow_ops.flush(dev, &ferror);
 	bond_ethdev_free_queues(dev);
 	rte_bitmap_reset(internals->vlan_filter_bmp);
+	rte_bitmap_free(internals->vlan_filter_bmp);
+	rte_free(internals->vlan_filter_bmpmem);
+
+	/* Try to release mempool used in mode6. If the bond
+	 * device is not mode6, free the NULL is not problem.
+	 */
+	rte_mempool_free(internals->mode6.mempool);
+
+	return 0;
 }
 
 /* forward declaration */
@@ -2794,7 +2832,7 @@ bond_ethdev_delayed_lsc_propagation(void *arg)
 	if (arg == NULL)
 		return;
 
-	_rte_eth_dev_callback_process((struct rte_eth_dev *)arg,
+	rte_eth_dev_callback_process((struct rte_eth_dev *)arg,
 			RTE_ETH_EVENT_INTR_LSC, NULL);
 }
 
@@ -2929,7 +2967,7 @@ link_update:
 						bond_ethdev_delayed_lsc_propagation,
 						(void *)bonded_eth_dev);
 			else
-				_rte_eth_dev_callback_process(bonded_eth_dev,
+				rte_eth_dev_callback_process(bonded_eth_dev,
 						RTE_ETH_EVENT_INTR_LSC,
 						NULL);
 
@@ -2939,7 +2977,7 @@ link_update:
 						bond_ethdev_delayed_lsc_propagation,
 						(void *)bonded_eth_dev);
 			else
-				_rte_eth_dev_callback_process(bonded_eth_dev,
+				rte_eth_dev_callback_process(bonded_eth_dev,
 						RTE_ETH_EVENT_INTR_LSC,
 						NULL);
 		}
@@ -3099,14 +3137,11 @@ bond_ethdev_mac_address_set(struct rte_eth_dev *dev,
 }
 
 static int
-bond_filter_ctrl(struct rte_eth_dev *dev __rte_unused,
-		 enum rte_filter_type type, enum rte_filter_op op, void *arg)
+bond_flow_ops_get(struct rte_eth_dev *dev __rte_unused,
+		  const struct rte_flow_ops **ops)
 {
-	if (type == RTE_ETH_FILTER_GENERIC && op == RTE_ETH_FILTER_GET) {
-		*(const void **)arg = &bond_flow_ops;
-		return 0;
-	}
-	return -ENOTSUP;
+	*ops = &bond_flow_ops;
+	return 0;
 }
 
 static int
@@ -3198,7 +3233,7 @@ const struct eth_dev_ops default_dev_ops = {
 	.mac_addr_set         = bond_ethdev_mac_address_set,
 	.mac_addr_add         = bond_ethdev_mac_addr_add,
 	.mac_addr_remove      = bond_ethdev_mac_addr_remove,
-	.filter_ctrl          = bond_filter_ctrl
+	.flow_ops_get         = bond_flow_ops_get
 };
 
 static int
@@ -3237,7 +3272,8 @@ bond_alloc(struct rte_vdev_device *dev, uint8_t mode)
 	}
 
 	eth_dev->dev_ops = &default_dev_ops;
-	eth_dev->data->dev_flags = RTE_ETH_DEV_INTR_LSC;
+	eth_dev->data->dev_flags = RTE_ETH_DEV_INTR_LSC |
+					RTE_ETH_DEV_AUTOFILL_QUEUE_XSTATS;
 
 	rte_spinlock_init(&internals->lock);
 	rte_spinlock_init(&internals->lsc_lock);
@@ -3328,8 +3364,9 @@ bond_probe(struct rte_vdev_device *dev)
 	const char *name;
 	struct bond_dev_private *internals;
 	struct rte_kvargs *kvlist;
-	uint8_t bonding_mode, socket_id/*, agg_mode*/;
-	int  arg_count, port_id;
+	uint8_t bonding_mode;
+	int arg_count, port_id;
+	int socket_id;
 	uint8_t agg_mode;
 	struct rte_eth_dev *eth_dev;
 
@@ -3440,6 +3477,7 @@ bond_remove(struct rte_vdev_device *dev)
 	struct rte_eth_dev *eth_dev;
 	struct bond_dev_private *internals;
 	const char *name;
+	int ret = 0;
 
 	if (!dev)
 		return -EINVAL;
@@ -3447,14 +3485,10 @@ bond_remove(struct rte_vdev_device *dev)
 	name = rte_vdev_device_name(dev);
 	RTE_BOND_LOG(INFO, "Uninitializing pmd_bond for %s", name);
 
-	/* now free all data allocation - for eth_dev structure,
-	 * dummy pci driver and internal (private) data
-	 */
-
 	/* find an ethdev entry */
 	eth_dev = rte_eth_dev_allocated(name);
 	if (eth_dev == NULL)
-		return -ENODEV;
+		return 0; /* port already released */
 
 	if (rte_eal_process_type() != RTE_PROC_PRIMARY)
 		return rte_eth_dev_release_port(eth_dev);
@@ -3466,25 +3500,14 @@ bond_remove(struct rte_vdev_device *dev)
 		return -EBUSY;
 
 	if (eth_dev->data->dev_started == 1) {
-		bond_ethdev_stop(eth_dev);
+		ret = bond_ethdev_stop(eth_dev);
 		bond_ethdev_close(eth_dev);
 	}
-
-	eth_dev->dev_ops = NULL;
-	eth_dev->rx_pkt_burst = NULL;
-	eth_dev->tx_pkt_burst = NULL;
-
-	internals = eth_dev->data->dev_private;
-	/* Try to release mempool used in mode6. If the bond
-	 * device is not mode6, free the NULL is not problem.
-	 */
-	rte_mempool_free(internals->mode6.mempool);
-	rte_bitmap_free(internals->vlan_filter_bmp);
-	rte_free(internals->vlan_filter_bmpmem);
-
+	if (internals->kvlist != NULL)
+		rte_kvargs_free(internals->kvlist);
 	rte_eth_dev_release_port(eth_dev);
 
-	return 0;
+	return ret;
 }
 
 /* this part will resolve the slave portids after all the other pdev and vdev
@@ -3794,4 +3817,4 @@ RTE_PMD_REGISTER_PARAM_STRING(net_bonding,
 	"up_delay=<int> "
 	"down_delay=<int>");
 
-RTE_LOG_REGISTER(bond_logtype, pmd.net.bond, NOTICE);
+RTE_LOG_REGISTER(bond_logtype, pmd.net.bonding, NOTICE);

@@ -25,7 +25,15 @@ ipsec_lp_len_precalc(struct rte_security_ipsec_xform *ipsec,
 {
 	struct rte_crypto_sym_xform *cipher_xform, *auth_xform;
 
-	lp->partial_len = sizeof(struct rte_ipv4_hdr);
+	lp->partial_len = 0;
+	if (ipsec->mode == RTE_SECURITY_IPSEC_SA_MODE_TUNNEL) {
+		if (ipsec->tunnel.type == RTE_SECURITY_IPSEC_TUNNEL_IPV4)
+			lp->partial_len = sizeof(struct rte_ipv4_hdr);
+		else if (ipsec->tunnel.type == RTE_SECURITY_IPSEC_TUNNEL_IPV6)
+			lp->partial_len = sizeof(struct rte_ipv6_hdr);
+		else
+			return -EINVAL;
+	}
 
 	if (ipsec->proto == RTE_SECURITY_IPSEC_SA_PROTO_ESP) {
 		lp->partial_len += sizeof(struct rte_esp_hdr);
@@ -69,6 +77,8 @@ ipsec_lp_len_precalc(struct rte_security_ipsec_xform *ipsec,
 
 	if (auth_xform->auth.algo == RTE_CRYPTO_AUTH_SHA1_HMAC)
 		lp->partial_len += OTX2_SEC_SHA1_HMAC_LEN;
+	else if (auth_xform->auth.algo == RTE_CRYPTO_AUTH_SHA256_HMAC)
+		lp->partial_len += OTX2_SEC_SHA2_HMAC_LEN;
 	else
 		return -EINVAL;
 
@@ -107,7 +117,7 @@ otx2_cpt_enq_sa_write(struct otx2_sec_session_ipsec_lp *lp,
 	inst.u64[3] = 0;
 	inst.res_addr = rte_mempool_virt2iova(res);
 
-	rte_cio_wmb();
+	rte_io_wmb();
 
 	do {
 		/* Copy CPT command to LMTLINE */
@@ -124,7 +134,7 @@ otx2_cpt_enq_sa_write(struct otx2_sec_session_ipsec_lp *lp,
 			otx2_err("Request timed out");
 			return -ETIMEDOUT;
 		}
-	    rte_cio_rmb();
+	    rte_io_rmb();
 	}
 
 	if (unlikely(res->compcode != CPT_9X_COMP_E_GOOD)) {
@@ -196,6 +206,7 @@ crypto_sec_ipsec_outb_session_create(struct rte_cryptodev *crypto_dev,
 				     struct rte_security_session *sec_sess)
 {
 	struct rte_crypto_sym_xform *auth_xform, *cipher_xform;
+	struct otx2_ipsec_po_ip_template *template = NULL;
 	const uint8_t *cipher_key, *auth_key;
 	struct otx2_sec_session_ipsec_lp *lp;
 	struct otx2_ipsec_po_sa_ctl *ctl;
@@ -203,10 +214,12 @@ crypto_sec_ipsec_outb_session_create(struct rte_cryptodev *crypto_dev,
 	struct otx2_ipsec_po_out_sa *sa;
 	struct otx2_sec_session *sess;
 	struct otx2_cpt_inst_s inst;
+	struct rte_ipv6_hdr *ip6;
 	struct rte_ipv4_hdr *ip;
-	int ret;
+	int ret, ctx_len;
 
 	sess = get_sec_session_private_data(sec_sess);
+	sess->ipsec.dir = RTE_SECURITY_IPSEC_SA_DIR_EGRESS;
 	lp = &sess->ipsec.lp;
 
 	sa = &lp->out_sa;
@@ -219,6 +232,7 @@ crypto_sec_ipsec_outb_session_create(struct rte_cryptodev *crypto_dev,
 	memset(sa, 0, sizeof(struct otx2_ipsec_po_out_sa));
 
 	/* Initialize lookaside ipsec private data */
+	lp->mode_type = OTX2_IPSEC_PO_TRANSPORT;
 	lp->ip_id = 0;
 	lp->seq_lo = 1;
 	lp->seq_hi = 0;
@@ -231,21 +245,48 @@ crypto_sec_ipsec_outb_session_create(struct rte_cryptodev *crypto_dev,
 	if (ret)
 		return ret;
 
-	memcpy(sa->iv.gcm.nonce, &ipsec->salt, 4);
+	/* Start ip id from 1 */
+	lp->ip_id = 1;
 
+	if (ctl->enc_type == OTX2_IPSEC_PO_SA_ENC_AES_GCM) {
+		template = &sa->aes_gcm.template;
+		ctx_len = offsetof(struct otx2_ipsec_po_out_sa,
+				aes_gcm.template) + sizeof(
+				sa->aes_gcm.template.ip4);
+		ctx_len = RTE_ALIGN_CEIL(ctx_len, 8);
+		lp->ctx_len = ctx_len >> 3;
+	} else if (ctl->auth_type ==
+			OTX2_IPSEC_PO_SA_AUTH_SHA1) {
+		template = &sa->sha1.template;
+		ctx_len = offsetof(struct otx2_ipsec_po_out_sa,
+				sha1.template) + sizeof(
+				sa->sha1.template.ip4);
+		ctx_len = RTE_ALIGN_CEIL(ctx_len, 8);
+		lp->ctx_len = ctx_len >> 3;
+	} else if (ctl->auth_type ==
+			OTX2_IPSEC_PO_SA_AUTH_SHA2_256) {
+		template = &sa->sha2.template;
+		ctx_len = offsetof(struct otx2_ipsec_po_out_sa,
+				sha2.template) + sizeof(
+				sa->sha2.template.ip4);
+		ctx_len = RTE_ALIGN_CEIL(ctx_len, 8);
+		lp->ctx_len = ctx_len >> 3;
+	} else {
+		return -EINVAL;
+	}
+	ip = &template->ip4.ipv4_hdr;
 	if (ipsec->options.udp_encap) {
-		sa->udp_src = 4500;
-		sa->udp_dst = 4500;
+		ip->next_proto_id = IPPROTO_UDP;
+		template->ip4.udp_src = rte_be_to_cpu_16(4500);
+		template->ip4.udp_dst = rte_be_to_cpu_16(4500);
+	} else {
+		ip->next_proto_id = IPPROTO_ESP;
 	}
 
 	if (ipsec->mode == RTE_SECURITY_IPSEC_SA_MODE_TUNNEL) {
-		/* Start ip id from 1 */
-		lp->ip_id = 1;
-
 		if (ipsec->tunnel.type == RTE_SECURITY_IPSEC_TUNNEL_IPV4) {
-			ip = &sa->template.ipv4_hdr;
+			lp->mode_type = OTX2_IPSEC_PO_TUNNEL_IPV4;
 			ip->version_ihl = RTE_IPV4_VHL_DEF;
-			ip->next_proto_id = IPPROTO_ESP;
 			ip->time_to_live = ipsec->tunnel.ipv4.ttl;
 			ip->type_of_service |= (ipsec->tunnel.ipv4.dscp << 2);
 			if (ipsec->tunnel.ipv4.df)
@@ -254,11 +295,60 @@ crypto_sec_ipsec_outb_session_create(struct rte_cryptodev *crypto_dev,
 				sizeof(struct in_addr));
 			memcpy(&ip->dst_addr, &ipsec->tunnel.ipv4.dst_ip,
 				sizeof(struct in_addr));
-		} else {
-			return -EINVAL;
+		} else if (ipsec->tunnel.type ==
+				RTE_SECURITY_IPSEC_TUNNEL_IPV6) {
+
+			lp->mode_type = OTX2_IPSEC_PO_TUNNEL_IPV6;
+			if (ctl->enc_type == OTX2_IPSEC_PO_SA_ENC_AES_GCM) {
+				template = &sa->aes_gcm.template;
+				ctx_len = offsetof(struct otx2_ipsec_po_out_sa,
+						aes_gcm.template) + sizeof(
+						sa->aes_gcm.template.ip6);
+				ctx_len = RTE_ALIGN_CEIL(ctx_len, 8);
+				lp->ctx_len = ctx_len >> 3;
+			} else if (ctl->auth_type ==
+					OTX2_IPSEC_PO_SA_AUTH_SHA1) {
+				template = &sa->sha1.template;
+				ctx_len = offsetof(struct otx2_ipsec_po_out_sa,
+						sha1.template) + sizeof(
+						sa->sha1.template.ip6);
+				ctx_len = RTE_ALIGN_CEIL(ctx_len, 8);
+				lp->ctx_len = ctx_len >> 3;
+			} else if (ctl->auth_type ==
+					OTX2_IPSEC_PO_SA_AUTH_SHA2_256) {
+				template = &sa->sha2.template;
+				ctx_len = offsetof(struct otx2_ipsec_po_out_sa,
+						sha2.template) + sizeof(
+						sa->sha2.template.ip6);
+				ctx_len = RTE_ALIGN_CEIL(ctx_len, 8);
+				lp->ctx_len = ctx_len >> 3;
+			} else {
+				return -EINVAL;
+			}
+
+			ip6 = &template->ip6.ipv6_hdr;
+			if (ipsec->options.udp_encap) {
+				ip6->proto = IPPROTO_UDP;
+				template->ip6.udp_src = rte_be_to_cpu_16(4500);
+				template->ip6.udp_dst = rte_be_to_cpu_16(4500);
+			} else {
+				ip6->proto = (ipsec->proto ==
+					RTE_SECURITY_IPSEC_SA_PROTO_ESP) ?
+					IPPROTO_ESP : IPPROTO_AH;
+			}
+			ip6->vtc_flow = rte_cpu_to_be_32(0x60000000 |
+				((ipsec->tunnel.ipv6.dscp <<
+					RTE_IPV6_HDR_TC_SHIFT) &
+					RTE_IPV6_HDR_TC_MASK) |
+				((ipsec->tunnel.ipv6.flabel <<
+					RTE_IPV6_HDR_FL_SHIFT) &
+					RTE_IPV6_HDR_FL_MASK));
+			ip6->hop_limits = ipsec->tunnel.ipv6.hlimit;
+			memcpy(&ip6->src_addr, &ipsec->tunnel.ipv6.src_addr,
+				sizeof(struct in6_addr));
+			memcpy(&ip6->dst_addr, &ipsec->tunnel.ipv6.dst_addr,
+				sizeof(struct in6_addr));
 		}
-	} else {
-		return -EINVAL;
 	}
 
 	cipher_xform = crypto_xform;
@@ -268,21 +358,20 @@ crypto_sec_ipsec_outb_session_create(struct rte_cryptodev *crypto_dev,
 	auth_key_len = 0;
 
 	if (crypto_xform->type == RTE_CRYPTO_SYM_XFORM_AEAD) {
+		if (crypto_xform->aead.algo == RTE_CRYPTO_AEAD_AES_GCM)
+			memcpy(sa->iv.gcm.nonce, &ipsec->salt, 4);
 		cipher_key = crypto_xform->aead.key.data;
 		cipher_key_len = crypto_xform->aead.key.length;
-
-		lp->ctx_len = sizeof(struct otx2_ipsec_po_out_sa);
-		lp->ctx_len >>= 3;
-		RTE_ASSERT(lp->ctx_len == OTX2_IPSEC_PO_AES_GCM_OUTB_CTX_LEN);
 	} else {
 		cipher_key = cipher_xform->cipher.key.data;
 		cipher_key_len = cipher_xform->cipher.key.length;
 		auth_key = auth_xform->auth.key.data;
 		auth_key_len = auth_xform->auth.key.length;
 
-		/* TODO: check the ctx len for supporting ALGO */
-		lp->ctx_len = sizeof(struct otx2_ipsec_po_out_sa) >> 3;
-		RTE_ASSERT(lp->ctx_len == OTX2_IPSEC_PO_MAX_OUTB_CTX_LEN);
+		if (auth_xform->auth.algo == RTE_CRYPTO_AUTH_SHA1_HMAC)
+			memcpy(sa->sha1.hmac_key, auth_key, auth_key_len);
+		else if (auth_xform->auth.algo == RTE_CRYPTO_AUTH_SHA256_HMAC)
+			memcpy(sa->sha2.hmac_key, auth_key, auth_key_len);
 	}
 
 	if (cipher_key_len != 0)
@@ -290,15 +379,11 @@ crypto_sec_ipsec_outb_session_create(struct rte_cryptodev *crypto_dev,
 	else
 		return -EINVAL;
 
-	/* Use OPAD & IPAD */
-	RTE_SET_USED(auth_key);
-	RTE_SET_USED(auth_key_len);
-
 	inst.u64[7] = 0;
 	inst.egrp = OTX2_CPT_EGRP_SE;
 	inst.cptr = rte_mempool_virt2iova(sa);
 
-	lp->ucmd_w3 = inst.u64[7];
+	lp->cpt_inst_w7 = inst.u64[7];
 	lp->ucmd_opcode = (lp->ctx_len << 8) |
 				(OTX2_IPSEC_PO_PROCESS_IPSEC_OUTB);
 
@@ -316,9 +401,9 @@ crypto_sec_ipsec_inb_session_create(struct rte_cryptodev *crypto_dev,
 				    struct rte_security_session *sec_sess)
 {
 	struct rte_crypto_sym_xform *auth_xform, *cipher_xform;
+	const uint8_t *cipher_key, *auth_key;
 	struct otx2_sec_session_ipsec_lp *lp;
 	struct otx2_ipsec_po_sa_ctl *ctl;
-	const uint8_t *cipher_key, *auth_key;
 	int cipher_key_len, auth_key_len;
 	struct otx2_ipsec_po_in_sa *sa;
 	struct otx2_sec_session *sess;
@@ -326,6 +411,7 @@ crypto_sec_ipsec_inb_session_create(struct rte_cryptodev *crypto_dev,
 	int ret;
 
 	sess = get_sec_session_private_data(sec_sess);
+	sess->ipsec.dir = RTE_SECURITY_IPSEC_SA_DIR_INGRESS;
 	lp = &sess->ipsec.lp;
 
 	sa = &lp->in_sa;
@@ -337,16 +423,25 @@ crypto_sec_ipsec_inb_session_create(struct rte_cryptodev *crypto_dev,
 	}
 
 	memset(sa, 0, sizeof(struct otx2_ipsec_po_in_sa));
+	sa->replay_win_sz = ipsec->replay_win_sz;
 
 	ret = ipsec_po_sa_ctl_set(ipsec, crypto_xform, ctl);
 	if (ret)
 		return ret;
+
+	lp->mode_type = OTX2_IPSEC_PO_TRANSPORT;
 
 	auth_xform = crypto_xform;
 	cipher_xform = crypto_xform->next;
 
 	cipher_key_len = 0;
 	auth_key_len = 0;
+
+	if (ipsec->mode == RTE_SECURITY_IPSEC_SA_MODE_TUNNEL)
+		lp->mode_type = (ipsec->tunnel.type ==
+				RTE_SECURITY_IPSEC_TUNNEL_IPV4) ?
+				OTX2_IPSEC_PO_TUNNEL_IPV4 :
+				OTX2_IPSEC_PO_TUNNEL_IPV6;
 
 	if (crypto_xform->type == RTE_CRYPTO_SYM_XFORM_AEAD) {
 		if (crypto_xform->aead.algo == RTE_CRYPTO_AEAD_AES_GCM)
@@ -363,9 +458,16 @@ crypto_sec_ipsec_inb_session_create(struct rte_cryptodev *crypto_dev,
 		auth_key = auth_xform->auth.key.data;
 		auth_key_len = auth_xform->auth.key.length;
 
-		/* TODO: check the ctx len for supporting ALGO */
-		lp->ctx_len = sizeof(struct otx2_ipsec_po_in_sa) >> 2;
-		RTE_ASSERT(lp->ctx_len == OTX2_IPSEC_PO_MAX_INB_CTX_LEN);
+		if (auth_xform->auth.algo == RTE_CRYPTO_AUTH_SHA1_HMAC) {
+			memcpy(sa->aes_gcm.hmac_key, auth_key, auth_key_len);
+			lp->ctx_len = offsetof(struct otx2_ipsec_po_in_sa,
+						    aes_gcm.selector) >> 3;
+		} else if (auth_xform->auth.algo ==
+				RTE_CRYPTO_AUTH_SHA256_HMAC) {
+			memcpy(sa->sha2.hmac_key, auth_key, auth_key_len);
+			lp->ctx_len = offsetof(struct otx2_ipsec_po_in_sa,
+						    sha2.selector) >> 3;
+		}
 	}
 
 	if (cipher_key_len != 0)
@@ -373,20 +475,34 @@ crypto_sec_ipsec_inb_session_create(struct rte_cryptodev *crypto_dev,
 	else
 		return -EINVAL;
 
-	/* Use OPAD & IPAD */
-	RTE_SET_USED(auth_key);
-	RTE_SET_USED(auth_key_len);
-
 	inst.u64[7] = 0;
 	inst.egrp = OTX2_CPT_EGRP_SE;
 	inst.cptr = rte_mempool_virt2iova(sa);
 
-	lp->ucmd_w3 = inst.u64[7];
+	lp->cpt_inst_w7 = inst.u64[7];
 	lp->ucmd_opcode = (lp->ctx_len << 8) |
 				(OTX2_IPSEC_PO_PROCESS_IPSEC_INB);
 
 	set_session_misc_attributes(lp, crypto_xform,
 				    auth_xform, cipher_xform);
+
+	if (sa->replay_win_sz) {
+		if (sa->replay_win_sz > OTX2_IPSEC_MAX_REPLAY_WIN_SZ) {
+			otx2_err("Replay window size is not supported");
+			return -ENOTSUP;
+		}
+		sa->replay = rte_zmalloc(NULL, sizeof(struct otx2_ipsec_replay),
+				0);
+		if (sa->replay == NULL)
+			return -ENOMEM;
+
+		/* Set window bottom to 1, base and top to size of window */
+		sa->replay->winb = 1;
+		sa->replay->wint = sa->replay_win_sz;
+		sa->replay->base = sa->replay_win_sz;
+		sa->esn_low = 0;
+		sa->esn_hi = 0;
+	}
 
 	return otx2_cpt_enq_sa_write(lp, crypto_dev->data->queue_pairs[0],
 				     OTX2_IPSEC_PO_WRITE_IPSEC_INB);
@@ -428,6 +544,9 @@ otx2_crypto_sec_session_create(void *device,
 
 	if (conf->action_type != RTE_SECURITY_ACTION_TYPE_LOOKASIDE_PROTOCOL)
 		return -ENOTSUP;
+
+	if (rte_security_dynfield_register() < 0)
+		return -rte_errno;
 
 	if (rte_mempool_get(mempool, (void **)&priv)) {
 		otx2_err("Could not allocate security session private data");
@@ -488,7 +607,7 @@ otx2_crypto_sec_set_pkt_mdata(void *device __rte_unused,
 			      struct rte_mbuf *m, void *params __rte_unused)
 {
 	/* Set security session as the pkt metadata */
-	m->udata64 = (uint64_t)session;
+	*rte_security_dynfield(m) = (rte_security_dynfield_t)session;
 
 	return 0;
 }

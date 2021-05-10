@@ -12,7 +12,7 @@
 
 #include <rte_mbuf.h>
 #include <rte_sched.h>
-#include <rte_ethdev_driver.h>
+#include <ethdev_driver.h>
 #include <rte_spinlock.h>
 
 #include <rte_io.h>
@@ -193,7 +193,7 @@ ipn3ke_rpst_dev_start(struct rte_eth_dev *dev)
 	return 0;
 }
 
-static void
+static int
 ipn3ke_rpst_dev_stop(struct rte_eth_dev *dev)
 {
 	struct ipn3ke_hw *hw = IPN3KE_DEV_PRIVATE_TO_HW(dev);
@@ -206,13 +206,18 @@ ipn3ke_rpst_dev_stop(struct rte_eth_dev *dev)
 		/* Disable the RX path */
 		ipn3ke_xmac_rx_disable(hw, rpst->port_id, 0);
 	}
+
+	return 0;
 }
 
-static void
+static int
 ipn3ke_rpst_dev_close(struct rte_eth_dev *dev)
 {
 	struct ipn3ke_hw *hw = IPN3KE_DEV_PRIVATE_TO_HW(dev);
 	struct ipn3ke_rpst *rpst = IPN3KE_DEV_PRIVATE_TO_RPST(dev);
+
+	if (rte_eal_process_type() != RTE_PROC_PRIMARY)
+		return 0;
 
 	if (hw->retimer.mac_type == IFPGA_RAWDEV_RETIMER_MAC_TYPE_10GE_XFI) {
 		/* Disable the TX path */
@@ -221,6 +226,8 @@ ipn3ke_rpst_dev_close(struct rte_eth_dev *dev)
 		/* Disable the RX path */
 		ipn3ke_xmac_rx_disable(hw, rpst->port_id, 0);
 	}
+
+	return 0;
 }
 
 /*
@@ -2794,7 +2801,7 @@ ipn3ke_rpst_mtu_set(struct rte_eth_dev *ethdev, uint16_t mtu)
 		return -EBUSY;
 	}
 
-	if (frame_size > RTE_ETHER_MAX_LEN)
+	if (frame_size > IPN3KE_ETH_MAX_LEN)
 		dev_data->dev_conf.rxmode.offloads |=
 			(uint64_t)(DEV_RX_OFFLOAD_JUMBO_FRAME);
 	else
@@ -2814,11 +2821,9 @@ ipn3ke_rpst_mtu_set(struct rte_eth_dev *ethdev, uint16_t mtu)
 }
 
 static int
-ipn3ke_afu_filter_ctrl(struct rte_eth_dev *ethdev,
-	enum rte_filter_type filter_type, enum rte_filter_op filter_op,
-	void *arg)
+ipn3ke_afu_flow_ops_get(struct rte_eth_dev *ethdev,
+			const struct rte_flow_ops **ops)
 {
-	int ret = 0;
 	struct ipn3ke_hw *hw;
 	struct ipn3ke_rpst *rpst;
 
@@ -2829,27 +2834,13 @@ ipn3ke_afu_filter_ctrl(struct rte_eth_dev *ethdev,
 	rpst = IPN3KE_DEV_PRIVATE_TO_RPST(ethdev);
 
 	if (hw->acc_flow)
-		switch (filter_type) {
-		case RTE_ETH_FILTER_GENERIC:
-			if (filter_op != RTE_ETH_FILTER_GET)
-				return -EINVAL;
-			*(const void **)arg = &ipn3ke_flow_ops;
-			break;
-		default:
-			IPN3KE_AFU_PMD_WARN("Filter type (%d) not supported",
-					filter_type);
-			ret = -EINVAL;
-			break;
-		}
+		*ops = &ipn3ke_flow_ops;
 	else if (rpst->i40e_pf_eth)
-		(*rpst->i40e_pf_eth->dev_ops->filter_ctrl)(ethdev,
-							filter_type,
-							filter_op,
-							arg);
+		(*rpst->i40e_pf_eth->dev_ops->flow_ops_get)(ethdev, ops);
 	else
 		return -EINVAL;
 
-	return ret;
+	return 0;
 }
 
 static const struct eth_dev_ops ipn3ke_rpst_dev_ops = {
@@ -2867,7 +2858,7 @@ static const struct eth_dev_ops ipn3ke_rpst_dev_ops = {
 	.stats_reset          = ipn3ke_rpst_stats_reset,
 	.xstats_reset         = ipn3ke_rpst_stats_reset,
 
-	.filter_ctrl          = ipn3ke_afu_filter_ctrl,
+	.flow_ops_get         = ipn3ke_afu_flow_ops_get,
 
 	.rx_queue_start       = ipn3ke_rpst_rx_queue_start,
 	.rx_queue_stop        = ipn3ke_rpst_rx_queue_stop,
@@ -2959,7 +2950,8 @@ ipn3ke_rpst_init(struct rte_eth_dev *ethdev, void *init_params)
 		return -ENODEV;
 	}
 
-	ethdev->data->dev_flags |= RTE_ETH_DEV_REPRESENTOR;
+	ethdev->data->dev_flags |= RTE_ETH_DEV_REPRESENTOR |
+					RTE_ETH_DEV_AUTOFILL_QUEUE_XSTATS;
 
 	rte_spinlock_lock(&ipn3ke_link_notify_list_lk);
 	TAILQ_INSERT_TAIL(&ipn3ke_rpst_list, rpst, next);

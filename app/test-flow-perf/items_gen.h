@@ -12,7 +12,7 @@
 
 #include "config.h"
 
-void fill_items(struct rte_flow_item *items, uint64_t flow_items,
-	uint32_t outer_ip_src);
+void fill_items(struct rte_flow_item *items, uint64_t *flow_items,
+	uint32_t outer_ip_src, uint8_t core_idx);
 
 #endif /* FLOW_PERF_ITEMS_GEN */

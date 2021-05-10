@@ -52,6 +52,7 @@ set_ipsec_conf(struct ipsec_sa *sa, struct rte_security_ipsec_xform *ipsec)
 	ipsec->esn_soft_limit = IPSEC_OFFLOAD_ESN_SOFTLIMIT;
 	ipsec->replay_win_sz = app_sa_prm.window_size;
 	ipsec->options.esn = app_sa_prm.enable_esn;
+	ipsec->options.udp_encap = sa->udp_encap;
 }
 
 int
@@ -117,7 +118,8 @@ create_lookaside_session(struct ipsec_ctx *ipsec_ctx, struct ipsec_sa *sa,
 			set_ipsec_conf(sa, &(sess_conf.ipsec));
 
 			ips->security.ses = rte_security_session_create(ctx,
-					&sess_conf, ipsec_ctx->session_priv_pool);
+					&sess_conf, ipsec_ctx->session_pool,
+					ipsec_ctx->session_priv_pool);
 			if (ips->security.ses == NULL) {
 				RTE_LOG(ERR, IPSEC,
 				"SEC Session init failed: err: %d\n", ret);
@@ -198,7 +200,8 @@ create_inline_session(struct socket_ctx *skt_ctx, struct ipsec_sa *sa,
 		}
 
 		ips->security.ses = rte_security_session_create(sec_ctx,
-				&sess_conf, skt_ctx->session_pool);
+				&sess_conf, skt_ctx->session_pool,
+				skt_ctx->session_priv_pool);
 		if (ips->security.ses == NULL) {
 			RTE_LOG(ERR, IPSEC,
 				"SEC Session init failed: err: %d\n", ret);
@@ -378,7 +381,8 @@ flow_create_failure:
 		sess_conf.userdata = (void *) sa;
 
 		ips->security.ses = rte_security_session_create(sec_ctx,
-					&sess_conf, skt_ctx->session_pool);
+					&sess_conf, skt_ctx->session_pool,
+					skt_ctx->session_priv_pool);
 		if (ips->security.ses == NULL) {
 			RTE_LOG(ERR, IPSEC,
 				"SEC Session init failed: err: %d\n", ret);
@@ -549,6 +553,15 @@ ipsec_enqueue(ipsec_xform_fn xform_func, struct ipsec_ctx *ipsec_ctx,
 
 			if ((unlikely(ips->security.ses == NULL)) &&
 				create_lookaside_session(ipsec_ctx, sa, ips)) {
+				free_pkts(&pkts[i], 1);
+				continue;
+			}
+
+			if (unlikely((pkts[i]->packet_type &
+					(RTE_PTYPE_TUNNEL_MASK |
+					RTE_PTYPE_L4_MASK)) ==
+					MBUF_PTYPE_TUNNEL_ESP_IN_UDP &&
+					sa->udp_encap != 1)) {
 				free_pkts(&pkts[i], 1);
 				continue;
 			}

@@ -6,7 +6,7 @@
 #define __OTX2_EVDEV_H__
 
 #include <rte_eventdev.h>
-#include <rte_eventdev_pmd.h>
+#include <eventdev_pmd.h>
 #include <rte_event_eth_rx_adapter.h>
 #include <rte_event_eth_tx_adapter.h>
 
@@ -79,6 +79,8 @@
 #define SSOW_LF_GWS_OP_GWC_INVAL            (0xe00ull)
 
 #define OTX2_SSOW_GET_BASE_ADDR(_GW)        ((_GW) - SSOW_LF_GWS_OP_GET_WORK)
+#define OTX2_SSOW_TT_FROM_TAG(x)	    (((x) >> 32) & SSO_TT_EMPTY)
+#define OTX2_SSOW_GRP_FROM_TAG(x)	    (((x) >> 36) & 0x3ff)
 
 #define NSEC2USEC(__ns)			((__ns) / 1E3)
 #define USEC2NSEC(__us)                 ((__us) * 1E3)
@@ -147,7 +149,6 @@ struct otx2_sso_evdev {
 	uint64_t *timer_adptr_sz;
 	/* Dev args */
 	uint8_t dual_ws;
-	uint8_t selftest;
 	uint32_t xae_cnt;
 	uint8_t qos_queue_cnt;
 	struct otx2_sso_qos *qos_parse_data;
@@ -162,32 +163,31 @@ struct otx2_sso_evdev {
 	struct otx2_timesync_info *tstamp;
 } __rte_cache_aligned;
 
-#define OTX2_SSOGWS_OPS \
-	/* WS ops */			\
-	uintptr_t getwrk_op;		\
-	uintptr_t tag_op;		\
-	uintptr_t wqp_op;		\
-	uintptr_t swtp_op;		\
-	uintptr_t swtag_norm_op;	\
-	uintptr_t swtag_desched_op;	\
-	uint8_t cur_tt;			\
-	uint8_t cur_grp
+#define OTX2_SSOGWS_OPS                                                        \
+	/* WS ops */                                                           \
+	uintptr_t getwrk_op;                                                   \
+	uintptr_t tag_op;                                                      \
+	uintptr_t wqp_op;                                                      \
+	uintptr_t swtag_flush_op;                                              \
+	uintptr_t swtag_norm_op;                                               \
+	uintptr_t swtag_desched_op;
 
 /* Event port aka GWS */
 struct otx2_ssogws {
 	/* Get Work Fastpath data */
 	OTX2_SSOGWS_OPS;
-	uint8_t swtag_req;
+	/* PTP timestamp */
+	struct otx2_timesync_info *tstamp;
 	void *lookup_mem;
+	uint8_t swtag_req;
 	uint8_t port;
 	/* Add Work Fastpath data */
 	uint64_t xaq_lmt __rte_cache_aligned;
 	uint64_t *fc_mem;
 	uintptr_t grps_base[OTX2_SSO_MAX_VHGRP];
-	/* PTP timestamp */
-	struct otx2_timesync_info *tstamp;
 	/* Tx Fastpath data */
-	uint8_t tx_adptr_data[] __rte_cache_aligned;
+	uint64_t base __rte_cache_aligned;
+	uint8_t tx_adptr_data[];
 } __rte_cache_aligned;
 
 struct otx2_ssogws_state {
@@ -197,24 +197,37 @@ struct otx2_ssogws_state {
 struct otx2_ssogws_dual {
 	/* Get Work Fastpath data */
 	struct otx2_ssogws_state ws_state[2]; /* Ping and Pong */
+	/* PTP timestamp */
+	struct otx2_timesync_info *tstamp;
+	void *lookup_mem;
 	uint8_t swtag_req;
 	uint8_t vws; /* Ping pong bit */
-	void *lookup_mem;
 	uint8_t port;
 	/* Add Work Fastpath data */
 	uint64_t xaq_lmt __rte_cache_aligned;
 	uint64_t *fc_mem;
 	uintptr_t grps_base[OTX2_SSO_MAX_VHGRP];
-	/* PTP timestamp */
-	struct otx2_timesync_info *tstamp;
 	/* Tx Fastpath data */
-	uint8_t tx_adptr_data[] __rte_cache_aligned;
+	uint64_t base[2] __rte_cache_aligned;
+	uint8_t tx_adptr_data[];
 } __rte_cache_aligned;
 
 static inline struct otx2_sso_evdev *
 sso_pmd_priv(const struct rte_eventdev *event_dev)
 {
 	return event_dev->data->dev_private;
+}
+
+struct otx2_ssogws_cookie {
+	const struct rte_eventdev *event_dev;
+	bool configured;
+};
+
+static inline struct otx2_ssogws_cookie *
+ssogws_get_cookie(void *ws)
+{
+	return (struct otx2_ssogws_cookie *)
+		((uint8_t *)ws - RTE_CACHE_LINE_SIZE);
 }
 
 static const union mbuf_initializer mbuf_init = {
@@ -387,6 +400,17 @@ int otx2_sso_tx_adapter_queue_del(uint8_t id,
 				  const struct rte_eventdev *event_dev,
 				  const struct rte_eth_dev *eth_dev,
 				  int32_t tx_queue_id);
+
+/* Event crypto adapter API's */
+int otx2_ca_caps_get(const struct rte_eventdev *dev,
+		     const struct rte_cryptodev *cdev, uint32_t *caps);
+
+int otx2_ca_qp_add(const struct rte_eventdev *dev,
+		   const struct rte_cryptodev *cdev, int32_t queue_pair_id,
+		   const struct rte_event *event);
+
+int otx2_ca_qp_del(const struct rte_eventdev *dev,
+		   const struct rte_cryptodev *cdev, int32_t queue_pair_id);
 
 /* Clean up API's */
 typedef void (*otx2_handle_event_t)(void *arg, struct rte_event ev);

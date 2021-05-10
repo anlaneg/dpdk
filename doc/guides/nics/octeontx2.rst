@@ -4,7 +4,7 @@
 OCTEON TX2 Poll Mode driver
 ===========================
 
-The OCTEON TX2 ETHDEV PMD (**librte_pmd_octeontx2**) provides poll mode ethdev
+The OCTEON TX2 ETHDEV PMD (**librte_net_octeontx2**) provides poll mode ethdev
 driver support for the inbuilt network device found in **Marvell OCTEON TX2**
 SoC family as well as for their virtual functions (VF) in SR-IOV context.
 
@@ -46,23 +46,12 @@ Prerequisites
 
 See :doc:`../platform/octeontx2` for setup information.
 
-Compile time Config Options
----------------------------
-
-The following options may be modified in the ``config`` file.
-
-- ``CONFIG_RTE_LIBRTE_OCTEONTX2_PMD`` (default ``y``)
-
-  Toggle compilation of the ``librte_pmd_octeontx2`` driver.
 
 Driver compilation and testing
 ------------------------------
 
 Refer to the document :ref:`compiling and testing a PMD for a NIC <pmd_build_and_test>`
 for details.
-
-To compile the OCTEON TX2 PMD for Linux arm64 gcc,
-use arm64-octeontx2-linux-gcc as target.
 
 #. Running testpmd:
 
@@ -74,7 +63,7 @@ use arm64-octeontx2-linux-gcc as target.
 
    .. code-block:: console
 
-      ./build/app/testpmd -c 0x300 -w 0002:02:00.0 -- --portmask=0x1 --nb-cores=1 --port-topology=loop --rxq=1 --txq=1
+      ./<build_dir>/app/dpdk-testpmd -c 0x300 -a 0002:02:00.0 -- --portmask=0x1 --nb-cores=1 --port-topology=loop --rxq=1 --txq=1
       EAL: Detected 24 lcore(s)
       EAL: Detected 1 NUMA nodes
       EAL: Multi-process socket /var/run/dpdk/rte/mp_socket
@@ -127,7 +116,7 @@ Runtime Config Options
 
    For example::
 
-      -w 0002:02:00.0,reta_size=256
+      -a 0002:02:00.0,reta_size=256
 
    With the above configuration, reta table of size 256 is populated.
 
@@ -138,7 +127,7 @@ Runtime Config Options
 
    For example::
 
-      -w 0002:02:00.0,flow_max_priority=10
+      -a 0002:02:00.0,flow_max_priority=10
 
    With the above configuration, priority level was set to 10 (0-9). Max
    priority level supported is 32.
@@ -150,7 +139,7 @@ Runtime Config Options
 
    For example::
 
-      -w 0002:02:00.0,flow_prealloc_size=4
+      -a 0002:02:00.0,flow_prealloc_size=4
 
    With the above configuration, pre alloc size was set to 4. Max pre alloc
    size supported is 32.
@@ -162,7 +151,7 @@ Runtime Config Options
 
    For example::
 
-      -w 0002:02:00.0,max_sqb_count=64
+      -a 0002:02:00.0,max_sqb_count=64
 
    With the above configuration, each send queue's decscriptor buffer count is
    limited to a maximum of 64 buffers.
@@ -174,11 +163,11 @@ Runtime Config Options
 
    For example::
 
-      -w 0002:02:00.0,switch_header="higig2"
+      -a 0002:02:00.0,switch_header="higig2"
 
    With the above configuration, higig2 will be enabled on that port and the
    traffic on this port should be higig2 traffic only. Supported switch header
-   types are "higig2", "dsa" and "chlen90b".
+   types are "chlen24b", "chlen90b", "dsa", "exdsa", "higig2" and "vlan_exdsa".
 
 - ``RSS tag as XOR`` (default ``0``)
 
@@ -196,7 +185,7 @@ Runtime Config Options
 
    For example to select the legacy mode(RSS tag adder as XOR)::
 
-      -w 0002:02:00.0,tag_as_xor=1
+      -a 0002:02:00.0,tag_as_xor=1
 
 - ``Max SPI for inbound inline IPsec`` (default ``1``)
 
@@ -205,7 +194,7 @@ Runtime Config Options
 
    For example::
 
-      -w 0002:02:00.0,ipsec_in_max_spi=128
+      -a 0002:02:00.0,ipsec_in_max_spi=128
 
    With the above configuration, application can enable inline IPsec processing
    on 128 SAs (SPI 0-127).
@@ -216,7 +205,7 @@ Runtime Config Options
 
    For example::
 
-      -w 0002:02:00.0,lock_rx_ctx=1
+      -a 0002:02:00.0,lock_rx_ctx=1
 
 - ``Lock Tx contexts in NDC cache``
 
@@ -224,7 +213,7 @@ Runtime Config Options
 
    For example::
 
-      -w 0002:02:00.0,lock_tx_ctx=1
+      -a 0002:02:00.0,lock_tx_ctx=1
 
 .. note::
 
@@ -240,7 +229,7 @@ Runtime Config Options
 
    For example::
 
-      -w 0002:02:00.0,npa_lock_mask=0xf
+      -a 0002:02:00.0,npa_lock_mask=0xf
 
 .. _otx2_tmapi:
 
@@ -373,6 +362,8 @@ Patterns:
    +----+--------------------------------+
    | 24 | RTE_FLOW_ITEM_TYPE_HIGIG2      |
    +----+--------------------------------+
+   | 25 | RTE_FLOW_ITEM_TYPE_RAW         |
+   +----+--------------------------------+
 
 .. note::
 
@@ -385,38 +376,87 @@ Actions:
 
 .. table:: Ingress action types
 
-   +----+--------------------------------+
-   | #  | Action Type                    |
-   +====+================================+
-   | 1  | RTE_FLOW_ACTION_TYPE_VOID      |
-   +----+--------------------------------+
-   | 2  | RTE_FLOW_ACTION_TYPE_MARK      |
-   +----+--------------------------------+
-   | 3  | RTE_FLOW_ACTION_TYPE_FLAG      |
-   +----+--------------------------------+
-   | 4  | RTE_FLOW_ACTION_TYPE_COUNT     |
-   +----+--------------------------------+
-   | 5  | RTE_FLOW_ACTION_TYPE_DROP      |
-   +----+--------------------------------+
-   | 6  | RTE_FLOW_ACTION_TYPE_QUEUE     |
-   +----+--------------------------------+
-   | 7  | RTE_FLOW_ACTION_TYPE_RSS       |
-   +----+--------------------------------+
-   | 8  | RTE_FLOW_ACTION_TYPE_SECURITY  |
-   +----+--------------------------------+
-   | 9  | RTE_FLOW_ACTION_TYPE_PF        |
-   +----+--------------------------------+
-   | 10 | RTE_FLOW_ACTION_TYPE_VF        |
-   +----+--------------------------------+
+   +----+-----------------------------------------+
+   | #  | Action Type                             |
+   +====+=========================================+
+   | 1  | RTE_FLOW_ACTION_TYPE_VOID               |
+   +----+-----------------------------------------+
+   | 2  | RTE_FLOW_ACTION_TYPE_MARK               |
+   +----+-----------------------------------------+
+   | 3  | RTE_FLOW_ACTION_TYPE_FLAG               |
+   +----+-----------------------------------------+
+   | 4  | RTE_FLOW_ACTION_TYPE_COUNT              |
+   +----+-----------------------------------------+
+   | 5  | RTE_FLOW_ACTION_TYPE_DROP               |
+   +----+-----------------------------------------+
+   | 6  | RTE_FLOW_ACTION_TYPE_QUEUE              |
+   +----+-----------------------------------------+
+   | 7  | RTE_FLOW_ACTION_TYPE_RSS                |
+   +----+-----------------------------------------+
+   | 8  | RTE_FLOW_ACTION_TYPE_SECURITY           |
+   +----+-----------------------------------------+
+   | 9  | RTE_FLOW_ACTION_TYPE_PF                 |
+   +----+-----------------------------------------+
+   | 10 | RTE_FLOW_ACTION_TYPE_VF                 |
+   +----+-----------------------------------------+
+   | 11 | RTE_FLOW_ACTION_TYPE_OF_POP_VLAN        |
+   +----+-----------------------------------------+
+   | 12 | RTE_FLOW_ACTION_TYPE_PORT_ID            |
+   +----+-----------------------------------------+
+
+.. note::
+
+   ``RTE_FLOW_ACTION_TYPE_PORT_ID`` is only supported between PF and its VFs.
 
 .. _table_octeontx2_supported_egress_action_types:
 
 .. table:: Egress action types
 
-   +----+--------------------------------+
-   | #  | Action Type                    |
-   +====+================================+
-   | 1  | RTE_FLOW_ACTION_TYPE_COUNT     |
-   +----+--------------------------------+
-   | 2  | RTE_FLOW_ACTION_TYPE_DROP      |
-   +----+--------------------------------+
+   +----+-----------------------------------------+
+   | #  | Action Type                             |
+   +====+=========================================+
+   | 1  | RTE_FLOW_ACTION_TYPE_COUNT              |
+   +----+-----------------------------------------+
+   | 2  | RTE_FLOW_ACTION_TYPE_DROP               |
+   +----+-----------------------------------------+
+   | 3  | RTE_FLOW_ACTION_TYPE_OF_PUSH_VLAN       |
+   +----+-----------------------------------------+
+   | 4  | RTE_FLOW_ACTION_TYPE_OF_SET_VLAN_VID    |
+   +----+-----------------------------------------+
+   | 5  | RTE_FLOW_ACTION_TYPE_OF_SET_VLAN_PCP    |
+   +----+-----------------------------------------+
+
+Custom protocols supported in RTE Flow
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The ``RTE_FLOW_ITEM_TYPE_RAW`` can be used to parse the below custom protocols.
+
+* ``vlan_exdsa`` and ``exdsa`` can be parsed at L2 level.
+* ``NGIO`` can be parsed at L3 level.
+
+For ``vlan_exdsa`` and ``exdsa``, the port has to be configured with the
+respective switch header.
+
+For example::
+
+   -a 0002:02:00.0,switch_header="vlan_exdsa"
+
+The below fields of ``struct rte_flow_item_raw`` shall be used to specify the
+pattern.
+
+- ``relative`` Selects the layer at which parsing is done.
+
+  - 0 for ``exdsa`` and ``vlan_exdsa``.
+
+  - 1 for  ``NGIO``.
+
+- ``offset`` The offset in the header where the pattern should be matched.
+- ``length`` Length of the pattern.
+- ``pattern`` Pattern as a byte string.
+
+Example usage in testpmd::
+
+   ./dpdk-testpmd -c 3 -w 0002:02:00.0,switch_header=exdsa -- -i \
+                  --rx-offloads=0x00080000 --rxq 8 --txq 8
+   testpmd> flow create 0 ingress pattern eth / raw relative is 0 pattern \
+          spec ab pattern mask ab offset is 4 / end actions queue index 1 / end

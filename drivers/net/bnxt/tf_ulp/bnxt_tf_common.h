@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: BSD-3-Clause
- * Copyright(c) 2014-2019 Broadcom
+ * Copyright(c) 2014-2021 Broadcom
  * All rights reserved.
  */
 
@@ -33,7 +33,9 @@
 enum bnxt_tf_rc {
 	BNXT_TF_RC_PARSE_ERR	= -2,
 	BNXT_TF_RC_ERROR	= -1,
-	BNXT_TF_RC_SUCCESS	= 0
+	BNXT_TF_RC_SUCCESS	= 0,
+	BNXT_TF_RC_NORMAL	= 1,
+	BNXT_TF_RC_FID		= 2,
 };
 
 /* eth IPv4 Type */

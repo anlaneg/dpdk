@@ -43,7 +43,7 @@
 #include <rte_prefetch.h>
 #include <rte_random.h>
 #include <rte_hexdump.h>
-#ifdef RTE_LIBRTE_PMD_CRYPTO_SCHEDULER
+#ifdef RTE_CRYPTO_SCHEDULER
 #include <rte_cryptodev_scheduler.h>
 #endif
 
@@ -616,11 +616,25 @@ l2fwd_simple_forward(struct rte_mbuf *m, uint16_t portid,
 		struct l2fwd_crypto_options *options)
 {
 	uint16_t dst_port;
+	uint32_t pad_len;
+	struct rte_ipv4_hdr *ip_hdr;
+	uint32_t ipdata_offset = sizeof(struct rte_ether_hdr);
 
+	ip_hdr = (struct rte_ipv4_hdr *)(rte_pktmbuf_mtod(m, char *) +
+					 ipdata_offset);
 	dst_port = l2fwd_dst_ports[portid];
 
 	if (options->mac_updating)
 		l2fwd_mac_updating(m, dst_port);
+
+	if (options->auth_xform.auth.op == RTE_CRYPTO_AUTH_OP_VERIFY)
+		rte_pktmbuf_trim(m, options->auth_xform.auth.digest_length);
+
+	if (options->cipher_xform.cipher.op == RTE_CRYPTO_CIPHER_OP_DECRYPT) {
+		pad_len = m->pkt_len - rte_be_to_cpu_16(ip_hdr->total_length) -
+			  ipdata_offset;
+		rte_pktmbuf_trim(m, pad_len);
+	}
 
 	l2fwd_send_packet(m, dst_port);
 }
@@ -874,8 +888,8 @@ l2fwd_main_loop(struct l2fwd_crypto_options *options)
 				if (unlikely(timer_tsc >=
 						(uint64_t)timer_period)) {
 
-					/* do this only on master core */
-					if (lcore_id == rte_get_master_lcore()
+					/* do this only on main core */
+					if (lcore_id == rte_get_main_lcore()
 						&& options->refresh_period) {
 						print_stats();
 						timer_tsc = 0;
@@ -1734,6 +1748,7 @@ check_all_ports_link_status(uint32_t port_mask)
 	uint8_t count, all_ports_up, print_flag = 0;
 	struct rte_eth_link link;
 	int ret;
+	char link_status_text[RTE_ETH_LINK_MAX_STR_LEN];
 
 	printf("\nChecking link status");
 	fflush(stdout);
@@ -1753,14 +1768,10 @@ check_all_ports_link_status(uint32_t port_mask)
 			}
 			/* print link status if flag set */
 			if (print_flag == 1) {
-				if (link.link_status)
-					printf(
-					"Port%d Link Up. Speed %u Mbps - %s\n",
-						portid, link.link_speed,
-				(link.link_duplex == ETH_LINK_FULL_DUPLEX) ?
-					("full-duplex") : ("half-duplex"));
-				else
-					printf("Port %d Link Down\n", portid);
+				rte_eth_link_to_str(link_status_text,
+					sizeof(link_status_text), &link);
+				printf("Port %d %s\n", portid,
+					link_status_text);
 				continue;
 			}
 			/* clear all_ports_up flag if any link down */
@@ -2115,12 +2126,21 @@ check_capabilities(struct l2fwd_crypto_options *options, uint8_t cdev_id)
 					cap->sym.cipher.key_size.max,
 					cap->sym.cipher.key_size.increment)
 						!= 0) {
-				RTE_LOG(DEBUG, USER1,
-					"Device %u does not support cipher "
-					"key length\n",
+				if (dev_info.feature_flags &
+				    RTE_CRYPTODEV_FF_CIPHER_WRAPPED_KEY) {
+					RTE_LOG(DEBUG, USER1,
+					"Key length does not match the device "
+					"%u capability. Key may be wrapped\n",
 					cdev_id);
-				return -1;
+				} else {
+					RTE_LOG(DEBUG, USER1,
+					"Key length does not match the device "
+					"%u capability\n",
+					cdev_id);
+					return -1;
+				}
 			}
+
 		/*
 		 * Check if length of the cipher key to be randomly generated
 		 * is supported by the algorithm chosen.
@@ -2254,6 +2274,12 @@ initialize_cryptodevs(struct l2fwd_crypto_options *options, unsigned nb_ports,
 		if (enabled_cdevs[cdev_id] == 0)
 			continue;
 
+		if (check_cryptodev_mask(options, cdev_id) < 0)
+			continue;
+
+		if (check_capabilities(options, cdev_id) < 0)
+			continue;
+
 		retval = rte_cryptodev_socket_id(cdev_id);
 
 		if (retval < 0) {
@@ -2276,12 +2302,12 @@ initialize_cryptodevs(struct l2fwd_crypto_options *options, unsigned nb_ports,
 		 * (one for the header, one for the private data)
 		 */
 		if (!strcmp(dev_info.driver_name, "crypto_scheduler")) {
-#ifdef RTE_LIBRTE_PMD_CRYPTO_SCHEDULER
-			uint32_t nb_slaves =
-				rte_cryptodev_scheduler_slaves_get(cdev_id,
+#ifdef RTE_CRYPTO_SCHEDULER
+			uint32_t nb_workers =
+				rte_cryptodev_scheduler_workers_get(cdev_id,
 								NULL);
 
-			sessions_needed = enabled_cdev_count * nb_slaves;
+			sessions_needed = enabled_cdev_count * nb_workers;
 #endif
 		} else
 			sessions_needed = enabled_cdev_count;
@@ -2694,7 +2720,8 @@ main(int argc, char **argv)
 
 	/* create the mbuf pool */
 	l2fwd_pktmbuf_pool = rte_pktmbuf_pool_create("mbuf_pool", NB_MBUF, 512,
-			sizeof(struct rte_crypto_op),
+			RTE_ALIGN(sizeof(struct rte_crypto_op),
+				RTE_CACHE_LINE_SIZE),
 			RTE_MBUF_DEFAULT_BUF_SIZE, rte_socket_id());
 	if (l2fwd_pktmbuf_pool == NULL)
 		rte_exit(EXIT_FAILURE, "Cannot create mbuf pool\n");
@@ -2802,11 +2829,14 @@ main(int argc, char **argv)
 
 	/* launch per-lcore init on every lcore */
 	rte_eal_mp_remote_launch(l2fwd_launch_one_lcore, (void *)&options,
-			CALL_MASTER);
-	RTE_LCORE_FOREACH_SLAVE(lcore_id) {
+			CALL_MAIN);
+	RTE_LCORE_FOREACH_WORKER(lcore_id) {
 		if (rte_eal_wait_lcore(lcore_id) < 0)
 			return -1;
 	}
+
+	/* clean up the EAL */
+	rte_eal_cleanup();
 
 	return 0;
 }

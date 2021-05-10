@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: BSD-3-Clause
- * Copyright(c) 2001-2020 Intel Corporation
+ * Copyright(c) 2001-2021 Intel Corporation
  */
 
 #ifndef _ICE_COMMON_H_
@@ -10,6 +10,9 @@
 #include "ice_flex_pipe.h"
 #include "ice_switch.h"
 #include "ice_fdir.h"
+
+#define ICE_SQ_SEND_DELAY_TIME_MS	10
+#define ICE_SQ_SEND_MAX_EXECUTE		3
 
 enum ice_fw_modes {
 	ICE_FW_MODE_NORMAL,
@@ -86,11 +89,9 @@ ice_write_tx_drbell_q_ctx(struct ice_hw *hw,
 			  u32 tx_drbell_q_index);
 
 enum ice_status
-ice_aq_get_rss_lut(struct ice_hw *hw, u16 vsi_handle, u8 lut_type, u8 *lut,
-		   u16 lut_size);
+ice_aq_get_rss_lut(struct ice_hw *hw, struct ice_aq_get_set_rss_lut_params *get_params);
 enum ice_status
-ice_aq_set_rss_lut(struct ice_hw *hw, u16 vsi_handle, u8 lut_type, u8 *lut,
-		   u16 lut_size);
+ice_aq_set_rss_lut(struct ice_hw *hw, struct ice_aq_get_set_rss_lut_params *set_params);
 enum ice_status
 ice_aq_get_rss_key(struct ice_hw *hw, u16 vsi_handle,
 		   struct ice_aqc_get_set_rss_keys *keys);
@@ -123,6 +124,10 @@ enum ice_status ice_aq_get_fw_ver(struct ice_hw *hw, struct ice_sq_cd *cd);
 
 enum ice_status
 ice_aq_send_driver_ver(struct ice_hw *hw, struct ice_driver_ver *dv,
+		       struct ice_sq_cd *cd);
+enum ice_status
+ice_aq_set_port_params(struct ice_port_info *pi, u16 bad_frame_vsi,
+		       bool save_bad_pac, bool pad_short_pac, bool double_vlan,
 		       struct ice_sq_cd *cd);
 enum ice_status
 ice_aq_get_phy_caps(struct ice_port_info *pi, bool qual_mods, u8 report_mode,
@@ -183,6 +188,16 @@ ice_aq_sff_eeprom(struct ice_hw *hw, u16 lport, u8 bus_addr,
 		  bool write, struct ice_sq_cd *cd);
 
 enum ice_status
+ice_aq_prog_topo_dev_nvm(struct ice_hw *hw,
+			 struct ice_aqc_link_topo_params *topo_params,
+			 struct ice_sq_cd *cd);
+enum ice_status
+ice_aq_read_topo_dev_nvm(struct ice_hw *hw,
+			 struct ice_aqc_link_topo_params *topo_params,
+			 u32 start_address, u8 *buf, u8 buf_size,
+			 struct ice_sq_cd *cd);
+
+enum ice_status
 ice_get_ctx(u8 *src_ctx, u8 *dest_ctx, struct ice_ctx_ele *ce_info);
 enum ice_status
 ice_dis_vsi_txq(struct ice_port_info *pi, u16 vsi_handle, u8 tc, u8 num_queues,
@@ -198,12 +213,6 @@ ice_ena_vsi_txq(struct ice_port_info *pi, u16 vsi_handle, u8 tc, u16 q_handle,
 		struct ice_sq_cd *cd);
 enum ice_status ice_replay_vsi(struct ice_hw *hw, u16 vsi_handle);
 void ice_replay_post(struct ice_hw *hw);
-void ice_sched_replay_agg_vsi_preinit(struct ice_hw *hw);
-void ice_sched_replay_agg(struct ice_hw *hw);
-enum ice_status ice_sched_replay_tc_node_bw(struct ice_port_info *pi);
-enum ice_status ice_replay_vsi_agg(struct ice_hw *hw, u16 vsi_handle);
-enum ice_status
-ice_sched_replay_q_bw(struct ice_port_info *pi, struct ice_q_ctx *q_ctx);
 struct ice_q_ctx *
 ice_get_lan_q_ctx(struct ice_hw *hw, u16 vsi_handle, u8 tc, u16 q_handle);
 void
@@ -219,8 +228,26 @@ enum ice_fw_modes ice_get_fw_mode(struct ice_hw *hw);
 void ice_print_rollback_msg(struct ice_hw *hw);
 enum ice_status
 ice_sched_query_elem(struct ice_hw *hw, u32 node_teid,
-		     struct ice_aqc_get_elem *buf);
+		     struct ice_aqc_txsched_elem_data *buf);
+enum ice_status
+ice_aq_set_gpio(struct ice_hw *hw, u16 gpio_ctrl_handle, u8 pin_idx, bool value,
+		struct ice_sq_cd *cd);
+enum ice_status
+ice_aq_get_gpio(struct ice_hw *hw, u16 gpio_ctrl_handle, u8 pin_idx,
+		bool *value, struct ice_sq_cd *cd);
 enum ice_status
 ice_aq_set_lldp_mib(struct ice_hw *hw, u8 mib_type, void *buf, u16 buf_size,
 		    struct ice_sq_cd *cd);
+bool ice_fw_supports_lldp_fltr_ctrl(struct ice_hw *hw);
+enum ice_status
+ice_lldp_fltr_add_remove(struct ice_hw *hw, u16 vsi_num, bool add);
+enum ice_status
+ice_aq_read_i2c(struct ice_hw *hw, struct ice_aqc_link_topo_addr topo_addr,
+		u16 bus_addr, __le16 addr, u8 params, u8 *data,
+		struct ice_sq_cd *cd);
+enum ice_status
+ice_aq_write_i2c(struct ice_hw *hw, struct ice_aqc_link_topo_addr topo_addr,
+		 u16 bus_addr, __le16 addr, u8 params, u8 *data,
+		 struct ice_sq_cd *cd);
+bool ice_fw_supports_report_dflt_cfg(struct ice_hw *hw);
 #endif /* _ICE_COMMON_H_ */

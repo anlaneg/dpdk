@@ -10,6 +10,7 @@
 #include <rte_ring.h>
 #include <rte_kvargs.h>
 #include <rte_cycles.h>
+#include <rte_errno.h>
 
 #include <rte_bbdev.h>
 #include <rte_bbdev_pmd.h>
@@ -302,7 +303,8 @@ q_setup(struct rte_bbdev *dev, uint16_t q_id,
 		rte_bbdev_log(ERR,
 				"Creating queue name for device %u queue %u failed",
 				dev->data->dev_id, q_id);
-		return -ENAMETOOLONG;
+		ret = -ENAMETOOLONG;
+		goto free_q;
 	}
 	q->enc_out = rte_zmalloc_socket(name,
 			((RTE_BBDEV_TURBO_MAX_TB_SIZE >> 3) + 3) *
@@ -311,6 +313,7 @@ q_setup(struct rte_bbdev *dev, uint16_t q_id,
 	if (q->enc_out == NULL) {
 		rte_bbdev_log(ERR,
 			"Failed to allocate queue memory for %s", name);
+		ret = -ENOMEM;
 		goto free_q;
 	}
 
@@ -322,7 +325,8 @@ q_setup(struct rte_bbdev *dev, uint16_t q_id,
 		rte_bbdev_log(ERR,
 				"Creating queue name for device %u queue %u failed",
 				dev->data->dev_id, q_id);
-		return -ENAMETOOLONG;
+		ret = -ENAMETOOLONG;
+		goto free_q;
 	}
 	q->enc_in = rte_zmalloc_socket(name,
 			(RTE_BBDEV_LDPC_MAX_CB_SIZE >> 3) * sizeof(*q->enc_in),
@@ -330,6 +334,7 @@ q_setup(struct rte_bbdev *dev, uint16_t q_id,
 	if (q->enc_in == NULL) {
 		rte_bbdev_log(ERR,
 			"Failed to allocate queue memory for %s", name);
+		ret = -ENOMEM;
 		goto free_q;
 	}
 
@@ -340,7 +345,8 @@ q_setup(struct rte_bbdev *dev, uint16_t q_id,
 		rte_bbdev_log(ERR,
 				"Creating queue name for device %u queue %u failed",
 				dev->data->dev_id, q_id);
-		return -ENAMETOOLONG;
+		ret = -ENAMETOOLONG;
+		goto free_q;
 	}
 	q->ag = rte_zmalloc_socket(name,
 			RTE_BBDEV_TURBO_MAX_CB_SIZE * 10 * sizeof(*q->ag),
@@ -348,6 +354,7 @@ q_setup(struct rte_bbdev *dev, uint16_t q_id,
 	if (q->ag == NULL) {
 		rte_bbdev_log(ERR,
 			"Failed to allocate queue memory for %s", name);
+		ret = -ENOMEM;
 		goto free_q;
 	}
 
@@ -358,7 +365,8 @@ q_setup(struct rte_bbdev *dev, uint16_t q_id,
 		rte_bbdev_log(ERR,
 				"Creating queue name for device %u queue %u failed",
 				dev->data->dev_id, q_id);
-		return -ENAMETOOLONG;
+		ret = -ENAMETOOLONG;
+		goto free_q;
 	}
 	q->code_block = rte_zmalloc_socket(name,
 			RTE_BBDEV_TURBO_MAX_CB_SIZE * sizeof(*q->code_block),
@@ -366,6 +374,7 @@ q_setup(struct rte_bbdev *dev, uint16_t q_id,
 	if (q->code_block == NULL) {
 		rte_bbdev_log(ERR,
 			"Failed to allocate queue memory for %s", name);
+		ret = -ENOMEM;
 		goto free_q;
 	}
 
@@ -377,7 +386,8 @@ q_setup(struct rte_bbdev *dev, uint16_t q_id,
 		rte_bbdev_log(ERR,
 				"Creating queue name for device %u queue %u failed",
 				dev->data->dev_id, q_id);
-		return -ENAMETOOLONG;
+		ret = -ENAMETOOLONG;
+		goto free_q;
 	}
 	q->deint_input = rte_zmalloc_socket(name,
 			DEINT_INPUT_BUF_SIZE * sizeof(*q->deint_input),
@@ -385,6 +395,7 @@ q_setup(struct rte_bbdev *dev, uint16_t q_id,
 	if (q->deint_input == NULL) {
 		rte_bbdev_log(ERR,
 			"Failed to allocate queue memory for %s", name);
+		ret = -ENOMEM;
 		goto free_q;
 	}
 
@@ -396,7 +407,8 @@ q_setup(struct rte_bbdev *dev, uint16_t q_id,
 		rte_bbdev_log(ERR,
 				"Creating queue name for device %u queue %u failed",
 				dev->data->dev_id, q_id);
-		return -ENAMETOOLONG;
+		ret = -ENAMETOOLONG;
+		goto free_q;
 	}
 	q->deint_output = rte_zmalloc_socket(NULL,
 			DEINT_OUTPUT_BUF_SIZE * sizeof(*q->deint_output),
@@ -404,6 +416,7 @@ q_setup(struct rte_bbdev *dev, uint16_t q_id,
 	if (q->deint_output == NULL) {
 		rte_bbdev_log(ERR,
 			"Failed to allocate queue memory for %s", name);
+		ret = -ENOMEM;
 		goto free_q;
 	}
 
@@ -415,7 +428,8 @@ q_setup(struct rte_bbdev *dev, uint16_t q_id,
 		rte_bbdev_log(ERR,
 				"Creating queue name for device %u queue %u failed",
 				dev->data->dev_id, q_id);
-		return -ENAMETOOLONG;
+		ret = -ENAMETOOLONG;
+		goto free_q;
 	}
 	q->adapter_output = rte_zmalloc_socket(NULL,
 			ADAPTER_OUTPUT_BUF_SIZE * sizeof(*q->adapter_output),
@@ -423,6 +437,7 @@ q_setup(struct rte_bbdev *dev, uint16_t q_id,
 	if (q->adapter_output == NULL) {
 		rte_bbdev_log(ERR,
 			"Failed to allocate queue memory for %s", name);
+		ret = -ENOMEM;
 		goto free_q;
 	}
 
@@ -433,12 +448,14 @@ q_setup(struct rte_bbdev *dev, uint16_t q_id,
 		rte_bbdev_log(ERR,
 				"Creating queue name for device %u queue %u failed",
 				dev->data->dev_id, q_id);
-		return -ENAMETOOLONG;
+		ret = -ENAMETOOLONG;
+		goto free_q;
 	}
 	q->processed_pkts = rte_ring_create(name, queue_conf->queue_size,
 			queue_conf->socket, RING_F_SP_ENQ | RING_F_SC_DEQ);
 	if (q->processed_pkts == NULL) {
 		rte_bbdev_log(ERR, "Failed to create ring for %s", name);
+		ret = -rte_errno;
 		goto free_q;
 	}
 
@@ -458,7 +475,7 @@ free_q:
 	rte_free(q->deint_output);
 	rte_free(q->adapter_output);
 	rte_free(q);
-	return -EFAULT;
+	return ret;
 }
 
 static const struct rte_bbdev_ops pmd_ops = {
@@ -561,7 +578,7 @@ process_enc_cb(struct turbo_sw_queue *q, struct rte_bbdev_enc_op *op,
 
 	/* CRC24A (for TB) */
 	if ((enc->op_flags & RTE_BBDEV_TURBO_CRC_24A_ATTACH) &&
-		(enc->code_block_mode == 1)) {
+		(enc->code_block_mode == RTE_BBDEV_CODE_BLOCK)) {
 #ifdef RTE_LIBRTE_BBDEV_DEBUG
 		ret = is_enc_input_valid(k - 24, k_idx, in_length);
 		if (ret != 0) {
@@ -990,7 +1007,7 @@ enqueue_enc_one_op(struct turbo_sw_queue *q, struct rte_bbdev_enc_op *op,
 		(enc->op_flags & RTE_BBDEV_TURBO_CRC_24A_ATTACH))
 		crc24_bits = 24;
 
-	if (enc->code_block_mode == 0) { /* For Transport Block mode */
+	if (enc->code_block_mode == RTE_BBDEV_TRANSPORT_BLOCK) {
 		c = enc->tb_params.c;
 		r = enc->tb_params.r;
 	} else {/* For Code Block mode */
@@ -1002,7 +1019,7 @@ enqueue_enc_one_op(struct turbo_sw_queue *q, struct rte_bbdev_enc_op *op,
 
 		seg_total_left = rte_pktmbuf_data_len(m_in) - in_offset;
 
-		if (enc->code_block_mode == 0) {
+		if (enc->code_block_mode == RTE_BBDEV_TRANSPORT_BLOCK) {
 			k = (r < enc->tb_params.c_neg) ?
 				enc->tb_params.k_neg : enc->tb_params.k_pos;
 			ncb = (r < enc->tb_params.c_neg) ?
@@ -1084,7 +1101,7 @@ enqueue_ldpc_enc_one_op(struct turbo_sw_queue *q, struct rte_bbdev_enc_op *op,
 		(enc->op_flags & RTE_BBDEV_TURBO_CRC_24A_ATTACH))
 		crc24_bits = 24;
 
-	if (enc->code_block_mode == 0) { /* For Transport Block mode */
+	if (enc->code_block_mode == RTE_BBDEV_TRANSPORT_BLOCK) {
 		c = enc->tb_params.c;
 		r = enc->tb_params.r;
 	} else { /* For Code Block mode */
@@ -1096,7 +1113,7 @@ enqueue_ldpc_enc_one_op(struct turbo_sw_queue *q, struct rte_bbdev_enc_op *op,
 
 		seg_total_left = rte_pktmbuf_data_len(m_in) - in_offset;
 
-		if (enc->code_block_mode == 0) {
+		if (enc->code_block_mode == RTE_BBDEV_TRANSPORT_BLOCK) {
 			e = (r < enc->tb_params.cab) ?
 				enc->tb_params.ea : enc->tb_params.eb;
 		} else {
@@ -1553,7 +1570,7 @@ enqueue_dec_one_op(struct turbo_sw_queue *q, struct rte_bbdev_dec_op *op,
 		return;
 	}
 
-	if (dec->code_block_mode == 0) { /* For Transport Block mode */
+	if (dec->code_block_mode == RTE_BBDEV_TRANSPORT_BLOCK) {
 		c = dec->tb_params.c;
 	} else { /* For Code Block mode */
 		k = dec->cb_params.k;
@@ -1565,7 +1582,7 @@ enqueue_dec_one_op(struct turbo_sw_queue *q, struct rte_bbdev_dec_op *op,
 		crc24_overlap = 24;
 
 	while (mbuf_total_left > 0) {
-		if (dec->code_block_mode == 0)
+		if (dec->code_block_mode == RTE_BBDEV_TRANSPORT_BLOCK)
 			k = (r < dec->tb_params.c_neg) ?
 				dec->tb_params.k_neg : dec->tb_params.k_pos;
 
@@ -1641,7 +1658,7 @@ enqueue_ldpc_dec_one_op(struct turbo_sw_queue *q, struct rte_bbdev_dec_op *op,
 		return;
 	}
 
-	if (dec->code_block_mode == 0) { /* For Transport Block mode */
+	if (dec->code_block_mode == RTE_BBDEV_TRANSPORT_BLOCK) {
 		c = dec->tb_params.c;
 		e = dec->tb_params.ea;
 	} else { /* For Code Block mode */
@@ -1656,7 +1673,7 @@ enqueue_ldpc_dec_one_op(struct turbo_sw_queue *q, struct rte_bbdev_dec_op *op,
 	out_length = ((out_length - crc24_overlap - dec->n_filler) >> 3);
 
 	while (mbuf_total_left > 0) {
-		if (dec->code_block_mode == 0)
+		if (dec->code_block_mode == RTE_BBDEV_TRANSPORT_BLOCK)
 			e = (r < dec->tb_params.cab) ?
 				dec->tb_params.ea : dec->tb_params.eb;
 		/* Special case handling when overusing mbuf */

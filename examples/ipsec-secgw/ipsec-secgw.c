@@ -65,6 +65,7 @@ volatile bool force_quit;
 #define CDEV_QUEUE_DESC 2048
 #define CDEV_MAP_ENTRIES 16384
 #define CDEV_MP_CACHE_SZ 64
+#define CDEV_MP_CACHE_MULTIPLIER 1.5 /* from rte_mempool.c */
 #define MAX_QUEUE_PAIRS 1
 
 #define BURST_TX_DRAIN_US 100 /* TX drain every ~100us */
@@ -183,7 +184,8 @@ static uint64_t frag_ttl_ns = MAX_FRAG_TTL_NS;
 /* application wide librte_ipsec/SA parameters */
 struct app_sa_prm app_sa_prm = {
 			.enable = 0,
-			.cache_sz = SA_CACHE_SZ
+			.cache_sz = SA_CACHE_SZ,
+			.udp_encap = 0
 		};
 static const char *cfgfile;
 
@@ -359,6 +361,9 @@ prepare_one_packet(struct rte_mbuf *pkt, struct ipsec_traffic *t)
 	const struct rte_ether_hdr *eth;
 	const struct rte_ipv4_hdr *iph4;
 	const struct rte_ipv6_hdr *iph6;
+	const struct rte_udp_hdr *udp;
+	uint16_t ip4_hdr_len;
+	uint16_t nat_port;
 
 	eth = rte_pktmbuf_mtod(pkt, const struct rte_ether_hdr *);
 	if (eth->ether_type == rte_cpu_to_be_16(RTE_ETHER_TYPE_IPV4)) {
@@ -367,9 +372,28 @@ prepare_one_packet(struct rte_mbuf *pkt, struct ipsec_traffic *t)
 			RTE_ETHER_HDR_LEN);
 		adjust_ipv4_pktlen(pkt, iph4, 0);
 
-		if (iph4->next_proto_id == IPPROTO_ESP)
+		switch (iph4->next_proto_id) {
+		case IPPROTO_ESP:
 			t->ipsec.pkts[(t->ipsec.num)++] = pkt;
-		else {
+			break;
+		case IPPROTO_UDP:
+			if (app_sa_prm.udp_encap == 1) {
+				ip4_hdr_len = ((iph4->version_ihl &
+					RTE_IPV4_HDR_IHL_MASK) *
+					RTE_IPV4_IHL_MULTIPLIER);
+				udp = rte_pktmbuf_mtod_offset(pkt,
+					struct rte_udp_hdr *, ip4_hdr_len);
+				nat_port = rte_cpu_to_be_16(IPSEC_NAT_T_PORT);
+				if (udp->src_port == nat_port ||
+					udp->dst_port == nat_port){
+					t->ipsec.pkts[(t->ipsec.num)++] = pkt;
+					pkt->packet_type |=
+						MBUF_PTYPE_TUNNEL_ESP_IN_UDP;
+					break;
+				}
+			}
+		/* Fall through */
+		default:
 			t->ip4.data[t->ip4.num] = &iph4->next_proto_id;
 			t->ip4.pkts[(t->ip4.num)++] = pkt;
 		}
@@ -402,9 +426,25 @@ prepare_one_packet(struct rte_mbuf *pkt, struct ipsec_traffic *t)
 			return;
 		}
 
-		if (next_proto == IPPROTO_ESP)
+		switch (next_proto) {
+		case IPPROTO_ESP:
 			t->ipsec.pkts[(t->ipsec.num)++] = pkt;
-		else {
+			break;
+		case IPPROTO_UDP:
+			if (app_sa_prm.udp_encap == 1) {
+				udp = rte_pktmbuf_mtod_offset(pkt,
+					struct rte_udp_hdr *, l3len);
+				nat_port = rte_cpu_to_be_16(IPSEC_NAT_T_PORT);
+				if (udp->src_port == nat_port ||
+					udp->dst_port == nat_port){
+					t->ipsec.pkts[(t->ipsec.num)++] = pkt;
+					pkt->packet_type |=
+						MBUF_PTYPE_TUNNEL_ESP_IN_UDP;
+					break;
+				}
+			}
+		/* Fall through */
+		default:
 			t->ip6.data[t->ip6.num] = &iph6->proto;
 			t->ip6.pkts[(t->ip6.num)++] = pkt;
 		}
@@ -426,7 +466,8 @@ prepare_one_packet(struct rte_mbuf *pkt, struct ipsec_traffic *t)
 	 * with the security session.
 	 */
 
-	if (pkt->ol_flags & PKT_RX_SEC_OFFLOAD) {
+	if (pkt->ol_flags & PKT_RX_SEC_OFFLOAD &&
+			rte_security_dynfield_is_registered()) {
 		struct ipsec_sa *sa;
 		struct ipsec_mbuf_metadata *priv;
 		struct rte_security_ctx *ctx = (struct rte_security_ctx *)
@@ -436,10 +477,8 @@ prepare_one_packet(struct rte_mbuf *pkt, struct ipsec_traffic *t)
 		/* Retrieve the userdata registered. Here, the userdata
 		 * registered is the SA pointer.
 		 */
-
-		sa = (struct ipsec_sa *)
-				rte_security_get_userdata(ctx, pkt->udata64);
-
+		sa = (struct ipsec_sa *)rte_security_get_userdata(ctx,
+				*rte_security_dynfield(pkt));
 		if (sa == NULL) {
 			/* userdata could not be retrieved */
 			return;
@@ -1842,6 +1881,7 @@ check_all_ports_link_status(uint32_t port_mask)
 	uint8_t count, all_ports_up, print_flag = 0;
 	struct rte_eth_link link;
 	int ret;
+	char link_status_text[RTE_ETH_LINK_MAX_STR_LEN];
 
 	printf("\nChecking link status");
 	fflush(stdout);
@@ -1861,14 +1901,10 @@ check_all_ports_link_status(uint32_t port_mask)
 			}
 			/* print link status if flag set */
 			if (print_flag == 1) {
-				if (link.link_status)
-					printf(
-					"Port%d Link Up - speed %u Mbps -%s\n",
-						portid, link.link_speed,
-				(link.link_duplex == ETH_LINK_FULL_DUPLEX) ?
-					("full-duplex") : ("half-duplex"));
-				else
-					printf("Port %d Link Down\n", portid);
+				rte_eth_link_to_str(link_status_text,
+					sizeof(link_status_text), &link);
+				printf("Port %d %s\n", portid,
+				       link_status_text);
 				continue;
 			}
 			/* clear all_ports_up flag if any link down */
@@ -2351,12 +2387,10 @@ session_pool_init(struct socket_ctx *ctx, int32_t socket_id, size_t sess_sz)
 
 	snprintf(mp_name, RTE_MEMPOOL_NAMESIZE,
 			"sess_mp_%u", socket_id);
-	/*
-	 * Doubled due to rte_security_session_create() uses one mempool for
-	 * session and for session private data.
-	 */
 	nb_sess = (get_nb_crypto_sessions() + CDEV_MP_CACHE_SZ *
-		rte_lcore_count()) * 2;
+		rte_lcore_count());
+	nb_sess = RTE_MAX(nb_sess, CDEV_MP_CACHE_SZ *
+			CDEV_MP_CACHE_MULTIPLIER);
 	sess_mp = rte_cryptodev_sym_session_pool_create(
 			mp_name, nb_sess, sess_sz, CDEV_MP_CACHE_SZ, 0,
 			socket_id);
@@ -2379,12 +2413,10 @@ session_priv_pool_init(struct socket_ctx *ctx, int32_t socket_id,
 
 	snprintf(mp_name, RTE_MEMPOOL_NAMESIZE,
 			"sess_mp_priv_%u", socket_id);
-	/*
-	 * Doubled due to rte_security_session_create() uses one mempool for
-	 * session and for session private data.
-	 */
 	nb_sess = (get_nb_crypto_sessions() + CDEV_MP_CACHE_SZ *
-		rte_lcore_count()) * 2;
+		rte_lcore_count());
+	nb_sess = RTE_MAX(nb_sess, CDEV_MP_CACHE_SZ *
+			CDEV_MP_CACHE_MULTIPLIER);
 	sess_mp = rte_mempool_create(mp_name,
 			nb_sess,
 			sess_sz,
@@ -2992,8 +3024,8 @@ main(int32_t argc, char **argv)
 #endif /* STATS_INTERVAL */
 
 	/* launch per-lcore init on every lcore */
-	rte_eal_mp_remote_launch(ipsec_launch_one_lcore, eh_conf, CALL_MASTER);
-	RTE_LCORE_FOREACH_SLAVE(lcore_id) {
+	rte_eal_mp_remote_launch(ipsec_launch_one_lcore, eh_conf, CALL_MAIN);
+	RTE_LCORE_FOREACH_WORKER(lcore_id) {
 		if (rte_eal_wait_lcore(lcore_id) < 0)
 			return -1;
 	}
@@ -3035,10 +3067,18 @@ main(int32_t argc, char **argv)
 					" for port %u, err msg: %s\n", portid,
 					err.message);
 		}
-		rte_eth_dev_stop(portid);
+		ret = rte_eth_dev_stop(portid);
+		if (ret != 0)
+			RTE_LOG(ERR, IPSEC,
+				"rte_eth_dev_stop: err=%s, port=%u\n",
+				rte_strerror(-ret), portid);
+
 		rte_eth_dev_close(portid);
 		printf(" Done\n");
 	}
+
+	/* clean up the EAL */
+	rte_eal_cleanup();
 	printf("Bye...\n");
 
 	return 0;

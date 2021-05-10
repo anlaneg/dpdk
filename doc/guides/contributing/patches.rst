@@ -32,9 +32,12 @@ The mailing list for DPDK development is `dev@dpdk.org <https://mails.dpdk.org/a
 Contributors will need to `register for the mailing list <https://mails.dpdk.org/listinfo/dev>`_ in order to submit patches.
 It is also worth registering for the DPDK `Patchwork <https://patches.dpdk.org/project/dpdk/list/>`_
 
-If you are using the GitHub service, you can link your repository to
-the ``travis-ci.org`` build service.  When you push patches to your GitHub
-repository, the travis service will automatically build your changes.
+If you are using the GitHub service, pushing to a branch will trigger GitHub
+Actions to automatically build your changes and run unit tests and ABI checks.
+
+Additionally, a Travis configuration is available in DPDK but Travis free usage
+is limited to a few builds.
+You can link your repository to the ``travis-ci.com`` build service.
 
 The development process requires some familiarity with the ``git`` version control system.
 Refer to the `Pro Git Book <http://www.git-scm.com/book/>`_ for further information.
@@ -464,55 +467,6 @@ and the -r option allows the user specify a ``git log`` range.
 Checking Compilation
 --------------------
 
-Makefile System
-~~~~~~~~~~~~~~~
-
-Compilation of patches and changes should be tested using the ``test-build.sh`` script in the ``devtools``
-directory of the DPDK repo::
-
-  devtools/test-build.sh x86_64-native-linux-gcc+next+shared
-
-The script usage is::
-
-   test-build.sh [-h] [-jX] [-s] [config1 [config2] ...]]
-
-Where:
-
-* ``-h``: help, usage.
-* ``-jX``: use X parallel jobs in "make".
-* ``-s``: short test with only first config and without examples/doc.
-* ``config``: default config name plus config switches delimited with a ``+`` sign.
-
-Examples of configs are::
-
-   x86_64-native-linux-gcc
-   x86_64-native-linux-gcc+next+shared
-   x86_64-native-linux-clang+shared
-
-The builds can be modified via the following environmental variables:
-
-* ``DPDK_BUILD_TEST_CONFIGS`` (target1+option1+option2 target2)
-* ``DPDK_BUILD_TEST_DIR``
-* ``DPDK_DEP_CFLAGS``
-* ``DPDK_DEP_LDFLAGS``
-* ``DPDK_DEP_PCAP`` (y/[n])
-* ``DPDK_NOTIFY`` (notify-send)
-
-These can be set from the command line or in the config files shown above in the :ref:`contrib_checkpatch`.
-
-The recommended configurations and options to test compilation prior to submitting patches are::
-
-   x86_64-native-linux-gcc+shared+next
-   x86_64-native-linux-clang+shared
-   i686-native-linux-gcc
-
-   export DPDK_DEP_ZLIB=y
-   export DPDK_DEP_PCAP=y
-   export DPDK_DEP_SSL=y
-
-Meson System
-~~~~~~~~~~~~
-
 Compilation of patches is to be tested with ``devtools/test-meson-builds.sh`` script.
 
 The script internally checks for dependencies, then builds for several
@@ -533,13 +487,18 @@ Checking ABI compatibility
 By default, ABI compatibility checks are disabled.
 
 To enable them, a reference version must be selected via the environment
-variable ``DPDK_ABI_REF_VERSION``.
+variable ``DPDK_ABI_REF_VERSION``. Contributors should ordinarily reference the
+git tag of the most recent release of DPDK in ``DPDK_ABI_REF_VERSION``.
 
-The ``devtools/test-build.sh`` and ``devtools/test-meson-builds.sh`` scripts
-then build this reference version in a temporary directory and store the
-results in a subfolder of the current working directory.
+The ``devtools/test-meson-builds.sh`` script then build this reference version
+in a temporary directory and store the results in a subfolder of the current
+working directory.
 The environment variable ``DPDK_ABI_REF_DIR`` can be set so that the results go
 to a different location.
+
+Sample::
+
+   DPDK_ABI_REF_VERSION=v19.11 DPDK_ABI_REF_DIR=/tmp ./devtools/test-meson-builds.sh
 
 
 Sending Patches

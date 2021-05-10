@@ -3,123 +3,173 @@
  */
 
 #include <rte_malloc.h>
-#include <rte_hash_crc.h>
 
 #include <mlx5_malloc.h>
 
 #include "mlx5_utils.h"
 
-struct mlx5_hlist *
-mlx5_hlist_create(const char *name, uint32_t size)
-{
-	struct mlx5_hlist *h;
-	uint32_t act_size;
-	uint32_t alloc_size;
 
-	if (!size)
-		return NULL;
-	/* Align to the next power of 2, 32bits integer is enough now. */
-	if (!rte_is_power_of_2(size)) {
-		act_size = rte_align32pow2(size);
-		DRV_LOG(WARNING, "Size 0x%" PRIX32 " is not power of 2, will "
-			"be aligned to 0x%" PRIX32 ".", size, act_size);
-	} else {
-		act_size = size;
-	}
-	alloc_size = sizeof(struct mlx5_hlist) +
-		     sizeof(struct mlx5_hlist_head) * act_size;
-	/* Using zmalloc, then no need to initialize the heads. */
-	h = mlx5_malloc(MLX5_MEM_ZERO, alloc_size, RTE_CACHE_LINE_SIZE,
-			SOCKET_ID_ANY);
-	if (!h) {
-		DRV_LOG(ERR, "No memory for hash list %s creation",
-			name ? name : "None");
-		return NULL;
-	}
-	if (name)
-		snprintf(h->name, MLX5_HLIST_NAMESIZE, "%s", name);
-	h->table_sz = act_size;
-	h->mask = act_size - 1;
-	DRV_LOG(DEBUG, "Hash list with %s size 0x%" PRIX32 " is created.",
-		h->name, act_size);
-	return h;
+/********************* Cache list ************************/
+
+static struct mlx5_cache_entry *
+mlx5_clist_default_create_cb(struct mlx5_cache_list *list,
+			     struct mlx5_cache_entry *entry __rte_unused,
+			     void *ctx __rte_unused)
+{
+	return mlx5_malloc(MLX5_MEM_ZERO, list->entry_sz, 0, SOCKET_ID_ANY);
 }
 
-struct mlx5_hlist_entry *
-mlx5_hlist_lookup(struct mlx5_hlist *h, uint64_t key)
+static void
+mlx5_clist_default_remove_cb(struct mlx5_cache_list *list __rte_unused,
+			     struct mlx5_cache_entry *entry)
 {
-	uint32_t idx;
-	struct mlx5_hlist_head *first;
-	struct mlx5_hlist_entry *node;
-
-	MLX5_ASSERT(h);
-	idx = rte_hash_crc_8byte(key, 0) & h->mask;
-	first = &h->heads[idx];
-	LIST_FOREACH(node, first, next) {
-		if (node->key == key)
-			return node;
-	}
-	return NULL;
+	mlx5_free(entry);
 }
 
 int
-mlx5_hlist_insert(struct mlx5_hlist *h, struct mlx5_hlist_entry *entry)
+mlx5_cache_list_init(struct mlx5_cache_list *list, const char *name,
+		     uint32_t entry_size, void *ctx,
+		     mlx5_cache_create_cb cb_create,
+		     mlx5_cache_match_cb cb_match,
+		     mlx5_cache_remove_cb cb_remove)
 {
-	uint32_t idx;
-	struct mlx5_hlist_head *first;
-	struct mlx5_hlist_entry *node;
+	MLX5_ASSERT(list);
+	if (!cb_match || (!cb_create ^ !cb_remove))
+		return -1;
+	if (name)
+		snprintf(list->name, sizeof(list->name), "%s", name);
+	list->entry_sz = entry_size;
+	list->ctx = ctx;
+	list->cb_create = cb_create ? cb_create : mlx5_clist_default_create_cb;
+	list->cb_match = cb_match;
+	list->cb_remove = cb_remove ? cb_remove : mlx5_clist_default_remove_cb;
+	rte_rwlock_init(&list->lock);
+	DRV_LOG(DEBUG, "Cache list %s initialized.", list->name);
+	LIST_INIT(&list->head);
+	return 0;
+}
 
-	MLX5_ASSERT(h && entry);
-	idx = rte_hash_crc_8byte(entry->key, 0) & h->mask;
-	first = &h->heads[idx];
-	/* No need to reuse the lookup function. */
-	LIST_FOREACH(node, first, next) {
-		if (node->key == entry->key)
-			return -EEXIST;
+static struct mlx5_cache_entry *
+__cache_lookup(struct mlx5_cache_list *list, void *ctx, bool reuse)
+{
+	struct mlx5_cache_entry *entry;
+
+	LIST_FOREACH(entry, &list->head, next) {
+		if (list->cb_match(list, entry, ctx))
+			continue;
+		if (reuse) {
+			__atomic_add_fetch(&entry->ref_cnt, 1,
+					   __ATOMIC_RELAXED);
+			DRV_LOG(DEBUG, "Cache list %s entry %p ref++: %u.",
+				list->name, (void *)entry, entry->ref_cnt);
+		}
+		break;
 	}
-	LIST_INSERT_HEAD(first, entry, next);
+	return entry;
+}
+
+static struct mlx5_cache_entry *
+cache_lookup(struct mlx5_cache_list *list, void *ctx, bool reuse)
+{
+	struct mlx5_cache_entry *entry;
+
+	rte_rwlock_read_lock(&list->lock);
+	entry = __cache_lookup(list, ctx, reuse);
+	rte_rwlock_read_unlock(&list->lock);
+	return entry;
+}
+
+struct mlx5_cache_entry *
+mlx5_cache_lookup(struct mlx5_cache_list *list, void *ctx)
+{
+	return cache_lookup(list, ctx, false);
+}
+
+struct mlx5_cache_entry *
+mlx5_cache_register(struct mlx5_cache_list *list, void *ctx)
+{
+	struct mlx5_cache_entry *entry;
+	uint32_t prev_gen_cnt = 0;
+
+	MLX5_ASSERT(list);
+	prev_gen_cnt = __atomic_load_n(&list->gen_cnt, __ATOMIC_ACQUIRE);
+	/* Lookup with read lock, reuse if found. */
+	entry = cache_lookup(list, ctx, true);
+	if (entry)
+		return entry;
+	/* Not found, append with write lock - block read from other threads. */
+	rte_rwlock_write_lock(&list->lock);
+	/* If list changed by other threads before lock, search again. */
+	if (prev_gen_cnt != __atomic_load_n(&list->gen_cnt, __ATOMIC_ACQUIRE)) {
+		/* Lookup and reuse w/o read lock. */
+		entry = __cache_lookup(list, ctx, true);
+		if (entry)
+			goto done;
+	}
+	entry = list->cb_create(list, entry, ctx);
+	if (!entry) {
+		DRV_LOG(ERR, "Failed to init cache list %s entry %p.",
+			list->name, (void *)entry);
+		goto done;
+	}
+	entry->ref_cnt = 1;
+	LIST_INSERT_HEAD(&list->head, entry, next);
+	__atomic_add_fetch(&list->gen_cnt, 1, __ATOMIC_RELEASE);
+	__atomic_add_fetch(&list->count, 1, __ATOMIC_ACQUIRE);
+	DRV_LOG(DEBUG, "Cache list %s entry %p new: %u.",
+		list->name, (void *)entry, entry->ref_cnt);
+done:
+	rte_rwlock_write_unlock(&list->lock);
+	return entry;
+}
+
+int
+mlx5_cache_unregister(struct mlx5_cache_list *list,
+		      struct mlx5_cache_entry *entry)
+{
+	rte_rwlock_write_lock(&list->lock);
+	MLX5_ASSERT(entry && entry->next.le_prev);
+	DRV_LOG(DEBUG, "Cache list %s entry %p ref--: %u.",
+		list->name, (void *)entry, entry->ref_cnt);
+	if (--entry->ref_cnt) {
+		rte_rwlock_write_unlock(&list->lock);
+		return 1;
+	}
+	__atomic_add_fetch(&list->gen_cnt, 1, __ATOMIC_ACQUIRE);
+	__atomic_sub_fetch(&list->count, 1, __ATOMIC_ACQUIRE);
+	LIST_REMOVE(entry, next);
+	list->cb_remove(list, entry);
+	rte_rwlock_write_unlock(&list->lock);
+	DRV_LOG(DEBUG, "Cache list %s entry %p removed.",
+		list->name, (void *)entry);
 	return 0;
 }
 
 void
-mlx5_hlist_remove(struct mlx5_hlist *h __rte_unused,
-		  struct mlx5_hlist_entry *entry)
+mlx5_cache_list_destroy(struct mlx5_cache_list *list)
 {
-	MLX5_ASSERT(entry && entry->next.le_prev);
-	LIST_REMOVE(entry, next);
-	/* Set to NULL to get rid of removing action for more than once. */
-	entry->next.le_prev = NULL;
-}
+	struct mlx5_cache_entry *entry;
 
-void
-mlx5_hlist_destroy(struct mlx5_hlist *h,
-		   mlx5_hlist_destroy_callback_fn cb, void *ctx)
-{
-	uint32_t idx;
-	struct mlx5_hlist_entry *entry;
-
-	MLX5_ASSERT(h);
-	for (idx = 0; idx < h->table_sz; ++idx) {
-		/* no LIST_FOREACH_SAFE, using while instead */
-		while (!LIST_EMPTY(&h->heads[idx])) {
-			entry = LIST_FIRST(&h->heads[idx]);
-			LIST_REMOVE(entry, next);
-			/*
-			 * The owner of whole element which contains data entry
-			 * is the user, so it's the user's duty to do the clean
-			 * up and the free work because someone may not put the
-			 * hlist entry at the beginning(suggested to locate at
-			 * the beginning). Or else the default free function
-			 * will be used.
-			 */
-			if (cb)
-				cb(entry, ctx);
-			else
-				mlx5_free(entry);
-		}
+	MLX5_ASSERT(list);
+	/* no LIST_FOREACH_SAFE, using while instead */
+	while (!LIST_EMPTY(&list->head)) {
+		entry = LIST_FIRST(&list->head);
+		LIST_REMOVE(entry, next);
+		list->cb_remove(list, entry);
+		DRV_LOG(DEBUG, "Cache list %s entry %p destroyed.",
+			list->name, (void *)entry);
 	}
-	mlx5_free(h);
+	memset(list, 0, sizeof(*list));
 }
+
+uint32_t
+mlx5_cache_list_get_entry_num(struct mlx5_cache_list *list)
+{
+	MLX5_ASSERT(list);
+	return __atomic_load_n(&list->count, __ATOMIC_RELAXED);
+}
+
+/********************* Indexed pool **********************/
 
 static inline void
 mlx5_ipool_lock(struct mlx5_indexed_pool *pool)
@@ -192,7 +242,7 @@ mlx5_ipool_create(struct mlx5_indexed_pool_config *cfg)
 	struct mlx5_indexed_pool *pool;
 	uint32_t i;
 
-	if (!cfg || !cfg->size || (!cfg->malloc ^ !cfg->free) ||
+	if (!cfg || (!cfg->malloc ^ !cfg->free) ||
 	    (cfg->trunk_size && ((cfg->trunk_size & (cfg->trunk_size - 1)) ||
 	    ((__builtin_ffs(cfg->trunk_size) + TRUNK_IDX_BITS) > 32))))
 		return NULL;
@@ -324,6 +374,11 @@ mlx5_ipool_malloc(struct mlx5_indexed_pool *pool, uint32_t *idx)
 	MLX5_ASSERT(iidx < mlx5_trunk_size_get(pool, trunk->idx));
 	rte_bitmap_clear(trunk->bmp, iidx);
 	p = &trunk->data[iidx * pool->cfg.size];
+	/*
+	 * The ipool index should grow continually from small to big,
+	 * some features as metering only accept limited bits of index.
+	 * Random index with MSB set may be rejected.
+	 */
 	iidx += mlx5_trunk_idx_offset_get(pool, trunk->idx);
 	iidx += 1; /* non-zero index. */
 	trunk->free--;
@@ -353,7 +408,7 @@ mlx5_ipool_zmalloc(struct mlx5_indexed_pool *pool, uint32_t *idx)
 {
 	void *entry = mlx5_ipool_malloc(pool, idx);
 
-	if (entry)
+	if (entry && pool->cfg.size)
 		memset(entry, 0, pool->cfg.size);
 	return entry;
 }
@@ -513,26 +568,23 @@ mlx5_l3t_create(enum mlx5_l3t_type type)
 	tbl->type = type;
 	switch (type) {
 	case MLX5_L3T_TYPE_WORD:
-		l3t_ip_cfg.size = sizeof(struct mlx5_l3t_entry_word) +
-				  sizeof(uint16_t) * MLX5_L3T_ET_SIZE;
+		l3t_ip_cfg.size = sizeof(struct mlx5_l3t_entry_word);
 		l3t_ip_cfg.type = "mlx5_l3t_e_tbl_w";
 		break;
 	case MLX5_L3T_TYPE_DWORD:
-		l3t_ip_cfg.size = sizeof(struct mlx5_l3t_entry_dword) +
-				  sizeof(uint32_t) * MLX5_L3T_ET_SIZE;
+		l3t_ip_cfg.size = sizeof(struct mlx5_l3t_entry_dword);
 		l3t_ip_cfg.type = "mlx5_l3t_e_tbl_dw";
 		break;
 	case MLX5_L3T_TYPE_QWORD:
-		l3t_ip_cfg.size = sizeof(struct mlx5_l3t_entry_qword) +
-				  sizeof(uint64_t) * MLX5_L3T_ET_SIZE;
+		l3t_ip_cfg.size = sizeof(struct mlx5_l3t_entry_qword);
 		l3t_ip_cfg.type = "mlx5_l3t_e_tbl_qw";
 		break;
 	default:
-		l3t_ip_cfg.size = sizeof(struct mlx5_l3t_entry_ptr) +
-				  sizeof(void *) * MLX5_L3T_ET_SIZE;
+		l3t_ip_cfg.size = sizeof(struct mlx5_l3t_entry_ptr);
 		l3t_ip_cfg.type = "mlx5_l3t_e_tbl_tpr";
 		break;
 	}
+	rte_spinlock_init(&tbl->sl);
 	tbl->eip = mlx5_ipool_create(&l3t_ip_cfg);
 	if (!tbl->eip) {
 		rte_errno = ENOMEM;
@@ -582,11 +634,15 @@ mlx5_l3t_destroy(struct mlx5_l3t_tbl *tbl)
 	mlx5_free(tbl);
 }
 
-uint32_t
-mlx5_l3t_get_entry(struct mlx5_l3t_tbl *tbl, uint32_t idx,
-		   union mlx5_l3t_data *data)
+static int32_t
+__l3t_get_entry(struct mlx5_l3t_tbl *tbl, uint32_t idx,
+		union mlx5_l3t_data *data)
 {
 	struct mlx5_l3t_level_tbl *g_tbl, *m_tbl;
+	struct mlx5_l3t_entry_word *w_e_tbl;
+	struct mlx5_l3t_entry_dword *dw_e_tbl;
+	struct mlx5_l3t_entry_qword *qw_e_tbl;
+	struct mlx5_l3t_entry_ptr *ptr_e_tbl;
 	void *e_tbl;
 	uint32_t entry_idx;
 
@@ -602,26 +658,46 @@ mlx5_l3t_get_entry(struct mlx5_l3t_tbl *tbl, uint32_t idx,
 	entry_idx = idx & MLX5_L3T_ET_MASK;
 	switch (tbl->type) {
 	case MLX5_L3T_TYPE_WORD:
-		data->word = ((struct mlx5_l3t_entry_word *)e_tbl)->entry
-			     [entry_idx];
+		w_e_tbl = (struct mlx5_l3t_entry_word *)e_tbl;
+		data->word = w_e_tbl->entry[entry_idx].data;
+		if (w_e_tbl->entry[entry_idx].data)
+			w_e_tbl->entry[entry_idx].ref_cnt++;
 		break;
 	case MLX5_L3T_TYPE_DWORD:
-		data->dword = ((struct mlx5_l3t_entry_dword *)e_tbl)->entry
-			     [entry_idx];
+		dw_e_tbl = (struct mlx5_l3t_entry_dword *)e_tbl;
+		data->dword = dw_e_tbl->entry[entry_idx].data;
+		if (dw_e_tbl->entry[entry_idx].data)
+			dw_e_tbl->entry[entry_idx].ref_cnt++;
 		break;
 	case MLX5_L3T_TYPE_QWORD:
-		data->qword = ((struct mlx5_l3t_entry_qword *)e_tbl)->entry
-			      [entry_idx];
+		qw_e_tbl = (struct mlx5_l3t_entry_qword *)e_tbl;
+		data->qword = qw_e_tbl->entry[entry_idx].data;
+		if (qw_e_tbl->entry[entry_idx].data)
+			qw_e_tbl->entry[entry_idx].ref_cnt++;
 		break;
 	default:
-		data->ptr = ((struct mlx5_l3t_entry_ptr *)e_tbl)->entry
-			    [entry_idx];
+		ptr_e_tbl = (struct mlx5_l3t_entry_ptr *)e_tbl;
+		data->ptr = ptr_e_tbl->entry[entry_idx].data;
+		if (ptr_e_tbl->entry[entry_idx].data)
+			ptr_e_tbl->entry[entry_idx].ref_cnt++;
 		break;
 	}
 	return 0;
 }
 
-void
+int32_t
+mlx5_l3t_get_entry(struct mlx5_l3t_tbl *tbl, uint32_t idx,
+		   union mlx5_l3t_data *data)
+{
+	int ret;
+
+	rte_spinlock_lock(&tbl->sl);
+	ret = __l3t_get_entry(tbl, idx, data);
+	rte_spinlock_unlock(&tbl->sl);
+	return ret;
+}
+
+int32_t
 mlx5_l3t_clear_entry(struct mlx5_l3t_tbl *tbl, uint32_t idx)
 {
 	struct mlx5_l3t_level_tbl *g_tbl, *m_tbl;
@@ -632,36 +708,54 @@ mlx5_l3t_clear_entry(struct mlx5_l3t_tbl *tbl, uint32_t idx)
 	void *e_tbl;
 	uint32_t entry_idx;
 	uint64_t ref_cnt;
+	int32_t ret = -1;
 
+	rte_spinlock_lock(&tbl->sl);
 	g_tbl = tbl->tbl;
 	if (!g_tbl)
-		return;
+		goto out;
 	m_tbl = g_tbl->tbl[(idx >> MLX5_L3T_GT_OFFSET) & MLX5_L3T_GT_MASK];
 	if (!m_tbl)
-		return;
+		goto out;
 	e_tbl = m_tbl->tbl[(idx >> MLX5_L3T_MT_OFFSET) & MLX5_L3T_MT_MASK];
 	if (!e_tbl)
-		return;
+		goto out;
 	entry_idx = idx & MLX5_L3T_ET_MASK;
 	switch (tbl->type) {
 	case MLX5_L3T_TYPE_WORD:
 		w_e_tbl = (struct mlx5_l3t_entry_word *)e_tbl;
-		w_e_tbl->entry[entry_idx] = 0;
+		MLX5_ASSERT(w_e_tbl->entry[entry_idx].ref_cnt);
+		ret = --w_e_tbl->entry[entry_idx].ref_cnt;
+		if (ret)
+			goto out;
+		w_e_tbl->entry[entry_idx].data = 0;
 		ref_cnt = --w_e_tbl->ref_cnt;
 		break;
 	case MLX5_L3T_TYPE_DWORD:
 		dw_e_tbl = (struct mlx5_l3t_entry_dword *)e_tbl;
-		dw_e_tbl->entry[entry_idx] = 0;
+		MLX5_ASSERT(dw_e_tbl->entry[entry_idx].ref_cnt);
+		ret = --dw_e_tbl->entry[entry_idx].ref_cnt;
+		if (ret)
+			goto out;
+		dw_e_tbl->entry[entry_idx].data = 0;
 		ref_cnt = --dw_e_tbl->ref_cnt;
 		break;
 	case MLX5_L3T_TYPE_QWORD:
 		qw_e_tbl = (struct mlx5_l3t_entry_qword *)e_tbl;
-		qw_e_tbl->entry[entry_idx] = 0;
+		MLX5_ASSERT(qw_e_tbl->entry[entry_idx].ref_cnt);
+		ret = --qw_e_tbl->entry[entry_idx].ref_cnt;
+		if (ret)
+			goto out;
+		qw_e_tbl->entry[entry_idx].data = 0;
 		ref_cnt = --qw_e_tbl->ref_cnt;
 		break;
 	default:
 		ptr_e_tbl = (struct mlx5_l3t_entry_ptr *)e_tbl;
-		ptr_e_tbl->entry[entry_idx] = NULL;
+		MLX5_ASSERT(ptr_e_tbl->entry[entry_idx].ref_cnt);
+		ret = --ptr_e_tbl->entry[entry_idx].ref_cnt;
+		if (ret)
+			goto out;
+		ptr_e_tbl->entry[entry_idx].data = NULL;
 		ref_cnt = --ptr_e_tbl->ref_cnt;
 		break;
 	}
@@ -680,11 +774,14 @@ mlx5_l3t_clear_entry(struct mlx5_l3t_tbl *tbl, uint32_t idx)
 			}
 		}
 	}
+out:
+	rte_spinlock_unlock(&tbl->sl);
+	return ret;
 }
 
-uint32_t
-mlx5_l3t_set_entry(struct mlx5_l3t_tbl *tbl, uint32_t idx,
-		   union mlx5_l3t_data *data)
+static int32_t
+__l3t_set_entry(struct mlx5_l3t_tbl *tbl, uint32_t idx,
+		union mlx5_l3t_data *data)
 {
 	struct mlx5_l3t_level_tbl *g_tbl, *m_tbl;
 	struct mlx5_l3t_entry_word *w_e_tbl;
@@ -745,24 +842,105 @@ mlx5_l3t_set_entry(struct mlx5_l3t_tbl *tbl, uint32_t idx,
 	switch (tbl->type) {
 	case MLX5_L3T_TYPE_WORD:
 		w_e_tbl = (struct mlx5_l3t_entry_word *)e_tbl;
-		w_e_tbl->entry[entry_idx] = data->word;
+		if (w_e_tbl->entry[entry_idx].data) {
+			data->word = w_e_tbl->entry[entry_idx].data;
+			w_e_tbl->entry[entry_idx].ref_cnt++;
+			rte_errno = EEXIST;
+			return -1;
+		}
+		w_e_tbl->entry[entry_idx].data = data->word;
+		w_e_tbl->entry[entry_idx].ref_cnt = 1;
 		w_e_tbl->ref_cnt++;
 		break;
 	case MLX5_L3T_TYPE_DWORD:
 		dw_e_tbl = (struct mlx5_l3t_entry_dword *)e_tbl;
-		dw_e_tbl->entry[entry_idx] = data->dword;
+		if (dw_e_tbl->entry[entry_idx].data) {
+			data->dword = dw_e_tbl->entry[entry_idx].data;
+			dw_e_tbl->entry[entry_idx].ref_cnt++;
+			rte_errno = EEXIST;
+			return -1;
+		}
+		dw_e_tbl->entry[entry_idx].data = data->dword;
+		dw_e_tbl->entry[entry_idx].ref_cnt = 1;
 		dw_e_tbl->ref_cnt++;
 		break;
 	case MLX5_L3T_TYPE_QWORD:
 		qw_e_tbl = (struct mlx5_l3t_entry_qword *)e_tbl;
-		qw_e_tbl->entry[entry_idx] = data->qword;
+		if (qw_e_tbl->entry[entry_idx].data) {
+			data->qword = qw_e_tbl->entry[entry_idx].data;
+			qw_e_tbl->entry[entry_idx].ref_cnt++;
+			rte_errno = EEXIST;
+			return -1;
+		}
+		qw_e_tbl->entry[entry_idx].data = data->qword;
+		qw_e_tbl->entry[entry_idx].ref_cnt = 1;
 		qw_e_tbl->ref_cnt++;
 		break;
 	default:
 		ptr_e_tbl = (struct mlx5_l3t_entry_ptr *)e_tbl;
-		ptr_e_tbl->entry[entry_idx] = data->ptr;
+		if (ptr_e_tbl->entry[entry_idx].data) {
+			data->ptr = ptr_e_tbl->entry[entry_idx].data;
+			ptr_e_tbl->entry[entry_idx].ref_cnt++;
+			rte_errno = EEXIST;
+			return -1;
+		}
+		ptr_e_tbl->entry[entry_idx].data = data->ptr;
+		ptr_e_tbl->entry[entry_idx].ref_cnt = 1;
 		ptr_e_tbl->ref_cnt++;
 		break;
 	}
 	return 0;
+}
+
+int32_t
+mlx5_l3t_set_entry(struct mlx5_l3t_tbl *tbl, uint32_t idx,
+		   union mlx5_l3t_data *data)
+{
+	int ret;
+
+	rte_spinlock_lock(&tbl->sl);
+	ret = __l3t_set_entry(tbl, idx, data);
+	rte_spinlock_unlock(&tbl->sl);
+	return ret;
+}
+
+int32_t
+mlx5_l3t_prepare_entry(struct mlx5_l3t_tbl *tbl, uint32_t idx,
+		       union mlx5_l3t_data *data,
+		       mlx5_l3t_alloc_callback_fn cb, void *ctx)
+{
+	int32_t ret;
+
+	rte_spinlock_lock(&tbl->sl);
+	/* Check if entry data is ready. */
+	ret = __l3t_get_entry(tbl, idx, data);
+	if (!ret) {
+		switch (tbl->type) {
+		case MLX5_L3T_TYPE_WORD:
+			if (data->word)
+				goto out;
+			break;
+		case MLX5_L3T_TYPE_DWORD:
+			if (data->dword)
+				goto out;
+			break;
+		case MLX5_L3T_TYPE_QWORD:
+			if (data->qword)
+				goto out;
+			break;
+		default:
+			if (data->ptr)
+				goto out;
+			break;
+		}
+	}
+	/* Entry data is not ready, use user callback to create it. */
+	ret = cb(ctx, data);
+	if (ret)
+		goto out;
+	/* Save the new allocated data to entry. */
+	ret = __l3t_set_entry(tbl, idx, data);
+out:
+	rte_spinlock_unlock(&tbl->sl);
+	return ret;
 }

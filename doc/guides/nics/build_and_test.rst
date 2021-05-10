@@ -26,6 +26,22 @@ This will also build testpmd.
 Detailed instructions are available
 in the :doc:`meson build guide <../prog_guide/build-sdk-meson>`.
 
+The ethdev layer supports below build options for debug purpose:
+
+- ``RTE_ETHDEV_DEBUG_RX`` (default **disabled**)
+
+  Build with debug code on Rx path.
+
+- ``RTE_ETHDEV_DEBUG_TX`` (default **disabled**)
+
+  Build with debug code on Tx path.
+
+.. Note::
+
+   The ethdev library use above options to wrap debug code to trace invalid parameters
+   on data path APIs, so performance downgrade is expected when enabling those options.
+   Each PMD can decide to reuse them to wrap their own debug code in the Rx/Tx path.
+
 Running testpmd in Linux
 ------------------------
 
@@ -64,12 +80,18 @@ This section demonstrates how to setup and run ``testpmd`` in Linux.
 
          Hugepagesize:       2048 kB
 
+   Mount and request above can be achieved simply with this tool:
+
+   .. code-block:: console
+
+      dpdk-hugepages.py --setup 2G
+
 #. Load ``igb_uio`` or ``vfio-pci`` driver:
 
    .. code-block:: console
 
       modprobe uio
-      insmod ./x86_64-native-linux-gcc/kmod/igb_uio.ko
+      insmod igb_uio.ko
 
    or
 
@@ -106,7 +128,7 @@ This section demonstrates how to setup and run ``testpmd`` in Linux.
 
    .. code-block:: console
 
-      ./x86_64-native-linux-gcc/app/testpmd -l 0-3 -n 4 -- -i
+      ./<build_dir>/app/dpdk-testpmd -l 0-3 -n 4 -- -i
 
    Successful execution will show initialization messages from EAL, PMD and
    testpmd application. A prompt will be displayed at the end for user commands

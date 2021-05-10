@@ -8,8 +8,8 @@
 #include <sys/epoll.h>
 
 #include <rte_mbuf.h>
-#include <rte_ethdev_driver.h>
-#include <rte_ethdev_vdev.h>
+#include <ethdev_driver.h>
+#include <ethdev_vdev.h>
 #include <rte_malloc.h>
 #include <rte_memcpy.h>
 #include <rte_bus_vdev.h>
@@ -33,7 +33,6 @@ enum {VIRTIO_RXQ, VIRTIO_TXQ, VIRTIO_QNUM};
 #define ETH_VHOST_IFACE_ARG		"iface"
 #define ETH_VHOST_QUEUES_ARG		"queues"
 #define ETH_VHOST_CLIENT_ARG		"client"
-#define ETH_VHOST_DEQUEUE_ZERO_COPY	"dequeue-zero-copy"
 #define ETH_VHOST_IOMMU_SUPPORT		"iommu-support"
 #define ETH_VHOST_POSTCOPY_SUPPORT	"postcopy-support"
 #define ETH_VHOST_VIRTIO_NET_F_HOST_TSO "tso"
@@ -46,7 +45,6 @@ static const char *valid_arguments[] = {
 	ETH_VHOST_IFACE_ARG,
 	ETH_VHOST_QUEUES_ARG,
 	ETH_VHOST_CLIENT_ARG,
-	ETH_VHOST_DEQUEUE_ZERO_COPY,
 	ETH_VHOST_IOMMU_SUPPORT,
 	ETH_VHOST_POSTCOPY_SUPPORT,
 	ETH_VHOST_VIRTIO_NET_F_HOST_TSO,
@@ -78,6 +76,9 @@ enum vhost_xstats_pkts {
 	VHOST_BROADCAST_PKT,
 	VHOST_MULTICAST_PKT,
 	VHOST_UNICAST_PKT,
+	VHOST_PKT,
+	VHOST_BYTE,
+	VHOST_MISSED_PKT,
 	VHOST_ERRORS_PKT,
 	VHOST_ERRORS_FRAGMENTED,
 	VHOST_ERRORS_JABBER,
@@ -154,11 +155,11 @@ struct vhost_xstats_name_off {
 /* [rx]_is prepended to the name string here */
 static const struct vhost_xstats_name_off vhost_rxport_stat_strings[] = {
 	{"good_packets",
-	 offsetof(struct vhost_queue, stats.pkts)},
+	 offsetof(struct vhost_queue, stats.xstats[VHOST_PKT])},
 	{"total_bytes",
-	 offsetof(struct vhost_queue, stats.bytes)},
+	 offsetof(struct vhost_queue, stats.xstats[VHOST_BYTE])},
 	{"missed_pkts",
-	 offsetof(struct vhost_queue, stats.missed_pkts)},
+	 offsetof(struct vhost_queue, stats.xstats[VHOST_MISSED_PKT])},
 	{"broadcast_packets",
 	 offsetof(struct vhost_queue, stats.xstats[VHOST_BROADCAST_PKT])},
 	{"multicast_packets",
@@ -194,11 +195,11 @@ static const struct vhost_xstats_name_off vhost_rxport_stat_strings[] = {
 /* [tx]_ is prepended to the name string here */
 static const struct vhost_xstats_name_off vhost_txport_stat_strings[] = {
 	{"good_packets",
-	 offsetof(struct vhost_queue, stats.pkts)},
+	 offsetof(struct vhost_queue, stats.xstats[VHOST_PKT])},
 	{"total_bytes",
-	 offsetof(struct vhost_queue, stats.bytes)},
+	 offsetof(struct vhost_queue, stats.xstats[VHOST_BYTE])},
 	{"missed_pkts",
-	 offsetof(struct vhost_queue, stats.missed_pkts)},
+	 offsetof(struct vhost_queue, stats.xstats[VHOST_MISSED_PKT])},
 	{"broadcast_packets",
 	 offsetof(struct vhost_queue, stats.xstats[VHOST_BROADCAST_PKT])},
 	{"multicast_packets",
@@ -292,23 +293,6 @@ vhost_dev_xstats_get(struct rte_eth_dev *dev, struct rte_eth_xstat *xstats,
 	if (n < nxstats)
 		return nxstats;
 
-	for (i = 0; i < dev->data->nb_rx_queues; i++) {
-		vq = dev->data->rx_queues[i];
-		if (!vq)
-			continue;
-		vq->stats.xstats[VHOST_UNICAST_PKT] = vq->stats.pkts
-				- (vq->stats.xstats[VHOST_BROADCAST_PKT]
-				+ vq->stats.xstats[VHOST_MULTICAST_PKT]);
-	}
-	for (i = 0; i < dev->data->nb_tx_queues; i++) {
-		vq = dev->data->tx_queues[i];
-		if (!vq)
-			continue;
-		vq->stats.xstats[VHOST_UNICAST_PKT] = vq->stats.pkts
-				+ vq->stats.missed_pkts
-				- (vq->stats.xstats[VHOST_BROADCAST_PKT]
-				+ vq->stats.xstats[VHOST_MULTICAST_PKT]);
-	}
 	for (t = 0; t < VHOST_NB_XSTATS_RXPORT; t++) {
 		xstats[count].value = 0;
 		for (i = 0; i < dev->data->nb_rx_queues; i++) {
@@ -339,7 +323,7 @@ vhost_dev_xstats_get(struct rte_eth_dev *dev, struct rte_eth_xstat *xstats,
 }
 
 static inline void
-vhost_count_multicast_broadcast(struct vhost_queue *vq,
+vhost_count_xcast_packets(struct vhost_queue *vq,
 				struct rte_mbuf *mbuf)
 {
 	struct rte_ether_addr *ea = NULL;
@@ -351,20 +335,27 @@ vhost_count_multicast_broadcast(struct vhost_queue *vq,
 			pstats->xstats[VHOST_BROADCAST_PKT]++;
 		else
 			pstats->xstats[VHOST_MULTICAST_PKT]++;
+	} else {
+		pstats->xstats[VHOST_UNICAST_PKT]++;
 	}
 }
 
 static void
-vhost_update_packet_xstats(struct vhost_queue *vq,
-			   struct rte_mbuf **bufs,
-			   uint16_t count)
+vhost_update_packet_xstats(struct vhost_queue *vq, struct rte_mbuf **bufs,
+			   uint16_t count, uint64_t nb_bytes,
+			   uint64_t nb_missed)
 {
 	uint32_t pkt_len = 0;
 	uint64_t i = 0;
 	uint64_t index;
 	struct vhost_stats *pstats = &vq->stats;
 
+	pstats->xstats[VHOST_BYTE] += nb_bytes;
+	pstats->xstats[VHOST_MISSED_PKT] += nb_missed;
+	pstats->xstats[VHOST_UNICAST_PKT] += nb_missed;
+
 	for (i = 0; i < count ; i++) {
+		pstats->xstats[VHOST_PKT]++;
 		pkt_len = bufs[i]->pkt_len;
 		if (pkt_len == 64) {
 			pstats->xstats[VHOST_64_PKT]++;
@@ -380,7 +371,7 @@ vhost_update_packet_xstats(struct vhost_queue *vq,
 			else if (pkt_len > 1522)
 				pstats->xstats[VHOST_1523_TO_MAX_PKT]++;
 		}
-		vhost_count_multicast_broadcast(vq, bufs[i]);
+		vhost_count_xcast_packets(vq, bufs[i]);
 	}
 }
 
@@ -391,6 +382,7 @@ eth_vhost_rx(void *q, struct rte_mbuf **bufs, uint16_t nb_bufs)
 	struct vhost_queue *r = q;
 	uint16_t i, nb_rx = 0;
 	uint16_t nb_receive = nb_bufs;
+	uint64_t nb_bytes = 0;
 
 	//此队列是否容许收包
 	if (unlikely(rte_atomic32_read(&r->allow_queuing) == 0))
@@ -433,10 +425,11 @@ eth_vhost_rx(void *q, struct rte_mbuf **bufs, uint16_t nb_bufs)
 			rte_vlan_strip(bufs[i]);
 
 		//收包字节计数
-		r->stats.bytes += bufs[i]->pkt_len;
+		nb_bytes += bufs[i]->pkt_len;
 	}
 
-	vhost_update_packet_xstats(r, bufs, nb_rx);
+	r->stats.bytes += nb_bytes;
+	vhost_update_packet_xstats(r, bufs, nb_rx, nb_bytes, 0);
 
 out:
 	//指明非队列操作中
@@ -452,6 +445,8 @@ eth_vhost_tx(void *q, struct rte_mbuf **bufs, uint16_t nb_bufs)
 	struct vhost_queue *r = q;
 	uint16_t i, nb_tx = 0;
 	uint16_t nb_send = 0;
+	uint64_t nb_bytes = 0;
+	uint64_t nb_missed = 0;
 
 	//当前不容许对队列操作，返回
 	if (unlikely(rte_atomic32_read(&r->allow_queuing) == 0))
@@ -498,20 +493,23 @@ eth_vhost_tx(void *q, struct rte_mbuf **bufs, uint16_t nb_bufs)
 	}
 
 	//统计处理
+	for (i = 0; likely(i < nb_tx); i++)
+		nb_bytes += bufs[i]->pkt_len;
+
+	nb_missed = nb_bufs - nb_tx;
+
 	r->stats.pkts += nb_tx;
+	r->stats.bytes += nb_bytes;
 	r->stats.missed_pkts += nb_bufs - nb_tx;//未发送出去的报文数
 
-	for (i = 0; likely(i < nb_tx); i++)
-		r->stats.bytes += bufs[i]->pkt_len;
+	vhost_update_packet_xstats(r, bufs, nb_tx, nb_bytes, nb_missed);
 
-	vhost_update_packet_xstats(r, bufs, nb_tx);
-
-	/* According to RFC2863 page42 section ifHCOutMulticastPkts and
-	 * ifHCOutBroadcastPkts, the counters "multicast" and "broadcast"
-	 * are increased when packets are not transmitted successfully.
+	/* According to RFC2863, ifHCOutUcastPkts, ifHCOutMulticastPkts and
+	 * ifHCOutBroadcastPkts counters are increased when packets are not
+	 * transmitted successfully.
 	 */
 	for (i = nb_tx; i < nb_bufs; i++)
-		vhost_count_multicast_broadcast(r, bufs[i]);
+		vhost_count_xcast_packets(r, bufs[i]);
 
 	//释放未发送成功的报文
 	for (i = 0; likely(i < nb_tx); i++)
@@ -859,7 +857,7 @@ new_device(int vid)
 
 	VHOST_LOG(INFO, "Vhost device %d created\n", vid);
 
-	_rte_eth_dev_callback_process(eth_dev, RTE_ETH_EVENT_INTR_LSC, NULL);
+	rte_eth_dev_callback_process(eth_dev, RTE_ETH_EVENT_INTR_LSC, NULL);
 
 	return 0;
 }
@@ -916,7 +914,7 @@ destroy_device(int vid)
 	VHOST_LOG(INFO, "Vhost device %d destroyed\n", vid);
 	eth_vhost_uninstall_intr(eth_dev);
 
-	_rte_eth_dev_callback_process(eth_dev, RTE_ETH_EVENT_INTR_LSC, NULL);
+	rte_eth_dev_callback_process(eth_dev, RTE_ETH_EVENT_INTR_LSC, NULL);
 }
 
 static int
@@ -995,7 +993,7 @@ vring_state_changed(int vid, uint16_t vring, int enable)
 	VHOST_LOG(INFO, "vring%u is %s\n",
 			vring, enable ? "enabled" : "disabled");
 
-	_rte_eth_dev_callback_process(eth_dev, RTE_ETH_EVENT_QUEUE_STATE, NULL);
+	rte_eth_dev_callback_process(eth_dev, RTE_ETH_EVENT_QUEUE_STATE, NULL);
 
 	return 0;
 }
@@ -1185,27 +1183,33 @@ eth_dev_start(struct rte_eth_dev *eth_dev)
 	return 0;
 }
 
-static void
+static int
 eth_dev_stop(struct rte_eth_dev *dev)
 {
 	struct pmd_internal *internal = dev->data->dev_private;
 
+	dev->data->dev_started = 0;
 	rte_atomic32_set(&internal->started, 0);
 	update_queuing_status(dev);
+
+	return 0;
 }
 
-static void
+static int
 eth_dev_close(struct rte_eth_dev *dev)
 {
 	struct pmd_internal *internal;
 	struct internal_list *list;
-	unsigned int i;
+	unsigned int i, ret;
+
+	if (rte_eal_process_type() != RTE_PROC_PRIMARY)
+		return 0;
 
 	internal = dev->data->dev_private;
 	if (!internal)
-		return;
+		return 0;
 
-	eth_dev_stop(dev);
+	ret = eth_dev_stop(dev);
 
 	list = find_internal_resource(internal->iface_name);
 	if (list) {
@@ -1233,6 +1237,8 @@ eth_dev_close(struct rte_eth_dev *dev)
 
 	rte_free(vring_states[dev->data->port_id]);
 	vring_states[dev->data->port_id] = NULL;
+
+	return ret;
 }
 
 //vhost收队列初始化（在那个socket_id上申请ring)
@@ -1423,7 +1429,6 @@ static const struct eth_dev_ops ops = {
 	.rx_queue_release = eth_queue_release,
 	.tx_queue_release = eth_queue_release,
 	.tx_done_cleanup = eth_tx_done_cleanup,
-	.rx_queue_count = eth_rx_queue_count,
 	.link_update = eth_link_update,
 	.stats_get = eth_stats_get,
 	.stats_reset = eth_stats_reset,
@@ -1484,11 +1489,13 @@ eth_dev_vhost_create(struct rte_vdev_device *dev, char *iface_name,
 	internal->flags = flags;
 	internal->disable_flags = disable_flags;
 	data->dev_link = pmd_link;
-	data->dev_flags = RTE_ETH_DEV_INTR_LSC | RTE_ETH_DEV_CLOSE_REMOVE;
+	data->dev_flags = RTE_ETH_DEV_INTR_LSC |
+				RTE_ETH_DEV_AUTOFILL_QUEUE_XSTATS;
 	data->promiscuous = 1;
 	data->all_multicast = 1;
 
 	eth_dev->dev_ops = &ops;
+	eth_dev->rx_queue_count = eth_rx_queue_count;
 
 	//挂载vhost设备的收包，发包函数
 	/* finally assign rx and tx ops */
@@ -1544,10 +1551,9 @@ rte_pmd_vhost_probe(struct rte_vdev_device *dev)
 	int ret = 0;
 	char *iface_name;
 	uint16_t queues;
-	uint64_t flags = 0;
+	uint64_t flags = RTE_VHOST_USER_NET_COMPLIANT_OL_FLAGS;
 	uint64_t disable_flags = 0;
 	int client_mode = 0;
-	int dequeue_zero_copy = 0;
 	int iommu_support = 0;
 	int postcopy_support = 0;
 	int tso = 0;
@@ -1615,18 +1621,6 @@ rte_pmd_vhost_probe(struct rte_vdev_device *dev)
 			flags |= RTE_VHOST_USER_CLIENT;
 	}
 
-	//zero-copy参数仅容许配置一次
-	if (rte_kvargs_count(kvlist, ETH_VHOST_DEQUEUE_ZERO_COPY) == 1) {
-		//用open-int,将参数转为整数，存入dequeue_zero_copy
-		ret = rte_kvargs_process(kvlist, ETH_VHOST_DEQUEUE_ZERO_COPY,
-					 &open_int, &dequeue_zero_copy);
-		if (ret < 0)
-			goto out_free;
-
-		if (dequeue_zero_copy)
-			//标记dequeue-zero-copy
-			flags |= RTE_VHOST_USER_DEQUEUE_ZERO_COPY;
-	}
 
 	//iommu-support参数仅容许配置一次
 	if (rte_kvargs_count(kvlist, ETH_VHOST_IOMMU_SUPPORT) == 1) {
@@ -1715,12 +1709,8 @@ rte_pmd_vhost_remove(struct rte_vdev_device *dev)
 	if (eth_dev == NULL)
 		return 0;
 
-	if (rte_eal_process_type() != RTE_PROC_PRIMARY)
-		return rte_eth_dev_release_port(eth_dev);
-
 	//停止设备
 	eth_dev_close(eth_dev);
-
 	rte_eth_dev_release_port(eth_dev);
 
 	return 0;
@@ -1739,7 +1729,6 @@ RTE_PMD_REGISTER_PARAM_STRING(net_vhost,
 	"iface=<ifc> "
 	"queues=<int> "
 	"client=<0|1> "
-	"dequeue-zero-copy=<0|1> "
 	"iommu-support=<0|1> "
 	"postcopy-support=<0|1> "
 	"tso=<0|1> "

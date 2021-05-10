@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: BSD-3-Clause
- * Copyright(c) 2019-2020 Broadcom
+ * Copyright(c) 2019-2021 Broadcom
  * All rights reserved.
  */
 
@@ -81,6 +81,12 @@ struct tf_rm_element_cfg tf_em_ext_p4[TF_EM_TBL_TYPE_MAX] = {
 	/* CFA_RESOURCE_TYPE_P4_EM_REC */
 	{ TF_RM_ELEM_CFG_NULL, CFA_RESOURCE_TYPE_INVALID },
 	{ TF_RM_ELEM_CFG_HCAPI_BA, CFA_RESOURCE_TYPE_P4_TBL_SCOPE },
+};
+
+struct tf_rm_element_cfg tf_em_ext_p45[TF_EM_TBL_TYPE_MAX] = {
+	/* CFA_RESOURCE_TYPE_P4_EM_REC */
+	{ TF_RM_ELEM_CFG_NULL, CFA_RESOURCE_TYPE_INVALID },
+	{ TF_RM_ELEM_CFG_HCAPI_BA, CFA_RESOURCE_TYPE_P45_TBL_SCOPE },
 };
 
 struct tf_rm_element_cfg tf_em_int_p4[TF_EM_TBL_TYPE_MAX] = {

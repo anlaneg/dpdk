@@ -9,13 +9,14 @@
 #include <string.h>
 
 #include <rte_malloc.h>
-#include <rte_ethdev_driver.h>
+#include <ethdev_driver.h>
 
 #include <mlx5_malloc.h>
 
 #include "mlx5_defs.h"
 #include "mlx5.h"
 #include "mlx5_rxtx.h"
+#include "mlx5_rx.h"
 
 /**
  * DPDK callback to update the RSS hash configuration.
@@ -215,9 +216,11 @@ mlx5_dev_rss_reta_update(struct rte_eth_dev *dev,
 		MLX5_ASSERT(reta_conf[idx].reta[pos] < priv->rxqs_n);
 		(*priv->reta_idx)[i] = reta_conf[idx].reta[pos];
 	}
+
+	priv->skip_default_rss_reta = 1;
+
 	if (dev->data->dev_started) {
 		mlx5_dev_stop(dev);
-		priv->skip_default_rss_reta = 1;
 		return mlx5_dev_start(dev);
 	}
 	return 0;

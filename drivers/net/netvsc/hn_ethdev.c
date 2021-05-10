@@ -9,6 +9,11 @@
 #include <stdio.h>
 #include <errno.h>
 #include <unistd.h>
+#include <dirent.h>
+#include <net/if.h>
+#include <net/if_arp.h>
+#include <netinet/in.h>
+#include <sys/ioctl.h>
 
 #include <rte_ethdev.h>
 #include <rte_memcpy.h>
@@ -20,13 +25,14 @@
 #include <rte_atomic.h>
 #include <rte_branch_prediction.h>
 #include <rte_ether.h>
-#include <rte_ethdev_driver.h>
+#include <ethdev_driver.h>
 #include <rte_cycles.h>
 #include <rte_errno.h>
 #include <rte_memory.h>
 #include <rte_eal.h>
 #include <rte_dev.h>
 #include <rte_bus_vmbus.h>
+#include <rte_alarm.h>
 
 #include "hn_logs.h"
 #include "hn_var.h"
@@ -44,6 +50,14 @@
 #define HN_RX_OFFLOAD_CAPS (DEV_RX_OFFLOAD_CHECKSUM | \
 			    DEV_RX_OFFLOAD_VLAN_STRIP | \
 			    DEV_RX_OFFLOAD_RSS_HASH)
+
+#define NETVSC_ARG_LATENCY "latency"
+#define NETVSC_ARG_RXBREAK "rx_copybreak"
+#define NETVSC_ARG_TXBREAK "tx_copybreak"
+#define NETVSC_ARG_RX_EXTMBUF_ENABLE "rx_extmbuf_enable"
+
+/* The max number of retry when hot adding a VF device */
+#define NETVSC_MAX_HOTADD_RETRY 10
 
 struct hn_xstats_name_off {
 	char name[RTE_ETH_XSTATS_NAME_SIZE];
@@ -123,9 +137,6 @@ eth_dev_vmbus_allocate(struct rte_vmbus_device *dev, size_t private_data_size)
 	eth_dev->data->dev_flags |= RTE_ETH_DEV_INTR_LSC;
 	eth_dev->intr_handle = &dev->intr_handle;
 
-	/* allow ethdev to remove on close */
-	eth_dev->data->dev_flags |= RTE_ETH_DEV_CLOSE_REMOVE;
-
 	return eth_dev;
 }
 
@@ -139,24 +150,36 @@ eth_dev_vmbus_release(struct rte_eth_dev *eth_dev)
 	eth_dev->intr_handle = NULL;
 }
 
-/* handle "latency=X" from devargs */
-static int hn_set_latency(const char *key, const char *value, void *opaque)
+static int hn_set_parameter(const char *key, const char *value, void *opaque)
 {
 	struct hn_data *hv = opaque;
 	char *endp = NULL;
-	unsigned long lat;
+	unsigned long v;
 
-	errno = 0;
-	lat = strtoul(value, &endp, 0);
-
+	v = strtoul(value, &endp, 0);
 	if (*value == '\0' || *endp != '\0') {
 		PMD_DRV_LOG(ERR, "invalid parameter %s=%s", key, value);
 		return -EINVAL;
 	}
 
-	PMD_DRV_LOG(DEBUG, "set latency %lu usec", lat);
+	if (!strcmp(key, NETVSC_ARG_LATENCY)) {
+		/* usec to nsec */
+		hv->latency = v * 1000;
+		PMD_DRV_LOG(DEBUG, "set latency %u usec", hv->latency);
+	} else if (!strcmp(key, NETVSC_ARG_RXBREAK)) {
+		hv->rx_copybreak = v;
+		PMD_DRV_LOG(DEBUG, "rx copy break set to %u",
+			    hv->rx_copybreak);
+	} else if (!strcmp(key, NETVSC_ARG_TXBREAK)) {
+		hv->tx_copybreak = v;
+		PMD_DRV_LOG(DEBUG, "tx copy break set to %u",
+			    hv->tx_copybreak);
+	} else if (!strcmp(key, NETVSC_ARG_RX_EXTMBUF_ENABLE)) {
+		hv->rx_extmbuf_enable = v;
+		PMD_DRV_LOG(DEBUG, "rx extmbuf enable set to %u",
+			    hv->rx_extmbuf_enable);
+	}
 
-	hv->latency = lat * 1000;	/* usec to nsec */
 	return 0;
 }
 
@@ -166,7 +189,10 @@ static int hn_parse_args(const struct rte_eth_dev *dev)
 	struct hn_data *hv = dev->data->dev_private;
 	struct rte_devargs *devargs = dev->device->devargs;
 	static const char * const valid_keys[] = {
-		"latency",
+		NETVSC_ARG_LATENCY,
+		NETVSC_ARG_RXBREAK,
+		NETVSC_ARG_TXBREAK,
+		NETVSC_ARG_RX_EXTMBUF_ENABLE,
 		NULL
 	};
 	struct rte_kvargs *kvlist;
@@ -180,15 +206,13 @@ static int hn_parse_args(const struct rte_eth_dev *dev)
 
 	kvlist = rte_kvargs_parse(devargs->args, valid_keys);
 	if (!kvlist) {
-		PMD_DRV_LOG(NOTICE, "invalid parameters");
+		PMD_DRV_LOG(ERR, "invalid parameters");
 		return -EINVAL;
 	}
 
-	ret = rte_kvargs_process(kvlist, "latency", hn_set_latency, hv);
-	if (ret)
-		PMD_DRV_LOG(ERR, "Unable to process latency arg\n");
-
+	ret = rte_kvargs_process(kvlist, NULL, hn_set_parameter, hv);
 	rte_kvargs_free(kvlist);
+
 	return ret;
 }
 
@@ -527,6 +551,129 @@ static int hn_subchan_configure(struct hn_data *hv,
 	return err;
 }
 
+static void netvsc_hotplug_retry(void *args)
+{
+	int ret;
+	struct hn_data *hv = args;
+	struct rte_eth_dev *dev = &rte_eth_devices[hv->port_id];
+	struct rte_devargs *d = &hv->devargs;
+	char buf[256];
+
+	DIR *di;
+	struct dirent *dir;
+	struct ifreq req;
+	struct rte_ether_addr eth_addr;
+	int s;
+
+	PMD_DRV_LOG(DEBUG, "%s: retry count %d",
+		    __func__, hv->eal_hot_plug_retry);
+
+	if (hv->eal_hot_plug_retry++ > NETVSC_MAX_HOTADD_RETRY)
+		return;
+
+	snprintf(buf, sizeof(buf), "/sys/bus/pci/devices/%s/net", d->name);
+	di = opendir(buf);
+	if (!di) {
+		PMD_DRV_LOG(DEBUG, "%s: can't open directory %s, "
+			    "retrying in 1 second", __func__, buf);
+		goto retry;
+	}
+
+	while ((dir = readdir(di))) {
+		/* Skip . and .. directories */
+		if (!strcmp(dir->d_name, ".") || !strcmp(dir->d_name, ".."))
+			continue;
+
+		/* trying to get mac address if this is a network device*/
+		s = socket(PF_INET, SOCK_DGRAM, IPPROTO_IP);
+		if (s == -1) {
+			PMD_DRV_LOG(ERR, "Failed to create socket errno %d",
+				    errno);
+			break;
+		}
+		strlcpy(req.ifr_name, dir->d_name, sizeof(req.ifr_name));
+		ret = ioctl(s, SIOCGIFHWADDR, &req);
+		close(s);
+		if (ret == -1) {
+			PMD_DRV_LOG(ERR,
+				    "Failed to send SIOCGIFHWADDR for device %s",
+				    dir->d_name);
+			break;
+		}
+		if (req.ifr_hwaddr.sa_family != ARPHRD_ETHER) {
+			closedir(di);
+			return;
+		}
+		memcpy(eth_addr.addr_bytes, req.ifr_hwaddr.sa_data,
+		       RTE_DIM(eth_addr.addr_bytes));
+
+		if (rte_is_same_ether_addr(&eth_addr, dev->data->mac_addrs)) {
+			PMD_DRV_LOG(NOTICE,
+				    "Found matching MAC address, adding device %s network name %s",
+				    d->name, dir->d_name);
+			ret = rte_eal_hotplug_add(d->bus->name, d->name,
+						  d->args);
+			if (ret) {
+				PMD_DRV_LOG(ERR,
+					    "Failed to add PCI device %s",
+					    d->name);
+				break;
+			}
+		}
+		/* When the code reaches here, we either have already added
+		 * the device, or its MAC address did not match.
+		 */
+		closedir(di);
+		return;
+	}
+	closedir(di);
+retry:
+	/* The device is still being initialized, retry after 1 second */
+	rte_eal_alarm_set(1000000, netvsc_hotplug_retry, hv);
+}
+
+static void
+netvsc_hotadd_callback(const char *device_name, enum rte_dev_event_type type,
+		       void *arg)
+{
+	struct hn_data *hv = arg;
+	struct rte_devargs *d = &hv->devargs;
+	int ret;
+
+	PMD_DRV_LOG(INFO, "Device notification type=%d device_name=%s",
+		    type, device_name);
+
+	switch (type) {
+	case RTE_DEV_EVENT_ADD:
+		/* if we already has a VF, don't check on hot add */
+		if (hv->vf_ctx.vf_state > vf_removed)
+			break;
+
+		ret = rte_devargs_parse(d, device_name);
+		if (ret) {
+			PMD_DRV_LOG(ERR,
+				    "devargs parsing failed ret=%d", ret);
+			return;
+		}
+
+		if (!strcmp(d->bus->name, "pci")) {
+			/* Start the process of figuring out if this
+			 * PCI device is a VF device
+			 */
+			hv->eal_hot_plug_retry = 0;
+			rte_eal_alarm_set(1000000, netvsc_hotplug_retry, hv);
+		}
+
+		/* We will switch to VF on RDNIS configure message
+		 * sent from VSP
+		 */
+
+		break;
+	default:
+		break;
+	}
+}
+
 static int hn_dev_configure(struct rte_eth_dev *dev)
 {
 	struct rte_eth_conf *dev_conf = &dev->data->dev_conf;
@@ -602,7 +749,7 @@ static int hn_dev_configure(struct rte_eth_dev *dev)
 		}
 	}
 
-	return hn_vf_configure(dev, dev_conf);
+	return hn_vf_configure_locked(dev, dev_conf);
 }
 
 static int hn_dev_stats_get(struct rte_eth_dev *dev,
@@ -812,6 +959,14 @@ hn_dev_start(struct rte_eth_dev *dev)
 
 	PMD_INIT_FUNC_TRACE();
 
+	/* Register to monitor hot plug events */
+	error = rte_dev_event_callback_register(NULL, netvsc_hotadd_callback,
+						hv);
+	if (error) {
+		PMD_DRV_LOG(ERR, "failed to register device event callback");
+		return error;
+	}
+
 	error = hn_rndis_set_rxfilter(hv,
 				      NDIS_PACKET_TYPE_BROADCAST |
 				      NDIS_PACKET_TYPE_ALL_MULTICAST |
@@ -830,24 +985,35 @@ hn_dev_start(struct rte_eth_dev *dev)
 	return error;
 }
 
-static void
+static int
 hn_dev_stop(struct rte_eth_dev *dev)
 {
 	struct hn_data *hv = dev->data->dev_private;
 
 	PMD_INIT_FUNC_TRACE();
+	dev->data->dev_started = 0;
 
+	rte_dev_event_callback_unregister(NULL, netvsc_hotadd_callback, hv);
 	hn_rndis_set_rxfilter(hv, 0);
-	hn_vf_stop(dev);
+	return hn_vf_stop(dev);
 }
 
-static void
+static int
 hn_dev_close(struct rte_eth_dev *dev)
 {
-	PMD_INIT_FUNC_TRACE();
+	int ret;
+	struct hn_data *hv = dev->data->dev_private;
 
-	hn_vf_close(dev);
+	PMD_INIT_FUNC_TRACE();
+	if (rte_eal_process_type() != RTE_PROC_PRIMARY)
+		return 0;
+
+	rte_eal_alarm_cancel(netvsc_hotplug_retry, &hv->devargs);
+
+	ret = hn_vf_close(dev);
 	hn_dev_free_queues(dev);
+
+	return ret;
 }
 
 static const struct eth_dev_ops hn_eth_dev_ops = {
@@ -871,11 +1037,8 @@ static const struct eth_dev_ops hn_eth_dev_ops = {
 	.tx_queue_setup		= hn_dev_tx_queue_setup,
 	.tx_queue_release	= hn_dev_tx_queue_release,
 	.tx_done_cleanup        = hn_dev_tx_done_cleanup,
-	.tx_descriptor_status	= hn_dev_tx_descriptor_status,
 	.rx_queue_setup		= hn_dev_rx_queue_setup,
 	.rx_queue_release	= hn_dev_rx_queue_release,
-	.rx_queue_count		= hn_dev_rx_queue_count,
-	.rx_descriptor_status   = hn_dev_rx_queue_status,
 	.link_update		= hn_dev_link_update,
 	.stats_get		= hn_dev_stats_get,
 	.stats_reset            = hn_dev_stats_reset,
@@ -936,6 +1099,9 @@ eth_hn_dev_init(struct rte_eth_dev *eth_dev)
 
 	vmbus = container_of(device, struct rte_vmbus_device, device);
 	eth_dev->dev_ops = &hn_eth_dev_ops;
+	eth_dev->rx_queue_count = hn_dev_rx_queue_count;
+	eth_dev->rx_descriptor_status = hn_dev_rx_queue_status;
+	eth_dev->tx_descriptor_status = hn_dev_tx_descriptor_status;
 	eth_dev->tx_pkt_burst = &hn_xmit_pkts;
 	eth_dev->rx_pkt_burst = &hn_recv_pkts;
 
@@ -945,6 +1111,8 @@ eth_hn_dev_init(struct rte_eth_dev *eth_dev)
 	 */
 	if (rte_eal_process_type() != RTE_PROC_PRIMARY)
 		return 0;
+
+	eth_dev->data->dev_flags |= RTE_ETH_DEV_AUTOFILL_QUEUE_XSTATS;
 
 	/* Since Hyper-V only supports one MAC address */
 	eth_dev->data->mac_addrs = rte_calloc("hv_mac", HN_MAX_MAC_ADDRS,
@@ -960,9 +1128,16 @@ eth_hn_dev_init(struct rte_eth_dev *eth_dev)
 	hv->chim_res  = &vmbus->resource[HV_SEND_BUF_MAP];
 	hv->port_id = eth_dev->data->port_id;
 	hv->latency = HN_CHAN_LATENCY_NS;
+	hv->rx_copybreak = HN_RXCOPY_THRESHOLD;
+	hv->tx_copybreak = HN_TXCOPY_THRESHOLD;
+	hv->rx_extmbuf_enable = HN_RX_EXTMBUF_ENABLE;
 	hv->max_queues = 1;
+
 	rte_rwlock_init(&hv->vf_lock);
-	hv->vf_port = HN_INVALID_PORT;
+	hv->vf_ctx.vf_vsc_switched = false;
+	hv->vf_ctx.vf_vsp_reported = false;
+	hv->vf_ctx.vf_attached = false;
+	hv->vf_ctx.vf_state = vf_unknown;
 
 	err = hn_parse_args(eth_dev);
 	if (err)
@@ -1016,12 +1191,10 @@ eth_hn_dev_init(struct rte_eth_dev *eth_dev)
 	hv->max_queues = RTE_MIN(rxr_cnt, (unsigned int)max_chan);
 
 	/* If VF was reported but not added, do it now */
-	if (hv->vf_present && !hn_vf_attached(hv)) {
+	if (hv->vf_ctx.vf_vsp_reported && !hv->vf_ctx.vf_vsc_switched) {
 		PMD_INIT_LOG(DEBUG, "Adding VF device");
 
 		err = hn_vf_add(eth_dev, hv);
-		if (err)
-			hv->vf_present = 0;
 	}
 
 	return 0;
@@ -1038,19 +1211,15 @@ static int
 eth_hn_dev_uninit(struct rte_eth_dev *eth_dev)
 {
 	struct hn_data *hv = eth_dev->data->dev_private;
-	int ret;
+	int ret, ret_stop;
 
 	PMD_INIT_FUNC_TRACE();
 
 	if (rte_eal_process_type() != RTE_PROC_PRIMARY)
 		return 0;
 
-	hn_dev_stop(eth_dev);
+	ret_stop = hn_dev_stop(eth_dev);
 	hn_dev_close(eth_dev);
-
-	eth_dev->dev_ops = NULL;
-	eth_dev->tx_pkt_burst = NULL;
-	eth_dev->rx_pkt_burst = NULL;
 
 	hn_detach(hv);
 	hn_chim_uninit(eth_dev);
@@ -1060,7 +1229,7 @@ eth_hn_dev_uninit(struct rte_eth_dev *eth_dev)
 	if (ret != 0)
 		return ret;
 
-	return 0;
+	return ret_stop;
 }
 
 static int eth_hn_probe(struct rte_vmbus_driver *drv __rte_unused,
@@ -1071,15 +1240,23 @@ static int eth_hn_probe(struct rte_vmbus_driver *drv __rte_unused,
 
 	PMD_INIT_FUNC_TRACE();
 
+	ret = rte_dev_event_monitor_start();
+	if (ret) {
+		PMD_DRV_LOG(ERR, "Failed to start device event monitoring");
+		return ret;
+	}
+
 	eth_dev = eth_dev_vmbus_allocate(dev, sizeof(struct hn_data));
 	if (!eth_dev)
 		return -ENOMEM;
 
 	ret = eth_hn_dev_init(eth_dev);
-	if (ret)
+	if (ret) {
 		eth_dev_vmbus_release(eth_dev);
-	else
+		rte_dev_event_monitor_stop();
+	} else {
 		rte_eth_dev_probing_finish(eth_dev);
+	}
 
 	return ret;
 }
@@ -1093,13 +1270,14 @@ static int eth_hn_remove(struct rte_vmbus_device *dev)
 
 	eth_dev = rte_eth_dev_allocated(dev->device.name);
 	if (!eth_dev)
-		return -ENODEV;
+		return 0; /* port already released */
 
 	ret = eth_hn_dev_uninit(eth_dev);
 	if (ret)
 		return ret;
 
 	eth_dev_vmbus_release(eth_dev);
+	rte_dev_event_monitor_stop();
 	return 0;
 }
 
@@ -1120,3 +1298,8 @@ RTE_PMD_REGISTER_VMBUS(net_netvsc, rte_netvsc_pmd);
 RTE_PMD_REGISTER_KMOD_DEP(net_netvsc, "* uio_hv_generic");
 RTE_LOG_REGISTER(hn_logtype_init, pmd.net.netvsc.init, NOTICE);
 RTE_LOG_REGISTER(hn_logtype_driver, pmd.net.netvsc.driver, NOTICE);
+RTE_PMD_REGISTER_PARAM_STRING(net_netvsc,
+			      NETVSC_ARG_LATENCY "=<uint32> "
+			      NETVSC_ARG_RXBREAK "=<uint32> "
+			      NETVSC_ARG_TXBREAK "=<uint32> "
+			      NETVSC_ARG_RX_EXTMBUF_ENABLE "=<0|1>");

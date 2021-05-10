@@ -58,16 +58,20 @@ struct evt_options {
 	uint8_t sched_type_list[EVT_MAX_STAGES];
 	uint16_t mbuf_sz;
 	uint16_t wkr_deq_dep;
+	uint16_t vector_size;
+	uint16_t eth_queues;
 	uint32_t nb_flows;
 	uint32_t tx_first;
 	uint32_t max_pkt_sz;
 	uint32_t deq_tmo_nsec;
 	uint32_t q_priority:1;
 	uint32_t fwd_latency:1;
+	uint32_t ena_vector : 1;
 	uint64_t nb_pkts;
 	uint64_t nb_timers;
 	uint64_t expiry_nsec;
 	uint64_t max_tmo_nsec;
+	uint64_t vector_tmo_nsec;
 	uint64_t timer_tick_nsec;
 	uint64_t optm_timer_tick_nsec;
 	enum evt_prod_type prod_type;
@@ -101,6 +105,16 @@ evt_has_all_types_queue(uint8_t dev_id)
 
 	rte_event_dev_info_get(dev_id, &dev_info);
 	return (dev_info.event_dev_cap & RTE_EVENT_DEV_CAP_QUEUE_ALL_TYPES) ?
+			true : false;
+}
+
+static inline bool
+evt_has_flow_id(uint8_t dev_id)
+{
+	struct rte_event_dev_info dev_info;
+
+	rte_event_dev_info_get(dev_id, &dev_info);
+	return (dev_info.event_dev_cap & RTE_EVENT_DEV_CAP_CARRY_FLOW_ID) ?
 			true : false;
 }
 
@@ -169,6 +183,7 @@ evt_configure_eventdev(struct evt_options *opt, uint8_t nb_queues,
 			.dequeue_timeout_ns = opt->deq_tmo_nsec,
 			.nb_event_queues = nb_queues,
 			.nb_event_ports = nb_ports,
+			.nb_single_link_event_port_queues = 0,
 			.nb_events_limit  = info.max_num_events,
 			.nb_event_queue_flows = opt->nb_flows,
 			.nb_event_port_dequeue_depth =

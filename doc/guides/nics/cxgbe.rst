@@ -5,7 +5,7 @@
 CXGBE Poll Mode Driver
 ======================
 
-The CXGBE PMD (**librte_pmd_cxgbe**) provides poll mode driver support
+The CXGBE PMD (**librte_net_cxgbe**) provides poll mode driver support
 for **Chelsio Terminator** 10/25/40/100 Gbps family of adapters. CXGBE PMD
 has support for the latest Linux and FreeBSD operating systems.
 
@@ -36,12 +36,12 @@ Limitations
 -----------
 
 The Chelsio Terminator series of devices provide two/four ports but
-expose a single PCI bus address, thus, librte_pmd_cxgbe registers
+expose a single PCI bus address, thus, librte_net_cxgbe registers
 itself as a PCI driver that allocates one Ethernet device per detected
 port.
 
-For this reason, one cannot whitelist/blacklist a single port without
-whitelisting/blacklisting the other ports on the same device.
+For this reason, one cannot allow/block a single port without
+allowing/blocking the other ports on the same device.
 
 .. _t5-nics:
 
@@ -70,7 +70,7 @@ in :ref:`t5-nics` and :ref:`t6-nics`.
 Prerequisites
 -------------
 
-- Requires firmware version **1.24.11.0** and higher. Visit
+- Requires firmware version **1.25.4.0** and higher. Visit
   `Chelsio Download Center <http://service.chelsio.com>`_ to get latest firmware
   bundled with the latest Chelsio Unified Wire package.
 
@@ -87,35 +87,19 @@ Prerequisites
   :ref:`linux-installation` for Linux and section :ref:`freebsd-installation`
   for FreeBSD.
 
-Pre-Installation Configuration
-------------------------------
-
-Config File Options
-~~~~~~~~~~~~~~~~~~~
-
-The following options can be modified in the ``.config`` file. Please note that
-enabling debugging options may affect system performance.
-
-- ``CONFIG_RTE_LIBRTE_CXGBE_PMD`` (default **y**)
-
-  Toggle compilation of librte_pmd_cxgbe driver.
-
-  .. note::
-
-     This controls compilation of both CXGBE and CXGBEVF PMD.
 
 Runtime Options
-~~~~~~~~~~~~~~~
+---------------
 
 The following ``devargs`` options can be enabled at runtime. They must
 be passed as part of EAL arguments. For example,
 
 .. code-block:: console
 
-   testpmd -w 02:00.4,keep_ovlan=1 -- -i
+   dpdk-testpmd -a 02:00.4,keep_ovlan=1 -- -i
 
 Common Runtime Options
-^^^^^^^^^^^^^^^^^^^^^^
+~~~~~~~~~~~~~~~~~~~~~~
 
 - ``keep_ovlan`` (default **0**)
 
@@ -133,7 +117,7 @@ Common Runtime Options
   coalesce limit has been reached.
 
 CXGBE VF Only Runtime Options
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 - ``force_link_up`` (default **0**)
 
@@ -142,7 +126,7 @@ CXGBE VF Only Runtime Options
   to send traffic to each other even when the physical link is down.
 
 CXGBE PF Only Runtime Options
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 - ``filtermode`` (default **0**)
 
@@ -317,7 +301,7 @@ CXGBE PF Only Runtime Options
 
   .. code-block:: console
 
-     testpmd -w 02:00.4,filtermode=0x88 -- -i
+     dpdk-testpmd -a 02:00.4,filtermode=0x88 -- -i
 
 - ``filtermask`` (default **0**)
 
@@ -344,7 +328,7 @@ CXGBE PF Only Runtime Options
 
   .. code-block:: console
 
-     testpmd -w 02:00.4,filtermode=0x88,filtermask=0x80 -- -i
+     dpdk-testpmd -a 02:00.4,filtermode=0x88,filtermask=0x80 -- -i
 
 .. _driver-compilation:
 
@@ -420,13 +404,13 @@ Unified Wire package for Linux operating system are as follows:
 
    .. code-block:: console
 
-      firmware-version: 1.24.11.0, TP 0.1.23.2
+      firmware-version: 1.25.4.0, TP 0.1.23.2
 
 Running testpmd
 ~~~~~~~~~~~~~~~
 
 This section demonstrates how to launch **testpmd** with Chelsio
-devices managed by librte_pmd_cxgbe in Linux operating system.
+devices managed by librte_net_cxgbe in Linux operating system.
 
 #. Load the kernel module:
 
@@ -478,7 +462,7 @@ devices managed by librte_pmd_cxgbe in Linux operating system.
       EAL:   PCI memory mapped at 0x7fd7c0200000
       EAL:   PCI memory mapped at 0x7fd77cdfd000
       EAL:   PCI memory mapped at 0x7fd7c10b7000
-      PMD: rte_cxgbe_pmd: fw: 1.24.11.0, TP: 0.1.23.2
+      PMD: rte_cxgbe_pmd: fw: 1.25.4.0, TP: 0.1.23.2
       PMD: rte_cxgbe_pmd: Coming up as MASTER: Initializing adapter
       Interactive-mode selected
       Configuring Port 0 (socket 0)
@@ -584,7 +568,7 @@ virtual functions.
       [...]
       EAL: PCI device 0000:02:01.0 on NUMA socket 0
       EAL:   probe driver: 1425:5803 net_cxgbevf
-      PMD: rte_cxgbe_pmd: Firmware version: 1.24.11.0
+      PMD: rte_cxgbe_pmd: Firmware version: 1.25.4.0
       PMD: rte_cxgbe_pmd: TP Microcode version: 0.1.23.2
       PMD: rte_cxgbe_pmd: Chelsio rev 0
       PMD: rte_cxgbe_pmd: No bootstrap loaded
@@ -592,7 +576,7 @@ virtual functions.
       PMD: rte_cxgbe_pmd:  0000:02:01.0 Chelsio rev 0 1G/10GBASE-SFP
       EAL: PCI device 0000:02:01.1 on NUMA socket 0
       EAL:   probe driver: 1425:5803 net_cxgbevf
-      PMD: rte_cxgbe_pmd: Firmware version: 1.24.11.0
+      PMD: rte_cxgbe_pmd: Firmware version: 1.25.4.0
       PMD: rte_cxgbe_pmd: TP Microcode version: 0.1.23.2
       PMD: rte_cxgbe_pmd: Chelsio rev 0
       PMD: rte_cxgbe_pmd: No bootstrap loaded
@@ -670,13 +654,13 @@ Unified Wire package for FreeBSD operating system are as follows:
 
    .. code-block:: console
 
-      dev.t5nex.0.firmware_version: 1.24.11.0
+      dev.t5nex.0.firmware_version: 1.25.4.0
 
 Running testpmd
 ~~~~~~~~~~~~~~~
 
 This section demonstrates how to launch **testpmd** with Chelsio
-devices managed by librte_pmd_cxgbe in FreeBSD operating system.
+devices managed by librte_net_cxgbe in FreeBSD operating system.
 
 #. Change to DPDK source directory where the target has been compiled in
    section :ref:`driver-compilation`:
@@ -689,7 +673,7 @@ devices managed by librte_pmd_cxgbe in FreeBSD operating system.
 
    .. code-block:: console
 
-      cp x86_64-native-freebsd-clang/kmod/contigmem.ko /boot/kernel/
+      cp <build_dir>/kernel/freebsd/contigmem.ko /boot/kernel/
 
 #. Add the following lines to /boot/loader.conf:
 
@@ -770,13 +754,13 @@ devices managed by librte_pmd_cxgbe in FreeBSD operating system.
 
    .. code-block:: console
 
-      kldload ./x86_64-native-freebsd-clang/kmod/nic_uio.ko
+      kldload <build_dir>/kernel/freebsd/nic_uio.ko
 
 #. Start testpmd with basic parameters:
 
    .. code-block:: console
 
-      ./x86_64-native-freebsd-clang/app/testpmd -l 0-3 -n 4 -w 0000:02:00.4 -- -i
+      ./<build_dir>/app/dpdk-testpmd -l 0-3 -n 4 -a 0000:02:00.4 -- -i
 
    Example output:
 
@@ -788,7 +772,7 @@ devices managed by librte_pmd_cxgbe in FreeBSD operating system.
       EAL:   PCI memory mapped at 0x8007ec000
       EAL:   PCI memory mapped at 0x842800000
       EAL:   PCI memory mapped at 0x80086c000
-      PMD: rte_cxgbe_pmd: fw: 1.24.11.0, TP: 0.1.23.2
+      PMD: rte_cxgbe_pmd: fw: 1.25.4.0, TP: 0.1.23.2
       PMD: rte_cxgbe_pmd: Coming up as MASTER: Initializing adapter
       Interactive-mode selected
       Configuring Port 0 (socket 0)

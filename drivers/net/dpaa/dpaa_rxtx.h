@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: BSD-3-Clause
  *
  *   Copyright 2016 Freescale Semiconductor, Inc. All rights reserved.
- *   Copyright 2017 NXP
+ *   Copyright 2017,2020-2021 NXP
  *
  */
 
@@ -61,7 +61,7 @@
  *		0x8000 - Ethernet type
  *	ShimR & Logical Port ID 0x0000
  */
-#define DPAA_PARSE_MASK			0x00E044ED00800000
+#define DPAA_PARSE_MASK			0x00F044EF00800000
 #define DPAA_PARSE_VLAN_MASK		0x0000000000700000
 
 /* Parsed values (Little Endian) */
@@ -137,6 +137,23 @@
 			(0x0020000000000000 | DPAA_PKT_TYPE_TUNNEL_4_6)
 #define DPAA_PKT_TYPE_TUNNEL_6_4_TCP \
 			(0x0020000000000000 | DPAA_PKT_TYPE_TUNNEL_6_4)
+
+/* Checksum Errors */
+#define DPAA_PKT_IP_CSUM_ERR		0x0000400200000000
+#define DPAA_PKT_L4_CSUM_ERR		0x0010000000000000
+#define DPAA_PKT_TYPE_IPV4_CSUM_ERR \
+			(DPAA_PKT_IP_CSUM_ERR | DPAA_PKT_TYPE_IPV4)
+#define DPAA_PKT_TYPE_IPV6_CSUM_ERR \
+			(DPAA_PKT_IP_CSUM_ERR | DPAA_PKT_TYPE_IPV6)
+#define DPAA_PKT_TYPE_IPV4_TCP_CSUM_ERR \
+			(DPAA_PKT_L4_CSUM_ERR | DPAA_PKT_TYPE_IPV4_TCP)
+#define DPAA_PKT_TYPE_IPV6_TCP_CSUM_ERR \
+			(DPAA_PKT_L4_CSUM_ERR | DPAA_PKT_TYPE_IPV6_TCP)
+#define DPAA_PKT_TYPE_IPV4_UDP_CSUM_ERR \
+			(DPAA_PKT_L4_CSUM_ERR | DPAA_PKT_TYPE_IPV4_UDP)
+#define DPAA_PKT_TYPE_IPV6_UDP_CSUM_ERR \
+			(DPAA_PKT_L4_CSUM_ERR | DPAA_PKT_TYPE_IPV6_UDP)
+
 #define DPAA_PKT_L3_LEN_SHIFT	7
 
 /**
@@ -261,12 +278,6 @@ uint16_t dpaa_eth_queue_tx(void *q, struct rte_mbuf **bufs, uint16_t nb_bufs);
 uint16_t dpaa_eth_tx_drop_all(void *q  __rte_unused,
 			      struct rte_mbuf **bufs __rte_unused,
 			      uint16_t nb_bufs __rte_unused);
-
-struct rte_mbuf *dpaa_eth_sg_to_mbuf(const struct qm_fd *fd, uint32_t ifid);
-
-int dpaa_eth_mbuf_to_sg_fd(struct rte_mbuf *mbuf,
-			   struct qm_fd *fd,
-			   uint32_t bpid);
 
 uint16_t dpaa_free_mbuf(const struct qm_fd *fd);
 void dpaa_rx_cb(struct qman_fq **fq,

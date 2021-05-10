@@ -4,7 +4,9 @@
 
 #include <stdlib.h>
 #include <rte_malloc.h>
-#include "mlx5_common_utils.h"
+#include <rte_class.h>
+
+#include "mlx5_common_log.h"
 #include "mlx5_common_pci.h"
 
 struct mlx5_pci_device {
@@ -28,14 +30,21 @@ static const struct {
 	{ .name = "vdpa", .driver_class = MLX5_CLASS_VDPA },
 	{ .name = "net", .driver_class = MLX5_CLASS_NET },
 	{ .name = "regex", .driver_class = MLX5_CLASS_REGEX },
+	{ .name = "compress", .driver_class = MLX5_CLASS_COMPRESS },
 };
 
 static const unsigned int mlx5_class_combinations[] = {
 	MLX5_CLASS_NET,
 	MLX5_CLASS_VDPA,
 	MLX5_CLASS_REGEX,
+	MLX5_CLASS_COMPRESS,
 	MLX5_CLASS_NET | MLX5_CLASS_REGEX,
 	MLX5_CLASS_VDPA | MLX5_CLASS_REGEX,
+	MLX5_CLASS_NET | MLX5_CLASS_COMPRESS,
+	MLX5_CLASS_VDPA | MLX5_CLASS_COMPRESS,
+	MLX5_CLASS_REGEX | MLX5_CLASS_COMPRESS,
+	MLX5_CLASS_NET | MLX5_CLASS_REGEX | MLX5_CLASS_COMPRESS,
+	MLX5_CLASS_VDPA | MLX5_CLASS_REGEX | MLX5_CLASS_COMPRESS,
 	/* New class combination should be added here. */
 };
 
@@ -72,6 +81,7 @@ bus_cmdline_options_handler(__rte_unused const char *key,
 	int class_val;
 	char *found;
 	char *nstr;
+	char *refstr = NULL;
 
 	*ret = 0;
 	nstr = strdup(class_names);
@@ -80,21 +90,22 @@ bus_cmdline_options_handler(__rte_unused const char *key,
 		return *ret;
 	}
 	nstr_org = nstr;
-	while (nstr) {
+	found = strtok_r(nstr, ":", &refstr);
+	if (!found)
+		goto err;
+	do {
 		/* Extract each individual class name. Multiple
 		 * class key,value is supplied as class=net:vdpa:foo:bar.
 		 */
-		found = strsep(&nstr, ":");
-		if (!found)
-			continue;
-		/* Check if its a valid class. */
 		class_val = class_name_to_value(found);
+		/* Check if its a valid class. */
 		if (class_val < 0) {
 			*ret = -EINVAL;
 			goto err;
 		}
 		*ret |= class_val;
-	}
+		found = strtok_r(NULL, ":", &refstr);
+	} while (found);
 err:
 	free(nstr_org);
 	if (*ret < 0)
@@ -133,18 +144,18 @@ mlx5_bus_match(const struct mlx5_pci_driver *drv,
 	     id_table++) {
 		/* Check if device's ids match the class driver's ids. */
 		if (id_table->vendor_id != pci_dev->id.vendor_id &&
-		    id_table->vendor_id != PCI_ANY_ID)
+		    id_table->vendor_id != RTE_PCI_ANY_ID)
 			continue;
 		if (id_table->device_id != pci_dev->id.device_id &&
-		    id_table->device_id != PCI_ANY_ID)
+		    id_table->device_id != RTE_PCI_ANY_ID)
 			continue;
 		if (id_table->subsystem_vendor_id !=
 		    pci_dev->id.subsystem_vendor_id &&
-		    id_table->subsystem_vendor_id != PCI_ANY_ID)
+		    id_table->subsystem_vendor_id != RTE_PCI_ANY_ID)
 			continue;
 		if (id_table->subsystem_device_id !=
 		    pci_dev->id.subsystem_device_id &&
-		    id_table->subsystem_device_id != PCI_ANY_ID)
+		    id_table->subsystem_device_id != RTE_PCI_ANY_ID)
 			continue;
 		if (id_table->class_id != pci_dev->id.class_id &&
 		    id_table->class_id != RTE_CLASS_ANY_ID)
@@ -236,14 +247,14 @@ drivers_probe(struct mlx5_pci_device *dev, struct rte_pci_driver *pci_drv,
 		already_loaded = dev->classes_loaded & driver->driver_class;
 		if (already_loaded &&
 		    !(driver->pci_driver.drv_flags & RTE_PCI_DRV_PROBE_AGAIN)) {
-			DRV_LOG(ERR, "Device %s is already probed\n",
+			DRV_LOG(ERR, "Device %s is already probed",
 				pci_dev->device.name);
 			ret = -EEXIST;
 			goto probe_err;
 		}
 		ret = driver->pci_driver.probe(pci_drv, pci_dev);
 		if (ret < 0) {
-			DRV_LOG(ERR, "Failed to load driver = %s.\n",
+			DRV_LOG(ERR, "Failed to load driver %s",
 				driver->pci_driver.driver.name);
 			goto probe_err;
 		}
@@ -406,7 +417,7 @@ static struct rte_pci_id *mlx5_pci_id_table;
 
 static struct rte_pci_driver mlx5_pci_driver = {
 	.driver = {
-		.name = "mlx5_pci",
+		.name = MLX5_PCI_DRIVER_NAME,
 	},
 	.probe = mlx5_common_pci_probe,
 	.remove = mlx5_common_pci_remove,

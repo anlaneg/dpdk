@@ -7,7 +7,16 @@
 
 #include "mlx5_glue.h"
 #include "mlx5_prm.h"
+#include <rte_compat.h>
 
+/*
+ * Defines the amount of retries to allocate the first UAR in the page.
+ * OFED 5.0.x and Upstream rdma_core before v29 returned the NULL as
+ * UAR base address if UAR was not the first object in the UAR page.
+ * It caused the PMD failure and we should try to get another UAR
+ * till we get the first one with non-NULL base address returned.
+ */
+#define MLX5_ALLOC_UAR_RETRY 32
 
 /* This is limitation of libibverbs: in length variable type is u16. */
 #define MLX5_DEVX_MAX_KLM_ENTRIES ((UINT16_MAX - \
@@ -20,7 +29,11 @@ struct mlx5_devx_mkey_attr {
 	uint32_t pd;
 	uint32_t log_entity_size;
 	uint32_t pg_access:1;
-	uint32_t relaxed_ordering:1;
+	uint32_t relaxed_ordering_write:1;
+	uint32_t relaxed_ordering_read:1;
+	uint32_t umr_en:1;
+	uint32_t crypto_en:2;
+	uint32_t set_remote_rw:1;
 	struct mlx5_klm *klm_array;
 	int klm_num;
 };
@@ -28,15 +41,29 @@ struct mlx5_devx_mkey_attr {
 /* HCA qos attributes. */
 struct mlx5_hca_qos_attr {
 	uint32_t sup:1;	/* Whether QOS is supported. */
-	uint32_t srtcm_sup:1; /* Whether srTCM mode is supported. */
+	uint32_t flow_meter_old:1; /* Flow meter is supported, old version. */
 	uint32_t packet_pacing:1; /* Packet pacing is supported. */
 	uint32_t wqe_rate_pp:1; /* Packet pacing WQE rate mode. */
-	uint32_t flow_meter_reg_share:1;
-	/* Whether reg_c share is supported. */
+	uint32_t flow_meter:1;
+	/*
+	 * Flow meter is supported, updated version.
+	 * When flow_meter is 1, it indicates that REG_C sharing is supported.
+	 * If flow_meter is 1, flow_meter_old is also 1.
+	 * Using older driver versions, flow_meter_old can be 1
+	 * while flow_meter is 0.
+	 */
+	uint32_t flow_meter_aso_sup:1;
+	/* Whether FLOW_METER_ASO Object is supported. */
 	uint8_t log_max_flow_meter;
 	/* Power of the maximum supported meters. */
 	uint8_t flow_meter_reg_c_ids;
 	/* Bitmap of the reg_Cs available for flow meter to use. */
+	uint32_t log_meter_aso_granularity:5;
+	/* Power of the minimum allocation granularity Object. */
+	uint32_t log_meter_aso_max_alloc:5;
+	/* Power of the maximum allocation granularity Object. */
+	uint32_t log_max_num_meter_aso:5;
+	/* Power of the maximum number of supported objects. */
 
 };
 
@@ -75,6 +102,7 @@ struct mlx5_hca_attr {
 	uint32_t eth_net_offloads:1;
 	uint32_t eth_virt:1;
 	uint32_t wqe_vlan_insert:1;
+	uint32_t csum_cap:1;
 	uint32_t wqe_inline_mode:2;
 	uint32_t vport_inline_mode:3;
 	uint32_t tunnel_stateless_geneve_rx:1;
@@ -85,7 +113,10 @@ struct mlx5_hca_attr {
 	uint32_t tunnel_lro_vxlan:1;
 	uint32_t lro_max_msg_sz_mode:2;
 	uint32_t lro_timer_supported_periods[MLX5_LRO_NUM_SUPP_PERIODS];
+	uint16_t lro_min_mss_size;
 	uint32_t flex_parser_protocols;
+	uint32_t max_geneve_tlv_options;
+	uint32_t max_geneve_tlv_option_data_len;
 	uint32_t hairpin:1;
 	uint32_t log_max_hairpin_queues:5;
 	uint32_t log_max_hairpin_wq_data_sz:5;
@@ -98,12 +129,50 @@ struct mlx5_hca_attr {
 	uint32_t cross_channel:1;
 	uint32_t non_wire_sq:1; /* SQ with non-wire ops is supported. */
 	uint32_t log_max_static_sq_wq:5; /* Static WQE size SQ. */
+	uint32_t num_lag_ports:4; /* Number of ports can be bonded. */
 	uint32_t dev_freq_khz; /* Timestamp counter frequency, kHz. */
 	uint32_t scatter_fcs_w_decap_disable:1;
+	uint32_t flow_hit_aso:1; /* General obj type FLOW_HIT_ASO supported. */
+	uint32_t roce:1;
+	uint32_t rq_ts_format:2;
+	uint32_t sq_ts_format:2;
+	uint32_t qp_ts_format:2;
 	uint32_t regex:1;
+	uint32_t reg_c_preserve:1;
+	uint32_t ct_offload:1; /* General obj type ASO CT offload supported. */
+	uint32_t crypto:1; /* Crypto engine is supported. */
+	uint32_t aes_xts:1; /* AES-XTS crypto is supported. */
+	uint32_t dek:1; /* General obj type DEK is supported. */
+	uint32_t import_kek:1; /* General obj type IMPORT_KEK supported. */
+	uint32_t credential:1; /* General obj type CREDENTIAL supported. */
+	uint32_t crypto_login:1; /* General obj type CRYPTO_LOGIN supported. */
 	uint32_t regexp_num_of_engines;
+	uint32_t log_max_ft_sampler_num:8;
+	uint32_t geneve_tlv_opt;
+	uint32_t cqe_compression:1;
+	uint32_t mini_cqe_resp_flow_tag:1;
+	uint32_t mini_cqe_resp_l3_l4_tag:1;
+	uint32_t pkt_integrity_match:1; /* 1 if HW supports integrity item */
 	struct mlx5_hca_qos_attr qos;
 	struct mlx5_hca_vdpa_attr vdpa;
+	int log_max_qp_sz;
+	int log_max_cq_sz;
+	int log_max_qp;
+	int log_max_cq;
+	uint32_t log_max_pd;
+	uint32_t log_max_mrw_sz;
+	uint32_t log_max_srq;
+	uint32_t log_max_srq_sz;
+	uint32_t rss_ind_tbl_cap;
+	uint32_t mmo_dma_en:1;
+	uint32_t mmo_compress_en:1;
+	uint32_t mmo_decompress_en:1;
+	uint32_t compress_min_block_size:4;
+	uint32_t log_max_mmo_dma:5;
+	uint32_t log_max_mmo_compress:5;
+	uint32_t log_max_mmo_decompress:5;
+	uint32_t umr_modify_entity_size_disabled:1;
+	uint32_t umr_indirect_mkey_disabled:1;
 };
 
 struct mlx5_devx_wq_attr {
@@ -145,6 +214,7 @@ struct mlx5_devx_create_rq_attr {
 	uint32_t state:4;
 	uint32_t flush_in_error_en:1;
 	uint32_t hairpin:1;
+	uint32_t ts_format:2;
 	uint32_t user_index:24;
 	uint32_t cqn:24;
 	uint32_t counter_set_id:8;
@@ -190,6 +260,13 @@ struct mlx5_devx_tir_attr {
 	struct mlx5_rx_hash_field_select rx_hash_field_selector_inner;
 };
 
+/* TIR attributes structure, used by TIR modify. */
+struct mlx5_devx_modify_tir_attr {
+	uint32_t tirn:24;
+	uint64_t modify_bitmask;
+	struct mlx5_devx_tir_attr tir;
+};
+
 /* RQT attributes structure, used by RQT operations. */
 struct mlx5_devx_rqt_attr {
 	uint8_t rq_type;
@@ -221,6 +298,7 @@ struct mlx5_devx_create_sq_attr {
 	uint32_t hairpin:1;
 	uint32_t non_wire:1;
 	uint32_t static_sq_wq:1;
+	uint32_t ts_format:2;
 	uint32_t user_index:24;
 	uint32_t cqn:24;
 	uint32_t packet_pacing_rate_limit_index:16;
@@ -246,7 +324,7 @@ struct mlx5_devx_cq_attr {
 	uint32_t overrun_ignore:1;
 	uint32_t cqe_comp_en:1;
 	uint32_t mini_cqe_res_format:2;
-	uint32_t cqe_size:3;
+	uint32_t mini_cqe_res_format_ext:2;
 	uint32_t log_cq_size:5;
 	uint32_t log_page_size:5;
 	uint32_t uar_page_id;
@@ -271,6 +349,9 @@ struct mlx5_devx_virtq_attr {
 	uint32_t rx_csum:1;
 	uint32_t event_mode:3;
 	uint32_t state:4;
+	uint32_t hw_latency_mode:2;
+	uint32_t hw_max_latency_us:12;
+	uint32_t hw_max_pending_comp:16;
 	uint32_t dirty_bitmap_dump_enable:1;
 	uint32_t dirty_bitmap_mkey;
 	uint32_t dirty_bitmap_size;
@@ -289,6 +370,7 @@ struct mlx5_devx_virtq_attr {
 		uint32_t size;
 		uint64_t offset;
 	} umems[3];
+	uint8_t error_type;
 };
 
 
@@ -300,6 +382,7 @@ struct mlx5_devx_qp_attr {
 	uint32_t rq_size:17; /* Must be power of 2. */
 	uint32_t log_rq_stride:3;
 	uint32_t sq_size:17; /* Must be power of 2. */
+	uint32_t ts_format:2;
 	uint32_t dbr_umem_valid:1;
 	uint32_t dbr_umem_id;
 	uint64_t dbr_address;
@@ -360,6 +443,41 @@ struct mlx5_devx_graph_node_attr {
 	struct mlx5_devx_graph_arc_attr out[MLX5_GRAPH_NODE_ARC_NUM];
 };
 
+/* Encryption key size is up to 1024 bit, 128 bytes. */
+#define MLX5_CRYPTO_KEY_MAX_SIZE	128
+
+struct mlx5_devx_dek_attr {
+	uint32_t key_size:4;
+	uint32_t has_keytag:1;
+	uint32_t key_purpose:4;
+	uint32_t pd:24;
+	uint64_t opaque;
+	uint8_t key[MLX5_CRYPTO_KEY_MAX_SIZE];
+};
+
+struct mlx5_devx_import_kek_attr {
+	uint64_t modify_field_select;
+	uint32_t state:8;
+	uint32_t key_size:4;
+	uint8_t key[MLX5_CRYPTO_KEY_MAX_SIZE];
+};
+
+#define MLX5_CRYPTO_CREDENTIAL_SIZE	48
+
+struct mlx5_devx_credential_attr {
+	uint64_t modify_field_select;
+	uint32_t state:8;
+	uint32_t credential_role:8;
+	uint8_t credential[MLX5_CRYPTO_CREDENTIAL_SIZE];
+};
+
+struct mlx5_devx_crypto_login_attr {
+	uint64_t modify_field_select;
+	uint32_t credential_pointer:24;
+	uint32_t session_import_kek_ptr:24;
+	uint8_t credential[MLX5_CRYPTO_CREDENTIAL_SIZE];
+};
+
 /* mlx5_devx_cmds.c */
 
 __rte_internal
@@ -413,6 +531,8 @@ __rte_internal
 int mlx5_devx_cmd_flow_dump(void *fdb_domain, void *rx_domain, void *tx_domain,
 			    FILE *file);
 __rte_internal
+int mlx5_devx_cmd_flow_single_dump(void *rule, FILE *file);
+__rte_internal
 struct mlx5_devx_obj *mlx5_devx_cmd_create_cq(void *ctx,
 					      struct mlx5_devx_cq_attr *attr);
 __rte_internal
@@ -434,6 +554,9 @@ __rte_internal
 int mlx5_devx_cmd_modify_rqt(struct mlx5_devx_obj *rqt,
 			     struct mlx5_devx_rqt_attr *rqt_attr);
 __rte_internal
+int mlx5_devx_cmd_modify_tir(struct mlx5_devx_obj *tir,
+			     struct mlx5_devx_modify_tir_attr *tir_attr);
+__rte_internal
 int mlx5_devx_cmd_query_parse_samples(struct mlx5_devx_obj *flex_obj,
 				      uint32_t ids[], uint32_t num);
 
@@ -444,6 +567,16 @@ struct mlx5_devx_obj *mlx5_devx_cmd_create_flex_parser(void *ctx,
 __rte_internal
 int mlx5_devx_cmd_register_read(void *ctx, uint16_t reg_id,
 				uint32_t arg, uint32_t *data, uint32_t dw_cnt);
+
+__rte_internal
+int mlx5_devx_cmd_register_write(void *ctx, uint16_t reg_id,
+				 uint32_t arg, uint32_t *data, uint32_t dw_cnt);
+
+__rte_internal
+struct mlx5_devx_obj *
+mlx5_devx_cmd_create_geneve_tlv_option(void *ctx,
+		uint16_t class, uint8_t type, uint8_t len);
+
 /**
  * Create virtio queue counters object DevX API.
  *
@@ -470,5 +603,58 @@ struct mlx5_devx_obj *mlx5_devx_cmd_create_virtio_q_counters(void *ctx);
 __rte_internal
 int mlx5_devx_cmd_query_virtio_q_counters(struct mlx5_devx_obj *couners_obj,
 				  struct mlx5_devx_virtio_q_couners_attr *attr);
+__rte_internal
+struct mlx5_devx_obj *mlx5_devx_cmd_create_flow_hit_aso_obj(void *ctx,
+							    uint32_t pd);
+__rte_internal
+struct mlx5_devx_obj *mlx5_devx_cmd_alloc_pd(void *ctx);
+
+__rte_internal
+int mlx5_devx_cmd_wq_query(void *wq, uint32_t *counter_set_id);
+
+__rte_internal
+struct mlx5_devx_obj *mlx5_devx_cmd_queue_counter_alloc(void *ctx);
+__rte_internal
+int mlx5_devx_cmd_queue_counter_query(struct mlx5_devx_obj *dcs, int clear,
+				      uint32_t *out_of_buffers);
+__rte_internal
+struct mlx5_devx_obj *mlx5_devx_cmd_create_conn_track_offload_obj(void *ctx,
+					uint32_t pd, uint32_t log_obj_size);
+
+/**
+ * Create general object of type FLOW_METER_ASO using DevX API..
+ *
+ * @param[in] ctx
+ *   Device context.
+ * @param [in] pd
+ *   PD value to associate the FLOW_METER_ASO object with.
+ * @param [in] log_obj_size
+ *   log_obj_size define to allocate number of 2 * meters
+ *   in one FLOW_METER_ASO object.
+ *
+ * @return
+ *   The DevX object created, NULL otherwise and rte_errno is set.
+ */
+__rte_internal
+struct mlx5_devx_obj *mlx5_devx_cmd_create_flow_meter_aso_obj(void *ctx,
+					uint32_t pd, uint32_t log_obj_size);
+__rte_internal
+struct mlx5_devx_obj *
+mlx5_devx_cmd_create_dek_obj(void *ctx, struct mlx5_devx_dek_attr *attr);
+
+__rte_internal
+struct mlx5_devx_obj *
+mlx5_devx_cmd_create_import_kek_obj(void *ctx,
+				    struct mlx5_devx_import_kek_attr *attr);
+
+__rte_internal
+struct mlx5_devx_obj *
+mlx5_devx_cmd_create_credential_obj(void *ctx,
+				    struct mlx5_devx_credential_attr *attr);
+
+__rte_internal
+struct mlx5_devx_obj *
+mlx5_devx_cmd_create_crypto_login_obj(void *ctx,
+				      struct mlx5_devx_crypto_login_attr *attr);
 
 #endif /* RTE_PMD_MLX5_DEVX_CMDS_H_ */

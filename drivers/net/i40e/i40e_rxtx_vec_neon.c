@@ -4,7 +4,7 @@
  */
 
 #include <stdint.h>
-#include <rte_ethdev_driver.h>
+#include <ethdev_driver.h>
 #include <rte_malloc.h>
 #include <rte_vect.h>
 
@@ -72,7 +72,7 @@ i40e_rxq_rearm(struct i40e_rx_queue *rxq)
 	rx_id = (uint16_t)((rxq->rxrearm_start == 0) ?
 			     (rxq->nb_rx_desc - 1) : (rxq->rxrearm_start - 1));
 
-	rte_cio_wmb();
+	rte_io_wmb();
 	/* Update the tail pointer on the NIC */
 	I40E_PCI_REG_WRITE_RELAXED(rxq->qrx_tail, rx_id);
 }
@@ -95,16 +95,16 @@ desc_to_olflags_v(struct i40e_rx_queue *rxq, uint64x2_t descs[4],
 	const uint32x4_t cksum_mask = {
 			PKT_RX_IP_CKSUM_GOOD | PKT_RX_IP_CKSUM_BAD |
 			PKT_RX_L4_CKSUM_GOOD | PKT_RX_L4_CKSUM_BAD |
-			PKT_RX_EIP_CKSUM_BAD,
+			PKT_RX_OUTER_IP_CKSUM_BAD,
 			PKT_RX_IP_CKSUM_GOOD | PKT_RX_IP_CKSUM_BAD |
 			PKT_RX_L4_CKSUM_GOOD | PKT_RX_L4_CKSUM_BAD |
-			PKT_RX_EIP_CKSUM_BAD,
+			PKT_RX_OUTER_IP_CKSUM_BAD,
 			PKT_RX_IP_CKSUM_GOOD | PKT_RX_IP_CKSUM_BAD |
 			PKT_RX_L4_CKSUM_GOOD | PKT_RX_L4_CKSUM_BAD |
-			PKT_RX_EIP_CKSUM_BAD,
+			PKT_RX_OUTER_IP_CKSUM_BAD,
 			PKT_RX_IP_CKSUM_GOOD | PKT_RX_IP_CKSUM_BAD |
 			PKT_RX_L4_CKSUM_GOOD | PKT_RX_L4_CKSUM_BAD |
-			PKT_RX_EIP_CKSUM_BAD};
+			PKT_RX_OUTER_IP_CKSUM_BAD};
 
 	/* map rss and vlan type to rss hash and vlan flag */
 	const uint8x16_t vlan_flags = {
@@ -124,11 +124,11 @@ desc_to_olflags_v(struct i40e_rx_queue *rxq, uint64x2_t descs[4],
 			PKT_RX_IP_CKSUM_BAD >> 1,
 			(PKT_RX_IP_CKSUM_GOOD | PKT_RX_L4_CKSUM_BAD) >> 1,
 			(PKT_RX_L4_CKSUM_BAD | PKT_RX_IP_CKSUM_BAD) >> 1,
-			(PKT_RX_IP_CKSUM_GOOD | PKT_RX_EIP_CKSUM_BAD) >> 1,
-			(PKT_RX_EIP_CKSUM_BAD | PKT_RX_IP_CKSUM_BAD) >> 1,
-			(PKT_RX_IP_CKSUM_GOOD | PKT_RX_EIP_CKSUM_BAD |
+			(PKT_RX_IP_CKSUM_GOOD | PKT_RX_OUTER_IP_CKSUM_BAD) >> 1,
+			(PKT_RX_OUTER_IP_CKSUM_BAD | PKT_RX_IP_CKSUM_BAD) >> 1,
+			(PKT_RX_IP_CKSUM_GOOD | PKT_RX_OUTER_IP_CKSUM_BAD |
 			 PKT_RX_L4_CKSUM_BAD) >> 1,
-			(PKT_RX_EIP_CKSUM_BAD | PKT_RX_L4_CKSUM_BAD |
+			(PKT_RX_OUTER_IP_CKSUM_BAD | PKT_RX_L4_CKSUM_BAD |
 			 PKT_RX_IP_CKSUM_BAD) >> 1,
 			0, 0, 0, 0, 0, 0, 0, 0};
 
@@ -187,11 +187,12 @@ desc_to_ptype_v(uint64x2_t descs[4], struct rte_mbuf **__rte_restrict rx_pkts,
 
 }
 
- /*
+/**
+ * vPMD raw receive routine, only accept(nb_pkts >= RTE_I40E_DESCS_PER_LOOP)
+ *
  * Notice:
  * - nb_pkts < RTE_I40E_DESCS_PER_LOOP, just return no packet
- * - nb_pkts > RTE_I40E_VPMD_RX_BURST, only scan RTE_I40E_VPMD_RX_BURST
- *   numbers of DD bits
+ * - floor align nb_pkts to a RTE_I40E_DESCS_PER_LOOP power-of-two
  */
 static inline uint16_t
 _recv_raw_pkts_vec(struct i40e_rx_queue *__rte_restrict rxq,
@@ -229,9 +230,6 @@ _recv_raw_pkts_vec(struct i40e_rx_queue *__rte_restrict rxq,
 		rxq->crc_len, /* sub crc on data_len */
 		0, 0, 0       /* ignore non-length fields */
 		};
-
-	/* nb_pkts shall be less equal than RTE_I40E_MAX_RX_BURST */
-	nb_pkts = RTE_MIN(nb_pkts, RTE_I40E_MAX_RX_BURST);
 
 	/* nb_pkts has to be floor-aligned to RTE_I40E_DESCS_PER_LOOP */
 	nb_pkts = RTE_ALIGN_FLOOR(nb_pkts, RTE_I40E_DESCS_PER_LOOP);
@@ -312,10 +310,16 @@ _recv_raw_pkts_vec(struct i40e_rx_queue *__rte_restrict rxq,
 		/* pkt 3,4 shift the pktlen field to be 16-bit aligned*/
 		uint32x4_t len3 = vshlq_u32(vreinterpretq_u32_u64(descs[3]),
 					    len_shl);
-		descs[3] = vreinterpretq_u64_u32(len3);
+		descs[3] = vreinterpretq_u64_u16(vsetq_lane_u16
+				(vgetq_lane_u16(vreinterpretq_u16_u32(len3), 7),
+				 vreinterpretq_u16_u64(descs[3]),
+				 7));
 		uint32x4_t len2 = vshlq_u32(vreinterpretq_u32_u64(descs[2]),
 					    len_shl);
-		descs[2] = vreinterpretq_u64_u32(len2);
+		descs[2] = vreinterpretq_u64_u16(vsetq_lane_u16
+				(vgetq_lane_u16(vreinterpretq_u16_u32(len2), 7),
+				 vreinterpretq_u16_u64(descs[2]),
+				 7));
 
 		/* D.1 pkt 3,4 convert format from desc to pktmbuf */
 		pkt_mb4 = vqtbl1q_u8(vreinterpretq_u8_u64(descs[3]), shuf_msk);
@@ -343,10 +347,16 @@ _recv_raw_pkts_vec(struct i40e_rx_queue *__rte_restrict rxq,
 		/* pkt 1,2 shift the pktlen field to be 16-bit aligned*/
 		uint32x4_t len1 = vshlq_u32(vreinterpretq_u32_u64(descs[1]),
 					    len_shl);
-		descs[1] = vreinterpretq_u64_u32(len1);
+		descs[1] = vreinterpretq_u64_u16(vsetq_lane_u16
+				(vgetq_lane_u16(vreinterpretq_u16_u32(len1), 7),
+				 vreinterpretq_u16_u64(descs[1]),
+				 7));
 		uint32x4_t len0 = vshlq_u32(vreinterpretq_u32_u64(descs[0]),
 					    len_shl);
-		descs[0] = vreinterpretq_u64_u32(len0);
+		descs[0] = vreinterpretq_u64_u16(vsetq_lane_u16
+				(vgetq_lane_u16(vreinterpretq_u16_u32(len0), 7),
+				 vreinterpretq_u16_u64(descs[0]),
+				 7));
 
 		/* D.1 pkt 1,2 convert format from desc to pktmbuf */
 		pkt_mb2 = vqtbl1q_u8(vreinterpretq_u8_u64(descs[1]), shuf_msk);
@@ -439,15 +449,15 @@ i40e_recv_pkts_vec(void *__rte_restrict rx_queue,
 	return _recv_raw_pkts_vec(rx_queue, rx_pkts, nb_pkts, NULL);
 }
 
- /* vPMD receive routine that reassembles scattered packets
+/**
+ * vPMD receive routine that reassembles single burst of 32 scattered packets
+ *
  * Notice:
  * - nb_pkts < RTE_I40E_DESCS_PER_LOOP, just return no packet
- * - nb_pkts > RTE_I40E_VPMD_RX_BURST, only scan RTE_I40E_VPMD_RX_BURST
- *   numbers of DD bits
  */
-uint16_t
-i40e_recv_scattered_pkts_vec(void *rx_queue, struct rte_mbuf **rx_pkts,
-			     uint16_t nb_pkts)
+static uint16_t
+i40e_recv_scattered_burst_vec(void *rx_queue, struct rte_mbuf **rx_pkts,
+			      uint16_t nb_pkts)
 {
 
 	struct i40e_rx_queue *rxq = rx_queue;
@@ -480,6 +490,32 @@ i40e_recv_scattered_pkts_vec(void *rx_queue, struct rte_mbuf **rx_pkts,
 	}
 	return i + reassemble_packets(rxq, &rx_pkts[i], nb_bufs - i,
 		&split_flags[i]);
+}
+
+/**
+ * vPMD receive routine that reassembles scattered packets.
+ */
+uint16_t
+i40e_recv_scattered_pkts_vec(void *rx_queue, struct rte_mbuf **rx_pkts,
+			     uint16_t nb_pkts)
+{
+	uint16_t retval = 0;
+
+	while (nb_pkts > RTE_I40E_VPMD_RX_BURST) {
+		uint16_t burst;
+
+		burst = i40e_recv_scattered_burst_vec(rx_queue,
+						      rx_pkts + retval,
+						      RTE_I40E_VPMD_RX_BURST);
+		retval += burst;
+		nb_pkts -= burst;
+		if (burst < RTE_I40E_VPMD_RX_BURST)
+			return retval;
+	}
+
+	return retval + i40e_recv_scattered_burst_vec(rx_queue,
+						      rx_pkts + retval,
+						      nb_pkts);
 }
 
 static inline void
@@ -566,7 +602,7 @@ i40e_xmit_fixed_burst_vec(void *__rte_restrict tx_queue,
 
 	txq->tx_tail = tx_id;
 
-	rte_cio_wmb();
+	rte_io_wmb();
 	I40E_PCI_REG_WRITE_RELAXED(txq->qtx_tail, tx_id);
 
 	return nb_pkts;

@@ -18,10 +18,9 @@
 #include <unistd.h>
 
 #include <rte_errno.h>
-#include <rte_atomic.h>
 
 #include "mlx5_nl.h"
-#include "mlx5_common_utils.h"
+#include "../mlx5_common_log.h"
 #include "mlx5_malloc.h"
 #ifdef HAVE_DEVLINK
 #include <linux/devlink.h>
@@ -169,10 +168,10 @@ struct mlx5_nl_ifindex_data {
 	uint32_t portnum; /**< IB device max port number (out). */
 };
 
-rte_atomic32_t atomic_sn = RTE_ATOMIC32_INIT(0);
+uint32_t atomic_sn;
 
 /* Generate Netlink sequence number. */
-#define MLX5_NL_SN_GENERATE ((uint32_t)rte_atomic32_add_return(&atomic_sn, 1))
+#define MLX5_NL_SN_GENERATE __atomic_add_fetch(&atomic_sn, 1, __ATOMIC_RELAXED)
 
 /**
  * Opens a Netlink socket.
@@ -747,6 +746,7 @@ mlx5_nl_mac_addr_sync(int nlsk_fd, unsigned int iface_idx,
 	int i;
 	int ret;
 
+	memset(macs, 0, n * sizeof(macs[0]));
 	ret = mlx5_nl_mac_addr_list(nlsk_fd, iface_idx, &macs, &macs_n);
 	if (ret)
 		return;
@@ -759,11 +759,21 @@ mlx5_nl_mac_addr_sync(int nlsk_fd, unsigned int iface_idx,
 				break;
 		if (j != n)
 			continue;
-		/* Find the first entry available. */
-		for (j = 0; j != n; ++j) {
-			if (rte_is_zero_ether_addr(&mac_addrs[j])) {
-				mac_addrs[j] = macs[i];
-				break;
+		if (rte_is_multicast_ether_addr(&macs[i])) {
+			/* Find the first entry available. */
+			for (j = MLX5_MAX_UC_MAC_ADDRESSES; j != n; ++j) {
+				if (rte_is_zero_ether_addr(&mac_addrs[j])) {
+					mac_addrs[j] = macs[i];
+					break;
+				}
+			}
+		} else {
+			/* Find the first entry available. */
+			for (j = 0; j != MLX5_MAX_UC_MAC_ADDRESSES; ++j) {
+				if (rte_is_zero_ether_addr(&mac_addrs[j])) {
+					mac_addrs[j] = macs[i];
+					break;
+				}
 			}
 		}
 	}
@@ -1152,6 +1162,8 @@ mlx5_nl_check_switch_info(bool num_vf_set,
 	case MLX5_PHYS_PORT_NAME_TYPE_PFHPF:
 		/* Fallthrough */
 	case MLX5_PHYS_PORT_NAME_TYPE_PFVF:
+		/* Fallthrough */
+	case MLX5_PHYS_PORT_NAME_TYPE_PFSF:
 		/* New representors naming schema. */
 		switch_info->representor = 1;
 		break;

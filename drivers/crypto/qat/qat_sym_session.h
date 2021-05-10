@@ -6,7 +6,7 @@
 
 #include <rte_crypto.h>
 #include <rte_cryptodev_pmd.h>
-#ifdef RTE_LIBRTE_SECURITY
+#ifdef RTE_LIB_SECURITY
 #include <rte_security.h>
 #endif
 
@@ -35,7 +35,6 @@
 
 /* 96-bit case of IV for CCP/GCM single pass algorithm */
 #define QAT_AES_GCM_SPC_IV_SIZE 12
-
 
 #define QAT_AES_HW_CONFIG_CBC_ENC(alg) \
 	ICP_QAT_HW_CIPHER_CONFIG_BUILD(ICP_QAT_HW_CIPHER_CBC_MODE, alg, \
@@ -86,11 +85,13 @@ struct qat_sym_session {
 		uint16_t offset;
 		uint16_t length;
 	} auth_iv;
+	uint16_t auth_key_length;
 	uint16_t digest_length;
 	rte_spinlock_t lock;	/* protects this struct */
 	enum qat_device_gen min_qat_dev_gen;
 	uint8_t aes_cmac;
 	uint8_t is_single_pass;
+	uint8_t is_single_pass_gmac;
 };
 
 int
@@ -159,7 +160,7 @@ qat_cipher_get_block_size(enum icp_qat_hw_cipher_algo qat_cipher_alg);
 int
 qat_sym_validate_zuc_key(int key_len, enum icp_qat_hw_cipher_algo *alg);
 
-#ifdef RTE_LIBRTE_SECURITY
+#ifdef RTE_LIB_SECURITY
 int
 qat_security_session_create(void *dev, struct rte_security_session_conf *conf,
 		struct rte_security_session *sess, struct rte_mempool *mempool);

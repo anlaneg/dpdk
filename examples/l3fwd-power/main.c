@@ -47,6 +47,7 @@
 #include <rte_power_empty_poll.h>
 #include <rte_metrics.h>
 #include <rte_telemetry.h>
+#include <rte_power_pmd_mgmt.h>
 
 #include "perf_core.h"
 #include "main.h"
@@ -199,10 +200,13 @@ enum appmode {
 	APP_MODE_LEGACY,
 	APP_MODE_EMPTY_POLL,
 	APP_MODE_TELEMETRY,
-	APP_MODE_INTERRUPT
+	APP_MODE_INTERRUPT,
+	APP_MODE_PMD_MGMT
 };
 
 enum appmode app_mode;
+
+static enum rte_power_pmd_mgmt_type pmgmt_type;
 
 enum freq_scale_hint_t
 {
@@ -821,20 +825,23 @@ power_freq_scaleup_heuristic(unsigned lcore_id,
  *  0 on success
  */
 static int
-sleep_until_rx_interrupt(int num)
+sleep_until_rx_interrupt(int num, int lcore)
 {
 	/*
 	 * we want to track when we are woken up by traffic so that we can go
-	 * back to sleep again without log spamming.
+	 * back to sleep again without log spamming. Avoid cache line sharing
+	 * to prevent threads stepping on each others' toes.
 	 */
-	static bool timeout;
+	static struct {
+		bool wakeup;
+	} __rte_cache_aligned status[RTE_MAX_LCORE];
 	struct rte_epoll_event event[num];
 	int n, i;
 	uint16_t port_id;
 	uint8_t queue_id;
 	void *data;
 
-	if (!timeout) {
+	if (status[lcore].wakeup) {
 		RTE_LOG(INFO, L3FWD_POWER,
 				"lcore %u sleeps until interrupt triggers\n",
 				rte_lcore_id());
@@ -851,7 +858,7 @@ sleep_until_rx_interrupt(int num)
 			" port %d queue %d\n",
 			rte_lcore_id(), port_id, queue_id);
 	}
-	timeout = n == 0;
+	status[lcore].wakeup = n != 0;
 
 	return 0;
 }
@@ -1050,7 +1057,8 @@ start_rx:
 				if (intr_en) {
 					turn_on_off_intr(qconf, 1);
 					sleep_until_rx_interrupt(
-							qconf->n_rx_queue);
+							qconf->n_rx_queue,
+							lcore_id);
 					turn_on_off_intr(qconf, 0);
 					/**
 					 * start receiving packets immediately
@@ -1473,7 +1481,8 @@ start_rx:
 				if (intr_en) {
 					turn_on_off_intr(qconf, 1);
 					sleep_until_rx_interrupt(
-						qconf->n_rx_queue);
+							qconf->n_rx_queue,
+							lcore_id);
 					turn_on_off_intr(qconf, 0);
 					/**
 					 * start receiving packets immediately
@@ -1514,7 +1523,7 @@ check_lcore_params(void)
 						"off\n", lcore, socketid);
 		}
 		if (app_mode == APP_MODE_TELEMETRY && lcore == rte_lcore_id()) {
-			printf("cannot enable master core %d in config for telemetry mode\n",
+			printf("cannot enable main core %d in config for telemetry mode\n",
 				rte_lcore_id());
 			return -1;
 		}
@@ -1606,7 +1615,9 @@ print_usage(const char *prgname)
 		" follow (training_flag, high_threshold, med_threshold)\n"
 		" --telemetry: enable telemetry mode, to update"
 		" empty polls, full polls, and core busyness to telemetry\n"
-		" --interrupt-only: enable interrupt-only mode\n",
+		" --interrupt-only: enable interrupt-only mode\n"
+		" --pmd-mgmt MODE: enable PMD power management mode. "
+		"Currently supported modes: monitor, pause, scale\n",
 		prgname);
 }
 
@@ -1696,6 +1707,32 @@ parse_config(const char *q_arg)
 
 	return 0;
 }
+
+static int
+parse_pmd_mgmt_config(const char *name)
+{
+#define PMD_MGMT_MONITOR "monitor"
+#define PMD_MGMT_PAUSE   "pause"
+#define PMD_MGMT_SCALE   "scale"
+
+	if (strncmp(PMD_MGMT_MONITOR, name, sizeof(PMD_MGMT_MONITOR)) == 0) {
+		pmgmt_type = RTE_POWER_MGMT_TYPE_MONITOR;
+		return 0;
+	}
+
+	if (strncmp(PMD_MGMT_PAUSE, name, sizeof(PMD_MGMT_PAUSE)) == 0) {
+		pmgmt_type = RTE_POWER_MGMT_TYPE_PAUSE;
+		return 0;
+	}
+
+	if (strncmp(PMD_MGMT_SCALE, name, sizeof(PMD_MGMT_SCALE)) == 0) {
+		pmgmt_type = RTE_POWER_MGMT_TYPE_SCALE;
+		return 0;
+	}
+	/* unknown PMD power management mode */
+	return -1;
+}
+
 static int
 parse_ep_config(const char *q_arg)
 {
@@ -1750,6 +1787,7 @@ parse_ep_config(const char *q_arg)
 #define CMD_LINE_OPT_EMPTY_POLL "empty-poll"
 #define CMD_LINE_OPT_INTERRUPT_ONLY "interrupt-only"
 #define CMD_LINE_OPT_TELEMETRY "telemetry"
+#define CMD_LINE_OPT_PMD_MGMT "pmd-mgmt"
 
 /* Parse the argument given in the command line of the application */
 static int
@@ -1771,6 +1809,7 @@ parse_args(int argc, char **argv)
 		{CMD_LINE_OPT_LEGACY, 0, 0, 0},
 		{CMD_LINE_OPT_TELEMETRY, 0, 0, 0},
 		{CMD_LINE_OPT_INTERRUPT_ONLY, 0, 0, 0},
+		{CMD_LINE_OPT_PMD_MGMT, 1, 0, 0},
 		{NULL, 0, 0, 0}
 	};
 
@@ -1881,6 +1920,21 @@ parse_args(int argc, char **argv)
 				printf("telemetry mode is enabled\n");
 			}
 
+			if (!strncmp(lgopts[option_index].name,
+					CMD_LINE_OPT_PMD_MGMT,
+					sizeof(CMD_LINE_OPT_PMD_MGMT))) {
+				if (app_mode != APP_MODE_DEFAULT) {
+					printf(" power mgmt mode is mutually exclusive with other modes\n");
+					return -1;
+				}
+				if (parse_pmd_mgmt_config(optarg) < 0) {
+					printf(" Invalid PMD power management mode: %s\n",
+							optarg);
+					return -1;
+				}
+				app_mode = APP_MODE_PMD_MGMT;
+				printf("PMD power mgmt mode is enabled\n");
+			}
 			if (!strncmp(lgopts[option_index].name,
 					CMD_LINE_OPT_INTERRUPT_ONLY,
 					sizeof(CMD_LINE_OPT_INTERRUPT_ONLY))) {
@@ -2134,6 +2188,7 @@ check_all_ports_link_status(uint32_t port_mask)
 	uint16_t portid;
 	struct rte_eth_link link;
 	int ret;
+	char link_status_text[RTE_ETH_LINK_MAX_STR_LEN];
 
 	printf("\nChecking link status");
 	fflush(stdout);
@@ -2153,15 +2208,10 @@ check_all_ports_link_status(uint32_t port_mask)
 			}
 			/* print link status if flag set */
 			if (print_flag == 1) {
-				if (link.link_status)
-					printf("Port %d Link Up - speed %u "
-						"Mbps - %s\n", (uint8_t)portid,
-						(unsigned)link.link_speed,
-				(link.link_duplex == ETH_LINK_FULL_DUPLEX) ?
-					("full-duplex") : ("half-duplex"));
-				else
-					printf("Port %d Link Down\n",
-						(uint8_t)portid);
+				rte_eth_link_to_str(link_status_text,
+					sizeof(link_status_text), &link);
+				printf("Port %d %s\n", portid,
+				       link_status_text);
 				continue;
 			}
 			/* clear all_ports_up flag if any link down */
@@ -2287,7 +2337,7 @@ get_current_stat_values(uint64_t *values)
 	uint64_t app_eps = 0, app_fps = 0, app_br = 0;
 	uint64_t count = 0;
 
-	RTE_LCORE_FOREACH_SLAVE(lcore_id) {
+	RTE_LCORE_FOREACH_WORKER(lcore_id) {
 		qconf = &lcore_conf[lcore_id];
 		if (qconf->n_rx_queue == 0)
 			continue;
@@ -2379,10 +2429,10 @@ launch_timer(unsigned int lcore_id)
 	RTE_SET_USED(lcore_id);
 
 
-	if (rte_get_master_lcore() != lcore_id) {
-		rte_panic("timer on lcore:%d which is not master core:%d\n",
+	if (rte_get_main_lcore() != lcore_id) {
+		rte_panic("timer on lcore:%d which is not main core:%d\n",
 				lcore_id,
-				rte_get_master_lcore());
+				rte_get_main_lcore());
 	}
 
 	RTE_LOG(INFO, POWER, "Bring up the Timer\n");
@@ -2441,6 +2491,8 @@ mode_to_str(enum appmode mode)
 		return "telemetry";
 	case APP_MODE_INTERRUPT:
 		return "interrupt-only";
+	case APP_MODE_PMD_MGMT:
+		return "pmd mgmt";
 	default:
 		return "invalid";
 	}
@@ -2670,6 +2722,13 @@ main(int argc, char **argv)
 		qconf = &lcore_conf[lcore_id];
 		printf("\nInitializing rx queues on lcore %u ... ", lcore_id );
 		fflush(stdout);
+
+		/* PMD power management mode can only do 1 queue per core */
+		if (app_mode == APP_MODE_PMD_MGMT && qconf->n_rx_queue > 1) {
+			rte_exit(EXIT_FAILURE,
+				"In PMD power management mode, only one queue per lcore is allowed\n");
+		}
+
 		/* init RX queues */
 		for(queue = 0; queue < qconf->n_rx_queue; ++queue) {
 			struct rte_eth_rxconf rxq_conf;
@@ -2706,9 +2765,17 @@ main(int argc, char **argv)
 				if (add_cb_parse_ptype(portid, queueid) < 0)
 					rte_exit(EXIT_FAILURE,
 						 "Fail to add ptype cb\n");
-			} else if (!check_ptype(portid))
-				rte_exit(EXIT_FAILURE,
-					 "PMD can not provide needed ptypes\n");
+			}
+
+			if (app_mode == APP_MODE_PMD_MGMT) {
+				ret = rte_power_ethdev_pmgmt_queue_enable(
+						lcore_id, portid, queueid,
+						pmgmt_type);
+				if (ret < 0)
+					rte_exit(EXIT_FAILURE,
+						"rte_power_ethdev_pmgmt_queue_enable: err=%d, port=%d\n",
+							ret, portid);
+			}
 		}
 	}
 
@@ -2739,6 +2806,11 @@ main(int argc, char **argv)
 		}
 		/* initialize spinlock for each port */
 		rte_spinlock_init(&(locks[portid]));
+
+		if (!parse_ptype)
+			if (!check_ptype(portid))
+				rte_exit(EXIT_FAILURE,
+					"PMD can not provide needed ptypes\n");
 	}
 
 	check_all_ports_link_status(enabled_port_mask);
@@ -2763,11 +2835,11 @@ main(int argc, char **argv)
 
 	/* launch per-lcore init on every lcore */
 	if (app_mode == APP_MODE_LEGACY) {
-		rte_eal_mp_remote_launch(main_legacy_loop, NULL, CALL_MASTER);
+		rte_eal_mp_remote_launch(main_legacy_loop, NULL, CALL_MAIN);
 	} else if (app_mode == APP_MODE_EMPTY_POLL) {
 		empty_poll_stop = false;
 		rte_eal_mp_remote_launch(main_empty_poll_loop, NULL,
-				SKIP_MASTER);
+				SKIP_MAIN);
 	} else if (app_mode == APP_MODE_TELEMETRY) {
 		unsigned int i;
 
@@ -2783,7 +2855,7 @@ main(int argc, char **argv)
 		else
 			rte_exit(EXIT_FAILURE, "failed to register metrics names");
 
-		RTE_LCORE_FOREACH_SLAVE(lcore_id) {
+		RTE_LCORE_FOREACH_WORKER(lcore_id) {
 			rte_spinlock_init(&stats[lcore_id].telemetry_lock);
 		}
 		rte_timer_init(&telemetry_timer);
@@ -2791,17 +2863,35 @@ main(int argc, char **argv)
 				handle_app_stats,
 				"Returns global power stats. Parameters: None");
 		rte_eal_mp_remote_launch(main_telemetry_loop, NULL,
-						SKIP_MASTER);
+						SKIP_MAIN);
 	} else if (app_mode == APP_MODE_INTERRUPT) {
-		rte_eal_mp_remote_launch(main_intr_loop, NULL, CALL_MASTER);
+		rte_eal_mp_remote_launch(main_intr_loop, NULL, CALL_MAIN);
+	} else if (app_mode == APP_MODE_PMD_MGMT) {
+		/* reuse telemetry loop for PMD power management mode */
+		rte_eal_mp_remote_launch(main_telemetry_loop, NULL, CALL_MAIN);
 	}
 
 	if (app_mode == APP_MODE_EMPTY_POLL || app_mode == APP_MODE_TELEMETRY)
 		launch_timer(rte_lcore_id());
 
-	RTE_LCORE_FOREACH_SLAVE(lcore_id) {
+	RTE_LCORE_FOREACH_WORKER(lcore_id) {
 		if (rte_eal_wait_lcore(lcore_id) < 0)
 			return -1;
+	}
+
+	if (app_mode == APP_MODE_PMD_MGMT) {
+		for (lcore_id = 0; lcore_id < RTE_MAX_LCORE; lcore_id++) {
+			if (rte_lcore_is_enabled(lcore_id) == 0)
+				continue;
+			qconf = &lcore_conf[lcore_id];
+			for (queue = 0; queue < qconf->n_rx_queue; ++queue) {
+				portid = qconf->rx_queue_list[queue].port_id;
+				queueid = qconf->rx_queue_list[queue].queue_id;
+
+				rte_power_ethdev_pmgmt_queue_disable(lcore_id,
+						portid, queueid);
+			}
+		}
 	}
 
 	RTE_ETH_FOREACH_DEV(portid)
@@ -2809,7 +2899,11 @@ main(int argc, char **argv)
 		if ((enabled_port_mask & (1 << portid)) == 0)
 			continue;
 
-		rte_eth_dev_stop(portid);
+		ret = rte_eth_dev_stop(portid);
+		if (ret != 0)
+			RTE_LOG(ERR, L3FWD_POWER, "rte_eth_dev_stop: err=%d, port=%u\n",
+				ret, portid);
+
 		rte_eth_dev_close(portid);
 	}
 

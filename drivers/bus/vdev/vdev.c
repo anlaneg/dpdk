@@ -143,10 +143,61 @@ vdev_parse(const char *name, void *addr)
 
 //为dev查找合适的驱动（采用设备名称前缀或者设备参数中的driver=参数)
 static int
+vdev_dma_map(struct rte_device *dev, void *addr, uint64_t iova, size_t len)
+{
+	struct rte_vdev_device *vdev = RTE_DEV_TO_VDEV(dev);
+	const struct rte_vdev_driver *driver;
+
+	if (!vdev) {
+		rte_errno = EINVAL;
+		return -1;
+	}
+
+	if (!vdev->device.driver) {
+		VDEV_LOG(DEBUG, "no driver attach to device %s", dev->name);
+		return 1;
+	}
+
+	driver = container_of(vdev->device.driver, const struct rte_vdev_driver,
+			driver);
+
+	if (driver->dma_map)
+		return driver->dma_map(vdev, addr, iova, len);
+
+	return 0;
+}
+
+static int
+vdev_dma_unmap(struct rte_device *dev, void *addr, uint64_t iova, size_t len)
+{
+	struct rte_vdev_device *vdev = RTE_DEV_TO_VDEV(dev);
+	const struct rte_vdev_driver *driver;
+
+	if (!vdev) {
+		rte_errno = EINVAL;
+		return -1;
+	}
+
+	if (!vdev->device.driver) {
+		VDEV_LOG(DEBUG, "no driver attach to device %s", dev->name);
+		return 1;
+	}
+
+	driver = container_of(vdev->device.driver, const struct rte_vdev_driver,
+			driver);
+
+	if (driver->dma_unmap)
+		return driver->dma_unmap(vdev, addr, iova, len);
+
+	return 0;
+}
+
+static int
 vdev_probe_all_drivers(struct rte_vdev_device *dev)
 {
 	const char *name;
 	struct rte_vdev_driver *driver;
+	enum rte_iova_mode iova_mode;
 	int ret;
 
 	if (rte_dev_is_probed(&dev->device))
@@ -159,6 +210,14 @@ vdev_probe_all_drivers(struct rte_vdev_device *dev)
 	//查找此设备对应的驱动，如果失配，返回-1
 	if (vdev_parse(name, &driver))
 		return -1;
+
+	iova_mode = rte_eal_iova_mode();
+	if ((driver->drv_flags & RTE_VDEV_DRV_NEED_IOVA_AS_VA) && (iova_mode == RTE_IOVA_PA)) {
+		VDEV_LOG(ERR, "%s requires VA IOVA mode but current mode is PA, not initializing",
+				name);
+		return -1;
+	}
+
 	//设备找到对应的驱动，执行驱动probe
 	ret = driver->probe(dev);
 	if (ret == 0)
@@ -200,13 +259,14 @@ alloc_devargs(const char *name, const char *args)
 
 	devargs->bus = &rte_vdev_bus;
 	if (args)
-		devargs->args = strdup(args);
+		devargs->data = strdup(args);
 	else
-		devargs->args = strdup("");
+		devargs->data = strdup("");
+	devargs->args = devargs->data;
 
 	ret = strlcpy(devargs->name, name, sizeof(devargs->name));
 	if (ret < 0 || ret >= (int)sizeof(devargs->name)) {
-		free(devargs->args);
+		rte_devargs_reset(devargs);
 		free(devargs);
 		return NULL;
 	}
@@ -262,7 +322,7 @@ insert_vdev(const char *name, const char *args,
 
 	return 0;
 fail:
-	free(devargs->args);
+	rte_devargs_reset(devargs);
 	free(devargs);
 	free(dev);
 	return ret;
@@ -472,7 +532,7 @@ scan:
 			 * by calling rte_devargs_insert() with
 			 *     devargs.bus = rte_bus_find_by_name("vdev");
 			 *     devargs.type = RTE_DEVTYPE_VIRTUAL;
-			 *     devargs.policy = RTE_DEV_WHITELISTED;
+			 *     devargs.policy = RTE_DEV_ALLOWED;
 			 */
 			custom_scan->callback(custom_scan->user_arg);
 	}
@@ -576,6 +636,25 @@ vdev_unplug(struct rte_device *dev)
 	return rte_vdev_uninit(dev->name);
 }
 
+static enum rte_iova_mode
+vdev_get_iommu_class(void)
+{
+	const char *name;
+	struct rte_vdev_device *dev;
+	struct rte_vdev_driver *driver;
+
+	TAILQ_FOREACH(dev, &vdev_device_list, next) {
+		name = rte_vdev_device_name(dev);
+		if (vdev_parse(name, &driver))
+			continue;
+
+		if (driver->drv_flags & RTE_VDEV_DRV_NEED_IOVA_AS_VA)
+			return RTE_IOVA_VA;
+	}
+
+	return RTE_IOVA_DC;
+}
+
 static struct rte_bus rte_vdev_bus = {
 	.scan = vdev_scan,//vdev设备发现
 	.probe = vdev_probe,//为所有vdev探测驱动，如果发现可匹配的驱动，则调用driver probe
@@ -583,6 +662,9 @@ static struct rte_bus rte_vdev_bus = {
 	.plug = vdev_plug,
 	.unplug = vdev_unplug,//设备移除
 	.parse = vdev_parse,//查找设备对应的驱动
+	.dma_map = vdev_dma_map,
+	.dma_unmap = vdev_dma_unmap,
+	.get_iommu_class = vdev_get_iommu_class,
 	.dev_iterate = rte_vdev_dev_iterate,
 };
 

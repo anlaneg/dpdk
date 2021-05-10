@@ -51,6 +51,22 @@ int max10_sys_write(struct intel_max10_device *dev,
 	return max10_reg_write(dev, dev->base + offset, val);
 }
 
+int max10_sys_update_bits(struct intel_max10_device *dev, unsigned int offset,
+					unsigned int msk, unsigned int val)
+{
+	int ret = 0;
+	unsigned int temp = 0;
+
+	ret = max10_sys_read(dev, offset, &temp);
+	if (ret < 0)
+		return ret;
+
+	temp &= ~msk;
+	temp |= val & msk;
+
+	return max10_sys_write(dev, offset, temp);
+}
+
 static struct max10_compatible_id max10_id_table[] = {
 	{.compatible = MAX10_PAC,},
 	{.compatible = MAX10_PAC_N3000,},
@@ -138,84 +154,116 @@ static int enable_nor_flash(struct intel_max10_device *dev, bool on)
 
 static int init_max10_device_table(struct intel_max10_device *max10)
 {
+	struct altera_spi_device *spi = NULL;
 	struct max10_compatible_id *id;
 	struct fdt_header hdr;
 	char *fdt_root = NULL;
-
+	u32 dtb_magic = 0;
 	u32 dt_size, dt_addr, val;
-	int ret;
+	int ret = 0;
 
-	ret = max10_sys_read(max10, DT_AVAIL_REG, &val);
-	if (ret) {
-		dev_err(max10 "cannot read DT_AVAIL_REG\n");
-		return ret;
-	}
-
-	if (!(val & DT_AVAIL)) {
-		dev_err(max10 "DT not available\n");
+	spi = (struct altera_spi_device *)max10->spi_master;
+	if (!spi) {
+		dev_err(max10, "spi master is not set\n");
 		return -EINVAL;
 	}
+	if (spi->dtb)
+		dtb_magic = *(u32 *)spi->dtb;
 
-	ret = max10_sys_read(max10, DT_BASE_ADDR_REG, &dt_addr);
-	if (ret) {
-		dev_info(max10 "cannot get base addr of device table\n");
-		return ret;
+	if (dtb_magic != 0xEDFE0DD0) {
+		dev_info(max10, "read DTB from NOR flash\n");
+		ret = max10_sys_read(max10, DT_AVAIL_REG, &val);
+		if (ret) {
+			dev_err(max10 "cannot read DT_AVAIL_REG\n");
+			return ret;
+		}
+
+		if (!(val & DT_AVAIL)) {
+			dev_err(max10 "DT not available\n");
+			return -EINVAL;
+		}
+
+		ret = max10_sys_read(max10, DT_BASE_ADDR_REG, &dt_addr);
+		if (ret) {
+			dev_info(max10 "cannot get base addr of device table\n");
+			return ret;
+		}
+
+		ret = enable_nor_flash(max10, true);
+		if (ret) {
+			dev_err(max10 "fail to enable flash\n");
+			return ret;
+		}
+
+		ret = altera_nor_flash_read(max10, dt_addr, &hdr, sizeof(hdr));
+		if (ret) {
+			dev_err(max10 "read fdt header fail\n");
+			goto disable_nor_flash;
+		}
+
+		ret = fdt_check_header(&hdr);
+		if (ret) {
+			dev_err(max10 "check fdt header fail\n");
+			goto disable_nor_flash;
+		}
+
+		dt_size = fdt_totalsize(&hdr);
+		if (dt_size > DFT_MAX_SIZE) {
+			dev_err(max10 "invalid device table size\n");
+			ret = -EINVAL;
+			goto disable_nor_flash;
+		}
+
+		fdt_root = opae_malloc(dt_size);
+		if (!fdt_root) {
+			ret = -ENOMEM;
+			goto disable_nor_flash;
+		}
+
+		ret = altera_nor_flash_read(max10, dt_addr, fdt_root, dt_size);
+		if (ret) {
+			opae_free(fdt_root);
+			fdt_root = NULL;
+			dev_err(max10 "cannot read device table\n");
+			goto disable_nor_flash;
+		}
+
+		if (spi->dtb) {
+			if (*spi->dtb_sz_ptr < dt_size) {
+				dev_warn(max10,
+						 "share memory for dtb is smaller than required %u\n",
+						 dt_size);
+			} else {
+				*spi->dtb_sz_ptr = dt_size;
+			}
+			/* store dtb data into share memory  */
+			memcpy(spi->dtb, fdt_root, *spi->dtb_sz_ptr);
+		}
+
+disable_nor_flash:
+		enable_nor_flash(max10, false);
+	} else {
+		if (*spi->dtb_sz_ptr > 0) {
+			dev_info(max10, "read DTB from shared memory\n");
+			fdt_root = opae_malloc(*spi->dtb_sz_ptr);
+			if (fdt_root)
+				memcpy(fdt_root, spi->dtb, *spi->dtb_sz_ptr);
+			else
+				ret = -ENOMEM;
+		}
 	}
 
-	ret = enable_nor_flash(max10, true);
-	if (ret) {
-		dev_err(max10 "fail to enable flash\n");
-		return ret;
+	if (fdt_root) {
+		id = max10_match_compatible(fdt_root);
+		if (!id) {
+			dev_err(max10 "max10 compatible not found\n");
+			ret = -ENODEV;
+		} else {
+			max10->flags |= MAX10_FLAGS_DEVICE_TABLE;
+			max10->id = id;
+			max10->fdt_root = fdt_root;
+		}
 	}
-
-	ret = altera_nor_flash_read(max10, dt_addr, &hdr, sizeof(hdr));
-	if (ret) {
-		dev_err(max10 "read fdt header fail\n");
-		goto done;
-	}
-
-	ret = fdt_check_header(&hdr);
-	if (ret) {
-		dev_err(max10 "check fdt header fail\n");
-		goto done;
-	}
-
-	dt_size = fdt_totalsize(&hdr);
-	if (dt_size > DFT_MAX_SIZE) {
-		dev_err(max10 "invalid device table size\n");
-		ret = -EINVAL;
-		goto done;
-	}
-
-	fdt_root = opae_malloc(dt_size);
-	if (!fdt_root) {
-		ret = -ENOMEM;
-		goto done;
-	}
-
-	ret = altera_nor_flash_read(max10, dt_addr, fdt_root, dt_size);
-	if (ret) {
-		dev_err(max10 "cannot read device table\n");
-		goto done;
-	}
-
-	id = max10_match_compatible(fdt_root);
-	if (!id) {
-		dev_err(max10 "max10 compatible not found\n");
-		ret = -ENODEV;
-		goto done;
-	}
-
-	max10->flags |= MAX10_FLAGS_DEVICE_TABLE;
-
-	max10->id = id;
-	max10->fdt_root = fdt_root;
-
-done:
-	ret = enable_nor_flash(max10, false);
-
-	if (ret && fdt_root)
-		opae_free(fdt_root);
 
 	return ret;
 }
@@ -525,6 +573,36 @@ static int check_max10_version(struct intel_max10_device *dev)
 	return -ENODEV;
 }
 
+static int max10_staging_area_init(struct intel_max10_device *dev)
+{
+	char *fdt_root = dev->fdt_root;
+	int ret, offset = 0;
+	u64 start, size;
+
+	if (!fdt_root) {
+		dev_debug(dev,
+			"skip staging area init as not find Device Tree\n");
+		return -ENODEV;
+	}
+
+	dev->staging_area_size = 0;
+
+	fdt_for_each_subnode(offset, fdt_root, 0) {
+		if (fdt_node_check_compatible(fdt_root, offset,
+					      "ifpga-sec-mgr,staging-area"))
+			continue;
+
+		ret = fdt_get_reg(fdt_root, offset, 0, &start, &size);
+		if (!ret && (size <= MAX_STAGING_AREA_SIZE)) {
+			dev->staging_area_base = start;
+			dev->staging_area_size = size;
+		}
+		return ret;
+	}
+
+	return -ENODEV;
+}
+
 static int
 max10_secure_hw_init(struct intel_max10_device *dev)
 {
@@ -548,6 +626,8 @@ max10_secure_hw_init(struct intel_max10_device *dev)
 	max10_check_capability(dev);
 
 	max10_sensor_init(dev, sysmgr_offset);
+
+	max10_staging_area_init(dev);
 
 	return 0;
 }

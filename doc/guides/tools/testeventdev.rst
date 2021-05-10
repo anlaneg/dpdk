@@ -10,19 +10,6 @@ This application has a generic framework to add new eventdev based test cases to
 verify functionality and measure the performance parameters of DPDK eventdev
 devices.
 
-Compiling the Application
--------------------------
-
-**Build the application**
-
-Execute the ``dpdk-setup.sh`` script to build the DPDK library together with the
-``dpdk-test-eventdev`` application.
-
-Initially, the user must select a DPDK target to choose the correct target type
-and compiler options to use when building the libraries.
-The user must have all libraries, modules, updates and compilers installed
-in the system prior to this,
-as described in the earlier chapters in this Getting Started Guide.
 
 Running the Application
 -----------------------
@@ -171,6 +158,26 @@ The following are the application command-line options:
        Set max packet mbuf size. Can be used configure Rx/Tx scatter gather.
        Only applicable for `pipeline_atq` and `pipeline_queue` tests.
 
+* ``--nb_eth_queues``
+
+       Configure multiple Rx queues per each ethernet port.
+       Only applicable for `pipeline_atq` and `pipeline_queue` tests.
+
+* ``--enable_vector``
+
+       Enable event vector for Rx/Tx adapters.
+       Only applicable for `pipeline_atq` and `pipeline_queue` tests.
+
+* ``--vector_size``
+
+       Vector size to configure for the Rx adapter.
+       Only applicable for `pipeline_atq` and `pipeline_queue` tests.
+
+* ``--vector_tmo_ns``
+
+       Vector timeout nanoseconds to be configured for the Rx adapter.
+       Only applicable for `pipeline_atq` and `pipeline_queue` tests.
+
 
 Eventdev Tests
 --------------
@@ -251,7 +258,7 @@ Example command to run order queue test:
 
 .. code-block:: console
 
-   sudo build/app/dpdk-test-eventdev --vdev=event_sw0 -- \
+   sudo <build_dir>/app/dpdk-test-eventdev --vdev=event_sw0 -- \
                 --test=order_queue --plcores 1 --wlcores 2,3
 
 
@@ -314,7 +321,7 @@ Example command to run order ``all types queue`` test:
 
 .. code-block:: console
 
-   sudo build/app/dpdk-test-eventdev --vdev=event_octeontx -- \
+   sudo <build_dir>/app/dpdk-test-eventdev --vdev=event_octeontx -- \
                         --test=order_atq --plcores 1 --wlcores 2,3
 
 
@@ -414,7 +421,7 @@ Example command to run perf queue test:
 
 .. code-block:: console
 
-   sudo build/app/dpdk-test-eventdev -c 0xf -s 0x1 --vdev=event_sw0 -- \
+   sudo <build_dir>/app/dpdk-test-eventdev -c 0xf -s 0x1 --vdev=event_sw0 -- \
         --test=perf_queue --plcores=2 --wlcore=3 --stlist=p --nb_pkts=0
 
 Example command to run perf queue test with ethernet ports:
@@ -428,7 +435,7 @@ Example command to run perf queue test with event timer adapter:
 
 .. code-block:: console
 
-   sudo  build/app/dpdk-test-eventdev --vdev="event_octeontx" -- \
+   sudo  <build_dir>/app/dpdk-test-eventdev --vdev="event_octeontx" -- \
                 --wlcores 4 --plcores 12 --test perf_queue --stlist=a \
                 --prod_type_timerdev --fwd_latency
 
@@ -514,14 +521,14 @@ Example command to run perf ``all types queue`` test:
 
 .. code-block:: console
 
-   sudo build/app/dpdk-test-eventdev --vdev=event_octeontx -- \
+   sudo <build_dir>/app/dpdk-test-eventdev --vdev=event_octeontx -- \
                 --test=perf_atq --plcores=2 --wlcore=3 --stlist=p --nb_pkts=0
 
 Example command to run perf ``all types queue`` test with event timer adapter:
 
 .. code-block:: console
 
-   sudo  build/app/dpdk-test-eventdev --vdev="event_octeontx" -- \
+   sudo  <build_dir>/app/dpdk-test-eventdev --vdev="event_octeontx" -- \
                 --wlcores 4 --plcores 12 --test perf_atq --verbose 20 \
                 --stlist=a --prod_type_timerdev --fwd_latency
 
@@ -620,6 +627,10 @@ Supported application command line options are following::
         --worker_deq_depth
         --prod_type_ethdev
         --deq_tmo_nsec
+        --nb_eth_queues
+        --enable_vector
+        --vector_size
+        --vector_tmo_ns
 
 
 .. Note::
@@ -633,9 +644,16 @@ Example command to run pipeline queue test:
 
 .. code-block:: console
 
-    sudo build/app/dpdk-test-eventdev -c 0xf -s 0x8 --vdev=event_sw0 -- \
+    sudo <build_dir>/app/dpdk-test-eventdev -c 0xf -s 0x8 --vdev=event_sw0 -- \
         --test=pipeline_queue --wlcore=1 --prod_type_ethdev --stlist=a
 
+Example command to run pipeline atq test with vector events:
+
+.. code-block:: console
+
+    sudo <build_dir>/app/dpdk-test-eventdev -c 0xf -s 0x8 --vdev=event_sw0 -- \
+        --test=pipeline_queue --wlcore=1 --prod_type_ethdev --stlist=a \
+        --enable_vector  --vector_size 512
 
 PIPELINE_ATQ Test
 ~~~~~~~~~~~~~~~~~~~
@@ -712,6 +730,10 @@ Supported application command line options are following::
         --worker_deq_depth
         --prod_type_ethdev
         --deq_tmo_nsec
+        --nb_eth_queues
+        --enable_vector
+        --vector_size
+        --vector_tmo_ns
 
 
 .. Note::
@@ -721,9 +743,17 @@ Supported application command line options are following::
 Example
 ^^^^^^^
 
-Example command to run pipeline queue test:
+Example command to run pipeline atq test:
 
 .. code-block:: console
 
-    sudo build/app/dpdk-test-eventdev -c 0xf -s 0x8 --vdev=event_sw0 -- \
+    sudo <build_dir>/app/dpdk-test-eventdev -c 0xf -s 0x8 --vdev=event_sw0 -- \
         --test=pipeline_atq --wlcore=1 --prod_type_ethdev --stlist=a
+
+Example command to run pipeline atq test with vector events:
+
+.. code-block:: console
+
+    sudo <build_dir>/app/dpdk-test-eventdev -c 0xf -s 0x8 --vdev=event_sw0 -- \
+        --test=pipeline_atq --wlcore=1 --prod_type_ethdev --stlist=a \
+        --enable_vector  --vector_size 512

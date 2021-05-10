@@ -16,6 +16,8 @@
 #include "rte_pmd_i40e.h"
 
 #include "base/i40e_register.h"
+#include "base/i40e_type.h"
+#include "base/virtchnl.h"
 
 #define I40E_VLAN_TAG_SIZE        4
 
@@ -281,15 +283,30 @@ struct rte_flow {
  */
 #define I40E_ETH_OVERHEAD \
 	(RTE_ETHER_HDR_LEN + RTE_ETHER_CRC_LEN + I40E_VLAN_TAG_SIZE * 2)
+#define I40E_ETH_MAX_LEN (RTE_ETHER_MTU + I40E_ETH_OVERHEAD)
+
+#define I40E_RXTX_BYTES_H_16_BIT(bytes) ((bytes) & ~I40E_48_BIT_MASK)
+#define I40E_RXTX_BYTES_L_48_BIT(bytes) ((bytes) & I40E_48_BIT_MASK)
 
 struct i40e_adapter;
 struct rte_pci_driver;
 
 /**
+ * MAC filter type
+ */
+enum i40e_mac_filter_type {
+	I40E_MAC_PERFECT_MATCH = 1, /**< exact match of MAC addr. */
+	I40E_MACVLAN_PERFECT_MATCH, /**< exact match of MAC addr and VLAN ID. */
+	I40E_MAC_HASH_MATCH, /**< hash match of MAC addr. */
+	/** hash match of MAC addr and exact match of VLAN ID. */
+	I40E_MACVLAN_HASH_MATCH,
+};
+
+/**
  * MAC filter structure
  */
 struct i40e_mac_filter_info {
-	enum rte_mac_filter_type filter_type;
+	enum i40e_mac_filter_type filter_type;
 	struct rte_ether_addr mac_addr;
 };
 
@@ -344,7 +361,7 @@ struct i40e_veb {
 /* i40e MACVLAN filter structure */
 struct i40e_macvlan_filter {
 	struct rte_ether_addr macaddr;
-	enum rte_mac_filter_type filter_type;
+	enum i40e_mac_filter_type filter_type;
 	uint16_t vlan_id;
 };
 
@@ -399,6 +416,8 @@ struct i40e_vsi {
 	uint8_t vlan_anti_spoof_on; /* The VLAN anti-spoofing enabled */
 	uint8_t vlan_filter_on; /* The VLAN filter enabled */
 	struct i40e_bw_info bw_info; /* VSI bandwidth information */
+	uint64_t prev_rx_bytes;
+	uint64_t prev_tx_bytes;
 };
 
 struct pool_entry {
@@ -594,19 +613,34 @@ enum i40e_fdir_ip_type {
 	I40E_FDIR_IPTYPE_IPV6,
 };
 
+/**
+ * Structure to store flex pit for flow diretor.
+ */
+struct i40e_fdir_flex_pit {
+	uint8_t src_offset; /* offset in words from the beginning of payload */
+	uint8_t size;       /* size in words */
+	uint8_t dst_offset; /* offset in words of flexible payload */
+};
+
 /* A structure used to contain extend input of flow */
 struct i40e_fdir_flow_ext {
 	uint16_t vlan_tci;
 	uint8_t flexbytes[RTE_ETH_FDIR_MAX_FLEXLEN];
 	/* It is filled by the flexible payload to match. */
+	uint8_t flex_mask[I40E_FDIR_MAX_FLEX_LEN];
+	uint8_t raw_id;
 	uint8_t is_vf;   /* 1 for VF, 0 for port dev */
 	uint16_t dst_id; /* VF ID, available when is_vf is 1*/
+	uint64_t input_set;
 	bool inner_ip;   /* If there is inner ip */
 	enum i40e_fdir_ip_type iip_type; /* ip type for inner ip */
 	enum i40e_fdir_ip_type oip_type; /* ip type for outer ip */
 	bool customized_pctype; /* If customized pctype is used */
 	bool pkt_template; /* If raw packet template is used */
 	bool is_udp; /* ipv4|ipv6 udp flow */
+	enum i40e_flxpld_layer_idx layer_idx;
+	struct i40e_fdir_flex_pit flex_pit[I40E_MAX_FLXPLD_LAYER * I40E_MAX_FLXPLD_FIED];
+	bool is_flex_flow;
 };
 
 /* A structure used to define the input for a flow director filter entry */
@@ -648,23 +682,13 @@ struct i40e_fdir_action {
 };
 
 /* A structure used to define the flow director filter entry by filter_ctrl API
- * It supports RTE_ETH_FILTER_FDIR with RTE_ETH_FILTER_ADD and
- * RTE_ETH_FILTER_DELETE operations.
+ * It supports RTE_ETH_FILTER_FDIR data representation.
  */
 struct i40e_fdir_filter_conf {
 	uint32_t soft_id;
 	/* ID, an unique value is required when deal with FDIR entry */
 	struct i40e_fdir_input input;    /* Input set */
 	struct i40e_fdir_action action;  /* Action taken when match */
-};
-
-/*
- * Structure to store flex pit for flow diretor.
- */
-struct i40e_fdir_flex_pit {
-	uint8_t src_offset;    /* offset in words from the beginning of payload */
-	uint8_t size;          /* size in words */
-	uint8_t dst_offset;    /* offset in words of flexible payload */
 };
 
 struct i40e_fdir_flex_mask {
@@ -765,6 +789,8 @@ struct i40e_fdir_info {
 	bool flex_mask_flag[I40E_FILTER_PCTYPE_MAX];
 
 	bool inset_flag[I40E_FILTER_PCTYPE_MAX]; /* Mark if input set is set */
+
+	uint32_t flex_flow_count[I40E_MAX_FLXPLD_LAYER];
 };
 
 /* Ethertype filter number HW supports */
@@ -1043,22 +1069,40 @@ struct i40e_customized_pctype {
 };
 
 struct i40e_rte_flow_rss_conf {
-	struct rte_flow_action_rss conf; /**< RSS parameters. */
-	uint16_t queue_region_conf; /**< Queue region config flag */
+	struct rte_flow_action_rss conf;	/**< RSS parameters. */
+
 	uint8_t key[(I40E_VFQF_HKEY_MAX_INDEX > I40E_PFQF_HKEY_MAX_INDEX ?
 		     I40E_VFQF_HKEY_MAX_INDEX : I40E_PFQF_HKEY_MAX_INDEX + 1) *
-		    sizeof(uint32_t)]; /* Hash key. */
-	uint16_t queue[I40E_MAX_Q_PER_TC]; /**< Queues indices to use. */
-	bool valid; /* Check if it's valid */
-};
+		    sizeof(uint32_t)];		/**< Hash key. */
+	uint16_t queue[ETH_RSS_RETA_SIZE_512];	/**< Queues indices to use. */
 
-TAILQ_HEAD(i40e_rss_conf_list, i40e_rss_filter);
+	bool symmetric_enable;		/**< true, if enable symmetric */
+	uint64_t config_pctypes;	/**< All PCTYPES with the flow  */
+	uint64_t inset;			/**< input sets */
+
+	uint8_t region_priority;	/**< queue region priority */
+	uint8_t region_queue_num;	/**< region queue number */
+	uint16_t region_queue_start;	/**< region queue start */
+
+	uint32_t misc_reset_flags;
+#define I40E_HASH_FLOW_RESET_FLAG_FUNC		0x01UL
+#define I40E_HASH_FLOW_RESET_FLAG_KEY		0x02UL
+#define I40E_HASH_FLOW_RESET_FLAG_QUEUE		0x04UL
+#define I40E_HASH_FLOW_RESET_FLAG_REGION	0x08UL
+
+	/**< All PCTYPES that reset with the flow  */
+	uint64_t reset_config_pctypes;
+	/**< Symmetric function should reset on PCTYPES */
+	uint64_t reset_symmetric_pctypes;
+};
 
 /* RSS filter list structure */
 struct i40e_rss_filter {
 	TAILQ_ENTRY(i40e_rss_filter) next;
 	struct i40e_rte_flow_rss_conf rss_filter_info;
 };
+
+TAILQ_HEAD(i40e_rss_conf_list, i40e_rss_filter);
 
 struct i40e_vf_msg_cfg {
 	/* maximal VF message during a statistic period */
@@ -1114,6 +1158,8 @@ struct i40e_pf {
 	uint16_t fdir_qp_offset;
 
 	uint16_t hash_lut_size; /* The size of hash lookup table */
+	bool hash_filter_enabled;
+	uint64_t hash_enabled_queues;
 	/* input set bits for each pctype */
 	uint64_t hash_input_set[I40E_FILTER_PCTYPE_MAX];
 	/* store VXLAN UDP ports */
@@ -1128,7 +1174,6 @@ struct i40e_pf {
 	struct i40e_fdir_info fdir; /* flow director info */
 	struct i40e_ethertype_rule ethertype; /* Ethertype filter rule */
 	struct i40e_tunnel_rule tunnel; /* Tunnel filter rule */
-	struct i40e_rte_flow_rss_conf rss_info; /* RSS info */
 	struct i40e_rss_conf_list rss_config_list; /* RSS rule list */
 	struct i40e_queue_regions queue_region; /* queue region info */
 	struct i40e_fc_conf fc_conf; /* Flow control conf */
@@ -1156,6 +1201,10 @@ struct i40e_pf {
 	uint16_t switch_domain_id;
 
 	struct i40e_vf_msg_cfg vf_msg_cfg;
+	uint64_t prev_rx_bytes;
+	uint64_t prev_tx_bytes;
+	uint64_t internal_prev_rx_bytes;
+	uint64_t internal_prev_tx_bytes;
 };
 
 enum pending_msg {
@@ -1200,6 +1249,7 @@ struct i40e_vf {
 	bool promisc_unicast_enabled;
 	bool promisc_multicast_enabled;
 
+	rte_spinlock_t cmd_send_lock;
 	uint32_t version_major; /* Major version number */
 	uint32_t version_minor; /* Minor version number */
 	uint16_t promisc_flags; /* Promiscuous setting */
@@ -1260,9 +1310,6 @@ struct i40e_adapter {
 	uint64_t pctypes_tbl[I40E_FLOW_TYPE_MAX] __rte_cache_min_aligned;
 	uint64_t flow_types_mask;
 	uint64_t pctypes_mask;
-
-	/* For devargs */
-	uint8_t use_latest_vec;
 
 	/* For RSS reta table update */
 	uint8_t rss_reta_updated;
@@ -1348,17 +1395,12 @@ void i40e_fdir_info_get(struct rte_eth_dev *dev,
 			struct rte_eth_fdir_info *fdir);
 void i40e_fdir_stats_get(struct rte_eth_dev *dev,
 			 struct rte_eth_fdir_stats *stat);
-int i40e_fdir_ctrl_func(struct rte_eth_dev *dev,
-			  enum rte_filter_op filter_op,
-			  void *arg);
 int i40e_select_filter_input_set(struct i40e_hw *hw,
 				 struct rte_eth_input_set_conf *conf,
 				 enum rte_filter_type filter);
 void i40e_fdir_filter_restore(struct i40e_pf *pf);
-int i40e_hash_filter_inset_select(struct i40e_hw *hw,
-			     struct rte_eth_input_set_conf *conf);
-int i40e_fdir_filter_inset_select(struct i40e_pf *pf,
-			     struct rte_eth_input_set_conf *conf);
+int i40e_set_hash_inset(struct i40e_hw *hw, uint64_t input_set,
+			uint32_t pctype, bool add);
 int i40e_pf_host_send_msg_to_vf(struct i40e_pf_vf *vf, uint32_t opcode,
 				uint32_t retval, uint8_t *msg,
 				uint16_t msglen);
@@ -1386,9 +1428,6 @@ uint64_t i40e_get_default_input_set(uint16_t pctype);
 int i40e_ethertype_filter_set(struct i40e_pf *pf,
 			      struct rte_eth_ethertype_filter *filter,
 			      bool add);
-int i40e_add_del_fdir_filter(struct rte_eth_dev *dev,
-			     const struct rte_eth_fdir_filter *filter,
-			     bool add);
 struct rte_flow *
 i40e_fdir_entry_pool_get(struct i40e_fdir_info *fdir_info);
 void i40e_fdir_entry_pool_put(struct i40e_fdir_info *fdir_info,
@@ -1416,11 +1455,12 @@ int i40e_add_macvlan_filters(struct i40e_vsi *vsi,
 bool is_device_supported(struct rte_eth_dev *dev, struct rte_pci_driver *drv);
 bool is_i40e_supported(struct rte_eth_dev *dev);
 bool is_i40evf_supported(struct rte_eth_dev *dev);
-
+void i40e_set_symmetric_hash_enable_per_port(struct i40e_hw *hw,
+					     uint8_t enable);
 int i40e_validate_input_set(enum i40e_filter_pctype pctype,
 			    enum rte_filter_type filter, uint64_t inset);
-int i40e_generate_inset_mask_reg(uint64_t inset, uint32_t *mask,
-				 uint8_t nb_elem);
+int i40e_generate_inset_mask_reg(struct i40e_hw *hw, uint64_t inset,
+				 uint32_t *mask, uint8_t nb_elem);
 uint64_t i40e_translate_input_set_reg(enum i40e_mac_type type, uint64_t input);
 void i40e_check_write_reg(struct i40e_hw *hw, uint32_t addr, uint32_t val);
 void i40e_check_write_global_reg(struct i40e_hw *hw,
@@ -1439,12 +1479,13 @@ int i40e_flush_queue_region_all_conf(struct rte_eth_dev *dev,
 		struct i40e_hw *hw, struct i40e_pf *pf, uint16_t on);
 void i40e_init_queue_region_conf(struct rte_eth_dev *dev);
 void i40e_flex_payload_reg_set_default(struct i40e_hw *hw);
+void i40e_pf_disable_rss(struct i40e_pf *pf);
+int i40e_pf_calc_configured_queues_num(struct i40e_pf *pf);
+int i40e_pf_reset_rss_reta(struct i40e_pf *pf);
+int i40e_pf_reset_rss_key(struct i40e_pf *pf);
+int i40e_pf_config_rss(struct i40e_pf *pf);
 int i40e_set_rss_key(struct i40e_vsi *vsi, uint8_t *key, uint8_t key_len);
 int i40e_set_rss_lut(struct i40e_vsi *vsi, uint8_t *lut, uint16_t lut_size);
-int i40e_rss_conf_init(struct i40e_rte_flow_rss_conf *out,
-		       const struct rte_flow_action_rss *in);
-int i40e_config_rss_filter(struct i40e_pf *pf,
-		struct i40e_rte_flow_rss_conf *conf, bool add);
 int i40e_vf_representor_init(struct rte_eth_dev *ethdev, void *init_params);
 int i40e_vf_representor_uninit(struct rte_eth_dev *ethdev);
 

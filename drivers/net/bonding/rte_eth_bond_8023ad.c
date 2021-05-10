@@ -804,20 +804,35 @@ rx_machine_update(struct bond_dev_private *internals, uint16_t slave_id,
 		struct rte_mbuf *lacp_pkt) {
 	struct lacpdu_header *lacp;
 	struct lacpdu_actor_partner_params *partner;
+	struct port *port, *agg;
 
 	if (lacp_pkt != NULL) {
 		lacp = rte_pktmbuf_mtod(lacp_pkt, struct lacpdu_header *);
 		RTE_ASSERT(lacp->lacpdu.subtype == SLOW_SUBTYPE_LACP);
 
 		partner = &lacp->lacpdu.partner;
+		port = &bond_mode_8023ad_ports[slave_id];
+		agg = &bond_mode_8023ad_ports[port->aggregator_port_id];
+
 		if (rte_is_zero_ether_addr(&partner->port_params.system) ||
 			rte_is_same_ether_addr(&partner->port_params.system,
-			&internals->mode4.mac_addr)) {
+				&agg->actor.system)) {
 			/* This LACP frame is sending to the bonding port
 			 * so pass it to rx_machine.
 			 */
 			//处理lacp报文
 			rx_machine(internals, slave_id, &lacp->lacpdu);
+		} else {
+			char preferred_system_name[RTE_ETHER_ADDR_FMT_SIZE];
+			char self_system_name[RTE_ETHER_ADDR_FMT_SIZE];
+
+			rte_ether_format_addr(preferred_system_name,
+				RTE_ETHER_ADDR_FMT_SIZE, &partner->port_params.system);
+			rte_ether_format_addr(self_system_name,
+				RTE_ETHER_ADDR_FMT_SIZE, &agg->actor.system);
+			MODE4_DEBUG("preferred partner system %s "
+				"is not equal with self system: %s\n",
+				preferred_system_name, self_system_name);
 		}
 		rte_pktmbuf_free(lacp_pkt);
 	} else
@@ -1336,8 +1351,7 @@ bond_mode_8023ad_handle_slow_pkt(struct bond_dev_private *internals,
 		rte_eth_macaddr_get(slave_id, &m_hdr->eth_hdr.s_addr);
 
 		if (internals->mode4.dedicated_queues.enabled == 0) {
-			int retval = rte_ring_enqueue(port->tx_ring, pkt);
-			if (retval != 0) {
+			if (rte_ring_enqueue(port->tx_ring, pkt) != 0) {
 				/* reset timer */
 				port->rx_marker_timer = 0;
 				wrn = WRN_TX_QUEUE_FULL;
@@ -1358,8 +1372,7 @@ bond_mode_8023ad_handle_slow_pkt(struct bond_dev_private *internals,
 	} else if (likely(subtype == SLOW_SUBTYPE_LACP)) {
 		//处理lacp报文（两种模式，一种直接入队，一种直接处理）
 		if (internals->mode4.dedicated_queues.enabled == 0) {
-			int retval = rte_ring_enqueue(port->rx_ring, pkt);
-			if (retval != 0) {
+			if (rte_ring_enqueue(port->rx_ring, pkt) != 0) {
 				/* If RX fing full free lacpdu message and drop packet */
 				wrn = WRN_RX_QUEUE_FULL;
 				goto free_out;

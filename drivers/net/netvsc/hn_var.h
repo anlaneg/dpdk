@@ -6,6 +6,8 @@
  * All rights reserved.
  */
 
+#include <rte_eal_paging.h>
+
 /*
  * Tunable ethdev params
  */
@@ -23,13 +25,13 @@
 /* Host monitor interval */
 #define HN_CHAN_LATENCY_NS	50000
 
-/* Buffers need to be aligned */
-#ifndef PAGE_SIZE
-#define PAGE_SIZE 4096
-#endif
+#define HN_TXCOPY_THRESHOLD	512
+#define HN_RXCOPY_THRESHOLD	256
+
+#define HN_RX_EXTMBUF_ENABLE	0
 
 #ifndef PAGE_MASK
-#define PAGE_MASK (PAGE_SIZE - 1)
+#define PAGE_MASK (rte_mem_page_size() - 1)
 #endif
 
 struct hn_data;
@@ -54,7 +56,9 @@ struct hn_tx_queue {
 	uint16_t	queue_id;
 	uint32_t	free_thresh;
 	struct rte_mempool *txdesc_pool;
+	const struct rte_memzone *tx_rndis_mz;
 	void		*tx_rndis;
+	rte_iova_t	tx_rndis_iova;
 
 	/* Applied packet transmission aggregation limits. */
 	uint32_t	agg_szmax;
@@ -83,27 +87,52 @@ struct hn_rx_queue {
 	struct hn_stats stats;
 
 	void *event_buf;
+	struct hn_rx_bufinfo *rxbuf_info;
+	rte_atomic32_t  rxbuf_outstanding;
 };
 
 
 /* multi-packet data from host */
 struct hn_rx_bufinfo {
 	struct vmbus_channel *chan;
-	struct hn_data *hv;
+	struct hn_rx_queue *rxq;
 	uint64_t	xactid;
 	struct rte_mbuf_ext_shared_info shinfo;
 } __rte_cache_aligned;
 
 #define HN_INVALID_PORT	UINT16_MAX
 
+enum vf_device_state {
+	vf_unknown = 0,
+	vf_removed,
+	vf_configured,
+	vf_started,
+	vf_stopped,
+};
+
+struct hn_vf_ctx {
+	uint16_t	vf_port;
+
+	/* We have taken ownership of this VF port from DPDK */
+	bool		vf_attached;
+
+	/* VSC has requested to switch data path to VF */
+	bool		vf_vsc_switched;
+
+	/* VSP has reported the VF is present for this NIC */
+	bool		vf_vsp_reported;
+
+	enum vf_device_state	vf_state;
+};
+
 struct hn_data {
 	struct rte_vmbus_device *vmbus;
 	struct hn_rx_queue *primary;
 	rte_rwlock_t    vf_lock;
 	uint16_t	port_id;
-	uint16_t	vf_port;
 
-	uint8_t		vf_present;
+	struct hn_vf_ctx	vf_ctx;
+
 	uint8_t		closed;
 	uint8_t		vlan_strip;
 
@@ -111,9 +140,9 @@ struct hn_data {
 	uint32_t	link_speed;
 
 	struct rte_mem_resource *rxbuf_res;	/* UIO resource for Rx */
-	struct hn_rx_bufinfo *rxbuf_info;
 	uint32_t	rxbuf_section_cnt;	/* # of Rx sections */
-	rte_atomic32_t	rxbuf_outstanding;
+	uint32_t	rx_copybreak;
+	uint32_t	rx_extmbuf_enable;
 	uint16_t	max_queues;		/* Max available queues */
 	uint16_t	num_queues;
 	uint64_t	rss_offloads;
@@ -122,6 +151,7 @@ struct hn_data {
 	struct rte_mem_resource *chim_res;	/* UIO resource for Tx */
 	struct rte_bitmap *chim_bmap;		/* Send buffer map */
 	void		*chim_bmem;
+	uint32_t	tx_copybreak;
 	uint32_t	chim_szmax;		/* Max size per buffer */
 	uint32_t	chim_cnt;		/* Max packets per buffer */
 
@@ -143,6 +173,9 @@ struct hn_data {
 	struct rte_eth_dev_owner owner;
 
 	struct vmbus_channel *channels[HN_MAX_CHANNELS];
+
+	struct rte_devargs devargs;
+	int		eal_hot_plug_retry;
 };
 
 static inline struct vmbus_channel *
@@ -186,13 +219,6 @@ uint32_t hn_dev_rx_queue_count(struct rte_eth_dev *dev, uint16_t queue_id);
 int	hn_dev_rx_queue_status(void *rxq, uint16_t offset);
 void	hn_dev_free_queues(struct rte_eth_dev *dev);
 
-/* Check if VF is attached */
-static inline bool
-hn_vf_attached(const struct hn_data *hv)
-{
-	return hv->vf_port != HN_INVALID_PORT;
-}
-
 /*
  * Get VF device for existing netvsc device
  * Assumes vf_lock is held.
@@ -200,24 +226,22 @@ hn_vf_attached(const struct hn_data *hv)
 static inline struct rte_eth_dev *
 hn_get_vf_dev(const struct hn_data *hv)
 {
-	uint16_t vf_port = hv->vf_port;
-
-	if (vf_port == HN_INVALID_PORT)
-		return NULL;
+	if (hv->vf_ctx.vf_attached)
+		return &rte_eth_devices[hv->vf_ctx.vf_port];
 	else
-		return &rte_eth_devices[vf_port];
+		return NULL;
 }
 
 int	hn_vf_info_get(struct hn_data *hv,
 		       struct rte_eth_dev_info *info);
 int	hn_vf_add(struct rte_eth_dev *dev, struct hn_data *hv);
-int	hn_vf_configure(struct rte_eth_dev *dev,
-			const struct rte_eth_conf *dev_conf);
+int	hn_vf_configure_locked(struct rte_eth_dev *dev,
+			       const struct rte_eth_conf *dev_conf);
 const uint32_t *hn_vf_supported_ptypes(struct rte_eth_dev *dev);
 int	hn_vf_start(struct rte_eth_dev *dev);
 void	hn_vf_reset(struct rte_eth_dev *dev);
-void	hn_vf_stop(struct rte_eth_dev *dev);
-void	hn_vf_close(struct rte_eth_dev *dev);
+int	hn_vf_close(struct rte_eth_dev *dev);
+int	hn_vf_stop(struct rte_eth_dev *dev);
 
 int	hn_vf_allmulticast_enable(struct rte_eth_dev *dev);
 int	hn_vf_allmulticast_disable(struct rte_eth_dev *dev);
@@ -255,3 +279,6 @@ int	hn_vf_rss_hash_update(struct rte_eth_dev *dev,
 int	hn_vf_reta_hash_update(struct rte_eth_dev *dev,
 			       struct rte_eth_rss_reta_entry64 *reta_conf,
 			       uint16_t reta_size);
+int	hn_eth_rmv_event_callback(uint16_t port_id,
+				  enum rte_eth_event_type event __rte_unused,
+				  void *cb_arg, void *out __rte_unused);

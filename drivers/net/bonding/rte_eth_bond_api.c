@@ -6,7 +6,7 @@
 
 #include <rte_mbuf.h>
 #include <rte_malloc.h>
-#include <rte_ethdev_driver.h>
+#include <ethdev_driver.h>
 #include <rte_tcp.h>
 #include <rte_bus_vdev.h>
 #include <rte_kvargs.h>
@@ -59,16 +59,22 @@ check_for_master_bonded_ethdev(const struct rte_eth_dev *eth_dev)
 }
 
 int
-valid_slave_port_id(uint16_t port_id, uint8_t mode)
+valid_slave_port_id(struct bond_dev_private *internals, uint16_t slave_port_id)
 {
-	RTE_ETH_VALID_PORTID_OR_ERR_RET(port_id, -1);
+	RTE_ETH_VALID_PORTID_OR_ERR_RET(slave_port_id, -1);
 
-	/* Verify that port_id refers to a non bonded port */
-	if (check_for_bonded_ethdev(&rte_eth_devices[port_id]) == 0 &&
-			mode == BONDING_MODE_8023AD) {
+	/* Verify that slave_port_id refers to a non bonded port */
+	if (check_for_bonded_ethdev(&rte_eth_devices[slave_port_id]) == 0 &&
+			internals->mode == BONDING_MODE_8023AD) {
 		RTE_BOND_LOG(ERR, "Cannot add slave to bonded device in 802.3ad"
 				" mode as slave is also a bonded device, only "
 				"physical devices can be support in this mode.");
+		return -1;
+	}
+
+	if (internals->port_id == slave_port_id) {
+		RTE_BOND_LOG(ERR,
+			"Cannot add the bonded device itself as its slave.");
 		return -1;
 	}
 
@@ -131,12 +137,6 @@ deactivate_slave(struct rte_eth_dev *eth_dev, uint16_t port_id)
 
 	RTE_ASSERT(active_count < RTE_DIM(internals->active_slaves));
 	internals->active_slave_count = active_count;
-
-	/* Resetting active_slave when reaches to max
-	 * no of slaves in active list
-	 */
-	if (internals->active_slave >= active_count)
-		internals->active_slave = 0;
 
 	if (eth_dev->data->dev_started) {
 		if (internals->mode == BONDING_MODE_8023AD) {
@@ -249,7 +249,12 @@ slave_rte_flow_prepare(uint16_t slave_id, struct bond_dev_private *internals)
 	uint16_t slave_port_id = internals->slaves[slave_id].port_id;
 
 	if (internals->flow_isolated_valid != 0) {
-		rte_eth_dev_stop(slave_port_id);
+		if (rte_eth_dev_stop(slave_port_id) != 0) {
+			RTE_BOND_LOG(ERR, "Failed to stop device on port %u",
+				     slave_port_id);
+			return -1;
+		}
+
 		if (rte_flow_isolate(slave_port_id, internals->flow_isolated,
 		    &ferror)) {
 			RTE_BOND_LOG(ERR, "rte_flow_isolate failed for slave"
@@ -463,7 +468,7 @@ __eth_bond_slave_add_lock_free(uint16_t bonded_port_id, uint16_t slave_port_id)
 	bonded_eth_dev = &rte_eth_devices[bonded_port_id];
 	internals = bonded_eth_dev->data->dev_private;
 
-	if (valid_slave_port_id(slave_port_id, internals->mode) != 0)
+	if (valid_slave_port_id(internals, slave_port_id) != 0)
 		return -1;
 
 	slave_eth_dev = &rte_eth_devices[slave_port_id];
@@ -612,13 +617,15 @@ rte_eth_bond_slave_add(uint16_t bonded_port_id, uint16_t slave_port_id)
 
 	int retval;
 
-	/* Verify that port id's are valid bonded and slave ports */
 	//先确认是否为bond口
 	if (valid_bonded_port_id(bonded_port_id) != 0)
 		return -1;
 
 	bonded_eth_dev = &rte_eth_devices[bonded_port_id];
 	internals = bonded_eth_dev->data->dev_private;
+
+	if (valid_slave_port_id(internals, slave_port_id) != 0)
+		return -1;
 
 	rte_spinlock_lock(&internals->lock);
 
@@ -643,7 +650,7 @@ __eth_bond_slave_remove_lock_free(uint16_t bonded_port_id,
 	bonded_eth_dev = &rte_eth_devices[bonded_port_id];
 	internals = bonded_eth_dev->data->dev_private;
 
-	if (valid_slave_port_id(slave_port_id, internals->mode) < 0)
+	if (valid_slave_port_id(internals, slave_port_id) < 0)
 		return -1;
 
 	/* first remove from active slave list */
@@ -791,7 +798,7 @@ rte_eth_bond_primary_set(uint16_t bonded_port_id, uint16_t slave_port_id)
 
 	internals = rte_eth_devices[bonded_port_id].data->dev_private;
 
-	if (valid_slave_port_id(slave_port_id, internals->mode) != 0)
+	if (valid_slave_port_id(internals, slave_port_id) != 0)
 		return -1;
 
 	internals->user_defined_primary_port = 1;

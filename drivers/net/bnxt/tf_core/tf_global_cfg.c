@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: BSD-3-Clause
- * Copyright(c) 2019-2020 Broadcom
+ * Copyright(c) 2019-2021 Broadcom
  * All rights reserved.
  */
 
@@ -113,7 +113,7 @@ tf_global_cfg_unbind(struct tf *tfp __rte_unused)
 
 int
 tf_global_cfg_set(struct tf *tfp,
-		  struct tf_dev_global_cfg_parms *parms)
+		  struct tf_global_cfg_parms *parms)
 {
 	int rc;
 	struct tf_global_cfg_get_hcapi_parms hparms;
@@ -156,7 +156,7 @@ tf_global_cfg_set(struct tf *tfp,
 
 int
 tf_global_cfg_get(struct tf *tfp,
-		  struct tf_dev_global_cfg_parms *parms)
+		  struct tf_global_cfg_parms *parms)
 
 {
 	int rc;

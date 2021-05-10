@@ -20,6 +20,9 @@
 #define CPT_MAJOR_OP_ZUC_SNOW3G	0x37
 #define CPT_MAJOR_OP_KASUMI	0x38
 #define CPT_MAJOR_OP_MISC	0x01
+#define CPT_HMAC_FIRST_BIT_POS	0x4
+#define CPT_FC_MINOR_OP_ENCRYPT	0x0
+#define CPT_FC_MINOR_OP_DECRYPT	0x1
 
 /* AE opcodes */
 #define CPT_MAJOR_OP_MODEX	0x03
@@ -38,9 +41,6 @@
 #define CPT_BLOCK_TYPE1 0
 #define CPT_BLOCK_TYPE2 1
 
-#define CPT_BYTE_16		16
-#define CPT_BYTE_24		24
-#define CPT_BYTE_32		32
 #define CPT_MAX_SG_IN_OUT_CNT	32
 #define CPT_MAX_SG_CNT		(CPT_MAX_SG_IN_OUT_CNT/2)
 
@@ -248,8 +248,8 @@ struct cpt_sess_misc {
 	uint16_t is_null:1;
 	/** Flag for GMAC */
 	uint16_t is_gmac:1;
-	/** Engine group */
-	uint16_t egrp:3;
+	/** Unused field */
+	uint16_t rsvd1:3;
 	/** AAD length */
 	uint16_t aad_length;
 	/** MAC len in bytes */
@@ -258,14 +258,16 @@ struct cpt_sess_misc {
 	uint8_t iv_length;
 	/** Auth IV length in bytes */
 	uint8_t auth_iv_length;
-	/** Reserved field */
-	uint8_t rsvd1;
+	/** Unused field */
+	uint8_t rsvd2;
 	/** IV offset in bytes */
 	uint16_t iv_offset;
 	/** Auth IV offset in bytes */
 	uint16_t auth_iv_offset;
 	/** Salt */
 	uint32_t salt;
+	/** CPT inst word 7 */
+	uint64_t cpt_inst_w7;
 	/** Context DMA address */
 	phys_addr_t ctx_dma_addr;
 };
@@ -315,14 +317,16 @@ struct cpt_ctx {
 	uint64_t hmac		:1;
 	uint64_t zsk_flags	:3;
 	uint64_t k_ecb		:1;
+	uint64_t auth_enc	:1;
+	uint64_t dec_auth	:1;
 	uint64_t snow3g		:2;
-	uint64_t rsvd		:21;
+	uint64_t rsvd		:19;
 	/* Below fields are accessed by hardware */
 	union {
 		mc_fc_context_t fctx;
 		mc_zuc_snow3g_ctx_t zs_ctx;
 		mc_kasumi_ctx_t k_ctx;
-	};
+	} mc_ctx;
 	uint8_t  auth_key[1024];
 };
 
@@ -353,6 +357,7 @@ struct cpt_asym_sess_misc {
 		struct rte_crypto_modex_xform mod_ctx;
 		struct cpt_asym_ec_ctx ec_ctx;
 	};
+	uint64_t cpt_inst_w7;
 };
 
 /* Buffer pointer */
@@ -368,14 +373,6 @@ typedef struct{
 	int buf_cnt;
 	buf_ptr_t bufs[0];
 } iov_ptr_t;
-
-typedef union opcode_info {
-	uint16_t flags;
-	struct {
-		uint8_t major;
-		uint8_t minor;
-	} s;
-} opcode_info_t;
 
 typedef struct fc_params {
 	/* 0th cache line */
@@ -429,6 +426,9 @@ typedef mc_hash_type_t auth_type_t;
 
 #define SESS_PRIV(__sess) \
 	(void *)((uint8_t *)__sess + sizeof(struct cpt_sess_misc))
+
+#define GET_SESS_FC_TYPE(__sess) \
+	(((struct cpt_ctx *)(SESS_PRIV(__sess)))->fc_type)
 
 /*
  * Get the session size

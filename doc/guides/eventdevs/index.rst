@@ -11,6 +11,8 @@ application through the eventdev API.
     :maxdepth: 2
     :numbered:
 
+    cnxk
+    dlb2
     dpaa
     dpaa2
     dsw

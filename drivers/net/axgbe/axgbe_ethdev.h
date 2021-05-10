@@ -9,6 +9,7 @@
 #include <rte_mempool.h>
 #include <rte_lcore.h>
 #include "axgbe_common.h"
+#include "rte_time.h"
 
 #define IRQ				0xff
 #define VLAN_HLEN			4
@@ -63,6 +64,13 @@
 #define AXGBE_V2_DMA_CLOCK_FREQ		500000000
 #define AXGBE_V2_PTP_CLOCK_FREQ		125000000
 
+/* Timestamp support - values based on 50MHz PTP clock
+ *   50MHz => 20 nsec
+ */
+#define AXGBE_TSTAMP_SSINC       20
+#define AXGBE_TSTAMP_SNSINC      0
+#define AXGBE_CYCLECOUNTER_MASK 0xffffffffffffffffULL
+
 #define AXGMAC_FIFO_MIN_ALLOC		2048
 #define AXGMAC_FIFO_UNIT		256
 #define AXGMAC_FIFO_ALIGN(_x)                            \
@@ -116,6 +124,12 @@
 
 /* MDIO port types */
 #define AXGMAC_MAX_C22_PORT		3
+
+/* The max frame size with default MTU */
+#define AXGBE_ETH_MAX_LEN ( \
+	RTE_ETHER_MTU + \
+	RTE_ETHER_HDR_LEN + \
+	RTE_ETHER_CRC_LEN)
 
 /* Helper macro for descriptor handling
  *  Always use AXGBE_GET_DESC_DATA to access the descriptor data
@@ -291,6 +305,13 @@ struct axgbe_hw_if {
 	int (*config_tx_flow_control)(struct axgbe_port *);
 	int (*config_rx_flow_control)(struct axgbe_port *);
 
+	/* vlan */
+	int (*enable_rx_vlan_stripping)(struct axgbe_port *);
+	int (*disable_rx_vlan_stripping)(struct axgbe_port *);
+	int (*enable_rx_vlan_filtering)(struct axgbe_port *);
+	int (*disable_rx_vlan_filtering)(struct axgbe_port *);
+	int (*update_vlan_hash_table)(struct axgbe_port *);
+
 	int (*exit)(struct axgbe_port *);
 };
 
@@ -425,6 +446,12 @@ struct axgbe_hw_features {
 	unsigned int tx_ch_cnt;		/* Number of DMA Transmit Channels */
 	unsigned int pps_out_num;	/* Number of PPS outputs */
 	unsigned int aux_snap_num;	/* Number of Aux snapshot inputs */
+
+	/* HW Feature Register3 */
+	unsigned int tx_q_vlan_tag_ins; /* Queue/Channel based VLAN tag */
+					/* insertion on Tx Enable */
+	unsigned int no_of_vlan_extn;   /* Number of Extended VLAN Tag */
+					/* Filters Enabled */
 };
 
 struct axgbe_version_data {
@@ -645,6 +672,15 @@ struct axgbe_port {
 	unsigned int hash_table_count;
 	unsigned int uc_hash_mac_addr;
 	unsigned int uc_hash_table[AXGBE_MAC_HASH_TABLE_SIZE];
+
+	/* Filtering support */
+	unsigned long active_vlans[VLAN_TABLE_SIZE];
+
+	/* For IEEE1588 PTP */
+	struct rte_timecounter systime_tc;
+	struct rte_timecounter tx_tstamp;
+	unsigned int tstamp_addend;
+
 };
 
 void axgbe_init_function_ptrs_dev(struct axgbe_hw_if *hw_if);

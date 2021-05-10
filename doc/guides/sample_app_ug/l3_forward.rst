@@ -11,7 +11,7 @@ The application performs L3 forwarding.
 Overview
 --------
 
-The application demonstrates the use of the hash and LPM libraries in the DPDK
+The application demonstrates the use of the hash, LPM and FIB libraries in DPDK
 to implement packet forwarding using poll or event mode PMDs for packet I/O.
 The initialization and run-time paths are very similar to those of the
 :doc:`l2_forward_real_virtual` and :doc:`l2_forward_event`.
@@ -22,7 +22,9 @@ decision is made based on information read from the input packet.
 Eventdev can optionally use S/W or H/W (if supported by platform) scheduler
 implementation for packet I/O based on run time parameters.
 
-The lookup method is either hash-based or LPM-based and is selected at run time. When the selected lookup method is hash-based,
+The lookup method is hash-based, LPM-based or FIB-based
+and is selected at run time.
+When the selected lookup method is hash-based,
 a hash object is used to emulate the flow classification stage.
 The hash object is used in correlation with a flow table to map each input packet to its flow at runtime.
 
@@ -30,14 +32,21 @@ The hash lookup key is represented by a DiffServ 5-tuple composed of the followi
 Source IP Address, Destination IP Address, Protocol, Source Port and Destination Port.
 The ID of the output interface for the input packet is read from the identified flow table entry.
 The set of flows used by the application is statically configured and loaded into the hash at initialization time.
-When the selected lookup method is LPM based, an LPM object is used to emulate the forwarding stage for IPv4 packets.
-The LPM object is used as the routing table to identify the next hop for each input packet at runtime.
+When the selected lookup method is LPM or FIB based,
+an LPM or FIB object is used to emulate the forwarding stage for IPv4 packets.
+The LPM or FIB object is used as the routing table
+to identify the next hop for each input packet at runtime.
 
-The LPM lookup key is represented by the Destination IP Address field read from the input packet.
-The ID of the output interface for the input packet is the next hop returned by the LPM lookup.
-The set of LPM rules used by the application is statically configured and loaded into the LPM object at initialization time.
+The LPM and FIB lookup keys are represented by the destination IP address field
+read from the input packet.
+The ID of the output interface for the input packet is the next hop
+returned by the LPM or FIB lookup.
+The set of LPM and FIB rules used by the application is statically configured
+and loaded into the LPM or FIB object at initialization time.
 
-In the sample application, hash-based forwarding supports IPv4 and IPv6. LPM-based forwarding supports IPv4 only.
+In the sample application, hash-based and FIB-based forwarding supports
+both IPv4 and IPv6.
+LPM-based forwarding supports IPv4 only.
 
 Compiling the Application
 -------------------------
@@ -51,10 +60,9 @@ Running the Application
 
 The application has a number of command line options::
 
-    ./l3fwd [EAL options] -- -p PORTMASK
+    ./dpdk-l3fwd [EAL options] -- -p PORTMASK
                              [-P]
-                             [-E]
-                             [-L]
+                             [--lookup LOOKUP_METHOD]
                              --config(port,queue,lcore)[,(port,queue,lcore)]
                              [--eth-dest=X,MM:MM:MM:MM:MM:MM]
                              [--enable-jumbo [--max-pkt-len PKTLEN]]
@@ -66,6 +74,8 @@ The application has a number of command line options::
                              [--mode]
                              [--eventq-sched]
                              [--event-eth-rxqs]
+                             [-E]
+                             [-L]
 
 Where,
 
@@ -74,9 +84,12 @@ Where,
 * ``-P:`` Optional, sets all ports to promiscuous mode so that packets are accepted regardless of the packet's Ethernet MAC destination address.
   Without this option, only packets with the Ethernet MAC destination address set to the Ethernet address of the port are accepted.
 
-* ``-E:`` Optional, enable exact match.
-
-* ``-L:`` Optional, enable longest prefix match.
+* ``--lookup:`` Optional, select the lookup method.
+  Accepted options:
+  ``em`` (Exact Match),
+  ``lpm`` (Longest Prefix Match),
+  ``fib`` (Forwarding Information Base).
+  Default is ``lpm``.
 
 * ``--config (port,queue,lcore)[,(port,queue,lcore)]:`` Determines which queues from which ports are mapped to which cores.
 
@@ -102,6 +115,12 @@ Where,
 
 * ``--event-eth-rxqs:`` Optional, Number of ethernet RX queues per device. Only valid if --mode=eventdev.
 
+* ``-E:`` Optional, enable exact match,
+  legacy flag, please use ``--lookup=em`` instead.
+
+* ``-L:`` Optional, enable longest prefix match,
+  legacy flag, please use ``--lookup=lpm`` instead.
+
 
 For example, consider a dual processor socket platform with 8 physical cores, where cores 0-7 and 16-23 appear on socket 0,
 while cores 8-15 and 24-31 appear on socket 1.
@@ -111,7 +130,7 @@ To enable L3 forwarding between two ports, assuming that both ports are in the s
 
 .. code-block:: console
 
-    ./build/l3fwd -l 1,2 -n 4 -- -p 0x3 --config="(0,0,1),(1,0,2)"
+    ./<build_dir>/examples/dpdk-l3fwd -l 1,2 -n 4 -- -p 0x3 --config="(0,0,1),(1,0,2)"
 
 In this command:
 
@@ -138,17 +157,19 @@ Following is the sample command:
 
 .. code-block:: console
 
-    ./build/l3fwd -l 0-3 -n 4 -w <event device> -- -p 0x3 --eventq-sched=ordered
+    ./<build_dir>/examples/dpdk-l3fwd -l 0-3 -n 4 -a <event device> -- -p 0x3 --eventq-sched=ordered
 
 or
 
 .. code-block:: console
 
-    ./build/l3fwd -l 0-3 -n 4 -w <event device> -- -p 0x03 --mode=eventdev --eventq-sched=ordered
+    ./<build_dir>/examples/dpdk-l3fwd -l 0-3 -n 4 -a <event device> \
+		-- -p 0x03 --mode=eventdev --eventq-sched=ordered
 
 In this command:
 
-*   -w option whitelist the event device supported by platform. Way to pass this device may vary based on platform.
+*   -a option allows the event device supported by platform.
+    The syntax used to indicate this device may vary based on platform.
 
 *   The --mode option defines PMD to be used for packet I/O.
 
@@ -166,7 +187,7 @@ scheduler. Following is the sample command:
 
 .. code-block:: console
 
-    ./build/l3fwd -l 0-7 -s 0xf0000 -n 4 --vdev event_sw0 -- -p 0x3 --mode=eventdev --eventq-sched=ordered
+    ./<build_dir>/examples/dpdk-l3fwd -l 0-7 -s 0xf0000 -n 4 --vdev event_sw0 -- -p 0x3 --mode=eventdev --eventq-sched=ordered
 
 In case of eventdev mode, *--config* option is not used for ethernet port
 configuration. Instead each ethernet port will be configured with mentioned
@@ -288,6 +309,19 @@ The LPM object is created and loaded with the pre-configured entries read from a
     }
     #endif
 
+FIB Initialization
+~~~~~~~~~~~~~~~~~~
+
+The FIB object is created and loaded with the pre-configured entries
+read from a global array.
+The abridged code snippet below shows the FIB initialization for IPv4,
+the full setup function including the IPv6 setup can be seen in the app code.
+
+.. literalinclude:: ../../../examples/l3fwd/l3fwd_fib.c
+   :language: c
+   :start-after: Function to setup fib.
+   :end-before: Create the fib IPv6 table.
+
 Packet Forwarding for Hash-based Lookups
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -377,6 +411,16 @@ for LPM-based lookups is done by the get_ipv4_dst_port() function below:
 
         return ((rte_lpm_lookup(ipv4_l3fwd_lookup_struct, rte_be_to_cpu_32(ipv4_hdr->dst_addr), &next_hop) == 0)? next_hop : portid);
     }
+
+Packet Forwarding for FIB-based Lookups
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The FIB library was designed to process multiple packets at once,
+it does not have separate functions for single and bulk lookups.
+``rte_fib_lookup_bulk`` is used for IPv4 lookups
+and ``rte_fib6_lookup_bulk`` for IPv6.
+Various examples of these functions being used
+can be found in the sample app code.
 
 Eventdev Driver Initialization
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

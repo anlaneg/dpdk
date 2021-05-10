@@ -6,13 +6,10 @@
 #ifndef RTE_PMD_MLX5_DEFS_H_
 #define RTE_PMD_MLX5_DEFS_H_
 
-#include <rte_ethdev_driver.h>
+#include <ethdev_driver.h>
 #include <rte_vxlan.h>
 
 #include "mlx5_autoconf.h"
-
-/* Reported driver name. */
-#define MLX5_DRIVER_NAME "net_mlx5"
 
 /* Maximum number of simultaneous VLAN filters. */
 #define MLX5_MAX_VLAN_IDS 128
@@ -50,10 +47,6 @@
 #ifndef MLX5_PMD_SOFT_COUNTERS
 #define MLX5_PMD_SOFT_COUNTERS 1
 #endif
-
-/* Switch port ID parameters for bonding configurations. */
-#define MLX5_PORT_ID_BONDING_PF_MASK 0xf
-#define MLX5_PORT_ID_BONDING_PF_SHIFT 0xf
 
 /* Alarm timeout. */
 #define MLX5_ALARM_TIMEOUT_US 100000
@@ -165,6 +158,8 @@
 #define MLX5_XMETA_MODE_LEGACY 0
 #define MLX5_XMETA_MODE_META16 1
 #define MLX5_XMETA_MODE_META32 2
+/* Provide info on patrial hw miss. Implies MLX5_XMETA_MODE_META16 */
+#define MLX5_XMETA_MODE_MISS_INFO 3
 
 /* MLX5_TX_DB_NC supported values. */
 #define MLX5_TXDB_CACHED 0
@@ -187,22 +182,25 @@
 #define MLX5_FLOW_MREG_HNAME "MARK_COPY_TABLE"
 #define MLX5_DEFAULT_COPY_ID UINT32_MAX
 
+/* Size of the simple hash table for header modify table. */
+#define MLX5_FLOW_HDR_MODIFY_HTABLE_SZ (1 << 16)
+
+/* Size of the simple hash table for encap decap table. */
+#define MLX5_FLOW_ENCAP_DECAP_HTABLE_SZ (1 << 16)
+
 /* Hairpin TX/RX queue configuration parameters. */
 #define MLX5_HAIRPIN_QUEUE_STRIDE 6
 #define MLX5_HAIRPIN_JUMBO_LOG_SIZE (14 + 2)
 
-/* Definition of static_assert found in /usr/include/assert.h */
-#ifndef HAVE_STATIC_ASSERT
-#define static_assert _Static_assert
-#endif
+/* Maximum number of indirect actions supported by rte_flow */
+#define MLX5_MAX_INDIRECT_ACTIONS 3
 
 /*
- * Defines the amount of retries to allocate the first UAR in the page.
- * OFED 5.0.x and Upstream rdma_core before v29 returned the NULL as
- * UAR base address if UAR was not the first object in the UAR page.
- * It caused the PMD failure and we should try to get another UAR
- * till we get the first one with non-NULL base address returned.
+ * Linux definition of static_assert is found in /usr/include/assert.h.
+ * Windows does not require a redefinition.
  */
-#define MLX5_ALLOC_UAR_RETRY 32
+#if !defined(HAVE_STATIC_ASSERT) && !defined(RTE_EXEC_ENV_WINDOWS)
+#define static_assert _Static_assert
+#endif
 
 #endif /* RTE_PMD_MLX5_DEFS_H_ */

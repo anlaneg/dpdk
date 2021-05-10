@@ -7,10 +7,12 @@ cd $(dirname $0)/..
 # speed up by ignoring Unicode details
 export LC_ALL=C
 
+ret=0
+
 find_orphan_symbols ()
 {
     for map in $(find lib drivers -name '*.map') ; do
-        for sym in $(sed -rn 's,^([^}]*_.*);,\1,p' $map) ; do
+        for sym in $(sed -rn 's,^([^}]*_.*);.*$,\1,p' $map) ; do
             if echo $sym | grep -q '^per_lcore_' ; then
                 symsrc=${sym#per_lcore_}
             elif echo $sym | grep -q '^__rte_.*_trace_' ; then
@@ -30,5 +32,7 @@ orphan_symbols=$(find_orphan_symbols)
 if [ -n "$orphan_symbols" ] ; then
     echo "Found only in symbol map file:"
     echo "$orphan_symbols" | sed 's,^,\t,'
-    exit 1
+    ret=1
 fi
+
+exit $ret
