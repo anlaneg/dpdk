@@ -111,6 +111,15 @@ New Features
 
   * Added conntrack item and action for stateful connection offload.
 
+* **Updated Amazon ENA PMD.**
+
+  The new driver version (v2.3.0) introduced bug fixes and improvements,
+  including:
+
+  * Changed memcpy mapping to the dpdk-optimized version.
+  * Updated ena_com (HAL) to the latest version.
+  * Added indication of the RSS hash presence in the mbuf.
+
 * **Updated Arkville PMD driver.**
 
   Updated Arkville net driver with new features and improvements, including:
@@ -269,6 +278,9 @@ New Features
   * Added commands to construct conntrack context and relevant indirect
     action handle creation, update for conntrack action as well as conntrack
     item matching.
+  * Added commands for action meter color to color the packet to reflect
+    the meter color result.
+    ``color type (green|yellow|red)``
 
 * **Added support for the FIB lookup method in the l3fwd example app.**
 
@@ -286,6 +298,11 @@ New Features
     adapter if forward mode is supported by driver.
   * Added support for crypto adapter forward mode in octeontx2 event and crypto
     device driver.
+
+* **Added sub-testsuite support.**
+
+  * The unit test suite struct now supports having both a nested
+    list of sub-testsuites, and a list of testcases as before.
 
 
 Removed Items

@@ -31,7 +31,7 @@ struct rte_cfgfile {
 	struct rte_cfgfile_section *sections;//段
 };
 
-RTE_LOG_REGISTER(cfgfile_logtype, lib.cfgfile, INFO);
+RTE_LOG_REGISTER_DEFAULT(cfgfile_logtype, INFO);
 
 #define CFG_LOG(level, fmt, args...)					\
 	rte_log(RTE_LOG_ ## level, cfgfile_logtype, "%s(): " fmt "\n",	\

@@ -1260,9 +1260,6 @@ nfp_net_infos_get(struct rte_eth_dev *dev, struct rte_eth_dev_info *dev_info)
 					     DEV_RX_OFFLOAD_UDP_CKSUM |
 					     DEV_RX_OFFLOAD_TCP_CKSUM;
 
-	dev_info->rx_offload_capa |= DEV_RX_OFFLOAD_JUMBO_FRAME |
-				     DEV_RX_OFFLOAD_RSS_HASH;
-
 	if (hw->cap & NFP_NET_CFG_CTRL_TXVLAN)
 		dev_info->tx_offload_capa = DEV_TX_OFFLOAD_VLAN_INSERT;
 
@@ -1311,15 +1308,22 @@ nfp_net_infos_get(struct rte_eth_dev *dev, struct rte_eth_dev_info *dev_info)
 		.nb_mtu_seg_max = NFP_TX_MAX_MTU_SEG,
 	};
 
-	dev_info->flow_type_rss_offloads = ETH_RSS_IPV4 |
-					   ETH_RSS_NONFRAG_IPV4_TCP |
-					   ETH_RSS_NONFRAG_IPV4_UDP |
-					   ETH_RSS_IPV6 |
-					   ETH_RSS_NONFRAG_IPV6_TCP |
-					   ETH_RSS_NONFRAG_IPV6_UDP;
+	/* All NFP devices support jumbo frames */
+	dev_info->rx_offload_capa |= DEV_RX_OFFLOAD_JUMBO_FRAME;
 
-	dev_info->reta_size = NFP_NET_CFG_RSS_ITBL_SZ;
-	dev_info->hash_key_size = NFP_NET_CFG_RSS_KEY_SZ;
+	if (hw->cap & NFP_NET_CFG_CTRL_RSS) {
+		dev_info->rx_offload_capa |= DEV_RX_OFFLOAD_RSS_HASH;
+
+		dev_info->flow_type_rss_offloads = ETH_RSS_IPV4 |
+						   ETH_RSS_NONFRAG_IPV4_TCP |
+						   ETH_RSS_NONFRAG_IPV4_UDP |
+						   ETH_RSS_IPV6 |
+						   ETH_RSS_NONFRAG_IPV6_TCP |
+						   ETH_RSS_NONFRAG_IPV6_UDP;
+
+		dev_info->reta_size = NFP_NET_CFG_RSS_ITBL_SZ;
+		dev_info->hash_key_size = NFP_NET_CFG_RSS_KEY_SZ;
+	}
 
 	dev_info->speed_capa = ETH_LINK_SPEED_1G | ETH_LINK_SPEED_10G |
 			       ETH_LINK_SPEED_25G | ETH_LINK_SPEED_40G |
@@ -3876,8 +3880,8 @@ RTE_PMD_REGISTER_PCI_TABLE(net_nfp_pf, pci_id_nfp_pf_net_map);
 RTE_PMD_REGISTER_PCI_TABLE(net_nfp_vf, pci_id_nfp_vf_net_map);
 RTE_PMD_REGISTER_KMOD_DEP(net_nfp_pf, "* igb_uio | uio_pci_generic | vfio");
 RTE_PMD_REGISTER_KMOD_DEP(net_nfp_vf, "* igb_uio | uio_pci_generic | vfio");
-RTE_LOG_REGISTER(nfp_logtype_init, pmd.net.nfp.init, NOTICE);
-RTE_LOG_REGISTER(nfp_logtype_driver, pmd.net.nfp.driver, NOTICE);
+RTE_LOG_REGISTER_SUFFIX(nfp_logtype_init, init, NOTICE);
+RTE_LOG_REGISTER_SUFFIX(nfp_logtype_driver, driver, NOTICE);
 /*
  * Local variables:
  * c-file-style: "Linux"
