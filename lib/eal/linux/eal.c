@@ -740,6 +740,7 @@ eal_parse_args(int argc, char **argv)
 		}
 		case OPT_FILE_PREFIX_NUM:
 		{
+		    /*修改大页文件前缀*/
 			char *prefix = strdup(optarg);
 			if (prefix == NULL)
 				RTE_LOG(ERR, EAL, "Could not store file prefix\n");
@@ -853,6 +854,7 @@ eal_parse_args(int argc, char **argv)
 
 	/* sanity checks */
 	if (eal_check_common_options(internal_conf) != 0) {
+	    /*配置检查不通过，退出*/
 		eal_usage(prgname);
 		ret = -1;
 		goto out;
@@ -982,6 +984,7 @@ rte_eal_init(int argc, char **argv)
 		return -1;
 	}
 
+	/*只容放调用一次*/
 	if (!__atomic_compare_exchange_n(&run_once, &has_run, 1, 0,
 					__ATOMIC_RELAXED, __ATOMIC_RELAXED)) {
 		rte_eal_init_alert("already called initialization.");
@@ -989,6 +992,7 @@ rte_eal_init(int argc, char **argv)
 		return -1;
 	}
 
+	/*程序名称*/
 	p = strrchr(argv[0], '/');
 	strlcpy(logid, p ? p + 1 : argv[0], sizeof(logid));
 	thread_id = pthread_self();
@@ -996,6 +1000,7 @@ rte_eal_init(int argc, char **argv)
 	eal_reset_internal_config(internal_conf);
 
 	/* set log level as early as possible */
+	/*log级别的参数解析*/
 	eal_log_level_parse(argc, argv);
 
 	/* clone argv to report out later in telemetry */
@@ -1007,6 +1012,7 @@ rte_eal_init(int argc, char **argv)
 		return -1;
 	}
 
+	/*详细的参数解析*/
 	fctret = eal_parse_args(argc, argv);
 	if (fctret < 0) {
 		rte_eal_init_alert("Invalid 'command line' arguments.");
@@ -1015,6 +1021,7 @@ rte_eal_init(int argc, char **argv)
 		return -1;
 	}
 
+	/*初始化动态插件*/
 	if (eal_plugins_init() < 0) {
 		rte_eal_init_alert("Cannot init plugins");
 		rte_errno = EINVAL;

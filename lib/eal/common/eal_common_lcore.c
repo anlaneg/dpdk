@@ -144,6 +144,7 @@ rte_eal_cpu_init(void)
 	unsigned lcore_id;
 	unsigned count = 0;
 	unsigned int socket_id, prev_socket_id;
+	/*由core_id获取socket_id*/
 	int lcore_to_socket_id[RTE_MAX_LCORE];
 
 	/*
@@ -160,6 +161,7 @@ rte_eal_cpu_init(void)
 		socket_id = eal_cpu_socket_id(lcore_id);
 		lcore_to_socket_id[lcore_id] = socket_id;
 
+		/*如果此core不在线，则跳过*/
 		if (eal_cpu_detected(lcore_id) == 0) {
 			config->lcore_role[lcore_id] = ROLE_OFF;
 			lcore_config[lcore_id].core_index = -1;
@@ -193,9 +195,11 @@ rte_eal_cpu_init(void)
 	RTE_LOG(DEBUG, EAL,
 		"Support maximum %u logical core(s) by configuration.\n",
 		RTE_MAX_LCORE);
+	/*指明系统有多少cpu*/
 	RTE_LOG(INFO, EAL, "Detected %u lcore(s)\n", config->lcore_count);
 
 	/* sort all socket id's in ascending order */
+	/*排列socket_id*/
 	qsort(lcore_to_socket_id, RTE_DIM(lcore_to_socket_id),
 			sizeof(lcore_to_socket_id[0]), socket_id_cmp);
 
@@ -204,10 +208,13 @@ rte_eal_cpu_init(void)
 	for (lcore_id = 0; lcore_id < RTE_MAX_LCORE; lcore_id++) {
 		socket_id = lcore_to_socket_id[lcore_id];
 		if (socket_id != prev_socket_id)
+		    /*与上一个socket_id不相同，则numa数目加1*/
 			config->numa_nodes[config->numa_node_count++] =
 					socket_id;
+		/*记录上一个socket_id*/
 		prev_socket_id = socket_id;
 	}
+	/*指明系统有多少numa node*/
 	RTE_LOG(INFO, EAL, "Detected %u NUMA nodes\n", config->numa_node_count);
 
 	return 0;

@@ -44,11 +44,13 @@ struct simd_bitwidth {
  * internal configuration
  */
 struct internal_config {
+    /*挂载要求的总内存大小,单位为G*/
 	volatile size_t memory;           /**< amount of asked memory */
 	volatile unsigned force_nchannel; /**< force number of channels */
 	volatile unsigned force_nrank;    /**< force number of ranks */
 	volatile unsigned no_hugetlbfs;   /**< true to disable hugetlbfs */
 	unsigned hugepage_unlink;         /**< true to unlink backing files */
+	/*配置指明是否需要禁止pci*/
 	volatile unsigned no_pci;         /**< true to disable PCI */
 	volatile unsigned no_hpet;        /**< true to disable HPET */
 	volatile unsigned vmware_tsc_map; /**< true to use VMware TSC mapping
@@ -72,7 +74,7 @@ struct internal_config {
 	 */
 	volatile unsigned match_allocations;
 	/**< true to free hugepages exactly as allocated */
-	volatile unsigned single_file_segments;
+	volatile unsigned single_file_segments;//将所有页存在一个文件中
 	/**< true if storing all pages within single files (per-page-size,
 	 * per-node) non-legacy mode only.
 	 */
@@ -81,6 +83,7 @@ struct internal_config {
 	volatile enum rte_intr_mode vfio_intr_mode;
 	/** the shared VF token for VFIO-PCI bound PF and VFs devices */
 	rte_uuid_t vfio_vf_token;
+	/*指明大页文件前缀*/
 	char *hugefile_prefix;      /**< the base filename of hugetlbfs files */
 	char *hugepage_dir;         /**< specific hugetlbfs directory to use */
 	char *user_mbuf_pool_ops_name;

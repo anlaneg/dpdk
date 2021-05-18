@@ -122,7 +122,7 @@ struct shared_driver {
 	TAILQ_ENTRY(shared_driver) next;
 
 	char    name[PATH_MAX];
-	void*   lib_handle;
+	void*   lib_handle;/*dl_open返回值*/
 };
 
 /* List of external loadable drivers */
@@ -147,7 +147,9 @@ TAILQ_HEAD(device_option_list, device_option);
 struct device_option {
 	TAILQ_ENTRY(device_option) next;
 
+	/*设备类型*/
 	enum rte_devtype type;
+	/*设备配置*/
 	char arg[];
 };
 
@@ -251,6 +253,7 @@ eal_save_args(int argc, char **argv)
 }
 #endif
 
+/*构造一个device_option,并将其添加到devopt_list中*/
 static int
 eal_option_device_add(enum rte_devtype type, const char *optarg)
 {
@@ -307,6 +310,7 @@ eal_get_hugefile_prefix(void)
 	return HUGEFILE_PREFIX_DEFAULT;
 }
 
+/*清空internal配置*/
 void
 eal_reset_internal_config(struct internal_config *internal_cfg)
 {
@@ -357,6 +361,7 @@ eal_reset_internal_config(struct internal_config *internal_cfg)
 	internal_cfg->max_simd_bitwidth.forced = 0;
 }
 
+/*添加solib对应的目录/so*/
 static int
 eal_plugin_add(const char *path)
 {
@@ -392,6 +397,7 @@ eal_plugindir_init(const char *path)
 	if (path == NULL || *path == '\0')
 		return 0;
 
+	/*打开path对应的目录*/
 	d = opendir(path);
 	if (d == NULL) {
 		RTE_LOG(ERR, EAL, "failed to open directory %s: %s\n",
@@ -401,6 +407,7 @@ eal_plugindir_init(const char *path)
 
 	while ((dent = readdir(d)) != NULL) {
 		struct stat sb;
+		/*查找当前目录下的so文件*/
 		int nlen = strnlen(dent->d_name, sizeof(dent->d_name));
 
 		/* check if name ends in .so or .so.ABI_VERSION */
@@ -504,6 +511,7 @@ is_shared_build(void)
 
 	len = strlcpy(soname, EAL_SO"."ABI_VERSION, sizeof(soname));
 	if (len > sizeof(soname)) {
+	    /*soname长度有误，发生截断*/
 		RTE_LOG(ERR, EAL, "Shared lib name too long in shared build check\n");
 		len = sizeof(soname) - 1;
 	}
@@ -515,6 +523,7 @@ is_shared_build(void)
 		RTE_LOG(DEBUG, EAL, "Checking presence of .so '%s'\n", soname);
 		handle = dlopen(soname, RTLD_LAZY | RTLD_NOLOAD);
 		if (handle != NULL) {
+		    /*加载动态库失败，退出*/
 			RTE_LOG(INFO, EAL, "Detected shared linkage of DPDK\n");
 			dlclose(handle);
 			return 1;
@@ -528,6 +537,7 @@ is_shared_build(void)
 			}
 	}
 
+	/*采用静态链接，返回0*/
 	RTE_LOG(INFO, EAL, "Detected static linkage of DPDK\n");
 	return 0;
 }
@@ -547,11 +557,14 @@ eal_plugins_init(void)
 			*default_solib_dir != '\0' &&
 			stat(default_solib_dir, &sb) == 0 &&
 			S_ISDIR(sb.st_mode))
+	    /*当前为动态链接，添加solib目录*/
 		eal_plugin_add(default_solib_dir);
 
+	/*遍历solib目录*/
 	TAILQ_FOREACH(solib, &solib_list, next) {
 
 		if (stat(solib->name, &sb) == 0 && S_ISDIR(sb.st_mode)) {
+		    /*遇到目录，初始化plugindir,扫出so,并加入solib*/
 			if (eal_plugindir_init(solib->name) == -1) {
 				RTE_LOG(ERR, EAL,
 					"Cannot init plugin directory %s\n",
@@ -559,6 +572,7 @@ eal_plugins_init(void)
 				return -1;
 			}
 		} else {
+		    /*加载so*/
 			RTE_LOG(DEBUG, EAL, "open shared lib %s\n",
 				solib->name);
 			solib->lib_handle = eal_dlopen(solib->name);
@@ -682,14 +696,18 @@ eal_service_cores_parsed(void)
 	return 0;
 }
 
+/*利用cores数组，填充lcore_config，rte_config,标记哪些core将被使用*/
 static int
 update_lcore_config(int *cores)
 {
 	struct rte_config *cfg = rte_eal_get_configuration();
+	/*记录有多少core被配置且可使用*/
 	unsigned int count = 0;
 	unsigned int i;
 	int ret = 0;
 
+	/*遍历cores数组，如果cores[i]!=-1,则此core被参数指定了，且i号core存在
+	 * 则指明rte使用此core*/
 	for (i = 0; i < RTE_MAX_LCORE; i++) {
 		if (cores[i] != -1) {
 			if (eal_cpu_detected(i) == 0) {
@@ -702,6 +720,7 @@ update_lcore_config(int *cores)
 		} else {
 			cfg->lcore_role[i] = ROLE_OFF;
 		}
+		/*记录i号core在配置中给定的序列*/
 		lcore_config[i].core_index = cores[i];
 	}
 	if (!ret)
@@ -836,43 +855,62 @@ eal_parse_service_corelist(const char *corelist)
 	return 0;
 }
 
+/*解析corelist将解析结果填充到cores中，cores中每个core会得到一个顺序编号*/
 static int
 eal_parse_corelist(const char *corelist, int *cores)
 {
+    /*为corelist指定的core进行编号*/
 	unsigned count = 0;
 	char *end = NULL;
 	int min, max;
 	int idx;
 
+	/*先初始化为-1*/
 	for (idx = 0; idx < RTE_MAX_LCORE; idx++)
 		cores[idx] = -1;
 
 	/* Remove all blank characters ahead */
+	/*跳过前导的空格，这一段为什么不合并到do while中？*/
 	while (isblank(*corelist))
 		corelist++;
 
 	/* Get list of cores */
 	min = RTE_MAX_LCORE;
 	do {
+	    /*跳过前导的空格*/
 		while (isblank(*corelist))
 			corelist++;
+		/*字符串为空，退出*/
 		if (*corelist == '\0')
 			return -1;
+
 		errno = 0;
 		idx = strtol(corelist, &end, 10);
 		if (errno || end == NULL)
+		    /*corelist转数字失败，配置有误，退出*/
 			return -1;
+
+		/*配置的core数量大于RTE_MAX_LCORE，配置有误，退出*/
 		if (idx < 0 || idx >= RTE_MAX_LCORE)
 			return -1;
+
+		/*跳过空格*/
 		while (isblank(*end))
 			end++;
+
 		if (*end == '-') {
+		    /*遇到'-'，则之前的为mincore*/
 			min = idx;
 		} else if ((*end == ',') || (*end == '\0')) {
+		    /*遇到','则之前的为maxcore*/
 			max = idx;
 			if (min == RTE_MAX_LCORE)
+			    /*这种情况是只有一个core的情况，例如"-l 1"或者 "-l 1,2",此时min=max*/
 				min = idx;
+
+			/*为每个指定的core进行编号*/
 			for (idx = min; idx <= max; idx++) {
+			    /*如果用户重复指定，则此段代码会保护*/
 				if (cores[idx] == -1) {
 					cores[idx] = count;
 					count++;
@@ -1545,6 +1583,7 @@ eal_parse_common_option(int opt, const char *optarg,
 		a_used = 1;
 		break;
 	/* coremask */
+	/*通过coremask指定core*/
 	case 'c': {
 		int lcore_indexes[RTE_MAX_LCORE];
 
@@ -1577,17 +1616,21 @@ eal_parse_common_option(int opt, const char *optarg,
 		break;
 	}
 	/* corelist */
+	/*通过list列表指定core*/
 	case 'l': {
+	    /*标记系统core状态*/
 		int lcore_indexes[RTE_MAX_LCORE];
 
 		if (eal_service_cores_parsed())
 			RTE_LOG(WARNING, EAL,
 				"Service cores parsed before dataplane cores. Please ensure -l is before -s or -S\n");
 
+		/*解析给定的corelist*/
 		if (eal_parse_corelist(optarg, lcore_indexes) < 0) {
 			RTE_LOG(ERR, EAL, "invalid core list syntax\n");
 			return -1;
 		}
+		/*依据指定的corelist填充lcore_config*/
 		if (update_lcore_config(lcore_indexes) < 0) {
 			char *available = available_cores();
 
@@ -1598,6 +1641,7 @@ eal_parse_common_option(int opt, const char *optarg,
 			return -1;
 		}
 
+		/*防止参数冲突*/
 		if (core_parsed) {
 			RTE_LOG(ERR, EAL, "Option -l is ignored, because (%s) is set!\n",
 				(core_parsed == LCORE_OPT_MSK) ? "-c" :
@@ -1625,6 +1669,7 @@ eal_parse_common_option(int opt, const char *optarg,
 		break;
 	/* size of memory */
 	case 'm':
+	    /*指定内存大小，默认单位为G*/
 		conf->memory = atoi(optarg);
 		conf->memory *= 1024ULL;
 		conf->memory *= 1024ULL;
@@ -1632,6 +1677,7 @@ eal_parse_common_option(int opt, const char *optarg,
 		break;
 	/* force number of channels */
 	case 'n':
+	    /*指明内存channel的数目*/
 		conf->force_nchannel = atoi(optarg);
 		if (conf->force_nchannel == 0) {
 			RTE_LOG(ERR, EAL, "invalid channel number\n");
@@ -1712,6 +1758,7 @@ eal_parse_common_option(int opt, const char *optarg,
 		break;
 
 	case OPT_VDEV_NUM:
+	    /*vdev配置添加*/
 		if (eal_option_device_add(RTE_DEVTYPE_VIRTUAL,
 				optarg) < 0) {
 			return -1;
