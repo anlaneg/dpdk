@@ -140,7 +140,7 @@ void rte_vdev_register(struct rte_vdev_driver *driver);
 void rte_vdev_unregister(struct rte_vdev_driver *driver);
 
 //vdev注册，指明设备驱动的名称为nm,指明设备驱动的别名
-#define RTE_PMD_REGISTER_VDEV(nm, vdrv)\
+#define RTE_PMD_REGISTER_VDEV(nm/*驱动名称*/, vdrv)\
 RTE_INIT(vdrvinitfn_ ##vdrv);\
 /*申明驱动别名变量*/\
 static const char *vdrvinit_ ## nm ## _alias;\

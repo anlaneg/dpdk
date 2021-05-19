@@ -58,12 +58,14 @@ struct rte_devargs {
 	/** Device policy. */
 	enum rte_dev_policy policy;
 	/** Name of the device. */
+	/*设备名称*/
 	char name[RTE_DEV_NAME_MAX_LEN];
 	RTE_STD_C11
 	union {
 		const char *args; /**< legacy name. */
 		const char *drv_str; /**< driver-related part of device string. */
 	};
+	/*设备所属的bus*/
 	struct rte_bus *bus; /**< bus handle. */
 	struct rte_class *cls; /**< class handle. */
 	const char *bus_str; /**< bus-related part of device string. */
@@ -241,6 +243,7 @@ rte_devargs_next(const char *busname, const struct rte_devargs *start);
 /**
  * Iterate over all rte_devargs for a specific bus.
  */
+/*遍历busname上对应的所有dev*/
 #define RTE_EAL_DEVARGS_FOREACH(busname, da) \
 	for (da = rte_devargs_next(busname, NULL); \
 	     da != NULL; \

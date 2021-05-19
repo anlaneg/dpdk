@@ -123,6 +123,7 @@ eal_thread_loop(__rte_unused void *arg)
 			rte_panic("NULL function pointer\n");
 
 		/* call the function and store the return value */
+		/*调用work线程对应的函数*/
 		fct_arg = lcore_config[lcore_id].arg;
 		ret = lcore_config[lcore_id].f(fct_arg);
 		lcore_config[lcore_id].ret = ret;

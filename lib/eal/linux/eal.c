@@ -1074,6 +1074,7 @@ rte_eal_init(int argc, char **argv)
 		return -1;
 	}
 
+	/*bus扫描，找到从属于bus的设备*/
 	if (rte_bus_scan()) {
 		rte_eal_init_alert("Cannot scan the buses for devices");
 		rte_errno = ENODEV;
@@ -1240,6 +1241,7 @@ rte_eal_init(int argc, char **argv)
 		config->main_lcore, (uintptr_t)thread_id, cpuset,
 		ret == 0 ? "" : "...");
 
+	/*创建work线程，并使之等待执行*/
 	RTE_LCORE_FOREACH_WORKER(i) {
 
 		/*
@@ -1268,6 +1270,7 @@ rte_eal_init(int argc, char **argv)
 			RTE_LOG(DEBUG, EAL,
 				"Cannot set name for lcore thread\n");
 
+		/*指定线程亲昵性*/
 		ret = pthread_setaffinity_np(lcore_config[i].thread_id,
 			sizeof(rte_cpuset_t), &lcore_config[i].cpuset);
 		if (ret != 0)

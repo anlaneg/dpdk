@@ -26,16 +26,21 @@ struct virtio_user_queue {
 
 struct virtio_user_dev {
 	struct virtio_hw hw;
+	/*virtio-user后端类型*/
 	enum virtio_user_backend_type backend_type;
 	//是否server模式
 	bool		is_server;  /* server or client mode */
 
 	int		callfds[VIRTIO_MAX_VIRTQUEUES];
 	int		kickfds[VIRTIO_MAX_VIRTQUEUES];
-	int		mac_specified;//是否指定了mac地址
-	uint32_t	max_queue_pairs;//最大队列数
-	uint32_t	queue_pairs;//生效队列数
-	uint32_t	queue_size;//队列大小
+	//是否指定了mac地址
+	int		mac_specified;
+	//最大队列数
+	uint32_t	max_queue_pairs;
+	//生效队列数
+	uint32_t	queue_pairs;
+	//队列大小
+	uint32_t	queue_size;
 	uint64_t	features; /* the negotiated features with driver,
 				   * and will be sync with device
 				   */
@@ -44,8 +49,10 @@ struct virtio_user_dev {
 	uint64_t	unsupported_features; /* unsupported features mask */
 	uint8_t		status;
 	uint16_t	net_status;
-	uint8_t		mac_addr[RTE_ETHER_ADDR_LEN];//设备的mac地址
-	char		path[PATH_MAX];//unix socet位置
+	//设备的mac地址
+	uint8_t		mac_addr[RTE_ETHER_ADDR_LEN];
+	//unix socet位置
+	char		path[PATH_MAX];
 	char		*ifname;
 
 	union {
@@ -55,6 +62,7 @@ struct virtio_user_dev {
 	struct virtio_user_queue packed_queues[VIRTIO_MAX_VIRTQUEUES];
 	bool		qp_enabled[VIRTIO_MAX_VIRTQUEUE_PAIRS];
 
+	/*virtio-user后端对应的ops,例如virtio_ops_user*/
 	struct virtio_user_backend_ops *ops;
 	pthread_mutex_t	mutex;
 	bool		started;

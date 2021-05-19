@@ -40,7 +40,7 @@ static struct vdev_device_list vdev_device_list =
 static rte_spinlock_recursive_t vdev_device_list_lock =
 	RTE_SPINLOCK_RECURSIVE_INITIALIZER;
 
-//所有注册的vdev挂载在此链上
+//所有为vdev bus注册的驱动均挂载在此链上
 static struct vdev_driver_list vdev_driver_list =
 	TAILQ_HEAD_INITIALIZER(vdev_driver_list);
 
@@ -55,7 +55,7 @@ static struct vdev_custom_scans vdev_custom_scans =
 static rte_spinlock_t vdev_custom_scan_lock = RTE_SPINLOCK_INITIALIZER;
 
 /* register a driver */
-//注册vdev驱动
+//注册从属于vdev bus的驱动
 void
 rte_vdev_register(struct rte_vdev_driver *driver)
 {
@@ -120,12 +120,12 @@ rte_vdev_remove_custom_scan(rte_vdev_scan_callback callback, void *user_arg)
 
 //通过名称匹配来完成驱动匹配，返回可匹配的驱动名称
 static int
-vdev_parse(const char *name, void *addr)
+vdev_parse(const char *name, void *addr/*出参，容许为空*/)
 {
 	struct rte_vdev_driver **out = addr;
 	struct rte_vdev_driver *driver = NULL;
 
-	//如果名称相同或者别名的前缀相同，则驱动会命中
+	//遍历vdev bus下所有驱动，如果驱动名称（驱动别名）与name前缀相等，则认为匹配
 	TAILQ_FOREACH(driver, &vdev_driver_list, next) {
 		if (strncmp(driver->driver.name, name,
 			    strlen(driver->driver.name)) == 0)
@@ -135,6 +135,7 @@ vdev_parse(const char *name, void *addr)
 			    strlen(driver->driver.alias)) == 0)
 			break;
 	}
+	/*驱动确认，如有出参，则填充*/
 	if (driver != NULL &&
 	    addr != NULL)
 		*out = driver;
@@ -200,6 +201,7 @@ vdev_probe_all_drivers(struct rte_vdev_device *dev)
 	enum rte_iova_mode iova_mode;
 	int ret;
 
+	/*此设备如已有驱动，则报错*/
 	if (rte_dev_is_probed(&dev->device))
 		return -EEXIST;
 
@@ -207,7 +209,7 @@ vdev_probe_all_drivers(struct rte_vdev_device *dev)
 	name = rte_vdev_device_name(dev);
 	VDEV_LOG(DEBUG, "Search driver to probe device %s", name);
 
-	//查找此设备对应的驱动，如果失配，返回-1
+	//查找此设备对应的驱动，如果失配，返回-1（匹配条件为驱动名称匹配）
 	if (vdev_parse(name, &driver))
 		return -1;
 
@@ -655,13 +657,18 @@ vdev_get_iommu_class(void)
 	return RTE_IOVA_DC;
 }
 
+/*所有vdev所属的bus*/
 static struct rte_bus rte_vdev_bus = {
-	.scan = vdev_scan,//vdev设备发现
-	.probe = vdev_probe,//为所有vdev探测驱动，如果发现可匹配的驱动，则调用driver probe
+    //vdev设备发现
+	.scan = vdev_scan,
+	//为所有vdev探测驱动，如果发现可匹配的驱动，则调用driver probe
+	.probe = vdev_probe,
 	.find_device = rte_vdev_find_device,
 	.plug = vdev_plug,
-	.unplug = vdev_unplug,//设备移除
-	.parse = vdev_parse,//查找设备对应的驱动
+	//设备移除
+	.unplug = vdev_unplug,
+	//查找vdev bus上能适配指定设备的驱动
+	.parse = vdev_parse,
 	.dma_map = vdev_dma_map,
 	.dma_unmap = vdev_dma_unmap,
 	.get_iommu_class = vdev_get_iommu_class,

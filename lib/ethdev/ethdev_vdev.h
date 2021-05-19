@@ -31,10 +31,12 @@ rte_eth_vdev_allocate(struct rte_vdev_device *dev, size_t private_data_size)
 	struct rte_eth_dev *eth_dev;
 	const char *name = rte_vdev_device_name(dev);
 
+	/*按名称分配以太网设备*/
 	eth_dev = rte_eth_dev_allocate(name);
 	if (!eth_dev)
 		return NULL;
 
+	/*创建以太网设备的私有数据*/
 	if (private_data_size) {
 		eth_dev->data->dev_private = rte_zmalloc_socket(name,
 			private_data_size, RTE_CACHE_LINE_SIZE,

@@ -19,8 +19,8 @@
 #include "virtio_user_dev.h"
 
 struct vhost_user_data {
-	int vhostfd;
-	int listenfd;
+	int vhostfd;/*连接进来的client fd*/
+	int listenfd;/*要监听的socket fd*/
 	uint64_t protocol_features;
 };
 
@@ -104,6 +104,7 @@ struct vhost_user_msg {
 #define VHOST_USER_PAYLOAD_SIZE \
 	(sizeof(struct vhost_user_msg) - VHOST_USER_HDR_SIZE)
 
+/*向指定fd发送msg消息*/
 static int
 vhost_user_write(int fd, struct vhost_user_msg *msg, int *fds, int fd_num)
 {
@@ -141,6 +142,7 @@ vhost_user_write(int fd, struct vhost_user_msg *msg, int *fds, int fd_num)
 	return r;
 }
 
+/*自fd读取msg消息*/
 static int
 vhost_user_read(int fd, struct vhost_user_msg *msg)
 {
@@ -647,6 +649,7 @@ vhost_user_set_vring_addr(struct virtio_user_dev *dev, struct vhost_vring_addr *
 	return 0;
 }
 
+/*virtio_user设备状态获取*/
 static int
 vhost_user_get_status(struct virtio_user_dev *dev, uint8_t *status)
 {
@@ -671,28 +674,33 @@ vhost_user_get_status(struct virtio_user_dev *dev, uint8_t *status)
 	if (!(data->protocol_features & (1ULL << VHOST_USER_PROTOCOL_F_STATUS)))
 		return -ENOTSUP;
 
+	/*向对端发送vhost-user-get-status消息*/
 	ret = vhost_user_write(data->vhostfd, &msg, NULL, 0);
 	if (ret < 0) {
 		PMD_DRV_LOG(ERR, "Failed to send request");
 		goto err;
 	}
 
+	/*收取对端发送的响应*/
 	ret = vhost_user_read(data->vhostfd, &msg);
 	if (ret < 0) {
 		PMD_DRV_LOG(ERR, "Failed to recv request");
 		goto err;
 	}
 
+	/*非本请求对应的应答*/
 	if (msg.request != VHOST_USER_GET_STATUS) {
 		PMD_DRV_LOG(ERR, "Unexpected request type (%d)", msg.request);
 		goto err;
 	}
 
+	/*status必须为u64长度*/
 	if (msg.size != sizeof(msg.payload.u64)) {
 		PMD_DRV_LOG(ERR, "Unexpected payload size (%u)", msg.size);
 		goto err;
 	}
 
+	/*返回status*/
 	*status = (uint8_t)msg.payload.u64;
 
 	return 0;
@@ -718,6 +726,7 @@ vhost_user_set_status(struct virtio_user_dev *dev, uint8_t status)
 	 * supports protocol features
 	 */
 	if (!(dev->status & VIRTIO_CONFIG_STATUS_FEATURES_OK))
+	    /*未达成到此状态，不容许设置状态*/
 		return -ENOTSUP;
 
 	/* Status protocol feature requires protocol features support */
@@ -730,12 +739,14 @@ vhost_user_set_status(struct virtio_user_dev *dev, uint8_t status)
 	if (data->protocol_features & (1ULL << VHOST_USER_PROTOCOL_F_REPLY_ACK))
 		msg.flags |= VHOST_USER_NEED_REPLY_MASK;
 
+	/*向后端发送状态更新*/
 	ret = vhost_user_write(data->vhostfd, &msg, NULL, 0);
 	if (ret < 0) {
 		PMD_DRV_LOG(ERR, "Failed to send get status request");
 		return -1;
 	}
 
+	/*检查此更新是否成功*/
 	return vhost_user_check_reply_ack(dev, &msg);
 }
 
@@ -748,16 +759,20 @@ vhost_user_start_server(struct virtio_user_dev *dev, struct sockaddr_un *un)
 	struct vhost_user_data *data = dev->backend_data;
 	int fd = data->listenfd;
 
+	/*绑定此fd到相应path*/
 	ret = bind(fd, (struct sockaddr *)un, sizeof(*un));
 	if (ret < 0) {
 		PMD_DRV_LOG(ERR, "failed to bind to %s: %s; remove it and try again\n",
 			    dev->path, strerror(errno));
 		return -1;
 	}
+
+	/*监听收取unix socket消息*/
 	ret = listen(fd, MAX_VIRTIO_USER_BACKLOG);
 	if (ret < 0)
 		return -1;
 
+	/*等待client连接进来*/
 	PMD_DRV_LOG(NOTICE, "(%s) waiting for client connection...", dev->path);
 	data->vhostfd = accept(fd, NULL, NULL);
 	if (data->vhostfd < 0) {
@@ -766,6 +781,7 @@ vhost_user_start_server(struct virtio_user_dev *dev, struct sockaddr_un *un)
 		return -1;
 	}
 
+	/*将listen fd置为非阻塞*/
 	flag = fcntl(fd, F_GETFL);
 	if (fcntl(fd, F_SETFL, flag | O_NONBLOCK) < 0) {
 		PMD_DRV_LOG(ERR, "fcntl failed, %s", strerror(errno));
@@ -813,7 +829,7 @@ vhost_user_server_reconnect(struct virtio_user_dev *dev)
  *   - (-1) if fail;
  *   - (0) if succeed.
  */
-//连接到dev->path
+//vhost-user启动后端：连接到dev->path
 static int
 vhost_user_setup(struct virtio_user_dev *dev)
 {
@@ -846,18 +862,20 @@ vhost_user_setup(struct virtio_user_dev *dev)
 	if (fcntl(fd, F_SETFD, flag | FD_CLOEXEC) < 0)
 		PMD_DRV_LOG(WARNING, "fcntl failed, %s", strerror(errno));
 
-	//连接到dev->path
+	//指定地址为dev->path
 	memset(&un, 0, sizeof(un));
 	un.sun_family = AF_UNIX;
 	strlcpy(un.sun_path, dev->path, sizeof(un.sun_path));
 
 	if (dev->is_server) {
+	    /*采用server模式时，启动server端,接笔试client fd*/
 		data->listenfd = fd;
 		if (vhost_user_start_server(dev, &un) < 0) {
 			PMD_DRV_LOG(ERR, "virtio-user startup fails in server mode");
 			goto err_socket;
 		}
 	} else {
+	    /*采用client模式时，连接远端地址*/
 		if (connect(fd, (struct sockaddr *)&un, sizeof(un)) < 0) {
 			PMD_DRV_LOG(ERR, "connect error, %s", strerror(errno));
 			goto err_socket;
@@ -1008,7 +1026,9 @@ struct virtio_user_backend_ops virtio_ops_user = {
 	.set_vring_call = vhost_user_set_vring_call,
 	.set_vring_kick = vhost_user_set_vring_kick,
 	.set_vring_addr = vhost_user_set_vring_addr,
+	/*向对端发送VHOST_USER_GET_STATUS请求，并记录响应的状态*/
 	.get_status = vhost_user_get_status,
+	/*向对端发送VHOST_USER_SET_STATUS请求，更新状态，返回结果*/
 	.set_status = vhost_user_set_status,
 	.enable_qp = vhost_user_enable_queue_pair,
 	.update_link_state = vhost_user_update_link_state,

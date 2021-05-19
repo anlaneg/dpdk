@@ -90,10 +90,14 @@ struct rte_driver {
  * A structure describing a generic device.
  */
 struct rte_device {
+    /*用于串连设备*/
 	TAILQ_ENTRY(rte_device) next; /**< Next device */
+	/*设备名称*/
 	const char *name;             /**< Device name */
 	const struct rte_driver *driver; /**< Driver assigned after probing */
+	/*设备所属的bus*/
 	const struct rte_bus *bus;    /**< Bus handle assigned on scan */
+	/*所属的numa*/
 	int numa_node;                /**< NUMA node connection */
 	struct rte_devargs *devargs;  /**< Arguments for latest probing */
 };

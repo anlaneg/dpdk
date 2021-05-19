@@ -46,15 +46,18 @@ virtio_reset(struct virtio_hw *hw)
 void
 virtio_reinit_complete(struct virtio_hw *hw)
 {
+    /*告知设备，驱动初始化完成*/
 	virtio_set_status(hw, VIRTIO_CONFIG_STATUS_DRIVER_OK);
 }
 
 void
 virtio_set_status(struct virtio_hw *hw, uint8_t status)
 {
+    /*状态不为VIRTIO_CONFIG_STATUS_RESET，则先获取底层状态*/
 	if (status != VIRTIO_CONFIG_STATUS_RESET)
 		status |= VIRTIO_OPS(hw)->get_status(hw);
 
+	/*设置virtio设备状态*/
 	VIRTIO_OPS(hw)->set_status(hw, status);
 }
 

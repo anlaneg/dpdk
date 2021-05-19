@@ -13,11 +13,11 @@
 
 #include "eal_private.h"
 
-//注册的bus挂载此链上（在装载期间通过rte_bus_register完成注册）
+//注册的所有bus挂载此链上（在装载期间通过rte_bus_register完成注册）
 static struct rte_bus_list rte_bus_list =
 	TAILQ_HEAD_INITIALIZER(rte_bus_list);
 
-//注册bus
+//注册新的bus
 void
 rte_bus_register(struct rte_bus *bus)
 {
@@ -81,6 +81,7 @@ rte_bus_probe(void)
 				bus->name);
 	}
 
+	/*vbus总线进行驱动探测*/
 	if (vbus) {
 		ret = vbus->probe();
 		if (ret)
@@ -134,8 +135,10 @@ rte_bus_find(const struct rte_bus *start, rte_bus_cmp_t cmp,
 	    /*不为空时，返回下一个*/
 		bus = TAILQ_NEXT(start, next);
 	else
-	    /*为空时，使用第一个*/
+	    /*为空时，使用第一个bus*/
 		bus = TAILQ_FIRST(&rte_bus_list);
+
+	/*如果存在bus,则调用cmp函数进行bus匹配，如不匹配，则继续循环*/
 	while (bus != NULL) {
 		if (cmp(bus, data) == 0)
 			break;
@@ -190,17 +193,20 @@ bus_can_parse(const struct rte_bus *bus, const void *_name)
 	return !(bus->parse && bus->parse(name, NULL) == 0);
 }
 
-//查找可解析给定名称设备的bus
+//查找可解析给定名称设备的rte_bus
 struct rte_bus *
 rte_bus_find_by_device_name(const char *str)
 {
 	char name[RTE_DEV_NAME_MAX_LEN];
 	char *c;
 
+	/*将str复制到name中，并沿第一个','截短，形成name*/
 	strlcpy(name, str, sizeof(name));
 	c = strchr(name, ',');
 	if (c != NULL)
 		c[0] = '\0';
+
+	/*遍历每个bus,针对每个bus，解析name*/
 	return rte_bus_find(NULL, bus_can_parse, name);
 }
 

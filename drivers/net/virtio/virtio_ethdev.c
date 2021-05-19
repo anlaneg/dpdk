@@ -126,6 +126,7 @@ static const struct rte_virtio_xstats_name_off rte_virtio_txq_stat_strings[] = {
 #define VIRTIO_NB_TXQ_XSTATS (sizeof(rte_virtio_txq_stat_strings) / \
 			    sizeof(rte_virtio_txq_stat_strings[0]))
 
+/*记录系统中所有virtio hw*/
 struct virtio_hw_internal virtio_hw_internal[RTE_MAX_ETHPORTS];
 
 static struct virtio_pmd_ctrl *
@@ -1672,6 +1673,7 @@ virtio_init_device(struct rte_eth_dev *eth_dev, uint64_t req_features)
 		virtio_free_queues(hw);
 	}
 
+	/*驱动告知硬件，当前设备状态*/
 	/* Tell the host we've noticed this device. */
 	virtio_set_status(hw, VIRTIO_CONFIG_STATUS_ACK);
 
@@ -1809,6 +1811,7 @@ virtio_init_device(struct rte_eth_dev *eth_dev, uint64_t req_features)
 		}
 	}
 
+	/*知会硬件初始化成功*/
 	virtio_reinit_complete(hw);
 
 	return 0;
@@ -1835,6 +1838,7 @@ eth_virtio_dev_init(struct rte_eth_dev *eth_dev)
 		return -1;
 	}
 
+	/*指定为以太设备的ops*/
 	eth_dev->dev_ops = &virtio_eth_dev_ops;
 	eth_dev->rx_descriptor_done = virtio_dev_rx_queue_done;
 
@@ -1960,6 +1964,7 @@ virtio_dev_devargs_parse(struct rte_devargs *devargs, uint32_t *speed, int *vect
 		return 0;
 	}
 
+	/*解析speed参数*/
 	if (speed && rte_kvargs_count(kvlist, VIRTIO_ARG_SPEED) == 1) {
 		ret = rte_kvargs_process(kvlist,
 					VIRTIO_ARG_SPEED,
@@ -1971,6 +1976,7 @@ virtio_dev_devargs_parse(struct rte_devargs *devargs, uint32_t *speed, int *vect
 		}
 	}
 
+	/*解析vectorized参数*/
 	if (vectorized &&
 		rte_kvargs_count(kvlist, VIRTIO_ARG_VECTORIZED) == 1) {
 		ret = rte_kvargs_process(kvlist,

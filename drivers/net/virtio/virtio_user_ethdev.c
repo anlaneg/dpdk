@@ -26,6 +26,7 @@
 #include "virtio_user/virtio_user_dev.h"
 #include "virtio_user/vhost.h"
 
+/*由hw获得virtio-user设备*/
 #define virtio_user_get_dev(hwp) container_of(hwp, struct virtio_user_dev, hw)
 
 //virtio user配置读取
@@ -78,6 +79,7 @@ virtio_user_reset(struct virtio_hw *hw)
 {
 	struct virtio_user_dev *dev = virtio_user_get_dev(hw);
 
+	/*如果driver ok,则需要先停止设备*/
 	if (dev->status & VIRTIO_CONFIG_STATUS_DRIVER_OK)
 		virtio_user_stop_device(dev);
 }
@@ -94,11 +96,14 @@ virtio_user_set_status(struct virtio_hw *hw, uint8_t status)
 	if (status & VIRTIO_CONFIG_STATUS_DRIVER_OK)
 		virtio_user_start_device(dev);
 	else if (status == VIRTIO_CONFIG_STATUS_RESET)
+	    /*执行设备的reset*/
 		virtio_user_reset(hw);
 
+	/*设置设备状态*/
 	virtio_user_dev_set_status(dev, status);
 }
 
+/*更新virtio-user设备的状态，并返回*/
 static uint8_t
 virtio_user_get_status(struct virtio_hw *hw)
 {
@@ -279,12 +284,15 @@ virtio_user_dev_close(struct virtio_hw *hw)
 	return 0;
 }
 
+/*virtio-user设备对应的函数操作集*/
 const struct virtio_ops virtio_user_ops = {
 	//读配置
 	.read_dev_cfg	= virtio_user_read_dev_config,
 	//写配置
 	.write_dev_cfg	= virtio_user_write_dev_config,
+	/*调用底层设备，获取设备状态信息*/
 	.get_status	= virtio_user_get_status,
+	/*设置设备状态*/
 	.set_status	= virtio_user_set_status,
 	.get_features	= virtio_user_get_features,
 	.set_features	= virtio_user_set_features,
@@ -396,11 +404,13 @@ vdpa_dynamic_major_num(void)
 	return found ? num : UNNAMED_MAJOR;
 }
 
+/*依据path检查virtio-user的后端*/
 static enum virtio_user_backend_type
 virtio_user_backend_type(const char *path)
 {
 	struct stat sb;
 
+	/*文件不存，返回backend_unknown*/
 	if (stat(path, &sb) == -1) {
 		if (errno == ENOENT)
 			return VIRTIO_USER_BACKEND_VHOST_USER;
@@ -411,8 +421,10 @@ virtio_user_backend_type(const char *path)
 	}
 
 	if (S_ISSOCK(sb.st_mode)) {
+	    /*如果其为socket,则定义为vhost_user*/
 		return VIRTIO_USER_BACKEND_VHOST_USER;
 	} else if (S_ISCHR(sb.st_mode)) {
+	    /*如为字符设备，则定义为vhost-kernel或vhost-vdpa*/
 		if (major(sb.st_rdev) == MISC_MAJOR)
 			return VIRTIO_USER_BACKEND_VHOST_KERNEL;
 		if (major(sb.st_rdev) == vdpa_dynamic_major_num())
@@ -429,7 +441,7 @@ virtio_user_eth_dev_alloc(struct rte_vdev_device *vdev)
 	struct virtio_hw *hw;
 	struct virtio_user_dev *dev;
 
-	//私有数据为virtio_hw
+	//创建vdev对应的以太网设备，其私有数据为virtio_user_dev
 	eth_dev = rte_eth_vdev_allocate(vdev, sizeof(*dev));
 	if (!eth_dev) {
 		PMD_INIT_LOG(ERR, "cannot alloc rte_eth_dev");
@@ -440,6 +452,7 @@ virtio_user_eth_dev_alloc(struct rte_vdev_device *vdev)
 	dev = eth_dev->data->dev_private;
 	hw = &dev->hw;
 
+	/*初始化virtio_hw*/
 	hw->port_id = data->port_id;
 	VIRTIO_OPS(hw) = &virtio_user_ops;
 
@@ -462,7 +475,7 @@ virtio_user_eth_dev_free(struct rte_eth_dev *eth_dev)
  * EAL init time, see rte_bus_probe().
  * Returns 0 on success.
  */
-//vritio 探测
+//vritio-user驱动探测设备
 static int
 virtio_user_pmd_probe(struct rte_vdev_device *vdev)
 {
@@ -510,13 +523,14 @@ virtio_user_pmd_probe(struct rte_vdev_device *vdev)
 		return 0;
 	}
 
+	/*解析kvlist,并校验其是否合法*/
 	kvlist = rte_kvargs_parse(rte_vdev_device_args(vdev), valid_args);
 	if (!kvlist) {
 		PMD_INIT_LOG(ERR, "error when parsing param");
 		goto end;
 	}
 
-	//取参数并填充path
+	//自kvlist中提供key为‘path’的参数，将其填充到path变量。
 	if (rte_kvargs_count(kvlist, VIRTIO_USER_ARG_PATH) == 1) {
 		if (rte_kvargs_process(kvlist, VIRTIO_USER_ARG_PATH,
 				       &get_string_arg, &path) < 0) {
@@ -530,6 +544,7 @@ virtio_user_pmd_probe(struct rte_vdev_device *vdev)
 		goto end;
 	}
 
+	/*backend类型检查*/
 	backend_type = virtio_user_backend_type(path);
 	if (backend_type == VIRTIO_USER_BACKEND_UNKNOWN) {
 		PMD_INIT_LOG(ERR,
@@ -549,7 +564,7 @@ virtio_user_pmd_probe(struct rte_vdev_device *vdev)
 			goto end;
 		}
 
-		//填充ifname
+		//自kvlist中提供key为‘iface’的参数,填充ifname
 		if (rte_kvargs_process(kvlist, VIRTIO_USER_ARG_INTERFACE_NAME,
 				       &get_string_arg, &ifname) < 0) {
 			PMD_INIT_LOG(ERR, "error to parse %s",
@@ -558,7 +573,7 @@ virtio_user_pmd_probe(struct rte_vdev_device *vdev)
 		}
 	}
 
-	//取参数配置的mac_addr
+	//自kvlist中提供key为‘mac’的参数,填充mac_addr
 	if (rte_kvargs_count(kvlist, VIRTIO_USER_ARG_MAC) == 1) {
 		if (rte_kvargs_process(kvlist, VIRTIO_USER_ARG_MAC,
 				       &get_string_arg, &mac_addr) < 0) {
@@ -610,6 +625,7 @@ virtio_user_pmd_probe(struct rte_vdev_device *vdev)
 		cq = 1;
 	}
 
+	//填充packed_vq
 	if (rte_kvargs_count(kvlist, VIRTIO_USER_ARG_PACKED_VQ) == 1) {
 		if (rte_kvargs_process(kvlist, VIRTIO_USER_ARG_PACKED_VQ,
 				       &get_integer_arg, &packed_vq) < 0) {
@@ -619,6 +635,7 @@ virtio_user_pmd_probe(struct rte_vdev_device *vdev)
 		}
 	}
 
+	//填充vectorized
 	if (rte_kvargs_count(kvlist, VIRTIO_USER_ARG_VECTORIZED) == 1) {
 		if (rte_kvargs_process(kvlist, VIRTIO_USER_ARG_VECTORIZED,
 				       &get_integer_arg, &vectorized) < 0) {
@@ -628,6 +645,7 @@ virtio_user_pmd_probe(struct rte_vdev_device *vdev)
 		}
 	}
 
+	/*如果queues>1时，则cq必须不能为0*/
 	if (queues > 1 && cq == 0) {
 		PMD_INIT_LOG(ERR, "multi-q requires ctrl-q");
 		goto end;
@@ -641,7 +659,7 @@ virtio_user_pmd_probe(struct rte_vdev_device *vdev)
 		goto end;
 	}
 
-	//取参数merge_rxbuf
+	//填充merge_rxbuf
 	if (rte_kvargs_count(kvlist, VIRTIO_USER_ARG_MRG_RXBUF) == 1) {
 		if (rte_kvargs_process(kvlist, VIRTIO_USER_ARG_MRG_RXBUF,
 				       &get_integer_arg, &mrg_rxbuf) < 0) {
@@ -651,7 +669,7 @@ virtio_user_pmd_probe(struct rte_vdev_device *vdev)
 		}
 	}
 
-	//取参数in_order
+	//填充in_order
 	if (rte_kvargs_count(kvlist, VIRTIO_USER_ARG_IN_ORDER) == 1) {
 		if (rte_kvargs_process(kvlist, VIRTIO_USER_ARG_IN_ORDER,
 				       &get_integer_arg, &in_order) < 0) {
@@ -661,6 +679,7 @@ virtio_user_pmd_probe(struct rte_vdev_device *vdev)
 		}
 	}
 
+	/*申请并创建并vdev对应的以太网络设备*/
 	eth_dev = virtio_user_eth_dev_alloc(vdev);
 	if (!eth_dev) {
 		PMD_INIT_LOG(ERR, "virtio_user fails to alloc device");
@@ -669,8 +688,8 @@ virtio_user_pmd_probe(struct rte_vdev_device *vdev)
 
 	dev = eth_dev->data->dev_private;
 	hw = &dev->hw;
-	if (virtio_user_dev_init(dev, path, queues, cq,
-			 queue_size, mac_addr, &ifname, server_mode,
+	if (virtio_user_dev_init(dev/*设备私有数据*/, path/*设备地址*/, queues/*队列数*/, cq,
+			 queue_size/*队列长度*/, mac_addr/*mac地址*/, &ifname, server_mode,
 			 mrg_rxbuf, in_order, packed_vq, backend_type) < 0) {
 		PMD_INIT_LOG(ERR, "virtio_user_dev_init fails");
 		virtio_user_eth_dev_free(eth_dev);
@@ -678,6 +697,7 @@ virtio_user_pmd_probe(struct rte_vdev_device *vdev)
 	}
 
 	/* previously called by pci probing for physical dev */
+	/*virtio设备初始化*/
 	if (eth_virtio_dev_init(eth_dev) < 0) {
 		PMD_INIT_LOG(ERR, "eth_virtio_dev_init fails");
 		virtio_user_eth_dev_free(eth_dev);
@@ -786,6 +806,7 @@ static int virtio_user_pmd_dma_unmap(struct rte_vdev_device *vdev, void *addr,
 
 //virtio用户driver
 static struct rte_vdev_driver virtio_user_driver = {
+    /*驱动找到了一个设备，进行适配*/
 	.probe = virtio_user_pmd_probe,
 	.remove = virtio_user_pmd_remove,
 	.dma_map = virtio_user_pmd_dma_map,
@@ -795,6 +816,7 @@ static struct rte_vdev_driver virtio_user_driver = {
 
 //注册virtio_user驱动
 RTE_PMD_REGISTER_VDEV(net_virtio_user, virtio_user_driver);
+/*指明net_virtio_user驱动的别名为virtio_user*/
 RTE_PMD_REGISTER_ALIAS(net_virtio_user, virtio_user);
 RTE_PMD_REGISTER_PARAM_STRING(net_virtio_user,
 	"path=<path> "

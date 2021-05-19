@@ -42,6 +42,7 @@
 #include "ethdev_private.h"
 
 static const char *MZ_RTE_ETH_DEV_DATA = "rte_eth_dev_data";
+/*记录系统中所有以太网设备*/
 struct rte_eth_dev rte_eth_devices[RTE_MAX_ETHPORTS];
 
 /* spinlock for eth device callbacks */
@@ -66,6 +67,7 @@ struct rte_eth_xstats_name_off {
 static struct {
 	uint64_t next_owner_id;
 	rte_spinlock_t ownership_lock;
+	/*记录每个以太网络设备的data*/
 	struct rte_eth_dev_data data[RTE_MAX_ETHPORTS];
 } *eth_dev_shared_data;
 
@@ -390,6 +392,7 @@ rte_eth_find_next_sibling(uint16_t port_id, uint16_t ref_port_id)
 			rte_eth_devices[ref_port_id].device);
 }
 
+/*准备eth_dev_shared_data*/
 static void
 eth_dev_shared_data_prepare(void)
 {
@@ -401,11 +404,15 @@ eth_dev_shared_data_prepare(void)
 	if (eth_dev_shared_data == NULL) {
 		if (rte_eal_process_type() == RTE_PROC_PRIMARY) {
 			/* Allocate port data and ownership shared memory. */
+		    /*申请创建rte_eth_dev_data对应的memzone*/
 			mz = rte_memzone_reserve(MZ_RTE_ETH_DEV_DATA,
 					sizeof(*eth_dev_shared_data),
 					rte_socket_id(), flags);
 		} else
+		    /*取rte_eth_dev_data对应的memzone*/
 			mz = rte_memzone_lookup(MZ_RTE_ETH_DEV_DATA);
+
+		/*创建或获取不成功，挂掉*/
 		if (mz == NULL)
 			rte_panic("Cannot allocate ethdev shared data\n");
 
@@ -414,6 +421,7 @@ eth_dev_shared_data_prepare(void)
 			eth_dev_shared_data->next_owner_id =
 					RTE_ETH_DEV_NO_OWNER + 1;
 			rte_spinlock_init(&eth_dev_shared_data->ownership_lock);
+			/*初始清空*/
 			memset(eth_dev_shared_data->data, 0,
 			       sizeof(eth_dev_shared_data->data));
 		}
@@ -428,6 +436,7 @@ eth_dev_is_allocated(const struct rte_eth_dev *ethdev)
 	return ethdev->data->name[0] != '\0';
 }
 
+/*查找指定名称的以太网络设备*/
 static struct rte_eth_dev *
 eth_dev_allocated(const char *name)
 {
@@ -459,6 +468,7 @@ rte_eth_dev_allocated(const char *name)
 	return ethdev;
 }
 
+/*查找首个可用的rte_eth_devices空间（检查条件是：设备名称为空）*/
 static uint16_t
 eth_dev_find_free_port(void)
 {
@@ -475,6 +485,7 @@ eth_dev_find_free_port(void)
 	return RTE_MAX_ETHPORTS;
 }
 
+/*给定port_id,分配并初始化其对应的以太网设备*/
 static struct rte_eth_dev *
 eth_dev_get(uint16_t port_id)
 {
@@ -485,6 +496,7 @@ eth_dev_get(uint16_t port_id)
 	return eth_dev;
 }
 
+/*利用设备名称申请rte以太网设备*/
 struct rte_eth_dev *
 rte_eth_dev_allocate(const char *name)
 {
@@ -492,6 +504,7 @@ rte_eth_dev_allocate(const char *name)
 	struct rte_eth_dev *eth_dev = NULL;
 	size_t name_len;
 
+	/*网络设备名称长度检查*/
 	name_len = strnlen(name, RTE_ETH_NAME_MAX_LEN);
 	if (name_len == 0) {
 		RTE_ETHDEV_LOG(ERR, "Zero length Ethernet device name\n");
@@ -515,6 +528,7 @@ rte_eth_dev_allocate(const char *name)
 		goto unlock;
 	}
 
+	/*分配port_id*/
 	port_id = eth_dev_find_free_port();
 	if (port_id == RTE_MAX_ETHPORTS) {
 		RTE_ETHDEV_LOG(ERR,
@@ -4734,6 +4748,7 @@ rte_eth_dev_callback_process(struct rte_eth_dev *dev,
 	return rc;
 }
 
+/*设备探测完成*/
 void
 rte_eth_dev_probing_finish(struct rte_eth_dev *dev)
 {

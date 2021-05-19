@@ -64,6 +64,7 @@ struct vhost_memory_region {
 struct virtio_user_dev;
 
 struct virtio_user_backend_ops {
+    /*启动后端*/
 	int (*setup)(struct virtio_user_dev *dev);
 	int (*destroy)(struct virtio_user_dev *dev);
 	int (*get_backend_features)(uint64_t *features);

@@ -96,6 +96,7 @@ struct rte_eth_dev {
 	 */
 	struct rte_eth_dev_data *data;  /**< Pointer to device data. */
 	void *process_private; /**< Pointer to per-process device data. */
+	/*设备的操作集*/
 	const struct eth_dev_ops *dev_ops; /**< Functions exported by PMD */
 	struct rte_device *device; /**< Backing device */
 	struct rte_intr_handle *intr_handle; /**< Device interrupt handle */
@@ -129,6 +130,7 @@ struct rte_eth_dev_owner;
  * processes in a multi-process configuration.
  */
 struct rte_eth_dev_data {
+    /*记录设备名称*/
 	char name[RTE_ETH_NAME_MAX_LEN]; /**< Unique identifier name */
 
 	void **rx_queues; /**< Array of pointers to RX queues. */
@@ -138,6 +140,7 @@ struct rte_eth_dev_data {
 
 	struct rte_eth_dev_sriov sriov;    /**< SRIOV data */
 
+	/*记录此设备的私有数据*/
 	void *dev_private;
 			/**< PMD-specific private data.
 			 *   @see rte_eth_dev_release_port()
@@ -145,6 +148,7 @@ struct rte_eth_dev_data {
 
 	struct rte_eth_link dev_link;   /**< Link-level information & status. */
 	struct rte_eth_conf dev_conf;   /**< Configuration applied to device. */
+	/*此设备对应的mtu*/
 	uint16_t mtu;                   /**< Maximum Transmission Unit. */
 	uint32_t min_rx_buf_size;
 			/**< Common RX buffer size handled by all queues. */
@@ -160,6 +164,7 @@ struct rte_eth_dev_data {
 			/**< Device Ethernet MAC addresses of hash filtering.
 			 *   @see rte_eth_dev_release_port()
 			 */
+	/*此设备对应的port_id*/
 	uint16_t port_id;           /**< Device [external] port identifier. */
 
 	__extension__
@@ -173,6 +178,7 @@ struct rte_eth_dev_data {
 	uint8_t tx_queue_state[RTE_MAX_QUEUES_PER_PORT];
 		/**< Queues state: HAIRPIN(2) / STARTED(1) / STOPPED(0). */
 	uint32_t dev_flags;             /**< Capabilities. */
+	/*设备所属的numa*/
 	int numa_node;                  /**< NUMA node connection. */
 	struct rte_vlan_filter_conf vlan_filter_conf;
 			/**< VLAN filter configuration. */

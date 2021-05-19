@@ -176,6 +176,7 @@ get_out:
 	return ret;
 }
 
+/*name必须是bus->name为前缀*/
 static int
 bus_name_cmp(const struct rte_bus *bus, const void *name)
 {
@@ -194,16 +195,25 @@ rte_devargs_parse(struct rte_devargs *da, const char *dev)
 		return -EINVAL;
 
 	/* Retrieve eventual bus info */
+	/*查找合适的bus*/
 	do {
 		devname = dev;
 		bus = rte_bus_find(bus, bus_name_cmp, dev);
 		if (bus == NULL)
+		    /*dev没有匹配到任何bus前缀*/
 			break;
+
+		/*这里我们匹配了bus前缀，故跳过此前缀*/
 		devname = dev + strlen(bus->name) + 1;
+
+		/*通过dev名称再检验一次bus,如果与之前匹配一致，则跳出*/
 		if (rte_bus_find_by_device_name(devname) == bus)
 			break;
+		/*失配，沿着bus再继续查找*/
 	} while (1);
+
 	/* Store device name */
+	/*利用devname填充da->name*/
 	i = 0;
 	while (devname[i] != '\0' && devname[i] != ',') {
 		da->name[i] = devname[i];
@@ -217,6 +227,7 @@ rte_devargs_parse(struct rte_devargs *da, const char *dev)
 	}
 	da->name[i] = '\0';
 	if (bus == NULL) {
+	    /*之前没有查找到bus,这里通过设备名称检查哪个bus可以解析它*/
 		bus = rte_bus_find_by_device_name(da->name);
 		if (bus == NULL) {
 			RTE_LOG(ERR, EAL, "failed to parse device \"%s\"\n",
@@ -225,8 +236,10 @@ rte_devargs_parse(struct rte_devargs *da, const char *dev)
 		}
 	}
 	da->bus = bus;
+
 	/* Parse eventual device arguments */
 	if (devname[i] == ',')
+	    /*设备数据*/
 		da->data = strdup(&devname[i + 1]);
 	else
 		da->data = strdup("");
@@ -314,7 +327,7 @@ rte_devargs_insert(struct rte_devargs **da)
 
 /* store in allowed list parameter for later parsing */
 int
-rte_devargs_add(enum rte_devtype devtype, const char *devargs_str)
+rte_devargs_add(enum rte_devtype devtype/*设备类型*/, const char *devargs_str/*设备参数*/)
 {
 	struct rte_devargs *devargs = NULL;
 	struct rte_bus *bus = NULL;
@@ -325,6 +338,7 @@ rte_devargs_add(enum rte_devtype devtype, const char *devargs_str)
 	if (devargs == NULL)
 		goto fail;
 
+	/*解析并填充devargs*/
 	if (rte_devargs_parse(devargs, dev))
 		goto fail;
 	devargs->type = devtype;
@@ -337,6 +351,7 @@ rte_devargs_add(enum rte_devtype devtype, const char *devargs_str)
 		else if (devargs->policy == RTE_DEV_BLOCKED)
 			bus->conf.scan_mode = RTE_BUS_SCAN_BLOCKLIST;
 	}
+	/*将devargs添加到devargs_list链表中*/
 	TAILQ_INSERT_TAIL(&devargs_list, devargs, next);
 	return 0;
 
@@ -406,9 +421,13 @@ rte_devargs_next(const char *busname, const struct rte_devargs *start)
 	struct rte_devargs *da;
 
 	if (start != NULL)
+	    /*start不为NULL，取next元素*/
 		da = TAILQ_NEXT(start, next);
 	else
+	    /*start为NULL，取链表首个元素*/
 		da = TAILQ_FIRST(&devargs_list);
+
+	/*检查da,如果其bus与busname相等，则返回*/
 	while (da != NULL) {
 		if (busname == NULL ||
 		    (strcmp(busname, da->bus->name) == 0))

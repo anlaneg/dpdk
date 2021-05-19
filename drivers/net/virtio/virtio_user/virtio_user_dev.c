@@ -286,18 +286,20 @@ virtio_user_dev_init_notify(struct virtio_user_dev *dev)
 	int callfd;
 	int kickfd;
 
-	//队列对，初始化为无效值
+	//初始化callfds,kickfds
 	for (i = 0; i < dev->max_queue_pairs * 2; i++) {
 		/* May use invalid flag, but some backend uses kickfd and
 		 * callfd as criteria to judge if dev is alive. so finally we
 		 * use real event_fd.
 		 */
-		//创建事件fd
+		//创建事件fd做为callfd
 		callfd = eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
 		if (callfd < 0) {
 			PMD_DRV_LOG(ERR, "(%s) callfd error, %s", dev->path, strerror(errno));
 			goto err;
 		}
+
+		//创建kickfd
 		kickfd = eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
 		if (kickfd < 0) {
 			close(callfd);
@@ -418,6 +420,7 @@ exit:
 static int
 virtio_user_dev_setup(struct virtio_user_dev *dev)
 {
+    /*仅vhost-user支持server模式*/
 	if (dev->is_server) {
 		if (dev->backend_type != VIRTIO_USER_BACKEND_VHOST_USER) {
 			PMD_DRV_LOG(ERR, "Server mode only supports vhost-user!");
@@ -440,6 +443,7 @@ virtio_user_dev_setup(struct virtio_user_dev *dev)
 		return -1;
 	}
 
+	/*setup后端*/
 	if (dev->ops->setup(dev) < 0) {
 		PMD_INIT_LOG(ERR, "(%s) Failed to setup backend\n", dev->path);
 		return -1;
@@ -486,11 +490,12 @@ destroy:
 	 1ULL << VIRTIO_F_VERSION_1		|	\
 	 1ULL << VIRTIO_F_RING_PACKED)
 
+/*virtio-user设备初始化*/
 int
-virtio_user_dev_init(struct virtio_user_dev *dev, char *path, int queues,
-		     int cq, int queue_size, const char *mac, char **ifname,
-		     int server, int mrg_rxbuf, int in_order, int packed_vq,
-		     enum virtio_user_backend_type backend_type)
+virtio_user_dev_init(struct virtio_user_dev *dev, char *path, int queues/*队列数*/,
+		     int cq, int queue_size/*队列长度*/, const char *mac/*设备mac*/, char **ifname,
+		     int server/*是否为server端*/, int mrg_rxbuf, int in_order, int packed_vq,
+		     enum virtio_user_backend_type backend_type/*后端类型*/)
 {
 	uint64_t backend_features;
 	int i;
@@ -513,6 +518,7 @@ virtio_user_dev_init(struct virtio_user_dev *dev, char *path, int queues,
 	dev->unsupported_features = 0;
 	dev->backend_type = backend_type;
 
+	//解析mac并填充
 	parse_mac(dev, mac);
 
 	if (*ifname) {
@@ -804,6 +810,7 @@ virtio_user_handle_cq(struct virtio_user_dev *dev, uint16_t queue_idx)
 	}
 }
 
+/*更新设备状态*/
 int
 virtio_user_dev_set_status(struct virtio_user_dev *dev, uint8_t status)
 {
@@ -813,12 +820,14 @@ virtio_user_dev_set_status(struct virtio_user_dev *dev, uint8_t status)
 	dev->status = status;
 	ret = dev->ops->set_status(dev, status);
 	if (ret && ret != -ENOTSUP)
+	    /*更新状态失败*/
 		PMD_INIT_LOG(ERR, "(%s) Failed to set backend status\n", dev->path);
 
 	pthread_mutex_unlock(&dev->mutex);
 	return ret;
 }
 
+/*更新virtio-user设备的状态*/
 int
 virtio_user_dev_update_status(struct virtio_user_dev *dev)
 {
@@ -827,8 +836,10 @@ virtio_user_dev_update_status(struct virtio_user_dev *dev)
 
 	pthread_mutex_lock(&dev->mutex);
 
+	/*通过virtio-user获取状态*/
 	ret = dev->ops->get_status(dev, &status);
 	if (!ret) {
+	    /*获取成功，执行更新*/
 		dev->status = status;
 		PMD_INIT_LOG(DEBUG, "Updated Device Status(0x%08x):\n"
 			"\t-RESET: %u\n"

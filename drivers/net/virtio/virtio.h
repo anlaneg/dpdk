@@ -117,9 +117,13 @@
 
 /* Status byte for guest to report progress. */
 #define VIRTIO_CONFIG_STATUS_RESET		0x00
+/* 状态1：Tell the host we've noticed this device. */
 #define VIRTIO_CONFIG_STATUS_ACK		0x01
+/*状态2：Tell the host we've known how to drive the device. */
 #define VIRTIO_CONFIG_STATUS_DRIVER		0x02
+/*状态3：告知设备，驱动初始化完成*/
 #define VIRTIO_CONFIG_STATUS_DRIVER_OK		0x04
+/*状态3：告诉硬件features协商成功*/
 #define VIRTIO_CONFIG_STATUS_FEATURES_OK	0x08
 #define VIRTIO_CONFIG_STATUS_DEV_NEED_RESET	0x40
 #define VIRTIO_CONFIG_STATUS_FAILED		0x80
@@ -174,6 +178,7 @@ struct virtio_hw {
 	uint8_t use_inorder_rx;
 	uint8_t use_inorder_tx;
 	uint8_t opened;
+	/*端口号*/
 	uint16_t port_id;
 	uint8_t mac_addr[RTE_ETHER_ADDR_LEN];
 	uint32_t speed;  /* link speed in MB */
@@ -218,6 +223,7 @@ struct virtio_hw_internal {
 	const struct virtio_ops *virtio_ops;
 };
 
+/*提取/设置此hw对应的操作集函数，例如virtio_user_ops*/
 #define VIRTIO_OPS(hw)	(virtio_hw_internal[(hw)->port_id].virtio_ops)
 
 extern struct virtio_hw_internal virtio_hw_internal[RTE_MAX_ETHPORTS];

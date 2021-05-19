@@ -26,7 +26,7 @@ static int
 rte_kvargs_tokenize(struct rte_kvargs *kvlist, const char *params)
 {
 	char *str, *start;
-	bool in_list = false, end_key = false, end_value = false;
+	bool in_list = false/*标记在list中*/, end_key = false/*key结束标记*/, end_value = false;
 	bool save = false, end_pair = false;
 
 	/* Copy the const char *params to a modifiable string
@@ -37,9 +37,11 @@ rte_kvargs_tokenize(struct rte_kvargs *kvlist, const char *params)
 		return -1;
 
 	/* browse each key/value pair and add it in kvlist */
+	/*这段代码可以考虑定义一个状态机并按状态进行解析，可读性会好一些。*/
 	str = kvlist->str;
 	start = str; /* start of current key or value */
 	while (1) {
+	    /*根据当前str内容，搞清楚当前解析状态*/
 		switch (*str) {
 		case '=': /* End of key. */
 			end_key = true;
@@ -55,6 +57,7 @@ rte_kvargs_tokenize(struct rte_kvargs *kvlist, const char *params)
 				save = true;
 				end_pair = true;
 			}
+			/*忽略掉在list中遇到,号的情况*/
 			break;
 		case '[': /* Start of list. */
 			in_list = true;
@@ -75,15 +78,18 @@ rte_kvargs_tokenize(struct rte_kvargs *kvlist, const char *params)
 			break;
 		}
 
+		/*非解析关键节点，忽略掉继续分析*/
 		if (!save) {
 			/* Continue if not end of key or value. */
 			str++;
 			continue;
 		}
 
+		/*kvlist数目超限*/
 		if (kvlist->count >= RTE_KVARGS_MAX)
 			return -1;
 
+		/*按状态记录key,value,未设置字符串结尾*/
 		if (end_value)
 			/* Value parsed */
 			kvlist->pairs[kvlist->count].value = start;
@@ -102,6 +108,7 @@ rte_kvargs_tokenize(struct rte_kvargs *kvlist, const char *params)
 
 		if (*str == '\0') /* End of string. */
 			break;
+		/*设置字符串结尾，开始下一轮*/
 		*str = '\0';
 		str++;
 		start = str;
@@ -120,6 +127,7 @@ is_valid_key(const char * const valid[], const char *key_match)
 {
 	const char * const *valid_ptr;
 
+	/*检查key_match是否属于valid数组的一个成员*/
 	for (valid_ptr = valid; *valid_ptr != NULL; valid_ptr++) {
 		if (strcmp(key_match, *valid_ptr) == 0)
 			return 1;
@@ -138,6 +146,7 @@ check_for_valid_keys(struct rte_kvargs *kvlist,
 	unsigned i, ret;
 	struct rte_kvargs_pair *pair;
 
+	/*遍历kvlist的pairs,针对每个pair进行key有效性检查*/
 	for (i = 0; i < kvlist->count; i++) {
 		pair = &kvlist->pairs[i];
 		ret = is_valid_key(valid, pair->key);
@@ -155,6 +164,7 @@ check_for_valid_keys(struct rte_kvargs *kvlist,
 unsigned
 rte_kvargs_count(const struct rte_kvargs *kvlist, const char *key_match)
 {
+    /*返回key_match在kvlist中出现的次数*/
 	const struct rte_kvargs_pair *pair;
 	unsigned i, ret;
 
@@ -177,6 +187,7 @@ rte_kvargs_process(const struct rte_kvargs *kvlist,
 		arg_handler_t handler,
 		void *opaque_arg)
 {
+    /*通过handler函数处理kvlist中的每个与key_match匹配的key*/
 	const struct rte_kvargs_pair *pair;
 	unsigned i;
 
@@ -234,11 +245,13 @@ rte_kvargs_parse(const char *args, const char * const valid_keys[])
 		return NULL;
 	memset(kvlist, 0, sizeof(*kvlist));
 
+	/*将args打散成key,value对儿*/
 	if (rte_kvargs_tokenize(kvlist, args) < 0) {
 		rte_kvargs_free(kvlist);
 		return NULL;
 	}
 
+	/*指定了valid_keys,进行kvlist校验*/
 	if (valid_keys != NULL && check_for_valid_keys(kvlist, valid_keys) < 0) {
 		rte_kvargs_free(kvlist);
 		return NULL;
