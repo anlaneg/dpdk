@@ -209,8 +209,6 @@ __rte_internal
 int mlx5_get_ifname_sysfs(const char *ibdev_path, char *ifname);
 
 
-#define MLX5_CLASS_ARG_NAME "class"
-
 enum mlx5_class {
 	MLX5_CLASS_INVALID,//其它类型
 	MLX5_CLASS_NET = RTE_BIT64(0),//net类型
