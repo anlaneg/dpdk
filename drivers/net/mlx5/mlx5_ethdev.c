@@ -414,9 +414,15 @@ mlx5_representor_info_get(struct rte_eth_dev *dev,
 	int n_type = 4; /* Representor types, VF, HPF@VF, SF and HPF@SF. */
 	int n_pf = 2; /* Number of PFs. */
 	int i = 0, pf;
+	int n_entries;
 
 	if (info == NULL)
 		goto out;
+
+	n_entries = n_type * n_pf;
+	if ((uint32_t)n_entries > info->nb_ranges_alloc)
+		n_entries = info->nb_ranges_alloc;
+
 	info->controller = 0;
 	info->pf = priv->pf_bond >= 0 ? priv->pf_bond : 0;
 	for (pf = 0; pf < n_pf; ++pf) {
@@ -432,6 +438,8 @@ mlx5_representor_info_get(struct rte_eth_dev *dev,
 		snprintf(info->ranges[i].name,
 			 sizeof(info->ranges[i].name), "pf%dvf", pf);
 		i++;
+		if (i == n_entries)
+			break;
 		/* HPF range of VF type. */
 		info->ranges[i].type = RTE_ETH_REPRESENTOR_VF;
 		info->ranges[i].controller = 0;
@@ -444,6 +452,8 @@ mlx5_representor_info_get(struct rte_eth_dev *dev,
 		snprintf(info->ranges[i].name,
 			 sizeof(info->ranges[i].name), "pf%dvf", pf);
 		i++;
+		if (i == n_entries)
+			break;
 		/* SF range. */
 		info->ranges[i].type = RTE_ETH_REPRESENTOR_SF;
 		info->ranges[i].controller = 0;
@@ -456,6 +466,8 @@ mlx5_representor_info_get(struct rte_eth_dev *dev,
 		snprintf(info->ranges[i].name,
 			 sizeof(info->ranges[i].name), "pf%dsf", pf);
 		i++;
+		if (i == n_entries)
+			break;
 		/* HPF range of SF type. */
 		info->ranges[i].type = RTE_ETH_REPRESENTOR_SF;
 		info->ranges[i].controller = 0;
@@ -468,7 +480,10 @@ mlx5_representor_info_get(struct rte_eth_dev *dev,
 		snprintf(info->ranges[i].name,
 			 sizeof(info->ranges[i].name), "pf%dsf", pf);
 		i++;
+		if (i == n_entries)
+			break;
 	}
+	info->nb_ranges = i;
 out:
 	return n_type * n_pf;
 }
