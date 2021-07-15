@@ -251,6 +251,7 @@ rte_cfgfile_load_with_params(const char *filename, int flags,
 
 			_strip(split[0], strlen(split[0]));//strip key
 			_strip(split[1], strlen(split[1]));//strip value
+			char *end = memchr(split[1], '\\', strlen(split[1]));  
 
 			//处理"\#"这种转义情况，将其转换为#
 			size_t split_len = strlen(split[1]) + 1;
