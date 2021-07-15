@@ -40,10 +40,15 @@ function install()
 	
 }
 
-install
-export RTE_TARGET=x86_64-native-linuxapp-gcc
-export EXTRA_CFLAGS="-g -O0"
-make config T=$RTE_TARGET
-make V=1 -j20
+#install
+#export RTE_TARGET=x86_64-native-linuxapp-gcc
+#export EXTRA_CFLAGS="-g -O0"
+#make config T=$RTE_TARGET
+#make V=1 -j20
 #make install -j20 T=$RTE_TARGET
-make V=1 install -j20 T=$RTE_TARGET DESTDIR=$RTE_TARGET
+#make V=1 install -j20 T=$RTE_TARGET DESTDIR=$RTE_TARGET
+meson build
+cd build
+ninja
+#ninja install
+#ldconfig
