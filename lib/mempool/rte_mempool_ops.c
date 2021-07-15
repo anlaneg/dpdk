@@ -173,6 +173,7 @@ rte_mempool_set_ops_byname(struct rte_mempool *mp, const char *name,
 	if (mp->flags & MEMPOOL_F_POOL_CREATED)
 		return -EEXIST;
 
+	/*检查是否存在对应的ops*/
 	for (i = 0; i < rte_mempool_ops_table.num_ops; i++) {
 		if (!strcmp(name,
 				rte_mempool_ops_table.ops[i].name)) {
@@ -181,6 +182,7 @@ rte_mempool_set_ops_byname(struct rte_mempool *mp, const char *name,
 		}
 	}
 
+	/*不存在，返回失败*/
 	if (ops == NULL)
 		return -EINVAL;
 

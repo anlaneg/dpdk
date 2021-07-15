@@ -227,7 +227,7 @@ __rte_pktmbuf_init_extmem(struct rte_mempool *mp,
 
 /* Helper to create a mbuf pool with given mempool ops name*/
 struct rte_mempool *
-rte_pktmbuf_pool_create_by_ops(const char *name, unsigned int n,
+rte_pktmbuf_pool_create_by_ops(const char *name, unsigned int n/*实体数目*/,
 	unsigned int cache_size, uint16_t priv_size, uint16_t data_room_size,
 	int socket_id, const char *ops_name)
 {
@@ -237,12 +237,14 @@ rte_pktmbuf_pool_create_by_ops(const char *name, unsigned int n,
 	unsigned elt_size;
 	int ret;
 
+	/*priv_size必须按RTE_MBUF_PRIV_ALIGN对齐*/
 	if (RTE_ALIGN(priv_size, RTE_MBUF_PRIV_ALIGN) != priv_size) {
 		RTE_LOG(ERR, MBUF, "mbuf priv_size=%u is not aligned\n",
 			priv_size);
 		rte_errno = EINVAL;
 		return NULL;
 	}
+	/*实体大小为：mbuf结构体 + priv_size + data_room*/
 	elt_size = sizeof(struct rte_mbuf) + (unsigned)priv_size +
 		(unsigned)data_room_size;
 	memset(&mbp_priv, 0, sizeof(mbp_priv));
@@ -254,6 +256,7 @@ rte_pktmbuf_pool_create_by_ops(const char *name, unsigned int n,
 	if (mp == NULL)
 		return NULL;
 
+	/*如果未指定mempool的ops,则选择一个*/
 	if (mp_ops_name == NULL)
 		mp_ops_name = rte_mbuf_best_mempool_ops();
 	ret = rte_mempool_set_ops_byname(mp, mp_ops_name, NULL);
@@ -272,14 +275,16 @@ rte_pktmbuf_pool_create_by_ops(const char *name, unsigned int n,
 		return NULL;
 	}
 
+	/*初始化每个mbuf*/
 	rte_mempool_obj_iter(mp, rte_pktmbuf_init, NULL);
 
 	return mp;
 }
 
 /* helper to create a mbuf pool */
+/*创建mbuf pool*/
 struct rte_mempool *
-rte_pktmbuf_pool_create(const char *name, unsigned int n,
+rte_pktmbuf_pool_create(const char *name/*mbuf pool名称*/, unsigned int n/*mbuf数量*/,
 	unsigned int cache_size, uint16_t priv_size, uint16_t data_room_size,
 	int socket_id)
 {
@@ -369,6 +374,8 @@ rte_pktmbuf_pool_create_extbuf(const char *name, unsigned int n,
 		.ext = 0,
 		.off = 0,
 	};
+
+	/*针对每个mbuf,进行初始化*/
 	rte_mempool_obj_iter(mp, __rte_pktmbuf_init_extmem, &init_ctx);
 
 	return mp;

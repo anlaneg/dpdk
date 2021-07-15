@@ -1636,6 +1636,7 @@ eal_hugepage_attach(void)
 	return 0;
 }
 
+/*dpdk大页初始化*/
 int
 rte_eal_hugepage_init(void)
 {

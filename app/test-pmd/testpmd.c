@@ -154,6 +154,7 @@ struct fwd_lcore **fwd_lcores; /**< For all probed logical cores. */
 //检测出的可用于转发的core数目
 lcoreid_t nb_lcores;           /**< Number of probed logical cores. */
 
+/*记录当前可用的port_id*/
 portid_t ports_ids[RTE_MAX_ETHPORTS]; /**< Store all port ids. */
 
 /*
@@ -3837,7 +3838,8 @@ main(int argc, char** argv)
 		TESTPMD_LOG(WARNING, "No probed ethernet devices\n");
 
 	/* allocate port structures, and init them */
-	init_port();//申请port数组
+	//申请port数组
+	init_port();
 
 	set_def_fwd_config();
 	if (nb_lcores == 0)

@@ -147,6 +147,7 @@ struct rte_eth_dev_data {
 			 */
 
 	struct rte_eth_link dev_link;   /**< Link-level information & status. */
+	/*设备配置*/
 	struct rte_eth_conf dev_conf;   /**< Configuration applied to device. */
 	/*此设备对应的mtu*/
 	uint16_t mtu;                   /**< Maximum Transmission Unit. */
@@ -171,6 +172,7 @@ struct rte_eth_dev_data {
 	uint8_t promiscuous   : 1, /**< RX promiscuous mode ON(1) / OFF(0). */
 		scattered_rx : 1,  /**< RX of scattered packets is ON(1) / OFF(0) */
 		all_multicast : 1, /**< RX all multicast mode ON(1) / OFF(0). */
+		/*设备是否已启动*/
 		dev_started : 1,   /**< Device state: STARTED(1) / STOPPED(0). */
 		lro         : 1,   /**< RX LRO is ON(1) / OFF(0) */
 		dev_configured : 1;

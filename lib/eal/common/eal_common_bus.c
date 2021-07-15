@@ -81,7 +81,7 @@ rte_bus_probe(void)
 				bus->name);
 	}
 
-	/*vbus总线进行驱动探测*/
+	/*vbus总线进行设备驱动探测*/
 	if (vbus) {
 		ret = vbus->probe();
 		if (ret)

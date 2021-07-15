@@ -151,6 +151,7 @@ get_min_page_size(int socket_id)
 }
 
 
+/*将obj加入到mempool中*/
 static void
 mempool_add_elem(struct rte_mempool *mp, __rte_unused void *opaque,
 		 void *obj, rte_iova_t iova)
@@ -173,6 +174,7 @@ mempool_add_elem(struct rte_mempool *mp, __rte_unused void *opaque,
 }
 
 /* call obj_cb() for each mempool element */
+/*遍历mempool中的每个obj,并针对其进行obj_ct回调触发*/
 uint32_t
 rte_mempool_obj_iter(struct rte_mempool *mp,
 	rte_mempool_obj_cb_t *obj_cb, void *obj_cb_arg)
@@ -181,12 +183,14 @@ rte_mempool_obj_iter(struct rte_mempool *mp,
 	void *obj;
 	unsigned n = 0;
 
+	/*每个obj中有一个rte_mempool_objhdr的头部*/
 	STAILQ_FOREACH(hdr, &mp->elt_list, next) {
 		obj = (char *)hdr + sizeof(*hdr);
 		obj_cb(mp, obj_cb_arg, obj, n);
 		n++;
 	}
 
+	/*返回元素总数*/
 	return n;
 }
 
@@ -217,22 +221,27 @@ rte_mempool_calc_obj_size(uint32_t elt_size, uint32_t flags,
 
 	sz->header_size = sizeof(struct rte_mempool_objhdr);
 	if ((flags & MEMPOOL_F_NO_CACHE_ALIGN) == 0)
+	    /*sz->header_size按RTE_MEMPOOL_ALIGN对齐*/
 		sz->header_size = RTE_ALIGN_CEIL(sz->header_size,
 			RTE_MEMPOOL_ALIGN);
 
+	/*指定trailer大小*/
 #ifdef RTE_LIBRTE_MEMPOOL_DEBUG
 	sz->trailer_size = sizeof(struct rte_mempool_objtlr);
 #else
 	sz->trailer_size = 0;
 #endif
 
+	/*实体大小按uint64_t对齐*/
 	/* element size is 8 bytes-aligned at least */
 	sz->elt_size = RTE_ALIGN_CEIL(elt_size, sizeof(uint64_t));
 
 	/* expand trailer to next cache line */
 	if ((flags & MEMPOOL_F_NO_CACHE_ALIGN) == 0) {
+	    /*总大小按RTE_MEMPOOL_ALIGN_MASK对齐*/
 		sz->total_size = sz->header_size + sz->elt_size +
 			sz->trailer_size;
+		/*将对齐扩大的空间赋给trailer*/
 		sz->trailer_size += ((RTE_MEMPOOL_ALIGN -
 				  (sz->total_size & RTE_MEMPOOL_ALIGN_MASK)) &
 				 RTE_MEMPOOL_ALIGN_MASK);
@@ -779,8 +788,8 @@ rte_mempool_cache_free(struct rte_mempool_cache *cache)
 
 /* create an empty mempool */
 struct rte_mempool *
-rte_mempool_create_empty(const char *name, unsigned n, unsigned elt_size,
-	unsigned cache_size, unsigned private_data_size,
+rte_mempool_create_empty(const char *name, unsigned n/*实体数目*/, unsigned elt_size,
+	unsigned cache_size, unsigned private_data_size/*mempool私有数据大小*/,
 	int socket_id, unsigned flags)
 {
 	char mz_name[RTE_MEMZONE_NAMESIZE];
@@ -806,10 +815,12 @@ rte_mempool_create_empty(const char *name, unsigned n, unsigned elt_size,
 			  RTE_CACHE_LINE_MASK) != 0);
 #endif
 
+	/*mempool链表指针*/
 	mempool_list = RTE_TAILQ_CAST(rte_mempool_tailq.head, rte_mempool_list);
 
 	/* asked for zero items */
 	if (n == 0) {
+	    /*实体数为0，返回NULL*/
 		rte_errno = EINVAL;
 		return NULL;
 	}
@@ -817,6 +828,7 @@ rte_mempool_create_empty(const char *name, unsigned n, unsigned elt_size,
 	/* asked cache too big */
 	if (cache_size > RTE_MEMPOOL_CACHE_MAX_SIZE ||
 	    CALC_CACHE_FLUSHTHRESH(cache_size) > n) {
+	    /*要求的cache_size不得过大*/
 		rte_errno = EINVAL;
 		return NULL;
 	}
@@ -848,16 +860,19 @@ rte_mempool_create_empty(const char *name, unsigned n, unsigned elt_size,
 		goto exit_unlock;
 	}
 
+	/*mempool大小*/
 	mempool_size = MEMPOOL_HEADER_SIZE(mp, cache_size);
 	mempool_size += private_data_size;
 	mempool_size = RTE_ALIGN_CEIL(mempool_size, RTE_MEMPOOL_ALIGN);
 
+	/*memzone名称*/
 	ret = snprintf(mz_name, sizeof(mz_name), RTE_MEMPOOL_MZ_FORMAT, name);
 	if (ret < 0 || ret >= (int)sizeof(mz_name)) {
 		rte_errno = ENAMETOOLONG;
 		goto exit_unlock;
 	}
 
+	/*申请memzone*/
 	mz = rte_memzone_reserve(mz_name, mempool_size, socket_id, mz_flags);
 	if (mz == NULL)
 		goto exit_unlock;

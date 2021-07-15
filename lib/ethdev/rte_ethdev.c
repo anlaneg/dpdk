@@ -354,10 +354,12 @@ rte_eth_iterator_cleanup(struct rte_dev_iterator *iter)
 uint16_t
 rte_eth_find_next(uint16_t port_id)
 {
+    /*跳过未使用port_id*/
 	while (port_id < RTE_MAX_ETHPORTS &&
 			rte_eth_devices[port_id].state == RTE_ETH_DEV_UNUSED)
 		port_id++;
 
+	/*如果port_id达到最大值，则返回*/
 	if (port_id >= RTE_MAX_ETHPORTS)
 		return RTE_MAX_ETHPORTS;
 
@@ -623,6 +625,7 @@ rte_eth_dev_release_port(struct rte_eth_dev *eth_dev)
 	return 0;
 }
 
+/*检查给定的port_id是否有效*/
 int
 rte_eth_dev_is_valid_port(uint16_t port_id)
 {
@@ -642,6 +645,7 @@ eth_is_valid_owner_id(uint64_t owner_id)
 	return 1;
 }
 
+/*遍历port_id下一个可用port_id*/
 uint64_t
 rte_eth_find_next_owned_by(uint16_t port_id, const uint64_t owner_id)
 {
@@ -904,6 +908,7 @@ eth_err(uint16_t port_id, int ret)
 	return ret;
 }
 
+/*配置rx队列数目*/
 static int
 eth_dev_rx_queue_config(struct rte_eth_dev *dev, uint16_t nb_queues)
 {
@@ -1144,6 +1149,7 @@ rte_eth_dev_tx_queue_stop(uint16_t port_id, uint16_t tx_queue_id)
 	return eth_err(port_id, dev->dev_ops->tx_queue_stop(dev, tx_queue_id));
 }
 
+/*配置tx队列数目*/
 static int
 eth_dev_tx_queue_config(struct rte_eth_dev *dev, uint16_t nb_queues)
 {
@@ -1339,6 +1345,7 @@ eth_dev_validate_offloads(uint16_t port_id, uint64_t req_offloads,
 	return ret;
 }
 
+/*执行以太设备配置*/
 int
 rte_eth_dev_configure(uint16_t port_id, uint16_t nb_rx_q, uint16_t nb_tx_q,
 		      const struct rte_eth_conf *dev_conf)
@@ -1361,8 +1368,10 @@ rte_eth_dev_configure(uint16_t port_id, uint16_t nb_rx_q, uint16_t nb_tx_q,
 		return -EINVAL;
 	}
 
+	/*dev的dev_configure回调必须存在*/
 	RTE_FUNC_PTR_OR_ERR_RET(*dev->dev_ops->dev_configure, -ENOTSUP);
 
+	/*设备如果已启动，则报错*/
 	if (dev->data->dev_started) {
 		RTE_ETHDEV_LOG(ERR,
 			"Port %u must be stopped to allow configuration\n",
@@ -1385,6 +1394,7 @@ rte_eth_dev_configure(uint16_t port_id, uint16_t nb_rx_q, uint16_t nb_tx_q,
 	 * rte_eth_dev_info_get() requires dev_conf, copy it before dev_info get
 	 */
 	if (dev_conf != &dev->data->dev_conf)
+	    /*非相同指针，完成请求配置的填充*/
 		memcpy(&dev->data->dev_conf, dev_conf,
 		       sizeof(dev->data->dev_conf));
 
@@ -1589,6 +1599,7 @@ rte_eth_dev_configure(uint16_t port_id, uint16_t nb_rx_q, uint16_t nb_tx_q,
 		goto rollback;
 	}
 
+	/*触发端口配置*/
 	diag = (*dev->dev_ops->dev_configure)(dev);
 	if (diag != 0) {
 		RTE_ETHDEV_LOG(ERR, "Port%u dev_configure = %d\n",

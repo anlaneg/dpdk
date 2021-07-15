@@ -305,6 +305,7 @@ rte_malloc_heap_socket_is_external(int socket_id)
 		return 0;
 
 	rte_mcfg_mem_read_lock();
+	/*在malloc_heaps中查找对应的socket_id*/
 	for (idx = 0; idx < RTE_MAX_HEAPS; idx++) {
 		struct malloc_heap *tmp = &mcfg->malloc_heaps[idx];
 

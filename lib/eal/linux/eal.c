@@ -1295,6 +1295,7 @@ rte_eal_init(int argc, char **argv)
 	}
 
 	/* Probe all the buses and devices/drivers on them */
+	/*探测所有的bus上的设备及驱动*/
 	if (rte_bus_probe()) {
 		rte_eal_init_alert("Cannot probe devices");
 		rte_errno = ENOTSUP;

@@ -141,8 +141,11 @@ struct rte_mempool_objsz {
  * double-frees.
  */
 struct rte_mempool_objhdr {
+    /*用于串连*/
 	STAILQ_ENTRY(rte_mempool_objhdr) next; /**< Next in list. */
+	/*obj所属的mp*/
 	struct rte_mempool *mp;          /**< The mempool owning the object. */
+	/*obj对应的地址*/
 	rte_iova_t iova;                 /**< IO address of the object. */
 #ifdef RTE_LIBRTE_MEMPOOL_DEBUG
 	uint64_t cookie;                 /**< Debug cookie. */
@@ -222,17 +225,25 @@ struct rte_mempool {
 		uint64_t pool_id;        /**< External mempool identifier. */
 	};
 	void *pool_config;               /**< optional args for ops alloc. */
+	/*mempool对应的memzone*/
 	const struct rte_memzone *mz;    /**< Memzone where pool is alloc'd. */
 	unsigned int flags;              /**< Flags of the mempool. */
+	/*所属的socket*/
 	int socket_id;                   /**< Socket id passed at create. */
+	/*mempool的元素大小*/
 	uint32_t size;                   /**< Max size of the mempool. */
+	/*mempool中的cache数目*/
 	uint32_t cache_size;
 	/**< Size of per-lcore default local cache. */
 
+	/*实体大小*/
 	uint32_t elt_size;               /**< Size of an element. */
+	/*实体对应的header大小*/
 	uint32_t header_size;            /**< Size of header (before elt). */
+	/*实体对应的trailer大小*/
 	uint32_t trailer_size;           /**< Size of trailer (after elt). */
 
+	/*mempool私有数据大小*/
 	unsigned private_data_size;      /**< Size of private data. */
 	/**
 	 * Index into rte_mempool_ops_table array of mempool ops
@@ -243,9 +254,11 @@ struct rte_mempool {
 	 */
 	int32_t ops_index;
 
+	/*每个core一个local cache*/
 	struct rte_mempool_cache *local_cache; /**< Per-lcore local cache */
 
 	uint32_t populated_size;         /**< Number of populated objects. */
+	/*mempool中所有obj将被串连在此list上*/
 	struct rte_mempool_objhdr_list elt_list; /**< List of objects in pool */
 	uint32_t nb_mem_chunks;          /**< Number of memory chunks */
 	struct rte_mempool_memhdr_list mem_list; /**< List of memory chunks */

@@ -104,6 +104,7 @@ rte_mempool_op_populate_helper(struct rte_mempool *mp, unsigned int flags,
 	if (ret < 0)
 		return ret;
 
+	/*元素的总大小*/
 	total_elt_sz = mp->header_size + mp->elt_size + mp->trailer_size;
 
 	if (flags & RTE_MEMPOOL_POPULATE_F_ALIGN_OBJ)
@@ -120,14 +121,18 @@ rte_mempool_op_populate_helper(struct rte_mempool *mp, unsigned int flags,
 						total_elt_sz) + 1);
 		}
 
+		/*不足以分配一个完整的obj了，跳出*/
 		if (off + total_elt_sz > len)
 			break;
 
+		/*off需要跳过一个header的大小，例如struct rte_mempool_objhdr*/
 		off += mp->header_size;
+		/*obj的起始地址*/
 		obj = va + off;
 		obj_cb(mp, obj_cb_arg, obj,
 		       (iova == RTE_BAD_IOVA) ? RTE_BAD_IOVA : (iova + off));
 		rte_mempool_ops_enqueue_bulk(mp, &obj, 1);
+		/*obj跳过mp->elt_size + mp->trailer_size*/
 		off += mp->elt_size + mp->trailer_size;
 	}
 
