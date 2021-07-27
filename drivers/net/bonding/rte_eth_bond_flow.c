@@ -213,6 +213,7 @@ bond_flow_query(struct rte_eth_dev *dev, struct rte_flow *flow,
 	}
 }
 
+/*bonding针对每个slave进行isolate回调*/
 static int
 bond_flow_isolate(struct rte_eth_dev *dev, int set,
 		  struct rte_flow_error *err)

@@ -797,7 +797,9 @@ struct token {
 
 /** Parser output buffer layout expected by cmd_flow_parsed(). */
 struct buffer {
+    /*待执行的命令*/
 	enum index command; /**< Flow command. */
+	/*命令关联的port*/
 	portid_t port; /**< Affected port ID. */
 	union {
 		struct {
@@ -808,12 +810,12 @@ struct buffer {
 			uint32_t action_id;
 		} ia; /* Indirect action query arguments */
 		struct {
-			struct rte_flow_attr attr;
+			struct rte_flow_attr attr;/*flow属性*/
 			struct tunnel_ops tunnel_ops;
-			struct rte_flow_item *pattern;
-			struct rte_flow_action *actions;
-			uint32_t pattern_n;
-			uint32_t actions_n;
+			struct rte_flow_item *pattern;/*match格式*/
+			struct rte_flow_action *actions;/*action格式*/
+			uint32_t pattern_n;/*match数组数量*/
+			uint32_t actions_n;/*action数组数量*/
 			uint8_t *data;
 		} vc; /**< Validate/create arguments. */
 		struct {
@@ -834,6 +836,7 @@ struct buffer {
 			uint32_t group_n;
 		} list; /**< List arguments. */
 		struct {
+		    /*isolate参数*/
 			int set;
 		} isolate; /**< Isolated mode arguments. */
 		struct {
@@ -8075,6 +8078,7 @@ cmd_flow_tok(cmdline_parse_token_hdr_t **hdr,
 static void
 cmd_flow_parsed(const struct buffer *in)
 {
+    /*解析并执行用户命令*/
 	switch (in->command) {
 	case INDIRECT_ACTION_CREATE:
 		port_action_handle_create(
@@ -8129,6 +8133,7 @@ cmd_flow_parsed(const struct buffer *in)
 			       in->args.list.group);
 		break;
 	case ISOLATE:
+	    /*指明port为isolate模式*/
 		port_flow_isolate(in->port, in->args.isolate.set);
 		break;
 	case AGED:

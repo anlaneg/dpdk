@@ -794,7 +794,9 @@ typedef int (*eth_representor_info_get_t)(struct rte_eth_dev *dev,
  */
 struct eth_dev_ops {
 	eth_dev_configure_t        dev_configure; /**< Configure device. */
+	/*启动指定设备*/
 	eth_dev_start_t            dev_start;     /**< Start device. */
+	/*停止指定设备*/
 	eth_dev_stop_t             dev_stop;      /**< Stop device. */
 	eth_dev_set_link_up_t      dev_set_link_up;   /**< Device link up. */
 	eth_dev_set_link_down_t    dev_set_link_down; /**< Device link down. */
@@ -886,6 +888,7 @@ struct eth_dev_ops {
 	eth_get_module_eeprom_t    get_module_eeprom;
 	/** Get plugin module eeprom data. */
 
+	/*用于获取netdev的flow操作函数集*/
 	eth_flow_ops_get_t         flow_ops_get; /**< Get flow operations. */
 
 	eth_get_dcb_info           get_dcb_info; /** Get DCB information. */

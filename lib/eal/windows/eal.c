@@ -236,9 +236,10 @@ trace_mem_per_thread_free(void)
 }
 
 void
-__rte_trace_point_emit_field(size_t sz, const char *field,
-	const char *type)
+__rte_trace_point_emit_field(size_t sz/*类型占用内存大小*/, const char *field/*字段名称*/,
+	const char *type/*字段类型*/)
 {
+    /*指明参数unuse,防止函数告警*/
 	RTE_SET_USED(sz);
 	RTE_SET_USED(field);
 	RTE_SET_USED(type);

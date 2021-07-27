@@ -222,6 +222,7 @@ error:
 	return -rte_errno;
 }
 
+/*如果没有线程安全标记，则对dev进行加锁操作*/
 static inline void
 fts_enter(struct rte_eth_dev *dev)
 {
@@ -229,6 +230,7 @@ fts_enter(struct rte_eth_dev *dev)
 		pthread_mutex_lock(&dev->data->flow_ops_mutex);
 }
 
+/*如果没有线程安全标记，则对dev进行解锁操作*/
 static inline void
 fts_exit(struct rte_eth_dev *dev)
 {
@@ -256,18 +258,22 @@ rte_flow_ops_get(uint16_t port_id, struct rte_flow_error *error)
 	const struct rte_flow_ops *ops;
 	int code;
 
+	/*port_id是否有效*/
 	if (unlikely(!rte_eth_dev_is_valid_port(port_id)))
 		code = ENODEV;
 	else if (unlikely(dev->dev_ops->flow_ops_get == NULL))
 		/* flow API not supported with this driver dev_ops */
+	    /*设备不支持*/
 		code = ENOSYS;
 	else
+	    /*取此设备对应的flow ops*/
 		code = dev->dev_ops->flow_ops_get(dev, &ops);
 	if (code == 0 && ops == NULL)
 		/* flow API not supported with this device */
 		code = ENOSYS;
 
 	if (code != 0) {
+	    /*获取失败*/
 		rte_flow_error_set(error, code, RTE_FLOW_ERROR_TYPE_UNSPECIFIED,
 				   NULL, rte_strerror(code));
 		return NULL;
@@ -291,6 +297,7 @@ rte_flow_validate(uint16_t port_id,
 		return -rte_errno;
 	if (likely(!!ops->validate)) {
 		fts_enter(dev);
+		/*flow校验*/
 		ret = ops->validate(dev, attr, pattern, actions, error);
 		fts_exit(dev);
 		return flow_err(port_id, ret, error);
@@ -316,6 +323,7 @@ rte_flow_create(uint16_t port_id,
 		return NULL;
 	if (likely(!!ops->create)) {
 		fts_enter(dev);
+		/*flow创建*/
 		flow = ops->create(dev, attr, pattern, actions, error);
 		fts_exit(dev);
 		if (flow == NULL)
@@ -341,6 +349,7 @@ rte_flow_destroy(uint16_t port_id,
 		return -rte_errno;
 	if (likely(!!ops->destroy)) {
 		fts_enter(dev);
+		/*flow销毁*/
 		ret = ops->destroy(dev, flow, error);
 		fts_exit(dev);
 		return flow_err(port_id, ret, error);
@@ -363,6 +372,7 @@ rte_flow_flush(uint16_t port_id,
 		return -rte_errno;
 	if (likely(!!ops->flush)) {
 		fts_enter(dev);
+		/*移除所有flow rules*/
 		ret = ops->flush(dev, error);
 		fts_exit(dev);
 		return flow_err(port_id, ret, error);
@@ -403,6 +413,7 @@ rte_flow_isolate(uint16_t port_id,
 		 int set,
 		 struct rte_flow_error *error)
 {
+    /*取port_id对应的dev*/
 	struct rte_eth_dev *dev = &rte_eth_devices[port_id];
 	const struct rte_flow_ops *ops = rte_flow_ops_get(port_id, error);
 	int ret;
@@ -410,11 +421,13 @@ rte_flow_isolate(uint16_t port_id,
 	if (!ops)
 		return -rte_errno;
 	if (likely(!!ops->isolate)) {
+	    /*有isolate回调，则调用它*/
 		fts_enter(dev);
 		ret = ops->isolate(dev, set, error);
 		fts_exit(dev);
 		return flow_err(port_id, ret, error);
 	}
+	/*无此回调函数，直接返回NOSYS*/
 	return rte_flow_error_set(error, ENOSYS,
 				  RTE_FLOW_ERROR_TYPE_UNSPECIFIED,
 				  NULL, rte_strerror(ENOSYS));

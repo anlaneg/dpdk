@@ -666,11 +666,14 @@ mlx5_flow_tunnel_get_restore_info(struct rte_eth_dev *dev,
 				  struct rte_flow_restore_info *info,
 				  struct rte_flow_error *err);
 
+/*mlx5流表函数集*/
 static const struct rte_flow_ops mlx5_flow_ops = {
 	.validate = mlx5_flow_validate,
-	.create = mlx5_flow_create,//flow规则创建
+	//flow规则创建
+	.create = mlx5_flow_create,
 	.destroy = mlx5_flow_destroy,
 	.flush = mlx5_flow_flush,
+	//变更isolate
 	.isolate = mlx5_flow_isolate,
 	.query = mlx5_flow_query,
 	.dev_dump = mlx5_flow_dev_dump,
@@ -1563,6 +1566,7 @@ mlx5_validate_action_rss(struct rte_eth_dev *dev,
 					  RTE_FLOW_ERROR_TYPE_ACTION_CONF,
 					  &rss->key_len,
 					  "RSS hash key too large");
+	/*rss指定的队列大于实际队列*/
 	if (rss->queue_num > priv->config.ind_table_max_size)
 		return rte_flow_error_set(error, ENOTSUP,
 					  RTE_FLOW_ERROR_TYPE_ACTION_CONF,
@@ -1798,26 +1802,32 @@ mlx5_flow_validate_attributes(struct rte_eth_dev *dev,
 			      struct rte_flow_error *error)
 {
 	struct mlx5_priv *priv = dev->data->dev_private;
+	/*取设备支持的优先级最大数*/
 	uint32_t priority_max = priv->config.flow_prio - 1;
 
 	if (attributes->group)
+	    /*不支持配置group*/
 		return rte_flow_error_set(error, ENOTSUP,
 					  RTE_FLOW_ERROR_TYPE_ATTR_GROUP,
 					  NULL, "groups is not supported");
 	if (attributes->priority != MLX5_FLOW_LOWEST_PRIO_INDICATOR &&
 	    attributes->priority >= priority_max)
+	    /*如果优先级不为 -1,且优先级大于priority_max,则报错*/
 		return rte_flow_error_set(error, ENOTSUP,
 					  RTE_FLOW_ERROR_TYPE_ATTR_PRIORITY,
 					  NULL, "priority out of range");
 	if (attributes->egress)
+	    /*不支持针对egress进行flow下发*/
 		return rte_flow_error_set(error, ENOTSUP,
 					  RTE_FLOW_ERROR_TYPE_ATTR_EGRESS, NULL,
 					  "egress is not supported");
 	if (attributes->transfer && !priv->config.dv_esw_en)
+	    /*如果未在dv_esw_en方式，则不支持transfer*/
 		return rte_flow_error_set(error, ENOTSUP,
 					  RTE_FLOW_ERROR_TYPE_ATTR_TRANSFER,
 					  NULL, "transfer is not supported");
 	if (!attributes->ingress)
+	    /*必须指明为ingress方向*/
 		return rte_flow_error_set(error, EINVAL,
 					  RTE_FLOW_ERROR_TYPE_ATTR_INGRESS,
 					  NULL,
@@ -2326,6 +2336,7 @@ mlx5_flow_validate_item_udp(const struct rte_flow_item *item,
 				      MLX5_FLOW_LAYER_OUTER_L4;
 	int ret;
 
+	/*target 协议不为udp,报错*/
 	if (target_protocol != 0xff && target_protocol != IPPROTO_UDP)
 		return rte_flow_error_set(error, EINVAL,
 					  RTE_FLOW_ERROR_TYPE_ITEM, item,
@@ -3243,6 +3254,7 @@ flow_get_drv_type(struct rte_eth_dev *dev, const struct rte_flow_attr *attr)
 	enum mlx5_flow_drv_type type = mlx5_flow_os_get_type();
 
 	if (type != MLX5_FLOW_TYPE_MAX)
+	    /*已明确type,直接返回*/
 		return type;
 	/* If no OS specific type - continue with DV/VERBS selection */
 	if (attr->transfer && priv->config.dv_esw_en)
@@ -3521,10 +3533,12 @@ flow_get_rss_action(struct rte_eth_dev *dev,
 	for (; actions->type != RTE_FLOW_ACTION_TYPE_END; actions++) {
 		switch (actions->type) {
 		case RTE_FLOW_ACTION_TYPE_RSS:
+		    /*取rss action的配置情况*/
 			rss = actions->conf;
 			break;
 		case RTE_FLOW_ACTION_TYPE_SAMPLE:
 		{
+		    /*sample中也有rss action方式，取其对应配置*/
 			const struct rte_flow_action_sample *sample =
 								actions->conf;
 			const struct rte_flow_action *act = sample->actions;
@@ -3540,6 +3554,7 @@ flow_get_rss_action(struct rte_eth_dev *dev,
 			struct mlx5_flow_meter_policy *policy;
 			const struct rte_flow_action_meter *mtr = actions->conf;
 
+			/*通过meter id找到对应的meter info*/
 			fm = mlx5_flow_meter_find(priv, mtr->mtr_id, &mtr_idx);
 			if (fm && !fm->def_policy) {
 				policy = mlx5_flow_meter_policy_find(dev,
@@ -3591,6 +3606,7 @@ flow_aso_age_get_by_idx(struct rte_eth_dev *dev, uint32_t age_idx)
 /* maps indirect action to translated direct in some actions array */
 struct mlx5_translated_action_handle {
 	struct rte_flow_action_handle *action; /**< Indirect action handle. */
+	/*在action中的索引*/
 	int index; /**< Index in related array of rte_flow_action. */
 };
 
@@ -3622,36 +3638,46 @@ struct mlx5_translated_action_handle {
  */
 static int
 flow_action_handles_translate(struct rte_eth_dev *dev,
-			      const struct rte_flow_action actions[],
+			      const struct rte_flow_action actions[]/*待转换的action*/,
 			      struct mlx5_translated_action_handle *handle,
-			      int *indir_n,
-			      struct rte_flow_action **translated_actions,
+			      int *indir_n/*出参，indirect action数量*/,
+			      struct rte_flow_action **translated_actions/*转换后的action*/,
 			      struct rte_flow_error *error)
 {
 	struct mlx5_priv *priv = dev->data->dev_private;
 	struct rte_flow_action *translated = NULL;
 	size_t actions_size;
 	int n;
+	/*indirect action数量*/
 	int copied_n = 0;
 	struct mlx5_translated_action_handle *handle_end = NULL;
 
+	/*遍历所有action，将indirect action收集并记录在handle中*/
 	for (n = 0; actions[n].type != RTE_FLOW_ACTION_TYPE_END; n++) {
 		if (actions[n].type != RTE_FLOW_ACTION_TYPE_INDIRECT)
+		    /*不处理非indirect action*/
 			continue;
+
 		if (copied_n == *indir_n) {
 			return rte_flow_error_set
 				(error, EINVAL, RTE_FLOW_ERROR_TYPE_ACTION_NUM,
 				 NULL, "too many shared actions");
 		}
+		/*indirect类型action,其对应格式填充到struct rte_flow_action_handle结构体*/
 		rte_memcpy(&handle[copied_n].action, &actions[n].conf,
 			   sizeof(actions[n].conf));
 		handle[copied_n].index = n;
 		copied_n++;
 	}
-	n++;
+
+	n++;/*action总数*/
+
 	*indir_n = copied_n;
 	if (!copied_n)
+	    /*没有indirect action,退出*/
 		return 0;
+
+	/*申请n个rte_flow_action,做成actions的副本*/
 	actions_size = sizeof(struct rte_flow_action) * n;
 	translated = mlx5_malloc(MLX5_MEM_ZERO, actions_size, 0, SOCKET_ID_ANY);
 	if (!translated) {
@@ -3659,8 +3685,12 @@ flow_action_handles_translate(struct rte_eth_dev *dev,
 		return -ENOMEM;
 	}
 	memcpy(translated, actions, actions_size);
+
+	/*遍历当前复制的indirect action*/
 	for (handle_end = handle + copied_n; handle < handle_end; handle++) {
 		struct mlx5_shared_action_rss *shared_rss;
+		/*handle->action上存储了两部分内容，type(占2bits) + idx(占用30个bits)*/
+		/*这一块格式是mellanox特有的，故需要从中提取出来转换一下。*/
 		uint32_t act_idx = (uint32_t)(uintptr_t)handle->action;
 		uint32_t type = act_idx >> MLX5_INDIRECT_ACTION_TYPE_OFFSET;
 		uint32_t idx = act_idx &
@@ -3701,6 +3731,7 @@ flow_action_handles_translate(struct rte_eth_dev *dev,
 			}
 			/* Fall-through */
 		default:
+		    /*其它不认识的action type*/
 			mlx5_free(translated);
 			return rte_flow_error_set
 				(error, EINVAL, RTE_FLOW_ERROR_TYPE_ACTION,
@@ -3998,8 +4029,9 @@ flow_check_hairpin_split(struct rte_eth_dev *dev,
 			 const struct rte_flow_action actions[])
 {
     //如注释所释，在rx方向不支持encap,故需要将action split成两部分
-	int queue_action = 0;
-	int action_n = 0;
+
+	int queue_action = 0;/*是否为queue action*/
+	int action_n = 0;/*action总数量*/
 	int split = 0;
 	const struct rte_flow_action_queue *queue;
 	const struct rte_flow_action_rss *rss;
@@ -4030,6 +4062,7 @@ flow_check_hairpin_split(struct rte_eth_dev *dev,
 			rss = actions->conf;
 			if (rss == NULL || rss->queue_num == 0)
 				return 0;
+			/*取0号队列hairpin配置*/
 			conf = mlx5_rxq_get_hairpin_conf(dev, rss->queue[0]);
 			if (conf == NULL || conf->tx_explicit != 0)
 				return 0;
@@ -4041,6 +4074,7 @@ flow_check_hairpin_split(struct rte_eth_dev *dev,
 		case RTE_FLOW_ACTION_TYPE_OF_PUSH_VLAN:
 		case RTE_FLOW_ACTION_TYPE_OF_SET_VLAN_VID:
 		case RTE_FLOW_ACTION_TYPE_OF_SET_VLAN_PCP:
+		    /*需要进行报文修改，故action需要split*/
 			split++;
 			action_n++;
 			break;
@@ -6163,10 +6197,12 @@ flow_tunnel_from_rule(const struct mlx5_flow *flow)
 static int
 flow_rss_workspace_adjust(struct mlx5_flow_workspace *wks,
 			  struct mlx5_flow_rss_desc *rss_desc,
-			  uint32_t nrssq_num)
+			  uint32_t nrssq_num/*rss队列数目*/)
 {
 	if (likely(nrssq_num <= wks->rssq_num))
+	    /*队列数目小于wks->rssq_num，不变更*/
 		return 0;
+	/*为queue申请内存*/
 	rss_desc->queue = realloc(rss_desc->queue,
 			  sizeof(*rss_desc->queue) * RTE_ALIGN(nrssq_num, 2));
 	if (!rss_desc->queue) {
@@ -6203,9 +6239,9 @@ flow_rss_workspace_adjust(struct mlx5_flow_workspace *wks,
  */
 static uint32_t
 flow_list_create(struct rte_eth_dev *dev, uint32_t *list,
-		 const struct rte_flow_attr *attr,
-		 const struct rte_flow_item items[],
-		 const struct rte_flow_action original_actions[],
+		 const struct rte_flow_attr *attr/*flow属性*/,
+		 const struct rte_flow_item items[]/*flow匹配项*/,
+		 const struct rte_flow_action original_actions[]/*flow的action*/,
 		 bool external, struct rte_flow_error *error)
 {
 	struct mlx5_priv *priv = dev->data->dev_private;
@@ -6242,6 +6278,7 @@ flow_list_create(struct rte_eth_dev *dev, uint32_t *list,
 	struct rte_flow_action *translated_actions = NULL;
 	struct mlx5_flow_tunnel *tunnel;
 	struct tunnel_default_miss_ctx default_miss_ctx = { 0, };
+	/*取当前cpu的上下文*/
 	struct mlx5_flow_workspace *wks = mlx5_flow_push_thread_workspace();
 	struct mlx5_flow_split_info flow_split_info = {
 		.external = !!external,
@@ -6255,7 +6292,7 @@ flow_list_create(struct rte_eth_dev *dev, uint32_t *list,
 
 	MLX5_ASSERT(wks);
 	rss_desc = &wks->rss_desc;
-	ret = flow_action_handles_translate(dev, original_actions,
+	ret = flow_action_handles_translate(dev, original_actions/*flow对应的actions*/,
 					    indir_actions,
 					    &indir_actions_n,
 					    &translated_actions, error);
@@ -6271,6 +6308,7 @@ flow_list_create(struct rte_eth_dev *dev, uint32_t *list,
 				external, hairpin_flow, error);
 	if (ret < 0)
 		goto error_before_hairpin_split;
+	/*申请一个flow*/
 	flow = mlx5_ipool_zmalloc(priv->sh->ipool[MLX5_IPOOL_RTE_FLOW], &idx);
 	if (!flow) {
 		rte_errno = ENOMEM;
@@ -6290,6 +6328,7 @@ flow_list_create(struct rte_eth_dev *dev, uint32_t *list,
 		p_actions_rx = actions_rx.actions;
 	}
 	flow_split_info.flow_idx = idx;
+	/*flow的驱动类型*/
 	flow->drv_type = flow_get_drv_type(dev, attr);
 	MLX5_ASSERT(flow->drv_type > MLX5_FLOW_TYPE_MIN &&
 		    flow->drv_type < MLX5_FLOW_TYPE_MAX);
@@ -6318,6 +6357,7 @@ flow_list_create(struct rte_eth_dev *dev, uint32_t *list,
 					   mlx5_support_expansion, graph_root);
 		MLX5_ASSERT(ret > 0 &&
 		       (unsigned int)ret < sizeof(expand_buffer.buffer));
+		/*显示pattern*/
 		if (rte_log_can_log(mlx5_logtype, RTE_LOG_DEBUG)) {
 			for (i = 0; i < buf->entries; ++i)
 				mlx5_dbg__print_pattern(buf->entry[i].pattern);
@@ -6500,16 +6540,20 @@ mlx5_flow_create_esw_table_zero_flow(struct rte_eth_dev *dev)
 int
 mlx5_flow_validate(struct rte_eth_dev *dev,
 		   const struct rte_flow_attr *attr,
-		   const struct rte_flow_item items[],
-		   const struct rte_flow_action original_actions[],
+		   const struct rte_flow_item items[]/*匹配字段*/,
+		   const struct rte_flow_action original_actions[]/*配置的flow action情况*/,
 		   struct rte_flow_error *error)
 {
 	int hairpin_flow;
+	/*记录indirect actions*/
 	struct mlx5_translated_action_handle
 		indir_actions[MLX5_MAX_INDIRECT_ACTIONS];
+	/*最大容许3跳*/
 	int indir_actions_n = MLX5_MAX_INDIRECT_ACTIONS;
 	const struct rte_flow_action *actions;
+	/*记录转换后的action*/
 	struct rte_flow_action *translated_actions = NULL;
+	/*针对indirect类型的flow，mellanox有一些自已的私有结构,这里翻译这些action*/
 	int ret = flow_action_handles_translate(dev, original_actions,
 						indir_actions,
 						&indir_actions_n,
@@ -6517,7 +6561,9 @@ mlx5_flow_validate(struct rte_eth_dev *dev,
 
 	if (ret)
 		return ret;
+	/*确定用哪种action*/
 	actions = translated_actions ? translated_actions : original_actions;
+	/*split之后的action数量*/
 	hairpin_flow = flow_check_hairpin_split(dev, attr, actions);
 	ret = flow_drv_validate(dev, attr, items, actions,
 				true, hairpin_flow, error);
@@ -6546,6 +6592,7 @@ mlx5_flow_create(struct rte_eth_dev *dev,
 	 * are not affected.
 	 */
 	if (unlikely(!dev->data->dev_started)) {
+	    /*添加flow时设备必须是up的*/
 		DRV_LOG(DEBUG, "port %u is not started when "
 			"inserting a flow", dev->data->port_id);
 		rte_flow_error_set(error, ENODEV,
@@ -6579,7 +6626,7 @@ flow_list_destroy(struct rte_eth_dev *dev, uint32_t *list,
 {
 	struct mlx5_priv *priv = dev->data->dev_private;
 	struct rte_flow *flow = mlx5_ipool_get(priv->sh->ipool
-					       [MLX5_IPOOL_RTE_FLOW], flow_idx);
+					       [MLX5_IPOOL_RTE_FLOW], flow_idx/*flow索引*/);
 
 	if (!flow)
 		return;
@@ -6623,6 +6670,7 @@ mlx5_flow_list_flush(struct rte_eth_dev *dev, uint32_t *list, bool active)
 {
 	uint32_t num_flushed = 0;
 
+	/*遍历所有flow,每个flow执行destroy*/
 	while (*list) {
 		flow_list_destroy(dev, list, *list);
 		num_flushed++;
@@ -6741,14 +6789,18 @@ mlx5_flow_push_thread_workspace(void)
 
 	curr = mlx5_flow_os_get_specific_workspace();
 	if (!curr) {
+	    /*没有curr,申请数据*/
 		data = flow_alloc_thread_workspace();
 		if (!data)
 			return NULL;
 	} else if (!curr->inuse) {
+	    /*没有使用，则复用此data*/
 		data = curr;
 	} else if (curr->next) {
+	    /*在使用过程中，有next,则使用next*/
 		data = curr->next;
 	} else {
+	    /*curr->next没有赋值，申请一个指向curr->next个*/
 		data = flow_alloc_thread_workspace();
 		if (!data)
 			return NULL;

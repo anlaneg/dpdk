@@ -81,7 +81,7 @@ struct bond_ethdev_slave_ports {
 };
 
 struct bond_slave_details {
-	uint16_t port_id;
+	uint16_t port_id;/*成员port id*/
 
 	uint8_t link_status_poll_enabled;
 	uint8_t link_status_wait_to_complete;

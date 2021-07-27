@@ -78,8 +78,11 @@ extern "C" {
  */
 struct rte_flow_attr {
 	uint32_t group; /**< Priority group. */
+	/*指明规则在group中的优先级*/
 	uint32_t priority; /**< Rule priority level within group. */
+	/*标记规则应用到ingress*/
 	uint32_t ingress:1; /**< Rule applies to ingress traffic. */
+	/*标记规则应用到egress*/
 	uint32_t egress:1; /**< Rule applies to egress traffic. */
 	/**
 	 * Instead of simply matching the properties of traffic as it would
@@ -138,7 +141,7 @@ enum rte_flow_item_type {
 	 *
 	 * No associated specification structure.
 	 */
-	RTE_FLOW_ITEM_TYPE_VOID,
+	RTE_FLOW_ITEM_TYPE_VOID,/*占位type,不关联结构体*/
 
 	/**
 	 * [META]
@@ -1872,7 +1875,7 @@ enum rte_flow_action_type {
 	 *
 	 * No associated configuration structure.
 	 */
-	RTE_FLOW_ACTION_TYPE_END,
+	RTE_FLOW_ACTION_TYPE_END,/*标记action结束*/
 
 	/**
 	 * Used as a placeholder for convenience. It is ignored and simply
@@ -1920,7 +1923,7 @@ enum rte_flow_action_type {
 	 *
 	 * See struct rte_flow_action_queue.
 	 */
-	RTE_FLOW_ACTION_TYPE_QUEUE,
+	RTE_FLOW_ACTION_TYPE_QUEUE,/*设置报文进指定队列*/
 
 	/**
 	 * Drops packets.
@@ -1949,7 +1952,7 @@ enum rte_flow_action_type {
 	 *
 	 * See struct rte_flow_action_rss.
 	 */
-	RTE_FLOW_ACTION_TYPE_RSS,
+	RTE_FLOW_ACTION_TYPE_RSS,/*按rss hash将报文送到指定一组队列*/
 
 	/**
 	 * Directs matching traffic to the physical function (PF) of the

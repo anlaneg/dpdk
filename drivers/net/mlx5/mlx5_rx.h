@@ -163,6 +163,7 @@ struct mlx5_rxq_ctrl {
 	uint32_t refcnt; /* Reference counter. */
 	struct mlx5_rxq_obj *obj; /* Verbs/DevX elements. */
 	struct mlx5_priv *priv; /* Back pointer to private data. */
+	/*rx队列类型,标准rx,hairping方式rx队列*/
 	enum mlx5_rxq_type type; /* Rxq type. */
 	unsigned int socket; /* CPU socket ID for allocations. */
 	unsigned int irq:1; /* Whether IRQ is enabled. */
@@ -170,6 +171,7 @@ struct mlx5_rxq_ctrl {
 	uint32_t flow_tunnels_n[MLX5_FLOW_TUNNEL]; /* Tunnels counters. */
 	uint32_t wqn; /* WQ number. */
 	uint16_t dump_file_n; /* Number of dump files. */
+	/*hairpin方式rx队列的配置*/
 	struct rte_eth_hairpin_conf hairpin_conf; /* Hairpin configuration. */
 	uint32_t hairpin_status; /* Hairpin binding status. */
 };

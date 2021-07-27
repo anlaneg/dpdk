@@ -7193,6 +7193,7 @@ flow_dv_validate(struct rte_eth_dev *dev, const struct rte_flow_attr *attr,
 			++actions_n;
 			break;
 		case RTE_FLOW_ACTION_TYPE_RSS:
+		    /*rss action校验*/
 			rss = actions->conf;
 			ret = mlx5_flow_validate_action_rss(actions,
 							    action_flags, dev,

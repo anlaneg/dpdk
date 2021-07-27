@@ -155,6 +155,7 @@ __rte_thread_init(unsigned int lcore_id, rte_cpuset_t *cpuset)
 
 	thread_update_affinity(cpuset);
 
+	/*为此thread申请trace mem*/
 	__rte_trace_mem_per_thread_alloc();
 }
 

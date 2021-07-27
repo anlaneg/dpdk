@@ -1262,13 +1262,16 @@ flow_verbs_validate(struct rte_eth_dev *dev,
 		return -1;
 	ret = mlx5_flow_validate_attributes(dev, attr, error);
 	if (ret < 0)
+	    /*flow 属性指定有误，报错*/
 		return ret;
+
+	/*遍历所有flow属性*/
 	for (; items->type != RTE_FLOW_ITEM_TYPE_END; items++) {
 		int tunnel = !!(item_flags & MLX5_FLOW_LAYER_TUNNEL);
 		int ret = 0;
 
 		switch (items->type) {
-		case RTE_FLOW_ITEM_TYPE_VOID:
+		case RTE_FLOW_ITEM_TYPE_VOID:/*占位action*/
 			break;
 		case RTE_FLOW_ITEM_TYPE_ETH:
 			ret = mlx5_flow_validate_item_eth(items, item_flags,

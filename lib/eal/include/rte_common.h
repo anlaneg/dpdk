@@ -178,6 +178,7 @@ typedef uint16_t unaligned_uint16_t;
  */
 #ifndef RTE_INIT_PRIO /* Allow to override from EAL */
 #define RTE_INIT_PRIO(func, prio) \
+    /*定义func,并指定其在main前调用，且优先级高*/\
 static void __attribute__((constructor(RTE_PRIO(prio)), used)) func(void)
 #endif
 

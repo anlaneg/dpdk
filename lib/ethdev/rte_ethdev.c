@@ -351,10 +351,11 @@ rte_eth_iterator_cleanup(struct rte_dev_iterator *iter)
 	memset(iter, 0, sizeof(*iter));
 }
 
+/*找下一个port*/
 uint16_t
 rte_eth_find_next(uint16_t port_id)
 {
-    /*跳过未使用port_id*/
+	/*跳过未使用port_id*/
 	while (port_id < RTE_MAX_ETHPORTS &&
 			rte_eth_devices[port_id].state == RTE_ETH_DEV_UNUSED)
 		port_id++;
@@ -371,6 +372,7 @@ rte_eth_find_next(uint16_t port_id)
  * Note: RTE_ETH_FOREACH_DEV is different because filtering owned ports.
  */
 #define RTE_ETH_FOREACH_VALID_DEV(port_id) \
+	/*遍历所有有效的port*/\
 	for (port_id = rte_eth_find_next(0); \
 	     port_id < RTE_MAX_ETHPORTS; \
 	     port_id = rte_eth_find_next(port_id + 1))
@@ -814,6 +816,7 @@ rte_eth_dev_owner_get(const uint16_t port_id, struct rte_eth_dev_owner *owner)
 	return 0;
 }
 
+/*获取指定设备对应的numa node*/
 int
 rte_eth_dev_socket_id(uint16_t port_id)
 {
@@ -842,6 +845,7 @@ rte_eth_dev_count_avail(void)
 	return count;
 }
 
+/*获取当前系统中所有eth设备数目*/
 uint16_t
 rte_eth_dev_count_total(void)
 {
@@ -853,6 +857,7 @@ rte_eth_dev_count_total(void)
 	return count;
 }
 
+/*通过port_id获取设备名称*/
 int
 rte_eth_dev_get_name_by_port(uint16_t port_id, char *name)
 {
@@ -873,6 +878,7 @@ rte_eth_dev_get_name_by_port(uint16_t port_id, char *name)
 	return 0;
 }
 
+/*通过接口名称获取接口port_id*/
 int
 rte_eth_dev_get_port_by_name(const char *name, uint16_t *port_id)
 {
@@ -917,6 +923,7 @@ eth_dev_rx_queue_config(struct rte_eth_dev *dev, uint16_t nb_queues)
 	unsigned i;
 
 	if (dev->data->rx_queues == NULL && nb_queues != 0) { /* first time configuration */
+		/*申请nb_queues个rx_queues*/
 		dev->data->rx_queues = rte_zmalloc("ethdev->rx_queues",
 				sizeof(dev->data->rx_queues[0]) * nb_queues,
 				RTE_CACHE_LINE_SIZE);
@@ -929,12 +936,15 @@ eth_dev_rx_queue_config(struct rte_eth_dev *dev, uint16_t nb_queues)
 
 		rxq = dev->data->rx_queues;
 
+		/*将多余rx queue释放*/
 		for (i = nb_queues; i < old_nb_queues; i++)
 			(*dev->dev_ops->rx_queue_release)(rxq[i]);
+		/*如有必要，重新分配rxq*/
 		rxq = rte_realloc(rxq, sizeof(rxq[0]) * nb_queues,
 				RTE_CACHE_LINE_SIZE);
 		if (rxq == NULL)
 			return -(ENOMEM);
+		/*初始化新增的queue,将其指针定为0*/
 		if (nb_queues > old_nb_queues) {
 			uint16_t new_qs = nb_queues - old_nb_queues;
 
@@ -945,6 +955,7 @@ eth_dev_rx_queue_config(struct rte_eth_dev *dev, uint16_t nb_queues)
 		dev->data->rx_queues = rxq;
 
 	} else if (dev->data->rx_queues != NULL && nb_queues == 0) {
+		/*释放所有rx queue*/
 		RTE_FUNC_PTR_OR_ERR_RET(*dev->dev_ops->rx_queue_release, -ENOTSUP);
 
 		rxq = dev->data->rx_queues;
@@ -959,6 +970,7 @@ eth_dev_rx_queue_config(struct rte_eth_dev *dev, uint16_t nb_queues)
 	return 0;
 }
 
+/*检查dev设备rx_queue_id对队是否存在*/
 static int
 eth_dev_validate_rx_queue(const struct rte_eth_dev *dev, uint16_t rx_queue_id)
 {
@@ -983,6 +995,7 @@ eth_dev_validate_rx_queue(const struct rte_eth_dev *dev, uint16_t rx_queue_id)
 	return 0;
 }
 
+/*检查dev设备tx_queue_id对队是否存在*/
 static int
 eth_dev_validate_tx_queue(const struct rte_eth_dev *dev, uint16_t tx_queue_id)
 {
@@ -1016,6 +1029,7 @@ rte_eth_dev_rx_queue_start(uint16_t port_id, uint16_t rx_queue_id)
 	RTE_ETH_VALID_PORTID_OR_ERR_RET(port_id, -ENODEV);
 	dev = &rte_eth_devices[port_id];
 
+	/*设备必须start*/
 	if (!dev->data->dev_started) {
 		RTE_ETHDEV_LOG(ERR,
 			"Port %u must be started before start any queue\n",
@@ -1029,6 +1043,7 @@ rte_eth_dev_rx_queue_start(uint16_t port_id, uint16_t rx_queue_id)
 
 	RTE_FUNC_PTR_OR_ERR_RET(*dev->dev_ops->rx_queue_start, -ENOTSUP);
 
+	/*针对hairpin队列不容许start*/
 	if (rte_eth_dev_is_rx_hairpin_queue(dev, rx_queue_id)) {
 		RTE_ETHDEV_LOG(INFO,
 			"Can't start Rx hairpin queue %"PRIu16" of device with port_id=%"PRIu16"\n",
@@ -1036,6 +1051,7 @@ rte_eth_dev_rx_queue_start(uint16_t port_id, uint16_t rx_queue_id)
 		return -EINVAL;
 	}
 
+	/*队列状态不为stop,故没必要再up*/
 	if (dev->data->rx_queue_state[rx_queue_id] != RTE_ETH_QUEUE_STATE_STOPPED) {
 		RTE_ETHDEV_LOG(INFO,
 			"Queue %"PRIu16" of device with port_id=%"PRIu16" already started\n",
@@ -1043,6 +1059,7 @@ rte_eth_dev_rx_queue_start(uint16_t port_id, uint16_t rx_queue_id)
 		return 0;
 	}
 
+	/*通过回调start指定队列*/
 	return eth_err(port_id, dev->dev_ops->rx_queue_start(dev, rx_queue_id));
 }
 
@@ -1061,6 +1078,7 @@ rte_eth_dev_rx_queue_stop(uint16_t port_id, uint16_t rx_queue_id)
 
 	RTE_FUNC_PTR_OR_ERR_RET(*dev->dev_ops->rx_queue_stop, -ENOTSUP);
 
+	/*不容许hairpin队列stop*/
 	if (rte_eth_dev_is_rx_hairpin_queue(dev, rx_queue_id)) {
 		RTE_ETHDEV_LOG(INFO,
 			"Can't stop Rx hairpin queue %"PRIu16" of device with port_id=%"PRIu16"\n",
@@ -1068,6 +1086,7 @@ rte_eth_dev_rx_queue_stop(uint16_t port_id, uint16_t rx_queue_id)
 		return -EINVAL;
 	}
 
+	/*队列已经STOP*/
 	if (dev->data->rx_queue_state[rx_queue_id] == RTE_ETH_QUEUE_STATE_STOPPED) {
 		RTE_ETHDEV_LOG(INFO,
 			"Queue %"PRIu16" of device with port_id=%"PRIu16" already stopped\n",
@@ -1075,6 +1094,7 @@ rte_eth_dev_rx_queue_stop(uint16_t port_id, uint16_t rx_queue_id)
 		return 0;
 	}
 
+	/*通过回调完成队列stop*/
 	return eth_err(port_id, dev->dev_ops->rx_queue_stop(dev, rx_queue_id));
 }
 
@@ -1117,6 +1137,7 @@ rte_eth_dev_tx_queue_start(uint16_t port_id, uint16_t tx_queue_id)
 	return eth_err(port_id, dev->dev_ops->tx_queue_start(dev, tx_queue_id));
 }
 
+/*停止指定tx队列*/
 int
 rte_eth_dev_tx_queue_stop(uint16_t port_id, uint16_t tx_queue_id)
 {
@@ -1190,6 +1211,7 @@ eth_dev_tx_queue_config(struct rte_eth_dev *dev, uint16_t nb_queues)
 
 		txq = dev->data->tx_queues;
 
+		/*释放多余的tx queue*/
 		for (i = nb_queues; i < old_nb_queues; i++)
 			(*dev->dev_ops->tx_queue_release)(txq[i]);
 
@@ -1200,6 +1222,7 @@ eth_dev_tx_queue_config(struct rte_eth_dev *dev, uint16_t nb_queues)
 	return 0;
 }
 
+/*返回speed*/
 uint32_t
 rte_eth_speed_bitflag(uint32_t speed, int duplex)
 {
@@ -1394,7 +1417,7 @@ rte_eth_dev_configure(uint16_t port_id, uint16_t nb_rx_q, uint16_t nb_tx_q,
 	 * rte_eth_dev_info_get() requires dev_conf, copy it before dev_info get
 	 */
 	if (dev_conf != &dev->data->dev_conf)
-	    /*非相同指针，完成请求配置的填充*/
+		/*非相同指针，完成请求配置的填充*/
 		memcpy(&dev->data->dev_conf, dev_conf,
 		       sizeof(dev->data->dev_conf));
 
@@ -1427,6 +1450,7 @@ rte_eth_dev_configure(uint16_t port_id, uint16_t nb_rx_q, uint16_t nb_tx_q,
 			nb_tx_q = RTE_ETH_DEV_FALLBACK_TX_NBQUEUES;
 	}
 
+	/*rx队列过大*/
 	if (nb_rx_q > RTE_MAX_QUEUES_PER_PORT) {
 		RTE_ETHDEV_LOG(ERR,
 			"Number of RX queues requested (%u) is greater than max supported(%d)\n",
@@ -1580,7 +1604,7 @@ rte_eth_dev_configure(uint16_t port_id, uint16_t nb_rx_q, uint16_t nb_tx_q,
 	/*
 	 * Setup new number of RX/TX queues and reconfigure device.
 	 */
-	diag = eth_dev_rx_queue_config(dev, nb_rx_q);
+	diag = eth_dev_rx_queue_config(dev, nb_rx_q);/*rx队列设置*/
 	if (diag != 0) {
 		RTE_ETHDEV_LOG(ERR,
 			"Port%u eth_dev_rx_queue_config = %d\n",
@@ -1589,7 +1613,7 @@ rte_eth_dev_configure(uint16_t port_id, uint16_t nb_rx_q, uint16_t nb_tx_q,
 		goto rollback;
 	}
 
-	diag = eth_dev_tx_queue_config(dev, nb_tx_q);
+	diag = eth_dev_tx_queue_config(dev, nb_tx_q);/*tx队列设置*/
 	if (diag != 0) {
 		RTE_ETHDEV_LOG(ERR,
 			"Port%u eth_dev_tx_queue_config = %d\n",
@@ -1836,6 +1860,7 @@ rte_eth_dev_start(uint16_t port_id)
 	return 0;
 }
 
+/*停止指定设备*/
 int
 rte_eth_dev_stop(uint16_t port_id)
 {
@@ -1861,6 +1886,7 @@ rte_eth_dev_stop(uint16_t port_id)
 	return ret;
 }
 
+/*指定port_id,并设置link up函数*/
 int
 rte_eth_dev_set_link_up(uint16_t port_id)
 {

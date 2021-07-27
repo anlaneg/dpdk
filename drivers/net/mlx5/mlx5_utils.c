@@ -486,6 +486,7 @@ mlx5_ipool_get(struct mlx5_indexed_pool *pool, uint32_t idx)
 	uint32_t entry_idx;
 
 	if (!idx)
+	    /*如果idx为0，则返回NULL*/
 		return NULL;
 	idx -= 1;
 	mlx5_ipool_lock(pool);
@@ -500,6 +501,7 @@ mlx5_ipool_get(struct mlx5_indexed_pool *pool, uint32_t idx)
 	if (trunk_idx != trunk->idx ||
 	    rte_bitmap_get(trunk->bmp, entry_idx))
 		goto out;
+	/*取idx号元素*/
 	p = &trunk->data[entry_idx * pool->cfg.size];
 out:
 	mlx5_ipool_unlock(pool);

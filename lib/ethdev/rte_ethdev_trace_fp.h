@@ -17,6 +17,19 @@ extern "C" {
 
 #include <rte_trace_point.h>
 
+/*定义trace函数rte_ethdev_trace_rx_burst，展开可看到，函数将被优化
+ * extern rte_trace_point_t __rte_ethdev_trace_rx_burst; \
+static inline __attribute__((always_inline)) void \
+rte_ethdev_trace_rx_burst  (uint16_t port_id, uint16_t queue_id,
+        void **pkt_tbl, uint16_t nb_rx) \
+{ \
+    (void)(&__rte_ethdev_trace_rx_burst); \
+    (void)(port_id);
+    (void)(queue_id);
+    (void)(pkt_tbl);
+    (void)(nb_rx); \
+}
+ * */
 RTE_TRACE_POINT_FP(
 	rte_ethdev_trace_rx_burst,
 	RTE_TRACE_POINT_ARGS(uint16_t port_id, uint16_t queue_id,

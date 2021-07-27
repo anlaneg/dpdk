@@ -1838,6 +1838,7 @@ struct rte_eth_dev_owner {
 };
 
 /** PMD supports thread-safe flow operations */
+/*是否需要多线程加锁操作*/
 #define RTE_ETH_DEV_FLOW_OPS_THREAD_SAFE  0x0001
 /** Device supports link state interrupt */
 #define RTE_ETH_DEV_INTR_LSC     0x0002
@@ -5017,6 +5018,7 @@ rte_eth_rx_burst(uint16_t port_id, uint16_t queue_id,
 	}
 #endif
 
+	/*触发trace函数*/
 	rte_ethdev_trace_rx_burst(port_id, queue_id, (void **)rx_pkts, nb_rx);
 	return nb_rx;
 }

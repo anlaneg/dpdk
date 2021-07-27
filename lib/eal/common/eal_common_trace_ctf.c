@@ -28,6 +28,7 @@ metadata_printf(char **str, const char *fmt, ...)
 	return rc;
 }
 
+/*将str起始的长度为rc的内容，复制到meta指向的内存空间里*/
 static int
 meta_copy(char **meta, int *offset, char *str, int rc)
 {
@@ -63,6 +64,7 @@ meta_data_type_emit(char **meta, int *offset)
 	char *str = NULL;
 	int rc;
 
+	/*格式化输出到str中*/
 	rc = metadata_printf(&str,
 		"/* CTF 1.8 */\n"
 		"typealias integer {size = 8; base = x;}:= uint8_t;\n"
@@ -248,14 +250,17 @@ trace_metadata_create(void)
 	int rc, offset = 0;
 	char *meta = NULL;
 
+	/*类型串*/
 	rc = meta_data_type_emit(&meta, &offset);
 	if (rc < 0)
 		goto fail;
 
+	/*trace定义*/
 	rc = meta_header_emit(&meta, &offset);
 	if (rc < 0)
 		goto fail;
 
+	/*合入env串*/
 	rc = meta_env_emit(&meta, &offset);
 	if (rc < 0)
 		goto fail;
@@ -279,14 +284,17 @@ trace_metadata_create(void)
 	if (rc < 0)
 		goto fail;
 
+	/*合入stream*/
 	rc = meta_stream_emit(&meta, &offset);
 	if (rc < 0)
 		goto fail;
 
+	/*遍历每个trace point,合入event*/
 	STAILQ_FOREACH(tp, tp_list, next)
 		if (meta_event_emit(&meta, &offset, tp) < 0)
 			goto fail;
 
+	/*将合成的串给ctf_meta*/
 	trace->ctf_meta = meta;
 	return 0;
 
@@ -371,6 +379,7 @@ rte_trace_metadata_dump(FILE *f)
 		__atomic_store_n(&trace->ctf_fixup_done, 1, __ATOMIC_SEQ_CST);
 	}
 
+	/*将ctf_meta显示到文件*/
 	rc = fprintf(f, "%s", ctf_meta);
 	return rc < 0 ? rc : 0;
 }

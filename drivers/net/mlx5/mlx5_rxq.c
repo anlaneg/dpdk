@@ -1802,10 +1802,12 @@ mlx5_rxq_get_type(struct rte_eth_dev *dev, uint16_t idx)
 const struct rte_eth_hairpin_conf *
 mlx5_rxq_get_hairpin_conf(struct rte_eth_dev *dev, uint16_t idx)
 {
+    /*检查此设备的idx号队列上是否配置了hairpin*/
 	struct mlx5_priv *priv = dev->data->dev_private;
 	struct mlx5_rxq_ctrl *rxq_ctrl = NULL;
 
 	if (idx < priv->rxqs_n && (*priv->rxqs)[idx]) {
+	    /*idx小于当前rx队列数，且idx号rx队列有值，取此队列*/
 		rxq_ctrl = container_of((*priv->rxqs)[idx],
 					struct mlx5_rxq_ctrl,
 					rxq);

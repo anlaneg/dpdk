@@ -15,10 +15,11 @@
 RTE_DECLARE_PER_LCORE(volatile int, trace_point_sz);
 
 #define RTE_TRACE_POINT_REGISTER(trace, name) \
+    /*定义trace point*/\
 rte_trace_point_t __attribute__((section("__rte_trace_point"))) __##trace; \
 RTE_INIT(trace##_init) \
 { \
-	__rte_trace_point_register(&__##trace, RTE_STR(name), \
+	__rte_trace_point_register(&__##trace/*handle名称为__XX*/, RTE_STR(name), \
 		(void (*)(void)) trace); \
 }
 
@@ -30,7 +31,9 @@ RTE_INIT(trace##_init) \
 
 #define __rte_trace_point_emit(in, type) \
 do { \
+    /*断言，类型必须相等*/\
 	RTE_BUILD_BUG_ON(sizeof(type) != sizeof(typeof(in))); \
+	/*调用emit field函数，忽略传入的参数*/\
 	__rte_trace_point_emit_field(sizeof(type), RTE_STR(in), \
 		RTE_STR(type)); \
 } while (0)

@@ -1359,9 +1359,13 @@ struct mlx5_priv {
 	int32_t pf_bond; /* >=0, representor owner PF index in bonding. */
 	unsigned int if_index; /* Associated kernel network device index. */
 	/* RX/TX queues. */
+	/*rx队列大小*/
 	unsigned int rxqs_n; /* RX queues array size. */
+	/*tx队列大小*/
 	unsigned int txqs_n; /* TX queues array size. */
+	/*rx队列，格式为struct mlx5_rxq_ctrl*/
 	struct mlx5_rxq_data *(*rxqs)[]; /* RX queues. */
+	/*tx队列*/
 	struct mlx5_txq_data *(*txqs)[]; /* TX queues. */
 	struct rte_mempool *mprq_mp; /* Mempool for Multi-Packet RQ. */
 	struct rte_eth_rss_conf rss_conf; /* RSS configuration. */

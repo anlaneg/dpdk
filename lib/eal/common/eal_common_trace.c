@@ -301,6 +301,7 @@ rte_trace_dump(FILE *f)
 		trace_point_dump(f, tp);
 }
 
+/*为trace申请内存*/
 void
 __rte_trace_mem_per_thread_alloc(void)
 {
@@ -308,6 +309,7 @@ __rte_trace_mem_per_thread_alloc(void)
 	struct __rte_trace_header *header;
 	uint32_t count;
 
+	/*trace未开启，退出*/
 	if (!rte_trace_is_enabled())
 		return;
 
@@ -451,8 +453,9 @@ __rte_trace_point_emit_field(size_t sz, const char *in, const char *datatype)
 	RTE_PER_LCORE(ctf_field) = field;
 }
 
+/*trace point注册*/
 int
-__rte_trace_point_register(rte_trace_point_t *handle, const char *name,
+__rte_trace_point_register(rte_trace_point_t *handle/*出参，tracepoint取值*/, const char *name/*对应的名称*/,
 		void (*register_fn)(void))
 {
 	struct trace_point *tp;
@@ -467,8 +470,9 @@ __rte_trace_point_register(rte_trace_point_t *handle, const char *name,
 
 	/* Check the size of the trace point object */
 	RTE_PER_LCORE(trace_point_sz) = 0;
-	register_fn();
+	register_fn();/*触发注册函数*/
 	if (RTE_PER_LCORE(trace_point_sz) == 0) {
+	    /*注册函数必须变更trace_point_sz*/
 		trace_err("missing rte_trace_emit_header() in register fn");
 		rte_errno = EBADF;
 		goto fail;
@@ -476,6 +480,7 @@ __rte_trace_point_register(rte_trace_point_t *handle, const char *name,
 
 	/* Is size overflowed */
 	if (RTE_PER_LCORE(trace_point_sz) > UINT16_MAX) {
+	    /*注册函数变更trace_point_sz不得大于UINT16_MAX*/
 		trace_err("trace point size overflowed");
 		rte_errno = ENOSPC;
 		goto fail;
@@ -483,6 +488,7 @@ __rte_trace_point_register(rte_trace_point_t *handle, const char *name,
 
 	/* Are we running out of space to store trace points? */
 	if (trace.nb_trace_points > UINT16_MAX) {
+	    /*trace数目不得超过UINT16_MAX*/
 		trace_err("trace point exceeds the max count");
 		rte_errno = ENOSPC;
 		goto fail;

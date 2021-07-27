@@ -21,12 +21,14 @@ rte_thread_key_create(rte_thread_key *key, void (*destructor)(void *))
 {
 	int err;
 
+	/*申请eal_tls_key*/
 	*key = malloc(sizeof(**key));
 	if ((*key) == NULL) {
 		RTE_LOG(DEBUG, EAL, "Cannot allocate TLS key.\n");
 		rte_errno = ENOMEM;
 		return -1;
 	}
+	/*创建key,并指定destructor函数*/
 	err = pthread_key_create(&((*key)->thread_index), destructor);
 	if (err) {
 		RTE_LOG(DEBUG, EAL, "pthread_key_create failed: %s\n",
@@ -80,6 +82,7 @@ rte_thread_value_set(rte_thread_key key, const void *value)
 	return 0;
 }
 
+/*获取当前线程tls*/
 void *
 rte_thread_value_get(rte_thread_key key)
 {

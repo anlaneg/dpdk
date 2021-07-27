@@ -41,11 +41,13 @@ trace_entry_compare(const char *name)
 	struct trace_point *tp;
 	int count = 0;
 
+	/*遍历检查tp中是否包含指定name*/
 	STAILQ_FOREACH(tp, tp_list, next) {
 		if (strncmp(tp->name, name, TRACE_POINT_NAME_SIZE) == 0)
 			count++;
 		if (count > 1) {
 			trace_err("found duplicate entry %s", name);
+			/*已存在多个trace*/
 			rte_errno = EEXIST;
 			return true;
 		}
@@ -53,6 +55,7 @@ trace_entry_compare(const char *name)
 	return false;
 }
 
+/*检查tp_list表中是否有重复的实体*/
 bool
 trace_has_duplicate_entry(void)
 {
@@ -81,6 +84,7 @@ trace_uuid_generate(void)
 		sz_total += sz;
 	}
 
+	/*生成trace的uuid*/
 	rte_uuid_t uuid = RTE_UUID_INIT(sz_total, trace->nb_trace_points,
 		0x4370, 0x8f50, 0x222ddd514176ULL);
 	rte_uuid_copy(trace->uuid, uuid);
@@ -203,6 +207,7 @@ trace_bufsz_args_apply(void)
 	struct trace *trace = trace_obj_get();
 
 	if (trace->buff_len == 0)
+	    /*默认1M*/
 		trace->buff_len = 1024 * 1024; /* 1MB */
 }
 
@@ -404,6 +409,7 @@ trace_mem_save(struct trace *trace, struct __rte_trace_header *hdr,
 	FILE *f;
 	int rc;
 
+	/*在trace目录下生成文件*/
 	rc = snprintf(file_name, PATH_MAX, "%s/channel0_%d", trace->dir, cnt);
 	if (rc < 0)
 		return rc;
@@ -412,6 +418,7 @@ trace_mem_save(struct trace *trace, struct __rte_trace_header *hdr,
 	if (f == NULL)
 		return -errno;
 
+	/*写入stream header*/
 	rc = fwrite(&hdr->stream_header, trace_file_sz(hdr), 1, f);
 	rc = (rc == 1) ?  0 : -EACCES;
 

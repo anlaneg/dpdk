@@ -1907,12 +1907,14 @@ port_flow_create(portid_t port_id,
 		 const struct rte_flow_action *actions,
 		 const struct tunnel_ops *tunnel_ops)
 {
+    /*为此port创建指定flow rule*/
 	struct rte_flow *flow;
 	struct rte_port *port;
 	struct port_flow *pf;
 	uint32_t id = 0;
 	struct rte_flow_error error;
 	struct port_flow_tunnel *pft = NULL;
+	/*取flow的age时间*/
 	struct rte_flow_action_age *age = age_action_get(actions);
 
 	port = &ports[port_id];

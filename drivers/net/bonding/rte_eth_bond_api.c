@@ -191,6 +191,7 @@ rte_eth_bond_create(const char *name, uint8_t mode, uint8_t socket_id)
 	return port_id;
 }
 
+/*bonding接口释放*/
 int
 rte_eth_bond_free(const char *name)
 {
@@ -609,6 +610,7 @@ __eth_bond_slave_add_lock_free(uint16_t bonded_port_id, uint16_t slave_port_id)
 
 }
 
+/*bonding成员口添加*/
 int
 rte_eth_bond_slave_add(uint16_t bonded_port_id, uint16_t slave_port_id)
 {
@@ -736,6 +738,7 @@ __eth_bond_slave_remove_lock_free(uint16_t bonded_port_id,
 	return 0;
 }
 
+/*bond成员口移除*/
 int
 rte_eth_bond_slave_remove(uint16_t bonded_port_id, uint16_t slave_port_id)
 {
@@ -758,6 +761,7 @@ rte_eth_bond_slave_remove(uint16_t bonded_port_id, uint16_t slave_port_id)
 	return retval;
 }
 
+/*bond接口模式设置*/
 int
 rte_eth_bond_mode_set(uint16_t bonded_port_id, uint8_t mode)
 {
@@ -775,6 +779,7 @@ rte_eth_bond_mode_set(uint16_t bonded_port_id, uint8_t mode)
 	return bond_ethdev_mode_set(bonded_eth_dev, mode);
 }
 
+/*bond接口模式获取*/
 int
 rte_eth_bond_mode_get(uint16_t bonded_port_id)
 {
@@ -788,6 +793,7 @@ rte_eth_bond_mode_get(uint16_t bonded_port_id)
 	return internals->mode;
 }
 
+/*bond接口模式主接口设置*/
 int
 rte_eth_bond_primary_set(uint16_t bonded_port_id, uint16_t slave_port_id)
 {
@@ -809,6 +815,7 @@ rte_eth_bond_primary_set(uint16_t bonded_port_id, uint16_t slave_port_id)
 	return 0;
 }
 
+/*bond接口主接口获取*/
 int
 rte_eth_bond_primary_get(uint16_t bonded_port_id)
 {

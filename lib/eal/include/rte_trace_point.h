@@ -43,11 +43,14 @@ typedef uint64_t rte_trace_point_t;
 
 /** @internal Helper macro to support RTE_TRACE_POINT and RTE_TRACE_POINT_FP */
 #define __RTE_TRACE_POINT(_mode, _tp, _args, ...) \
+/*trace point 变量，以两个下划线开头的_tp*/\
 extern rte_trace_point_t __##_tp; \
 static __rte_always_inline void \
 _tp _args \
 { \
+    /*忽略trace point 变量*/\
 	__rte_trace_point_emit_header_##_mode(&__##_tp); \
+	/*展开参数列表，完成函数参数忽略*/\
 	__VA_ARGS__ \
 }
 
@@ -96,8 +99,8 @@ _tp _args \
  *
  * @see RTE_TRACE_POINT
  */
-#define RTE_TRACE_POINT_FP(tp, args, ...) \
-	__RTE_TRACE_POINT(fp, tp, args, __VA_ARGS__)
+#define RTE_TRACE_POINT_FP(tp/*函数名*/, args/*函数参数列表*/, ...) \
+	__RTE_TRACE_POINT(fp/*采用fastpath模式*/, tp, args, __VA_ARGS__)
 
 #ifdef __DOXYGEN__
 
@@ -211,6 +214,7 @@ static __rte_always_inline bool
 __rte_trace_point_fp_is_enabled(void)
 {
 #ifdef RTE_ENABLE_TRACE_FP
+    /*trace fp被开启*/
 	return true;
 #else
 	return false;
@@ -273,9 +277,11 @@ int __rte_trace_point_register(rte_trace_point_t *trace, const char *name,
 #define __RTE_TRACE_EVENT_HEADER_ID_SHIFT (48)
 
 #define __RTE_TRACE_FIELD_SIZE_SHIFT 0
+/*定义trace point字段的大小对应的mask*/
 #define __RTE_TRACE_FIELD_SIZE_MASK (0xffffULL << __RTE_TRACE_FIELD_SIZE_SHIFT)
 #define __RTE_TRACE_FIELD_ID_SHIFT (16)
 #define __RTE_TRACE_FIELD_ID_MASK (0xffffULL << __RTE_TRACE_FIELD_ID_SHIFT)
+/*标记此trace point被开启*/
 #define __RTE_TRACE_FIELD_ENABLE_MASK (1ULL << 63)
 #define __RTE_TRACE_FIELD_ENABLE_DISCARD (1ULL << 62)
 
@@ -300,10 +306,12 @@ __rte_trace_mem_get(uint64_t in)
 {
 	struct __rte_trace_header *trace =
 		(struct __rte_trace_header *)(RTE_PER_LCORE(trace_mem));
+	/*取此trace point对应的size*/
 	const uint16_t sz = in & __RTE_TRACE_FIELD_SIZE_MASK;
 
 	/* Trace memory is not initialized for this thread */
 	if (unlikely(trace == NULL)) {
+	    /*此线程内存还未初始化，在此处初始化内存*/
 		__rte_trace_mem_per_thread_alloc();
 		trace = (struct __rte_trace_header *)(RTE_PER_LCORE(trace_mem));
 		if (unlikely(trace == NULL))
@@ -327,6 +335,7 @@ __rte_trace_mem_get(uint64_t in)
 	return mem;
 }
 
+/*填写trace信息*/
 static __rte_always_inline void *
 __rte_trace_point_emit_ev_header(void *mem, uint64_t in)
 {
@@ -346,18 +355,22 @@ __rte_trace_point_emit_ev_header(void *mem, uint64_t in)
 #define __rte_trace_point_emit_header_generic(t) \
 void *mem; \
 do { \
+    /*取此trace point变量，如果其没有ENABLE标记，则返回*/\
 	const uint64_t val = __atomic_load_n(t, __ATOMIC_ACQUIRE); \
 	if (likely(!(val & __RTE_TRACE_FIELD_ENABLE_MASK))) \
 		return; \
 	mem = __rte_trace_mem_get(val); \
 	if (unlikely(mem == NULL)) \
+	    /*取此对应的mem失败，直接返回*/\
 		return; \
 	mem = __rte_trace_point_emit_ev_header(mem, val); \
 } while (0)
 
 #define __rte_trace_point_emit_header_fp(t) \
 	if (!__rte_trace_point_fp_is_enabled()) \
+	    /*fp trace未开启，直接返回*/\
 		return; \
+		/*检查通过，仍走generic流程*/\
 	__rte_trace_point_emit_header_generic(t)
 
 #define __rte_trace_point_emit(in, type) \

@@ -1666,7 +1666,7 @@ const struct eth_dev_ops mlx5_dev_ops = {
 	.xstats_get_names = mlx5_xstats_get_names,
 	.fw_version_get = mlx5_fw_version_get,
 	.dev_infos_get = mlx5_dev_infos_get,
-	.representor_info_get = mlx5_representor_info_get,
+	.representor_info_get = mlx5_representor_info_get,/*获取rep信息*/
 	.read_clock = mlx5_txpp_read_clock,
 	.dev_supported_ptypes_get = mlx5_dev_supported_ptypes_get,
 	.vlan_filter_set = mlx5_vlan_filter_set,
@@ -1779,6 +1779,7 @@ const struct eth_dev_ops mlx5_dev_ops_isolate = {
 	.mtu_set = mlx5_dev_set_mtu,
 	.vlan_strip_queue_set = mlx5_vlan_strip_queue_set,
 	.vlan_offload_set = mlx5_vlan_offload_set,
+	/*取flow对应的ops*/
 	.flow_ops_get = mlx5_flow_ops_get,
 	.rxq_info_get = mlx5_rxq_info_get,
 	.txq_info_get = mlx5_txq_info_get,

@@ -3784,7 +3784,8 @@ signal_handler(int signum)
 		f_quit = 1;
 		/* exit with the expected status */
 #ifndef RTE_EXEC_ENV_WINDOWS
-		signal(signum, SIG_DFL);//改为默认函数，并发信号杀死自已
+		//改为默认函数，并发信号杀死自已
+		signal(signum, SIG_DFL);
 		kill(getpid(), signum);
 #endif
 	}

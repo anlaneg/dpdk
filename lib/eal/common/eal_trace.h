@@ -30,7 +30,9 @@
 
 struct trace_point {
 	STAILQ_ENTRY(trace_point) next;
+	/*dpdk系统对应的唯一id*/
 	rte_trace_point_t *handle;
+	/*对应的名称*/
 	char name[TRACE_POINT_NAME_SIZE];
 	char *ctf_field;
 };
@@ -54,11 +56,12 @@ struct trace {
 	char dir[PATH_MAX];
 	int dir_offset;
 	int register_errno;
-	bool status;
+	bool status;/*trace是否开启*/
 	enum rte_trace_mode mode;
 	rte_uuid_t uuid;
 	uint32_t buff_len;
 	STAILQ_HEAD(, trace_arg) args;
+	/*总的trace点数目*/
 	uint32_t nb_trace_points;
 	uint32_t nb_trace_mem_list;
 	struct thread_mem_meta *lcore_meta;
