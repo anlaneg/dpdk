@@ -94,6 +94,7 @@ struct rte_devargs {
 	struct rte_class *cls; /**< class handle. */
 	const char *bus_str; /**< bus-related part of device string. */
 	const char *cls_str; /**< class-related part of device string. */
+	/*设备数据*/
 	char *data; /**< raw string including bus, class and driver parts. */
 };
 

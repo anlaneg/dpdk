@@ -95,9 +95,9 @@ ipv4_frag_reassemble(struct ip_frag_pkt *fp)
  *   - not all fragments of the packet are collected yet.
  */
 struct rte_mbuf *
-rte_ipv4_frag_reassemble_packet(struct rte_ip_frag_tbl *tbl,
-	struct rte_ip_frag_death_row *dr, struct rte_mbuf *mb, uint64_t tms,
-	struct rte_ipv4_hdr *ip_hdr)
+rte_ipv4_frag_reassemble_packet(struct rte_ip_frag_tbl *tbl/*分片表*/,
+	struct rte_ip_frag_death_row *dr, struct rte_mbuf *mb/*报文*/, uint64_t tms,
+	struct rte_ipv4_hdr *ip_hdr/*ip头指针*/)
 {
 	struct ip_frag_pkt *fp;
 	struct ip_frag_key key;
@@ -106,16 +106,19 @@ rte_ipv4_frag_reassemble_packet(struct rte_ip_frag_tbl *tbl,
 	int32_t ip_len;
 	int32_t trim;
 
+	/*分片offset+flags*/
 	flag_offset = rte_be_to_cpu_16(ip_hdr->fragment_offset);
 	ip_ofs = (uint16_t)(flag_offset & RTE_IPV4_HDR_OFFSET_MASK);
 	ip_flag = (uint16_t)(flag_offset & RTE_IPV4_HDR_MF_FLAG);
 
+	/*取srcip+dstip*/
 	psd = (unaligned_uint64_t *)&ip_hdr->src_addr;
 	/* use first 8 bytes only */
 	key.src_dst[0] = psd[0];
 	key.id = ip_hdr->packet_id;
 	key.key_len = IPV4_KEYLEN;
 
+	/*展开为实际offset*/
 	ip_ofs *= RTE_IPV4_HDR_OFFSET_UNITS;
 	ip_len = rte_be_to_cpu_16(ip_hdr->total_length) - mb->l3_len;
 	trim = mb->pkt_len - (ip_len + mb->l3_len + mb->l2_len);
@@ -132,6 +135,7 @@ rte_ipv4_frag_reassemble_packet(struct rte_ip_frag_tbl *tbl,
 
 	/* check that fragment length is greater then zero. */
 	if (ip_len <= 0) {
+	    /*错误长度的包*/
 		IP_FRAG_MBUF2DR(dr, mb);
 		return NULL;
 	}

@@ -344,6 +344,7 @@ pdump_server(const struct rte_mp_msg *mp_msg, const void *peer)
 	return 0;
 }
 
+/*pdump模块初始化*/
 int
 rte_pdump_init(void)
 {

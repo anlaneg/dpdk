@@ -2347,6 +2347,7 @@ port_flow_isolate(portid_t port_id, int set)
 
 	/* Poisoning to make sure PMDs update it in case of error. */
 	memset(&error, 0x66, sizeof(error));
+	/*针对port_id设置isolate*/
 	if (rte_flow_isolate(port_id, set, &error))
 		return port_flow_complain(&error);
 	printf("Ingress traffic on port %u is %s to the defined flow rules\n",

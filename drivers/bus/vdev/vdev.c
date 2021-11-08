@@ -309,7 +309,7 @@ insert_vdev(const char *name, const char *args,
 		 * So there is no reason to try probing again,
 		 * even with new arguments.
 		 */
-		ret = -EEXIST;//重复添加，报错
+		ret = -EEXIST;/*重复添加，报错*/
 		goto fail;
 	}
 
@@ -337,7 +337,8 @@ rte_vdev_init(const char *name, const char *args)
 	int ret;
 
 	rte_spinlock_recursive_lock(&vdev_device_list_lock);
-	ret = insert_vdev(name, args, &dev, true);//创建dev
+	//创建dev
+	ret = insert_vdev(name, args, &dev, true);
 	if (ret == 0) {
 		//查驱动
 		ret = vdev_probe_all_drivers(dev);

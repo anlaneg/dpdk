@@ -593,6 +593,7 @@ rte_eth_dev_release_port(struct rte_eth_dev *eth_dev)
 
 	eth_dev_shared_data_prepare();
 
+	/*触发dev destroy*/
 	if (eth_dev->state != RTE_ETH_DEV_UNUSED)
 		rte_eth_dev_callback_process(eth_dev,
 				RTE_ETH_EVENT_DESTROY, NULL);
@@ -895,6 +896,7 @@ rte_eth_dev_get_port_by_name(const char *name, uint16_t *port_id)
 		return -EINVAL;
 	}
 
+	/*按名称查找设备，获取设备port_id*/
 	RTE_ETH_FOREACH_VALID_DEV(pid)
 		if (!strcmp(name, eth_dev_shared_data->data[pid].name)) {
 			*port_id = pid;
@@ -1911,6 +1913,7 @@ rte_eth_dev_set_link_down(uint16_t port_id)
 	return eth_err(port_id, (*dev->dev_ops->dev_set_link_down)(dev));
 }
 
+/*close port,port相关的资源会被释放*/
 int
 rte_eth_dev_close(uint16_t port_id)
 {
@@ -1932,6 +1935,7 @@ rte_eth_dev_close(uint16_t port_id)
 	return firsterr;
 }
 
+/*停止设备port_id,并执行reset回调*/
 int
 rte_eth_dev_reset(uint16_t port_id)
 {
@@ -2047,9 +2051,10 @@ rte_eth_rx_queue_check_split(const struct rte_eth_rxseg_split *rx_seg,
 	return 0;
 }
 
+/*rx队列配置*/
 int
-rte_eth_rx_queue_setup(uint16_t port_id, uint16_t rx_queue_id,
-		       uint16_t nb_rx_desc, unsigned int socket_id,
+rte_eth_rx_queue_setup(uint16_t port_id/*端口id*/, uint16_t rx_queue_id/*rx队列索引*/,
+		       uint16_t nb_rx_desc/*rx队列描述符数目*/, unsigned int socket_id,
 		       const struct rte_eth_rxconf *rx_conf,
 		       struct rte_mempool *mp)
 {
@@ -2063,6 +2068,7 @@ rte_eth_rx_queue_setup(uint16_t port_id, uint16_t rx_queue_id,
 	RTE_ETH_VALID_PORTID_OR_ERR_RET(port_id, -ENODEV);
 	dev = &rte_eth_devices[port_id];
 
+	/*rx队列有效性描述*/
 	if (rx_queue_id >= dev->data->nb_rx_queues) {
 		RTE_ETHDEV_LOG(ERR, "Invalid RX queue_id=%u\n", rx_queue_id);
 		return -EINVAL;
@@ -2162,6 +2168,7 @@ rte_eth_rx_queue_setup(uint16_t port_id, uint16_t rx_queue_id,
 			RTE_ETH_QUEUE_STATE_STOPPED))
 		return -EBUSY;
 
+	/*rx队列已存在，释放它*/
 	rxq = dev->data->rx_queues;
 	if (rxq[rx_queue_id]) {
 		RTE_FUNC_PTR_OR_ERR_RET(*dev->dev_ops->rx_queue_release,
@@ -2220,6 +2227,7 @@ rte_eth_rx_queue_setup(uint16_t port_id, uint16_t rx_queue_id,
 			return ret;
 	}
 
+	/*配置rx队列*/
 	ret = (*dev->dev_ops->rx_queue_setup)(dev, rx_queue_id, nb_rx_desc,
 					      socket_id, &local_conf, mp);
 	if (!ret) {
@@ -2233,6 +2241,7 @@ rte_eth_rx_queue_setup(uint16_t port_id, uint16_t rx_queue_id,
 	return eth_err(port_id, ret);
 }
 
+/*配置rx hairpin队列*/
 int
 rte_eth_rx_hairpin_queue_setup(uint16_t port_id, uint16_t rx_queue_id,
 			       uint16_t nb_rx_desc,
@@ -2305,6 +2314,8 @@ rte_eth_rx_hairpin_queue_setup(uint16_t port_id, uint16_t rx_queue_id,
 		(*dev->dev_ops->rx_queue_release)(rxq[rx_queue_id]);
 		rxq[rx_queue_id] = NULL;
 	}
+
+	/*配置rx hairpin队列*/
 	ret = (*dev->dev_ops->rx_hairpin_queue_setup)(dev, rx_queue_id,
 						      nb_rx_desc, conf);
 	if (ret == 0)
@@ -2313,6 +2324,7 @@ rte_eth_rx_hairpin_queue_setup(uint16_t port_id, uint16_t rx_queue_id,
 	return eth_err(port_id, ret);
 }
 
+/*设置port_id号设备tx队列（tx_queue_id)*/
 int
 rte_eth_tx_queue_setup(uint16_t port_id, uint16_t tx_queue_id,
 		       uint16_t nb_tx_desc, unsigned int socket_id,
@@ -2327,6 +2339,7 @@ rte_eth_tx_queue_setup(uint16_t port_id, uint16_t tx_queue_id,
 	RTE_ETH_VALID_PORTID_OR_ERR_RET(port_id, -ENODEV);
 	dev = &rte_eth_devices[port_id];
 
+	/*队列id有效性检查*/
 	if (tx_queue_id >= dev->data->nb_tx_queues) {
 		RTE_ETHDEV_LOG(ERR, "Invalid TX queue_id=%u\n", tx_queue_id);
 		return -EINVAL;
@@ -2334,12 +2347,14 @@ rte_eth_tx_queue_setup(uint16_t port_id, uint16_t tx_queue_id,
 
 	RTE_FUNC_PTR_OR_ERR_RET(*dev->dev_ops->tx_queue_setup, -ENOTSUP);
 
+	/*队列devinfo*/
 	ret = rte_eth_dev_info_get(port_id, &dev_info);
 	if (ret != 0)
 		return ret;
 
 	/* Use default specified by driver, if nb_tx_desc is zero */
 	if (nb_tx_desc == 0) {
+	    /*未配置tx描述符，直接自devinfo中提取*/
 		nb_tx_desc = dev_info.default_txportconf.ring_size;
 		/* If driver default is zero, fall back on EAL default */
 		if (nb_tx_desc == 0)
@@ -2366,6 +2381,7 @@ rte_eth_tx_queue_setup(uint16_t port_id, uint16_t tx_queue_id,
 			RTE_ETH_QUEUE_STATE_STOPPED))
 		return -EBUSY;
 
+	/*队列queue_id已存在，则释放*/
 	txq = dev->data->tx_queues;
 	if (txq[tx_queue_id]) {
 		RTE_FUNC_PTR_OR_ERR_RET(*dev->dev_ops->tx_queue_release,
@@ -2408,15 +2424,17 @@ rte_eth_tx_queue_setup(uint16_t port_id, uint16_t tx_queue_id,
 		return -EINVAL;
 	}
 
+	/*tx队列配置*/
 	rte_ethdev_trace_txq_setup(port_id, tx_queue_id, nb_tx_desc, tx_conf);
 	return eth_err(port_id, (*dev->dev_ops->tx_queue_setup)(dev,
 		       tx_queue_id, nb_tx_desc, socket_id, &local_conf));
 }
 
+/*配置tx hairpin*/
 int
-rte_eth_tx_hairpin_queue_setup(uint16_t port_id, uint16_t tx_queue_id,
+rte_eth_tx_hairpin_queue_setup(uint16_t port_id, uint16_t tx_queue_id/*队列id*/,
 			       uint16_t nb_tx_desc,
-			       const struct rte_eth_hairpin_conf *conf)
+			       const struct rte_eth_hairpin_conf *conf/*hairpin配置*/)
 {
 	struct rte_eth_dev *dev;
 	struct rte_eth_hairpin_cap cap;
@@ -2428,6 +2446,7 @@ rte_eth_tx_hairpin_queue_setup(uint16_t port_id, uint16_t tx_queue_id,
 	RTE_ETH_VALID_PORTID_OR_ERR_RET(port_id, -ENODEV);
 	dev = &rte_eth_devices[port_id];
 
+	/*tx队列有效性检查*/
 	if (tx_queue_id >= dev->data->nb_tx_queues) {
 		RTE_ETHDEV_LOG(ERR, "Invalid TX queue_id=%u\n", tx_queue_id);
 		return -EINVAL;
@@ -2478,6 +2497,8 @@ rte_eth_tx_hairpin_queue_setup(uint16_t port_id, uint16_t tx_queue_id,
 	}
 	if (dev->data->dev_started)
 		return -EBUSY;
+
+	/*txq如果已存在，则释放它*/
 	txq = dev->data->tx_queues;
 	if (txq[tx_queue_id] != NULL) {
 		RTE_FUNC_PTR_OR_ERR_RET(*dev->dev_ops->tx_queue_release,
@@ -2485,6 +2506,8 @@ rte_eth_tx_hairpin_queue_setup(uint16_t port_id, uint16_t tx_queue_id,
 		(*dev->dev_ops->tx_queue_release)(txq[tx_queue_id]);
 		txq[tx_queue_id] = NULL;
 	}
+
+	/*配置hairpin tx队列*/
 	ret = (*dev->dev_ops->tx_hairpin_queue_setup)
 		(dev, tx_queue_id, nb_tx_desc, conf);
 	if (ret == 0)
@@ -2507,6 +2530,7 @@ rte_eth_hairpin_bind(uint16_t tx_port, uint16_t rx_port)
 		return -EBUSY;
 	}
 
+	/*将设备dev与rx_port绑定*/
 	RTE_FUNC_PTR_OR_ERR_RET(*dev->dev_ops->hairpin_bind, -ENOTSUP);
 	ret = (*dev->dev_ops->hairpin_bind)(dev, rx_port);
 	if (ret != 0)
@@ -2645,6 +2669,7 @@ rte_eth_tx_done_cleanup(uint16_t port_id, uint16_t queue_id, uint32_t free_cnt)
 	return eth_err(port_id, ret);
 }
 
+/*开启混杂模式*/
 int
 rte_eth_promiscuous_enable(uint16_t port_id)
 {
@@ -3464,6 +3489,7 @@ rte_eth_dev_info_get(uint16_t port_id, struct rte_eth_dev_info *dev_info)
 	};
 	int diag;
 
+	/*通过port_id取设备*/
 	RTE_ETH_VALID_PORTID_OR_ERR_RET(port_id, -ENODEV);
 	dev = &rte_eth_devices[port_id];
 
@@ -3486,6 +3512,8 @@ rte_eth_dev_info_get(uint16_t port_id, struct rte_eth_dev_info *dev_info)
 	dev_info->min_mtu = RTE_ETHER_MIN_MTU;
 	dev_info->max_mtu = UINT16_MAX;
 
+
+	/*获取设备info*/
 	RTE_FUNC_PTR_OR_ERR_RET(*dev->dev_ops->dev_infos_get, -ENOTSUP);
 	diag = (*dev->dev_ops->dev_infos_get)(dev, dev_info);
 	if (diag != 0) {
@@ -4663,6 +4691,7 @@ rte_eth_dev_callback_register(uint16_t port_id,
 		return -EINVAL;
 	}
 
+	/*检查port_id*/
 	if (!rte_eth_dev_is_valid_port(port_id) && port_id != RTE_ETH_ALL) {
 		RTE_ETHDEV_LOG(ERR, "Invalid port_id=%d\n", port_id);
 		return -EINVAL;
@@ -4680,6 +4709,7 @@ rte_eth_dev_callback_register(uint16_t port_id,
 	do {
 		dev = &rte_eth_devices[next_port];
 
+		/*如果此设备已注册，则跳过*/
 		TAILQ_FOREACH(user_cb, &(dev->link_intr_cbs), next) {
 			if (user_cb->cb_fn == cb_fn &&
 				user_cb->cb_arg == cb_arg &&
@@ -4690,6 +4720,7 @@ rte_eth_dev_callback_register(uint16_t port_id,
 
 		/* create a new callback. */
 		if (user_cb == NULL) {
+		    /*未注册，这里注册，并挂接在设备上*/
 			user_cb = rte_zmalloc("INTR_USER_CALLBACK",
 				sizeof(struct rte_eth_dev_callback), 0);
 			if (user_cb != NULL) {
@@ -5804,6 +5835,7 @@ static void
 eth_dev_adjust_nb_desc(uint16_t *nb_desc,
 		const struct rte_eth_desc_lim *desc_lim)
 {
+    /*按nb_align进行对齐*/
 	if (desc_lim->nb_align != 0)
 		*nb_desc = RTE_ALIGN_CEIL(*nb_desc, desc_lim->nb_align);
 
@@ -5854,9 +5886,11 @@ rte_eth_dev_hairpin_capability_get(uint16_t port_id,
 
 	RTE_FUNC_PTR_OR_ERR_RET(*dev->dev_ops->hairpin_cap_get, -ENOTSUP);
 	memset(cap, 0, sizeof(*cap));
+	/*取设备对应的hairpin能力*/
 	return eth_err(port_id, (*dev->dev_ops->hairpin_cap_get)(dev, cap));
 }
 
+/*检查queue_id是否为hairpin rx队列*/
 int
 rte_eth_dev_is_rx_hairpin_queue(struct rte_eth_dev *dev, uint16_t queue_id)
 {

@@ -43,7 +43,9 @@ static char peer_name[PATH_MAX];
 
 struct action_entry {
 	TAILQ_ENTRY(action_entry) next;
+	/*action名称*/
 	char action_name[RTE_MP_MAX_NAME_LEN];
+	/*action回调*/
 	rte_mp_t action;
 };
 
@@ -199,6 +201,7 @@ validate_action_name(const char *name)
 	return 0;
 }
 
+/*action回调注册*/
 int
 rte_mp_action_register(const char *name, rte_mp_t action)
 {
@@ -206,6 +209,7 @@ rte_mp_action_register(const char *name, rte_mp_t action)
 	const struct internal_config *internal_conf =
 		eal_get_internal_configuration();
 
+	/*名称检查*/
 	if (validate_action_name(name) != 0)
 		return -1;
 
@@ -215,6 +219,7 @@ rte_mp_action_register(const char *name, rte_mp_t action)
 		return -1;
 	}
 
+	/*action名称*/
 	entry = malloc(sizeof(struct action_entry));
 	if (entry == NULL) {
 		rte_errno = ENOMEM;
@@ -224,12 +229,14 @@ rte_mp_action_register(const char *name, rte_mp_t action)
 	entry->action = action;
 
 	pthread_mutex_lock(&mp_mutex_action);
+	/*取指定名称的action*/
 	if (find_action_entry_by_name(name) != NULL) {
 		pthread_mutex_unlock(&mp_mutex_action);
 		rte_errno = EEXIST;
 		free(entry);
 		return -1;
 	}
+	/*注册action*/
 	TAILQ_INSERT_TAIL(&action_entry_list, entry, next);
 	pthread_mutex_unlock(&mp_mutex_action);
 	return 0;

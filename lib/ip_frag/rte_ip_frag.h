@@ -44,14 +44,16 @@ struct ip_frag {
 
 /** @internal <src addr, dst_addr, id> to uniquely identify fragmented datagram. */
 struct ip_frag_key {
-	uint64_t src_dst[4];
+	uint64_t src_dst[4];/*ip信息*/
 	/**< src and dst address, only first 8 bytes used for IPv4 */
 	RTE_STD_C11
 	union {
 		uint64_t id_key_len; /**< combined for easy fetch */
 		__extension__
 		struct {
+		    /*报文id*/
 			uint32_t id;       /**< packet id */
+			/*key长度*/
 			uint32_t key_len;  /**< src/dst key length */
 		};
 	};
@@ -99,10 +101,14 @@ struct ip_frag_tbl_stat {
 struct rte_ip_frag_tbl {
 	uint64_t             max_cycles;      /**< ttl for table entries. */
 	uint32_t             entry_mask;      /**< hash value mask. */
+	/*容许持有的最大元素数*/
 	uint32_t             max_entries;     /**< max entries allowed. */
 	uint32_t             use_entries;     /**< entries in use. */
+	/*桶内元素数，必须2的N次方*/
 	uint32_t             bucket_entries;  /**< hash associativity. */
+	/*table可提供的元素数*/
 	uint32_t             nb_entries;      /**< total size of the table. */
+	/*桶数*/
 	uint32_t             nb_buckets;      /**< num of associativity lines. */
 	struct ip_frag_pkt *last;         /**< last used entry. */
 	struct ip_pkt_list lru;           /**< LRU list for table entries. */
@@ -284,6 +290,7 @@ struct rte_mbuf * rte_ipv4_frag_reassemble_packet(struct rte_ip_frag_tbl *tbl,
 static inline int
 rte_ipv4_frag_pkt_is_fragmented(const struct rte_ipv4_hdr *hdr)
 {
+    /*检查此报文是否为分片*/
 	uint16_t flag_offset, ip_flag, ip_ofs;
 
 	flag_offset = rte_be_to_cpu_16(hdr->fragment_offset);

@@ -152,7 +152,7 @@ deactivate_slave(struct rte_eth_dev *eth_dev, uint16_t port_id)
 
 //bond接口创建
 int
-rte_eth_bond_create(const char *name, uint8_t mode, uint8_t socket_id)
+rte_eth_bond_create(const char *name/*接口名称*/, uint8_t mode/*bond方式*/, uint8_t socket_id)
 {
 	struct bond_dev_private *internals;
 	char devargs[52];
@@ -170,6 +170,7 @@ rte_eth_bond_create(const char *name, uint8_t mode, uint8_t socket_id)
 	if (ret < 0 || ret >= (int)sizeof(devargs))
 		return -ENOMEM;
 
+	/*bond为一个vdev,并执行初始化*/
 	ret = rte_vdev_init(name, devargs);
 	if (ret)
 		return ret;
@@ -209,6 +210,7 @@ slave_vlan_filter_set(uint16_t bonded_port_id, uint16_t slave_port_id)
 	uint32_t pos = 0;
 	uint16_t first;
 
+	/*取bond设备*/
 	bonded_eth_dev = &rte_eth_devices[bonded_port_id];
 	if ((bonded_eth_dev->data->dev_conf.rxmode.offloads &
 			DEV_RX_OFFLOAD_VLAN_FILTER) == 0)
@@ -242,6 +244,7 @@ slave_vlan_filter_set(uint16_t bonded_port_id, uint16_t slave_port_id)
 	return res;
 }
 
+/*为slave_port_id创建flow*/
 static int
 slave_rte_flow_prepare(uint16_t slave_id, struct bond_dev_private *internals)
 {
@@ -256,6 +259,7 @@ slave_rte_flow_prepare(uint16_t slave_id, struct bond_dev_private *internals)
 			return -1;
 		}
 
+		/*对slave_port_id执行flow isolated*/
 		if (rte_flow_isolate(slave_port_id, internals->flow_isolated,
 		    &ferror)) {
 			RTE_BOND_LOG(ERR, "rte_flow_isolate failed for slave"
@@ -264,6 +268,8 @@ slave_rte_flow_prepare(uint16_t slave_id, struct bond_dev_private *internals)
 			return -1;
 		}
 	}
+
+	/*遍历bond设备创建的所有flow，添加到slave_id对应设备中*/
 	TAILQ_FOREACH(flow, &internals->flow_list, next) {
 		flow->flows[slave_id] = rte_flow_create(slave_port_id,
 							flow->rule.attr,
@@ -271,12 +277,14 @@ slave_rte_flow_prepare(uint16_t slave_id, struct bond_dev_private *internals)
 							flow->rule.actions,
 							&ferror);
 		if (flow->flows[slave_id] == NULL) {
+		    /*slave_id对应的flow未创建成功*/
 			RTE_BOND_LOG(ERR, "Cannot create flow for slave"
 				     " %d: %s", slave_id,
 				     ferror.message ? ferror.message :
 				     "(no stated reason)");
 			/* Destroy successful bond flows from the slave */
 			TAILQ_FOREACH(flow, &internals->flow_list, next) {
+			    /*移除已创建的flow*/
 				if (flow->flows[slave_id] != NULL) {
 					rte_flow_destroy(slave_port_id,
 							 flow->flows[slave_id],

@@ -36,7 +36,7 @@ struct rte_vdev_device {
 
 #define RTE_ETH_DEV_TO_VDEV(eth_dev)	RTE_DEV_TO_VDEV((eth_dev)->device)
 
-//获取虚设备名称
+//获取虚设备(vdev)名称
 static inline const char *
 rte_vdev_device_name(const struct rte_vdev_device *dev)
 {

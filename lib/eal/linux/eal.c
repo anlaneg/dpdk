@@ -986,7 +986,7 @@ rte_eal_init(int argc, char **argv)
 		return -1;
 	}
 
-	/*只容放调用一次*/
+	/*只容许调用一次*/
 	if (!__atomic_compare_exchange_n(&run_once, &has_run, 1, 0,
 					__ATOMIC_RELAXED, __ATOMIC_RELAXED)) {
 		rte_eal_init_alert("already called initialization.");
@@ -997,6 +997,7 @@ rte_eal_init(int argc, char **argv)
 	/*程序名称*/
 	p = strrchr(argv[0], '/');
 	strlcpy(logid, p ? p + 1 : argv[0], sizeof(logid));
+	/*当前线程id*/
 	thread_id = pthread_self();
 
 	eal_reset_internal_config(internal_conf);

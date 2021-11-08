@@ -697,6 +697,7 @@ mlx5_hairpin_bind_single_port(struct rte_eth_dev *dev, uint16_t rx_port)
 	uint32_t explicit;
 	uint16_t rx_queue;
 
+	/*rx_port必须为mlx5设备*/
 	if (mlx5_eth_find_next(rx_port, priv->pci_dev) != rx_port) {
 		rte_errno = ENODEV;
 		DRV_LOG(ERR, "Rx port %u does not belong to mlx5", rx_port);

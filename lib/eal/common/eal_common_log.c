@@ -28,6 +28,7 @@ static struct rte_logs {
 	uint32_t type;  /**< Bitfield with enabled logs. */
 	uint32_t level; /**< Log level. */
 	FILE *file;     /**< Output file set by rte_openlog_stream, or NULL. */
+	/*dynamic_types数组长度*/
 	size_t dynamic_types_len;
 	struct rte_log_dynamic_type *dynamic_types;
 } rte_logs = {
@@ -136,6 +137,7 @@ rte_log_can_log(uint32_t logtype, uint32_t level)
 	return true;
 }
 
+/*更新模块的日志level*/
 static void
 logtype_set_level(uint32_t type, uint32_t level)
 {
@@ -282,16 +284,19 @@ log_lookup(const char *name)
 	return -1;
 }
 
+/*日志注册*/
 static int
-log_register(const char *name, uint32_t level)
+log_register(const char *name/*模块名称*/, uint32_t level)
 {
 	struct rte_log_dynamic_type *new_dynamic_types;
 	int id;
 
+	/*已注册，返回id*/
 	id = log_lookup(name);
 	if (id >= 0)
 		return id;
 
+	/*增加dynamic_types长度*/
 	new_dynamic_types = realloc(rte_logs.dynamic_types,
 		sizeof(struct rte_log_dynamic_type) *
 		(rte_logs.dynamic_types_len + 1));
@@ -299,12 +304,14 @@ log_register(const char *name, uint32_t level)
 		return -ENOMEM;
 	rte_logs.dynamic_types = new_dynamic_types;
 
+	/*为此type分配id*/
 	id = rte_logs.dynamic_types_len;
 	memset(&rte_logs.dynamic_types[id], 0,
 		sizeof(rte_logs.dynamic_types[id]));
 	rte_logs.dynamic_types[id].name = strdup(name);
 	if (rte_logs.dynamic_types[id].name == NULL)
 		return -ENOMEM;
+	/*设置此模块对应的level*/
 	logtype_set_level(id, level);
 
 	rte_logs.dynamic_types_len++;

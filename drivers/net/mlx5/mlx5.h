@@ -1376,9 +1376,11 @@ struct mlx5_priv {
 	uint32_t ctrl_flows; /* Control flow rules. */
 	rte_spinlock_t flow_list_lock;
 	struct mlx5_obj_ops obj_ops; /* HW objects operations. */
+	/*rx队列*/
 	LIST_HEAD(rxq, mlx5_rxq_ctrl) rxqsctrl; /* DPDK Rx queues. */
 	LIST_HEAD(rxqobj, mlx5_rxq_obj) rxqsobj; /* Verbs/DevX Rx queues. */
 	struct mlx5_cache_list hrxqs; /* Hash Rx queues. */
+	/*tx队列*/
 	LIST_HEAD(txq, mlx5_txq_ctrl) txqsctrl; /* DPDK Tx queues. */
 	LIST_HEAD(txqobj, mlx5_txq_obj) txqsobj; /* Verbs/DevX Tx queues. */
 	/* Indirection tables. */

@@ -57,7 +57,7 @@ struct rte_config {
 	enum rte_lcore_role_t lcore_role[RTE_MAX_LCORE]; /**< State of cores. */
 
 	/** Primary or secondary configuration */
-	enum rte_proc_type_t process_type;
+	enum rte_proc_type_t process_type;/*进程类型*/
 
 	/** PA or VA mapping mode */
 	enum rte_iova_mode iova_mode;

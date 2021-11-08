@@ -1431,6 +1431,7 @@ int
 mlx5_udp_tunnel_port_add(struct rte_eth_dev *dev __rte_unused,
 			 struct rte_eth_udp_tunnel *udp_tunnel)
 {
+    /*当前默认支持4789的vxlan tunnel*/
 	MLX5_ASSERT(udp_tunnel != NULL);
 	if (udp_tunnel->prot_type == RTE_TUNNEL_TYPE_VXLAN &&
 	    udp_tunnel->udp_port == 4789)
@@ -1670,12 +1671,12 @@ const struct eth_dev_ops mlx5_dev_ops = {
 	.read_clock = mlx5_txpp_read_clock,
 	.dev_supported_ptypes_get = mlx5_dev_supported_ptypes_get,
 	.vlan_filter_set = mlx5_vlan_filter_set,
-	.rx_queue_setup = mlx5_rx_queue_setup,
-	.rx_hairpin_queue_setup = mlx5_rx_hairpin_queue_setup,
-	.tx_queue_setup = mlx5_tx_queue_setup,
-	.tx_hairpin_queue_setup = mlx5_tx_hairpin_queue_setup,
-	.rx_queue_release = mlx5_rx_queue_release,
-	.tx_queue_release = mlx5_tx_queue_release,
+	.rx_queue_setup = mlx5_rx_queue_setup/*rx队列配置*/,
+	.rx_hairpin_queue_setup = mlx5_rx_hairpin_queue_setup/*rx hairpin队列配置*/,
+	.tx_queue_setup = mlx5_tx_queue_setup/*tx队列配置*/,
+	.tx_hairpin_queue_setup = mlx5_tx_hairpin_queue_setup/*tx hairpin队列配置*/,
+	.rx_queue_release = mlx5_rx_queue_release/*rx队列释放*/,
+	.tx_queue_release = mlx5_tx_queue_release/*tx队列释放*/,
 	.rx_queue_start = mlx5_rx_queue_start,
 	.rx_queue_stop = mlx5_rx_queue_stop,
 	.tx_queue_start = mlx5_tx_queue_start,
@@ -2312,6 +2313,7 @@ mlx5_dev_check_sibling_config(struct mlx5_priv *priv,
 uint16_t
 mlx5_eth_find_next(uint16_t port_id, struct rte_pci_device *pci_dev)
 {
+    /*在已识别的所有设备中，查找驱动当前使用mlx5的下一个port*/
 	while (port_id < RTE_MAX_ETHPORTS) {
 		struct rte_eth_dev *dev = &rte_eth_devices[port_id];
 

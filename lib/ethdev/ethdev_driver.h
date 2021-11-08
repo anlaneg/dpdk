@@ -798,21 +798,31 @@ struct eth_dev_ops {
 	eth_dev_start_t            dev_start;     /**< Start device. */
 	/*停止指定设备*/
 	eth_dev_stop_t             dev_stop;      /**< Stop device. */
+	/*设置link up*/
 	eth_dev_set_link_up_t      dev_set_link_up;   /**< Device link up. */
+	/*设置link down*/
 	eth_dev_set_link_down_t    dev_set_link_down; /**< Device link down. */
+	/*关闭device,释放device资源*/
 	eth_dev_close_t            dev_close;     /**< Close device. */
+	/*设备reset*/
 	eth_dev_reset_t		   dev_reset;	  /**< Reset device. */
 	eth_link_update_t          link_update;   /**< Get device link state. */
 	eth_is_removed_t           is_removed;
 	/**< Check if the device was physically removed. */
 
+	/*开启混杂*/
 	eth_promiscuous_enable_t   promiscuous_enable; /**< Promiscuous ON. */
+	/*关闭混杂*/
 	eth_promiscuous_disable_t  promiscuous_disable;/**< Promiscuous OFF. */
 	eth_allmulticast_enable_t  allmulticast_enable;/**< RX multicast ON. */
 	eth_allmulticast_disable_t allmulticast_disable;/**< RX multicast OFF. */
+	/*移除mac地址*/
 	eth_mac_addr_remove_t      mac_addr_remove; /**< Remove MAC address. */
+	/*添加mac地址*/
 	eth_mac_addr_add_t         mac_addr_add;  /**< Add a MAC address. */
+	/*设置设备的mac地址*/
 	eth_mac_addr_set_t         mac_addr_set;  /**< Set a MAC address. */
+	/*添加组播地址*/
 	eth_set_mc_addr_list_t     set_mc_addr_list; /**< set list of mcast addrs. */
 	mtu_set_t                  mtu_set;       /**< Set MTU. */
 
@@ -825,6 +835,7 @@ struct eth_dev_ops {
 	eth_queue_stats_mapping_set_t queue_stats_mapping_set;
 	/**< Configure per queue stat counter mapping. */
 
+	/*获取设备info*/
 	eth_dev_infos_get_t        dev_infos_get; /**< Get device info. */
 	eth_rxq_info_get_t         rxq_info_get; /**< retrieve RX queue information. */
 	eth_txq_info_get_t         txq_info_get; /**< retrieve TX queue information. */
@@ -846,12 +857,16 @@ struct eth_dev_ops {
 	eth_queue_stop_t           rx_queue_stop; /**< Stop RX for a queue. */
 	eth_queue_start_t          tx_queue_start;/**< Start TX for a queue. */
 	eth_queue_stop_t           tx_queue_stop; /**< Stop TX for a queue. */
+	/*rx队列配置*/
 	eth_rx_queue_setup_t       rx_queue_setup;/**< Set up device RX queue. */
+	/*rx队列释放*/
 	eth_queue_release_t        rx_queue_release; /**< Release RX queue. */
 
 	eth_rx_enable_intr_t       rx_queue_intr_enable;  /**< Enable Rx queue interrupt. */
 	eth_rx_disable_intr_t      rx_queue_intr_disable; /**< Disable Rx queue interrupt. */
+	/*tx队列配置*/
 	eth_tx_queue_setup_t       tx_queue_setup;/**< Set up device TX queue. */
+	/*tx队列释放*/
 	eth_queue_release_t        tx_queue_release; /**< Release TX queue. */
 	eth_tx_done_cleanup_t      tx_done_cleanup;/**< Free tx ring mbufs */
 
@@ -921,10 +936,13 @@ struct eth_dev_ops {
 	eth_pool_ops_supported_t pool_ops_supported;
 	/**< Test if a port supports specific mempool ops */
 
+	/*取hairpin能力获取*/
 	eth_hairpin_cap_get_t hairpin_cap_get;
 	/**< Returns the hairpin capabilities. */
+	/*配置hairpin rx队列*/
 	eth_rx_hairpin_queue_setup_t rx_hairpin_queue_setup;
 	/**< Set up device RX hairpin queue. */
+	/*配置hairpin tx队列*/
 	eth_tx_hairpin_queue_setup_t tx_hairpin_queue_setup;
 	/**< Set up device TX hairpin queue. */
 
@@ -936,6 +954,7 @@ struct eth_dev_ops {
 	/**< Set Forward Error Correction(FEC) mode. */
 	hairpin_get_peer_ports_t hairpin_get_peer_ports;
 	/**< Get hairpin peer ports list. */
+	/*将设备与rx_port绑定*/
 	eth_hairpin_bind_t hairpin_bind;
 	/**< Bind all hairpin Tx queues of device to the peer port Rx queues. */
 	eth_hairpin_unbind_t hairpin_unbind;

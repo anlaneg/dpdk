@@ -76,6 +76,7 @@ static int cmp_dev_name(const struct rte_device *dev, const void *_name)
 	return strcmp(dev->name, name);
 }
 
+/*检查设备是否已定义了驱动*/
 int
 rte_dev_is_probed(const struct rte_device *dev)
 {

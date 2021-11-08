@@ -360,7 +360,7 @@ uint8_t no_flush_rx = 0; /* flush by default */
 /*
  * Flow API isolated mode.
  */
-uint8_t flow_isolate_all;
+uint8_t flow_isolate_all;/*是否所有的flow都要isolate*/
 
 /*
  * Avoids to check link status when starting/stopping a port.
@@ -575,7 +575,8 @@ static void
 set_default_fwd_lcores_config(void)
 {
 	unsigned int i;
-	unsigned int nb_lc;//原文：number logic core
+	//原文：number logic core
+	unsigned int nb_lc;
 	unsigned int sock_num;
 
 	nb_lc = 0;
@@ -2319,6 +2320,7 @@ all_ports_stopped(void)
 	return 1;
 }
 
+/*检查设备是否start*/
 int
 port_is_started(portid_t port_id)
 {
@@ -2472,6 +2474,7 @@ rx_queue_setup(uint16_t port_id, uint16_t rx_queue_id,
 	}
 	rx_conf->rx_nseg = rx_pkt_nb_segs;
 	rx_conf->rx_seg = rx_useg;
+	/*配置rx队列*/
 	ret = rte_eth_rx_queue_setup(port_id, rx_queue_id, nb_rx_desc,
 				    socket_id, rx_conf, NULL);
 	rx_conf->rx_seg = NULL;
@@ -2514,6 +2517,7 @@ start_port(portid_t pid)
 			port->need_reconfig = 0;
 
 			if (flow_isolate_all) {
+			    /*针对pi设备，开启isolate*/
 				int ret = port_flow_isolate(pi, 1);
 				if (ret) {
 					printf("Failed to apply isolated"
@@ -2524,6 +2528,7 @@ start_port(portid_t pid)
 			configure_rxtx_dump_callbacks(0);
 			printf("Configuring Port %d (socket %u)\n", pi,
 					port->socket_id);
+			/*检查此设备是否支持hairpin*/
 			if (nb_hairpinq > 0 &&
 			    rte_eth_dev_hairpin_capability_get(pi, &cap)) {
 				printf("Port %d doesn't support hairpin "
@@ -2531,8 +2536,8 @@ start_port(portid_t pid)
 				return -1;
 			}
 			/* configure port */
-			diag = rte_eth_dev_configure(pi, nb_rxq + nb_hairpinq,
-						     nb_txq + nb_hairpinq,
+			diag = rte_eth_dev_configure(pi, nb_rxq/*rx队列*/ + nb_hairpinq/*hairpin队列*/,
+						     nb_txq/*tx队列*/ + nb_hairpinq,
 						     &(port->dev_conf));
 			if (diag != 0) {
 				if (rte_atomic16_cmpset(&(port->port_status),
@@ -2545,17 +2550,21 @@ start_port(portid_t pid)
 				return -1;
 			}
 		}
+
+		/*reconfig队列*/
 		if (port->need_reconfig_queues > 0) {
 			port->need_reconfig_queues = 0;
 			/* setup tx queues */
 			for (qi = 0; qi < nb_txq; qi++) {
 				if ((numa_support) &&
 					(txring_numa[pi] != NUMA_NO_CONFIG))
+				    /*设置pi设备对应的qi号tx队列*/
 					diag = rte_eth_tx_queue_setup(pi, qi,
 						port->nb_tx_desc[qi],
 						txring_numa[pi],
 						&(port->tx_conf[qi]));
 				else
+                    /*设置pi设备对应的qi号tx队列*/
 					diag = rte_eth_tx_queue_setup(pi, qi,
 						port->nb_tx_desc[qi],
 						port->socket_id,
@@ -2591,6 +2600,7 @@ start_port(portid_t pid)
 						return -1;
 					}
 
+					/*rx队列配置*/
 					diag = rx_queue_setup(pi, qi,
 					     port->nb_rx_desc[qi],
 					     rxring_numa[pi],
@@ -2628,6 +2638,7 @@ start_port(portid_t pid)
 				port->need_reconfig_queues = 1;
 				return -1;
 			}
+
 			/* setup hairpin queues */
 			/*使能hairpin队列*/
 			if (setup_hairpin_queues(pi, p_pi, cnt_pi) != 0)
@@ -2647,7 +2658,7 @@ start_port(portid_t pid)
 		cnt_pi++;
 
 		/* start port */
-		diag = rte_eth_dev_start(pi);
+		diag = rte_eth_dev_start(pi);/*启动设备*/
 		if (diag < 0) {
 			printf("Fail to start port %d: %s\n", pi,
 			       rte_strerror(-diag));
@@ -2694,7 +2705,10 @@ start_port(portid_t pid)
 							RTE_MAX_ETHPORTS, 1);
 			if (peer_pi < 0)
 				return peer_pi;
+
+			/*将pi设备与peer_pl[*] port bind*/
 			for (j = 0; j < peer_pi; j++) {
+			    /*设备是否start*/
 				if (!port_is_started(peer_pl[j]))
 					continue;
 				diag = rte_eth_hairpin_bind(pi, peer_pl[j]);
@@ -2711,7 +2725,10 @@ start_port(portid_t pid)
 							RTE_MAX_ETHPORTS, 0);
 			if (peer_pi < 0)
 				return peer_pi;
+
+			/*将peer_pl[*]与pi port bind*/
 			for (j = 0; j < peer_pi; j++) {
+			    /*设备是否start*/
 				if (!port_is_started(peer_pl[j]))
 					continue;
 				diag = rte_eth_hairpin_bind(peer_pl[j], pi);
@@ -3267,6 +3284,7 @@ register_eth_event_callback(void)
 
 	for (event = RTE_ETH_EVENT_UNKNOWN;
 			event < RTE_ETH_EVENT_MAX; event++) {
+	    /*针对所有设备，注册evnet处理回调*/
 		ret = rte_eth_dev_callback_register(RTE_ETH_ALL,
 				event,
 				eth_event_callback,
@@ -3804,21 +3822,25 @@ main(int argc, char** argv)
 	signal(SIGINT, signal_handler);
 	signal(SIGTERM, signal_handler);
 
+	/*注册testpmd日志类型*/
 	testpmd_logtype = rte_log_register("testpmd");
 	if (testpmd_logtype < 0)
 		rte_exit(EXIT_FAILURE, "Cannot register log type");
 	//设置此模块的debug level
 	rte_log_set_level(testpmd_logtype, RTE_LOG_DEBUG);
 
+	/*初始化eal*/
 	diag = rte_eal_init(argc, argv);
 	if (diag < 0)
 		rte_exit(EXIT_FAILURE, "Cannot init EAL: %s\n",
 			 rte_strerror(rte_errno));
 
+	/*不支持当前进程以从进程方式运行*/
 	if (rte_eal_process_type() == RTE_PROC_SECONDARY)
 		rte_exit(EXIT_FAILURE,
 			 "Secondary process type not supported.\n");
 
+	/*为所有eth设备注册event回调*/
 	ret = register_eth_event_callback();
 	if (ret != 0)
 		rte_exit(EXIT_FAILURE, "Cannot register for ethdev events");

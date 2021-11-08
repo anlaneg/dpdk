@@ -1539,7 +1539,9 @@ struct rte_eth_dev_info {
 	uint32_t max_rx_pktlen; /**< Maximum configurable length of RX pkt. */
 	/** Maximum configurable size of LRO aggregated packet. */
 	uint32_t max_lro_pkt_size;
+	/*rx队列最大值*/
 	uint16_t max_rx_queues; /**< Maximum number of RX queues. */
+	/*tx队列最大值*/
 	uint16_t max_tx_queues; /**< Maximum number of TX queues. */
 	uint32_t max_mac_addrs; /**< Maximum number of MAC addresses. */
 	uint32_t max_hash_mac_addrs;

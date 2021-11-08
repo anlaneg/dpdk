@@ -38,7 +38,7 @@ ip_frag_tbl_reuse(struct rte_ip_frag_tbl *tbl, struct rte_ip_frag_death_row *dr,
 	IP_FRAG_TBL_STAT_UPDATE(&tbl->stat, reuse_num, 1);
 }
 
-
+/*利用srcip,dstip,id计算出两类hash,通过v1,v2返回*/
 static inline void
 ipv4_frag_hash(const struct ip_frag_key *key, uint32_t *v1, uint32_t *v2)
 {
@@ -294,7 +294,7 @@ ip_frag_find(struct rte_ip_frag_tbl *tbl, struct rte_ip_frag_death_row *dr,
 struct ip_frag_pkt *
 ip_frag_lookup(struct rte_ip_frag_tbl *tbl,
 	const struct ip_frag_key *key, uint64_t tms,
-	struct ip_frag_pkt **free, struct ip_frag_pkt **stale)
+	struct ip_frag_pkt **free/*遍历过程中遇到的首个free元素*/, struct ip_frag_pkt **stale)
 {
 	struct ip_frag_pkt *p1, *p2;
 	struct ip_frag_pkt *empty, *old;
@@ -311,12 +311,14 @@ ip_frag_lookup(struct rte_ip_frag_tbl *tbl,
 	if (tbl->last != NULL && ip_frag_key_cmp(key, &tbl->last->key) == 0)
 		return tbl->last;
 
+	/*计算两个hash*/
 	/* different hashing methods for IPv4 and IPv6 */
 	if (key->key_len == IPV4_KEYLEN)
 		ipv4_frag_hash(key, &sig1, &sig2);
 	else
 		ipv6_frag_hash(key, &sig1, &sig2);
 
+	/*取出备选的桶p1,p2*/
 	p1 = IP_FRAG_TBL_POS(tbl, sig1);
 	p2 = IP_FRAG_TBL_POS(tbl, sig2);
 
@@ -341,7 +343,8 @@ ip_frag_lookup(struct rte_ip_frag_tbl *tbl,
 			IPv6_KEY_BYTES(p1[i].key.src_dst), p1[i].key.id, p1[i].start);
 
 		if (ip_frag_key_cmp(key, &p1[i].key) == 0)
-			return p1 + i;//与第i个匹配，直接返回
+		    //与第i个匹配，直接返回
+			return p1 + i;
 		else if (ip_frag_key_is_empty(&p1[i].key))
 			//遇到空闲的，记录空闲位置
 			empty = (empty == NULL) ? (p1 + i) : empty;
@@ -369,7 +372,8 @@ ip_frag_lookup(struct rte_ip_frag_tbl *tbl,
 			IPv6_KEY_BYTES(p2[i].key.src_dst), p2[i].key.id, p2[i].start);
 
 		if (ip_frag_key_cmp(key, &p2[i].key) == 0)
-			return p2 + i;//在p2中找到，直接返回
+		    //在p2中找到，直接返回
+			return p2 + i;
 		else if (ip_frag_key_is_empty(&p2[i].key))
 			//如果之前没有记录空闲位置，记录空闲位置
 			empty = (empty == NULL) ?( p2 + i) : empty;

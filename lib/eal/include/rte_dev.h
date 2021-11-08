@@ -76,6 +76,7 @@ struct rte_mem_resource {
  */
 struct rte_driver {
 	TAILQ_ENTRY(rte_driver) next;  /**< Next in list. */
+	/*驱动名称*/
 	const char *name;                   /**< Driver name. */
 	const char *alias;              /**< Driver alias. */
 };

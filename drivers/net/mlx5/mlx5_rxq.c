@@ -1648,6 +1648,7 @@ mlx5_rxq_hairpin_new(struct rte_eth_dev *dev, uint16_t idx, uint16_t desc,
 	struct mlx5_priv *priv = dev->data->dev_private;
 	struct mlx5_rxq_ctrl *tmpl;
 
+	/*创建hairpin rxq,并加入*/
 	tmpl = mlx5_malloc(MLX5_MEM_RTE | MLX5_MEM_ZERO, sizeof(*tmpl), 0,
 			   SOCKET_ID_ANY);
 	if (!tmpl) {

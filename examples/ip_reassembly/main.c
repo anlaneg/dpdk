@@ -318,6 +318,7 @@ reassemble(struct rte_mbuf *m, uint16_t portid, uint32_t queue,
 
 	rxq = &qconf->rx_queue_list[queue];
 
+	/*指向以太头*/
 	eth_hdr = rte_pktmbuf_mtod(m, struct rte_ether_hdr *);
 
 	dst_port = portid;
@@ -859,6 +860,7 @@ setup_queue_tbl(struct rx_queue *rxq, uint32_t lcore, uint32_t queue)
 	frag_cycles = (rte_get_tsc_hz() + MS_PER_S - 1) / MS_PER_S *
 		max_flow_ttl;
 
+	/*创建分片表*/
 	if ((rxq->frag_tbl = rte_ip_frag_table_create(max_flow_num,
 			IP_FRAG_TBL_BUCKET_ENTRIES, max_flow_num, frag_cycles,
 			socket)) == NULL) {

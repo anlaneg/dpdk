@@ -2191,6 +2191,7 @@ bond_ethdev_close(struct rte_eth_dev *dev)
 /* forward declaration */
 static int bond_ethdev_configure(struct rte_eth_dev *dev);
 
+/*获取bonding devinfo*/
 static int
 bond_ethdev_info(struct rte_eth_dev *dev, struct rte_eth_dev_info *dev_info)
 {
@@ -2218,7 +2219,8 @@ bond_ethdev_info(struct rte_eth_dev *dev, struct rte_eth_dev_info *dev_info)
 		uint16_t idx;
 
 		for (idx = 0; idx < internals->slave_count; idx++) {
-			slave = internals->slaves[idx];
+			slave = internals->slaves[idx];/*取idx号slave设备*/
+			/*取slave号设备对应的devinfo*/
 			ret = rte_eth_dev_info_get(slave.port_id, &slave_info);
 			if (ret != 0) {
 				RTE_BOND_LOG(ERR,
@@ -2244,6 +2246,7 @@ bond_ethdev_info(struct rte_eth_dev *dev, struct rte_eth_dev_info *dev_info)
 		}
 	}
 
+	/*rx,tx队列数*/
 	dev_info->max_rx_queues = max_nb_rx_queues;
 	dev_info->max_tx_queues = max_nb_tx_queues;
 

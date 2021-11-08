@@ -87,6 +87,7 @@ rte_eth_dev_pci_allocate(struct rte_pci_device *dev, size_t private_data_size)
 		if (!eth_dev)
 			return NULL;
 
+		/*申请私有数据*/
 		if (private_data_size) {
 			eth_dev->data->dev_private = rte_zmalloc_socket(name,
 				private_data_size, RTE_CACHE_LINE_SIZE,

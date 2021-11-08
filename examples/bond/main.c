@@ -110,6 +110,7 @@
 uint16_t slaves[RTE_MAX_ETHPORTS];
 uint16_t slaves_count;
 
+/*bond设备port id*/
 static uint16_t BOND_PORT = 0xffff;
 
 static struct rte_mempool *mbuf_pool;
@@ -229,6 +230,7 @@ bond_port_init(struct rte_mempool *mbuf_pool)
 	struct rte_eth_conf local_port_conf = port_conf;
 	uint16_t wait_counter = 20;
 
+	/*创建bond设备*/
 	retval = rte_eth_bond_create("net_bonding0", BONDING_MODE_ALB,
 			0 /*SOCKET_ID_ANY*/);
 	if (retval < 0)
@@ -237,6 +239,7 @@ bond_port_init(struct rte_mempool *mbuf_pool)
 
 	BOND_PORT = retval;
 
+	/*取bond获取devinfo*/
 	retval = rte_eth_dev_info_get(BOND_PORT, &dev_info);
 	if (retval != 0)
 		rte_exit(EXIT_FAILURE,
@@ -246,6 +249,7 @@ bond_port_init(struct rte_mempool *mbuf_pool)
 	if (dev_info.tx_offload_capa & DEV_TX_OFFLOAD_MBUF_FAST_FREE)
 		local_port_conf.txmode.offloads |=
 			DEV_TX_OFFLOAD_MBUF_FAST_FREE;
+	/*配置rx,tx队列*/
 	retval = rte_eth_dev_configure(BOND_PORT, 1, 1, &local_port_conf);
 	if (retval != 0)
 		rte_exit(EXIT_FAILURE, "port %u: configuration failed (res=%d)\n",

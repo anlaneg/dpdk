@@ -899,10 +899,12 @@ main(int argc, char **argv)
 		if ((l2fwd_enabled_port_mask & (1 << portid)) == 0)
 			continue;
 		printf("Closing port %d...", portid);
+		/*停止port*/
 		ret = rte_eth_dev_stop(portid);
 		if (ret != 0)
 			printf("rte_eth_dev_stop: err=%d, port=%d\n",
 			       ret, portid);
+		/*释放port资源*/
 		rte_eth_dev_close(portid);
 		printf(" Done\n");
 	}

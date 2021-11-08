@@ -95,7 +95,7 @@ struct bond_slave_details {
 struct rte_flow {
 	TAILQ_ENTRY(rte_flow) next;
 	/* Slaves flows */
-	struct rte_flow *flows[RTE_MAX_ETHPORTS];
+	struct rte_flow *flows[RTE_MAX_ETHPORTS];/*各slave对应的flow*/
 	/* Flow description for synchronization */
 	struct rte_flow_conv_rule rule;
 	uint8_t rule_data[];

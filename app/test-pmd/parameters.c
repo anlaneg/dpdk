@@ -1084,6 +1084,7 @@ launch_args_parse(int argc, char** argv)
 				if (errno != 0 || end == optarg)
 					rte_exit(EXIT_FAILURE, "hairpin mode invalid\n");
 				else
+				    /*配置hairpin模式*/
 					hairpin_mode = (uint16_t)n;
 			}
 			if (!strcmp(lgopts[opt_idx].name, "burst")) {
