@@ -4996,6 +4996,7 @@ rte_eth_rx_burst(uint16_t port_id, uint16_t queue_id,
 		return 0;
 	}
 #endif
+	/*自$dev的queue_id队列收取nb_rx个报文*/
 	nb_rx = (*dev->rx_pkt_burst)(dev->data->rx_queues[queue_id],
 				     rx_pkts, nb_pkts);
 
@@ -5013,6 +5014,7 @@ rte_eth_rx_burst(uint16_t port_id, uint16_t queue_id,
 
 	if (unlikely(cb != NULL)) {
 		do {
+		    /*触发rx回调*/
 			nb_rx = cb->fn.rx(port_id, queue_id, rx_pkts, nb_rx,
 						nb_pkts, cb->param);
 			cb = cb->next;

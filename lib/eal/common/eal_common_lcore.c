@@ -18,6 +18,7 @@
 #include "eal_private.h"
 #include "eal_thread.h"
 
+/*取对应的main logic core*/
 unsigned int rte_get_main_lcore(void)
 {
 	return rte_eal_get_configuration()->main_lcore;
@@ -84,6 +85,7 @@ rte_lcore_has_role(unsigned int lcore_id, enum rte_lcore_role_t role)
 	return cfg->lcore_role[lcore_id] == role;
 }
 
+/*检查此core是否被启用*/
 int rte_lcore_is_enabled(unsigned int lcore_id)
 {
 	struct rte_config *cfg = rte_eal_get_configuration();
@@ -93,7 +95,8 @@ int rte_lcore_is_enabled(unsigned int lcore_id)
 	return cfg->lcore_role[lcore_id] == ROLE_RTE;
 }
 
-unsigned int rte_get_next_lcore(unsigned int i, int skip_main, int wrap)
+/*取i之后可使用的logic core*/
+unsigned int rte_get_next_lcore(unsigned int i, int skip_main/*是否跳过主core*/, int wrap)
 {
 	i++;
 	if (wrap)
@@ -102,16 +105,19 @@ unsigned int rte_get_next_lcore(unsigned int i, int skip_main, int wrap)
 	while (i < RTE_MAX_LCORE) {
 		if (!rte_lcore_is_enabled(i) ||
 		    (skip_main && (i == rte_get_main_lcore()))) {
+		    /*未开启此core,或者要跳过main core,且当前恰好为main core*/
 			i++;
 			if (wrap)
 				i %= RTE_MAX_LCORE;
 			continue;
 		}
+		/*找到一个可用的logic core，退出，返回此core id*/
 		break;
 	}
 	return i;
 }
 
+/*取此logic core的socket id*/
 unsigned int
 rte_lcore_to_socket_id(unsigned int lcore_id)
 {

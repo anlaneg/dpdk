@@ -95,6 +95,7 @@ unsigned int rte_get_main_lcore(void);
 __rte_deprecated
 static inline unsigned int rte_get_master_lcore(void)
 {
+    /*取main logic core*/
 	return rte_get_main_lcore();
 }
 
@@ -241,6 +242,7 @@ unsigned int rte_get_next_lcore(unsigned int i, int skip_main, int wrap);
 /**
  * Macro to browse all running lcores except the main lcore.
  */
+/*从0号core开启遍历，跳过main core,且不容许wrap*/
 #define RTE_LCORE_FOREACH_WORKER(i)					\
 	for (i = rte_get_next_lcore(-1, 1, 0);				\
 	     i < RTE_MAX_LCORE;						\

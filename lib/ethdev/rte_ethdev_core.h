@@ -106,6 +106,7 @@ struct rte_eth_dev {
 	 * User-supplied functions called from rx_burst to post-process
 	 * received packets before passing them to the user
 	 */
+	/*每个队列一个cb*/
 	struct rte_eth_rxtx_callback *post_rx_burst_cbs[RTE_MAX_QUEUES_PER_PORT];
 	/**
 	 * User-supplied functions called from tx_burst to pre-process

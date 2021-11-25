@@ -1372,7 +1372,7 @@ eth_dev_validate_offloads(uint16_t port_id, uint64_t req_offloads,
 
 /*执行以太设备配置*/
 int
-rte_eth_dev_configure(uint16_t port_id, uint16_t nb_rx_q, uint16_t nb_tx_q,
+rte_eth_dev_configure(uint16_t port_id, uint16_t nb_rx_q/*rx队列数*/, uint16_t nb_tx_q/*tx队列数*/,
 		      const struct rte_eth_conf *dev_conf)
 {
 	struct rte_eth_dev *dev;

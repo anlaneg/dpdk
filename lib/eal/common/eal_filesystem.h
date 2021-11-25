@@ -49,6 +49,7 @@ eal_runtime_config_path(void)
 static inline const char *
 eal_mp_socket_path(void)
 {
+    /*mp socket文件目录前缀*/
 	static char buffer[PATH_MAX]; /* static so auto-zeroed */
 
 	snprintf(buffer, sizeof(buffer), "%s/%s", rte_eal_get_runtime_dir(),

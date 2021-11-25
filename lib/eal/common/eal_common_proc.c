@@ -135,6 +135,7 @@ find_pending_request(const char *dst, const char *act_name)
 	return r;
 }
 
+/*构造socket路径到buffer中*/
 static void
 create_socket_path(const char *name, char *buf, int len)
 {
@@ -289,8 +290,10 @@ read_msg(struct mp_msg_internal *m, struct sockaddr_un *s)
 	msgh.msg_control = control;
 	msgh.msg_controllen = sizeof(control);
 
+	/*自mp进程读取消息*/
 	msglen = recvmsg(mp_fd, &msgh, 0);
 	if (msglen < 0) {
+	    /*mp收到错误的消息*/
 		RTE_LOG(ERR, EAL, "recvmsg failed, %s\n", strerror(errno));
 		return -1;
 	}
@@ -392,7 +395,9 @@ mp_handle(void *arg __rte_unused)
 	struct sockaddr_un sa;
 
 	while (mp_fd >= 0) {
+	    /*自mp socket收取消息*/
 		if (read_msg(&msg, &sa) == 0)
+		    /*处理mp socket收到的消息*/
 			process_msg(&msg, &sa);
 	}
 
@@ -547,9 +552,11 @@ open_socket_fd(void)
 
 	peer_name[0] = '\0';
 	if (rte_eal_process_type() == RTE_PROC_SECONDARY)
+	    /*有从进程，获取pid构造peer_name*/
 		snprintf(peer_name, sizeof(peer_name),
 				"%d_%"PRIx64, getpid(), rte_rdtsc());
 
+	/*创建unix socket*/
 	mp_fd = socket(AF_UNIX, SOCK_DGRAM, 0);
 	if (mp_fd < 0) {
 		RTE_LOG(ERR, EAL, "failed to create unix socket\n");
@@ -559,10 +566,12 @@ open_socket_fd(void)
 	memset(&un, 0, sizeof(un));
 	un.sun_family = AF_UNIX;
 
+	/*生成监听地址*/
 	create_socket_path(peer_name, un.sun_path, sizeof(un.sun_path));
 
 	unlink(un.sun_path); /* May still exist since last run */
 
+	/*完成地址绑定*/
 	if (bind(mp_fd, (struct sockaddr *)&un, sizeof(un)) < 0) {
 		RTE_LOG(ERR, EAL, "failed to bind %s: %s\n",
 			un.sun_path, strerror(errno));
@@ -629,6 +638,7 @@ rte_mp_channel_init(void)
 		return -1;
 	}
 
+	/*创建线程处理此socket fd*/
 	if (rte_ctrl_thread_create(&mp_handle_tid, "rte_mp_handle",
 			NULL, mp_handle, NULL) < 0) {
 		RTE_LOG(ERR, EAL, "failed to create mp thread: %s\n",

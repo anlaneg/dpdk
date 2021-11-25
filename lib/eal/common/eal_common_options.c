@@ -936,6 +936,7 @@ eal_parse_main_lcore(const char *arg)
 	struct rte_config *cfg = rte_eal_get_configuration();
 
 	errno = 0;
+	/*设置main core*/
 	cfg->main_lcore = (uint32_t) strtol(arg, &parsing_end, 0);
 	if (errno || parsing_end[0] != 0)
 		return -1;
@@ -1751,6 +1752,7 @@ eal_parse_common_option(int opt, const char *optarg,
 			" is deprecated use " OPT_MAIN_LCORE "\n");
 		/* fallthrough */
 	case OPT_MAIN_LCORE_NUM:
+	    /*指定main core*/
 		if (eal_parse_main_lcore(optarg) < 0) {
 			RTE_LOG(ERR, EAL, "invalid parameter for --"
 					OPT_MAIN_LCORE "\n");
@@ -1966,6 +1968,7 @@ eal_adjust_config(struct internal_config *internal_cfg)
 
 	/* default main lcore is the first one */
 	if (!main_lcore_parsed) {
+	    /*没有配置main lcore,默认使用第一个core为main core*/
 		cfg->main_lcore = rte_get_next_lcore(-1, 0, 0);
 		if (cfg->main_lcore >= RTE_MAX_LCORE)
 			return -1;

@@ -31,7 +31,7 @@
  * remote lcore switch in FINISHED state.
  */
 int
-rte_eal_remote_launch(int (*f)(void *), void *arg, unsigned int worker_id)
+rte_eal_remote_launch(int (*f/*工作函数*/)(void *), void *arg, unsigned int worker_id/*工作core id*/)
 {
 	int n;
 	char c = 0;
@@ -42,19 +42,20 @@ rte_eal_remote_launch(int (*f)(void *), void *arg, unsigned int worker_id)
 	if (lcore_config[worker_id].state != WAIT)
 		goto finish;
 
+	/*此work_id的工作函数及参数*/
 	lcore_config[worker_id].f = f;
 	lcore_config[worker_id].arg = arg;
 
 	/* send message */
 	n = 0;
 	while (n == 0 || (n < 0 && errno == EINTR))
-		n = write(m2w, &c, 1);
+		n = write(m2w, &c, 1);/*发送消息给work,使其开始工作*/
 	if (n < 0)
 		rte_panic("cannot write on configuration pipe\n");
 
 	/* wait ack */
 	do {
-		n = read(w2m, &c, 1);
+		n = read(w2m, &c, 1);/*读取work给master的消息，确认其已开始运行*/
 	} while (n < 0 && errno == EINTR);
 
 	if (n <= 0)
@@ -104,7 +105,7 @@ eal_thread_loop(__rte_unused void *arg)
 
 		/* wait command */
 		do {
-			n = read(m2w, &c, 1);
+			n = read(m2w, &c, 1);/*等待控制节点发送命令*/
 		} while (n < 0 && errno == EINTR);
 
 		if (n <= 0)

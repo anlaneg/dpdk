@@ -48,6 +48,7 @@ rte_eal_remote_launch(int (*f)(void *), void *arg, unsigned worker_id)
 	/* send message */
 	n = 0;
 	while (n == 0 || (n < 0 && errno == EINTR))
+	    /*向worker发送命令，使其开始工作*/
 		n = write(m2w, &c, 1);
 	if (n < 0)
 		rte_panic("cannot write on configuration pipe\n");
