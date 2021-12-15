@@ -91,7 +91,9 @@ int rte_lcore_is_enabled(unsigned int lcore_id)
 	struct rte_config *cfg = rte_eal_get_configuration();
 
 	if (lcore_id >= RTE_MAX_LCORE)
+	    /*logic core id必须小于RTE_MAX_LCORE*/
 		return 0;
+	/*检查此core是否被开启*/
 	return cfg->lcore_role[lcore_id] == ROLE_RTE;
 }
 

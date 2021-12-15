@@ -4981,9 +4981,10 @@ int rte_eth_representor_info_get(uint16_t port_id,
  *   *rx_pkts* array.
  */
 static inline uint16_t
-rte_eth_rx_burst(uint16_t port_id, uint16_t queue_id,
-		 struct rte_mbuf **rx_pkts, const uint16_t nb_pkts)
+rte_eth_rx_burst(uint16_t port_id, uint16_t queue_id/*读取指定queue_id*/,
+		 struct rte_mbuf **rx_pkts/*出参，读到的报文*/, const uint16_t nb_pkts)
 {
+    /*取对应设备*/
 	struct rte_eth_dev *dev = &rte_eth_devices[port_id];
 	uint16_t nb_rx;
 
@@ -5014,7 +5015,7 @@ rte_eth_rx_burst(uint16_t port_id, uint16_t queue_id,
 
 	if (unlikely(cb != NULL)) {
 		do {
-		    /*触发rx回调*/
+			/*触发所有rx回调*/
 			nb_rx = cb->fn.rx(port_id, queue_id, rx_pkts, nb_rx,
 						nb_pkts, cb->param);
 			cb = cb->next;

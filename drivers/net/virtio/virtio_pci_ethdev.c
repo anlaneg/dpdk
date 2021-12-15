@@ -77,6 +77,7 @@ eth_virtio_pci_init(struct rte_eth_dev *eth_dev)
 	int ret;
 
 	if (rte_eal_process_type() == RTE_PROC_PRIMARY) {
+	    /*填充port_id*/
 		hw->port_id = eth_dev->data->port_id;
 		VTPCI_DEV(hw) = pci_dev;
 		ret = vtpci_init(RTE_ETH_DEV_TO_PCI(eth_dev), dev);
@@ -178,6 +179,7 @@ virtio_pci_devargs_parse(struct rte_devargs *devargs, int *vdpa)
 	return ret;
 }
 
+/*virtio-pci设备探测*/
 static int eth_virtio_pci_probe(struct rte_pci_driver *pci_drv __rte_unused,
 	struct rte_pci_device *pci_dev)
 {
@@ -194,7 +196,7 @@ static int eth_virtio_pci_probe(struct rte_pci_driver *pci_drv __rte_unused,
 		return 1;
 
 	return rte_eth_dev_pci_generic_probe(pci_dev, sizeof(struct virtio_pci_dev),
-		eth_virtio_pci_init);
+		eth_virtio_pci_init/*virtio设备初始化函数*/);
 }
 
 static int eth_virtio_pci_remove(struct rte_pci_device *pci_dev)

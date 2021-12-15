@@ -923,6 +923,7 @@ static inline int rte_pktmbuf_alloc_bulk(struct rte_mempool *pool,
 	unsigned idx = 0;
 	int rc;
 
+	/*自pool中提取count个mbuf*/
 	rc = rte_mempool_get_bulk(pool, (void **)mbufs, count);
 	if (unlikely(rc))
 		return rc;
@@ -1505,6 +1506,7 @@ static inline void rte_pktmbuf_refcnt_update(struct rte_mbuf *m, int16_t v)
  */
 static inline uint16_t rte_pktmbuf_headroom(const struct rte_mbuf *m)
 {
+    /*返回headroom长度*/
 	__rte_mbuf_sanity_check(m, 0);
 	return m->data_off;
 }
@@ -1534,6 +1536,7 @@ static inline uint16_t rte_pktmbuf_tailroom(const struct rte_mbuf *m)
  */
 static inline struct rte_mbuf *rte_pktmbuf_lastseg(struct rte_mbuf *m)
 {
+    /*指向mbuf的最后一个buffer*/
 	__rte_mbuf_sanity_check(m, 1);
 	while (m->next != NULL)
 		m = m->next;
@@ -1581,15 +1584,17 @@ static inline char *rte_pktmbuf_prepend(struct rte_mbuf *m,
 	__rte_mbuf_sanity_check(m, 1);
 
 	if (unlikely(len > rte_pktmbuf_headroom(m)))
+	    /*len长度大于headroom,空间不足*/
 		return NULL;
 
 	/* NB: elaborating the subtraction like this instead of using
 	 *     -= allows us to ensure the result type is uint16_t
 	 *     avoiding compiler warnings on gcc 8.1 at least */
-	m->data_off = (uint16_t)(m->data_off - len);
+	m->data_off = (uint16_t)(m->data_off - len);/*data_off前移len长度*/
 	m->data_len = (uint16_t)(m->data_len + len);
 	m->pkt_len  = (m->pkt_len + len);
 
+	/*返回新填充的位置*/
 	return (char *)m->buf_addr + m->data_off;
 }
 
@@ -1617,11 +1622,15 @@ static inline char *rte_pktmbuf_append(struct rte_mbuf *m, uint16_t len)
 
 	m_last = rte_pktmbuf_lastseg(m);
 	if (unlikely(len > rte_pktmbuf_tailroom(m_last)))
+	    /*len大于tailroom,返回NULL*/
 		return NULL;
 
+	/*tail指向buffer结尾*/
 	tail = (char *)m_last->buf_addr + m_last->data_off + m_last->data_len;
+	/*更新data_len,pkt_len*/
 	m_last->data_len = (uint16_t)(m_last->data_len + len);
 	m->pkt_len  = (m->pkt_len + len);
+	/*返回待填充的起始地址*/
 	return (char*) tail;
 }
 

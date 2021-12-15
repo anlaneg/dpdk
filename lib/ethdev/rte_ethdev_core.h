@@ -61,9 +61,12 @@ typedef int (*eth_tx_descriptor_status_t)(void *txq, uint16_t offset);
  * queue on RX and TX.
  */
 struct rte_eth_rxtx_callback {
+    /*指向下一个callback*/
 	struct rte_eth_rxtx_callback *next;
 	union{
+	    /*收回调*/
 		rte_rx_callback_fn rx;
+		/*发回调*/
 		rte_tx_callback_fn tx;
 	} fn;
 	void *param;
@@ -107,7 +110,7 @@ struct rte_eth_dev {
 	 * received packets before passing them to the user
 	 */
 	/*每个队列一个cb*/
-	struct rte_eth_rxtx_callback *post_rx_burst_cbs[RTE_MAX_QUEUES_PER_PORT];
+	struct rte_eth_rxtx_callback *post_rx_burst_cbs[RTE_MAX_QUEUES_PER_PORT];/*传报文给上层时回调使用*/
 	/**
 	 * User-supplied functions called from tx_burst to pre-process
 	 * received packets before passing them to the driver for transmission.

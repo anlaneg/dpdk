@@ -484,6 +484,7 @@ enum {
 struct rte_mbuf {
 	RTE_MARKER cacheline0;
 
+	/*buffer起始地址*/
 	void *buf_addr;           /**< Virtual address of segment buffer. */
 	/**
 	 * Physical address of segment buffer.
@@ -495,6 +496,7 @@ struct rte_mbuf {
 
 	/* next 8 bytes are initialised on RX descriptor rearm */
 	RTE_MARKER64 rearm_data;
+	/*headroom长度*/
 	uint16_t data_off;
 
 	/**
@@ -527,6 +529,7 @@ struct rte_mbuf {
 	 */
 	RTE_STD_C11
 	union {
+	    /*报文类型*/
 		uint32_t packet_type; /**< L2/L3/L4 and tunnel information. */
 		__extension__
 		struct {
@@ -553,7 +556,9 @@ struct rte_mbuf {
 		};
 	};
 
+	/*报文总长度*/
 	uint32_t pkt_len;         /**< Total pkt len: sum of all segments. */
+	/*此mbuf数据长度*/
 	uint16_t data_len;        /**< Amount of data in segment buffer. */
 	/** VLAN TCI (CPU order), valid if PKT_RX_VLAN is set. */
 	uint16_t vlan_tci;
@@ -595,6 +600,7 @@ struct rte_mbuf {
 	/** Outer VLAN TCI (CPU order), valid if PKT_RX_QINQ is set. */
 	uint16_t vlan_tci_outer;
 
+	/*此buffer长度*/
 	uint16_t buf_len;         /**< Length of segment buffer. */
 
 	struct rte_mempool *pool; /**< Pool from which mbuf was allocated. */
@@ -610,10 +616,12 @@ struct rte_mbuf {
 		uint64_t tx_offload;       /**< combined for easy fetch */
 		__extension__
 		struct {
+		    /*l2长度*/
 			uint64_t l2_len:RTE_MBUF_L2_LEN_BITS;
 			/**< L2 (MAC) Header Length for non-tunneling pkt.
 			 * Outer_L4_len + ... + Inner_L2_len for tunneling pkt.
 			 */
+			/*l3长度*/
 			uint64_t l3_len:RTE_MBUF_L3_LEN_BITS;
 			/**< L3 (IP) Header Length. */
 			uint64_t l4_len:RTE_MBUF_L4_LEN_BITS;
@@ -720,6 +728,7 @@ struct rte_mbuf_ext_shared_info {
  *   The type to cast the result into.
  */
 #define rte_pktmbuf_mtod_offset(m, t, o)	\
+    /*跳到报文起始的指定位置*/\
 	((t)((char *)(m)->buf_addr + (m)->data_off + (o)))
 
 /**

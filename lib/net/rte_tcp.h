@@ -28,10 +28,14 @@ extern "C" {
 struct rte_tcp_hdr {
 	rte_be16_t src_port; /**< TCP source port. */
 	rte_be16_t dst_port; /**< TCP destination port. */
+	/*本端发送seq*/
 	rte_be32_t sent_seq; /**< TX data sequence number. */
+	/*本端已接收ack*/
 	rte_be32_t recv_ack; /**< RX data acknowledgment sequence number. */
-	uint8_t  data_off;   /**< Data offset. */ //高位有四个预留位
-	uint8_t  tcp_flags;  /**< TCP flags */ //高位有两个预留位（6位有效，自低向高，依次为fin,syn,rst,push,ack,urg)
+	//高位有四个预留位（data offset长度）
+	uint8_t  data_off;   /**< Data offset. */
+	//高位有两个预留位（6位有效，自低向高，依次为fin,syn,rst,push,ack,urg)
+	uint8_t  tcp_flags;  /**< TCP flags */
 	rte_be16_t rx_win;   /**< RX flow control window. */
 	rte_be16_t cksum;    /**< TCP checksum. */
 	rte_be16_t tcp_urp;  /**< TCP urgent pointer, if any. */

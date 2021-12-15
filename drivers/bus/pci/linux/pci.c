@@ -38,19 +38,21 @@ pci_get_kernel_driver_by_path(const char *filename, char *dri_name,
 	if (!filename || !dri_name)
 		return -1;
 
-	//读取link
+	//读取link,例如：../../../bus/pci/drivers/virtio-pci
 	count = readlink(filename, path, PATH_MAX);
 	if (count >= PATH_MAX)
 		return -1;
 
 	/* For device does not have a driver */
 	if (count < 0)
-		return 1;//还没有driver
+	    //还没有driver
+		return 1;
 
 	path[count] = '\0';
 
 	name = strrchr(path, '/');
 	if (name) {
+	    /*反向找到'/'符，前跳一个字符，指向driver名称*/
 		strlcpy(dri_name, name + 1, len);
 		return 0;
 	}

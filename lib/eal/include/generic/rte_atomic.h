@@ -596,6 +596,7 @@ rte_atomic32_dec(rte_atomic32_t *v)
 static inline int32_t
 rte_atomic32_add_return(rte_atomic32_t *v, int32_t inc)
 {
+    /*v+inc并返回结果*/
 	return __sync_add_and_fetch(&v->cnt, inc);
 }
 

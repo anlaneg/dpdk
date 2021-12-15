@@ -81,6 +81,7 @@ eal_thread_loop(__rte_unused void *arg)
 	thread_id = pthread_self();
 
 	/* retrieve our lcore_id from the configuration structure */
+	/*通过自身线程id,查找本线程对应的lcore_config结构*/
 	RTE_LCORE_FOREACH_WORKER(lcore_id) {
 		if (thread_id == lcore_config[lcore_id].thread_id)
 			break;
@@ -91,6 +92,7 @@ eal_thread_loop(__rte_unused void *arg)
 	m2w = lcore_config[lcore_id].pipe_main2worker[0];
 	w2m = lcore_config[lcore_id].pipe_worker2main[1];
 
+	/*为本线程绑定logic core_id*/
 	__rte_thread_init(lcore_id, &lcore_config[lcore_id].cpuset);
 
 	ret = eal_thread_dump_current_affinity(cpuset, sizeof(cpuset));

@@ -540,6 +540,7 @@ rte_eth_dev_allocate(const char *name)
 		goto unlock;
 	}
 
+	/*取此port_id对应的rte_eth_dev*/
 	eth_dev = eth_dev_get(port_id);
 	strlcpy(eth_dev->data->name, name, sizeof(eth_dev->data->name));
 	eth_dev->data->port_id = port_id;

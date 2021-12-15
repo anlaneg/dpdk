@@ -127,6 +127,7 @@ rte_eth_dev_pci_generic_probe(struct rte_pci_device *pci_dev,
 		return -ENOMEM;
 
 	RTE_FUNC_PTR_OR_ERR_RET(*dev_init, -EINVAL);
+	/*初始化pci设备*/
 	ret = dev_init(eth_dev);
 	if (ret)
 		rte_eth_dev_release_port(eth_dev);
