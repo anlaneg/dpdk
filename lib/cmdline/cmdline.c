@@ -23,12 +23,16 @@ cmdline_valid_buffer(struct rdline *rdl, const char *buf,
 {
 	struct cmdline *cl = rdl->opaque;
 	int ret;
+	/*解析命令行内容*/
 	ret = cmdline_parse(cl, buf);
 	if (ret == CMDLINE_PARSE_AMBIGUOUS)
+	    /*命令有歧义*/
 		cmdline_printf(cl, "Ambiguous command\n");
 	else if (ret == CMDLINE_PARSE_NOMATCH)
+	    /*命令无匹配*/
 		cmdline_printf(cl, "Command not found\n");
 	else if (ret == CMDLINE_PARSE_BAD_ARGS)
+	    /*命令参数有误*/
 		cmdline_printf(cl, "Bad arguments\n");
 }
 
@@ -53,12 +57,14 @@ cmdline_write_char(struct rdline *rdl, char c)
 	cl = rdl->opaque;
 
 	if (cl->s_out >= 0)
+	    /*向标准输出写一个字符*/
 		ret = write(cl->s_out, &c, 1);
 
 	return ret;
 }
 
 
+/*设置提示符*/
 void
 cmdline_set_prompt(struct cmdline *cl, const char *prompt)
 {
@@ -68,14 +74,16 @@ cmdline_set_prompt(struct cmdline *cl, const char *prompt)
 }
 
 struct cmdline *
-cmdline_new(cmdline_parse_ctx_t *ctx, const char *prompt, int s_in, int s_out)
+cmdline_new(cmdline_parse_ctx_t *ctx/*命令列表*/, const char *prompt/*命令行提示符*/, int s_in/*stdin对应的fd*/, int s_out)
 {
 	struct cmdline *cl;
 	int ret;
 
 	if (!ctx || !prompt)
+	    /*参数有误*/
 		return NULL;
 
+	/*申请cmdline*/
 	cl = malloc(sizeof(struct cmdline));
 	if (cl == NULL)
 		return NULL;
@@ -84,6 +92,7 @@ cmdline_new(cmdline_parse_ctx_t *ctx, const char *prompt, int s_in, int s_out)
 	cl->s_out = s_out;
 	cl->ctx = ctx;
 
+	/*初始化rdl*/
 	ret = rdline_init(&cl->rdl, cmdline_write_char, cmdline_valid_buffer,
 			cmdline_complete_buffer);
 	if (ret != 0) {
@@ -92,7 +101,7 @@ cmdline_new(cmdline_parse_ctx_t *ctx, const char *prompt, int s_in, int s_out)
 	}
 
 	cl->rdl.opaque = cl;
-	cmdline_set_prompt(cl, prompt);
+	cmdline_set_prompt(cl, prompt);/*设置命令行提示符*/
 	rdline_newline(&cl->rdl, cl->prompt);
 
 	return cl;
@@ -135,7 +144,7 @@ cmdline_printf(const struct cmdline *cl, const char *fmt, ...)
 }
 
 int
-cmdline_in(struct cmdline *cl, const char *buf, int size)
+cmdline_in(struct cmdline *cl, const char *buf/*输入的内容*/, int size/*输入的内容长度*/)
 {
 	const char *history, *buffer;
 	size_t histlen, buflen;
@@ -208,6 +217,7 @@ cmdline_poll(struct cmdline *cl)
 	return cl->rdl.status;
 }
 
+/*进入命令行交互流程*/
 void
 cmdline_interact(struct cmdline *cl)
 {
@@ -219,7 +229,9 @@ cmdline_interact(struct cmdline *cl)
 	c = -1;
 	while (1) {
 		if (cmdline_read_char(cl, &c) <= 0)
+		    /*自标准输入读取一个字符失败，退出循环*/
 			break;
+		/*向命令行解析注入一个字符*/
 		if (cmdline_in(cl, &c, 1) < 0)
 			break;
 	}

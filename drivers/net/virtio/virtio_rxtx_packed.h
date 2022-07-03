@@ -228,6 +228,7 @@ virtqueue_dequeue_single_packed_vec(struct virtnet_rx *rxvq,
 	id = desc[used_idx].id;
 	cookie = (struct rte_mbuf *)vq->vq_descx[id].cookie;
 	if (unlikely(cookie == NULL)) {
+		/*描述符上没有标明cookie*/
 		PMD_DRV_LOG(ERR, "vring descriptor with no mbuf cookie at %u",
 				vq->vq_used_cons_idx);
 		return -1;

@@ -941,6 +941,7 @@ virtio_update_stats(struct rte_eth_dev *dev, struct rte_eth_stats *stats)
 {
 	unsigned i;
 
+	/*遍历所有tx队列，取此对队中的统计计数*/
 	for (i = 0; i < dev->data->nb_tx_queues; i++) {
 		const struct virtnet_tx *txvq = dev->data->tx_queues[i];
 		if (txvq == NULL)
@@ -955,6 +956,7 @@ virtio_update_stats(struct rte_eth_dev *dev, struct rte_eth_stats *stats)
 		}
 	}
 
+	/*遍历所有rx队列，取此队列中的统计计数*/
 	for (i = 0; i < dev->data->nb_rx_queues; i++) {
 		const struct virtnet_rx *rxvq = dev->data->rx_queues[i];
 		if (rxvq == NULL)
@@ -970,6 +972,7 @@ virtio_update_stats(struct rte_eth_dev *dev, struct rte_eth_stats *stats)
 		}
 	}
 
+	/*统计申请mbuf失败*/
 	stats->rx_nombuf = dev->data->rx_mbuf_alloc_failed;
 }
 
@@ -1065,6 +1068,7 @@ virtio_dev_xstats_get(struct rte_eth_dev *dev, struct rte_eth_xstat *xstats,
 	return count;
 }
 
+/*取virtio设备统计信息*/
 static int
 virtio_dev_stats_get(struct rte_eth_dev *dev, struct rte_eth_stats *stats)
 {
@@ -2030,6 +2034,7 @@ virtio_dev_configure(struct rte_eth_dev *dev)
 	PMD_INIT_LOG(DEBUG, "configure");
 	req_features = VIRTIO_PMD_DEFAULT_GUEST_FEATURES;
 
+	/*当前rxmode必须为None*/
 	if (rxmode->mq_mode != ETH_MQ_RX_NONE) {
 		PMD_DRV_LOG(ERR,
 			"Unsupported Rx multi queue mode %d",

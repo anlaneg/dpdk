@@ -195,6 +195,7 @@ main(int argc, char **argv)
 {
 	int ret;
 
+	/*解析命令行*/
 	ret = app_parse_args(argc, argv);
 	if (ret < 0)
 		return -1;
@@ -207,8 +208,9 @@ main(int argc, char **argv)
 	rte_eal_mp_remote_launch(app_main_loop, NULL, SKIP_MAIN);
 
 	if (interactive) {
+	    /*以交互模式运行*/
 		sleep(1);
-		prompt();
+		prompt();/*输出提示符，与用户交互*/
 	}
 	else {
 		/* print statistics every second */

@@ -51,15 +51,18 @@ rte_eal_mp_remote_launch(int (*f)(void *), void *arg,
 
 	/* check state of lcores */
 	RTE_LCORE_FOREACH_WORKER(lcore_id) {
+	    /*确保所有worker达到wait状态*/
 		if (lcore_config[lcore_id].state != WAIT)
 			return -EBUSY;
 	}
 
 	/* send messages to cores */
 	RTE_LCORE_FOREACH_WORKER(lcore_id) {
+	    /*指定所有worker调用f函数*/
 		rte_eal_remote_launch(f, arg, lcore_id);
 	}
 
+	/*如果main需要调用，则进行执行*/
 	if (call_main == CALL_MAIN) {
 		lcore_config[main_lcore].ret = f(arg);
 		lcore_config[main_lcore].state = FINISHED;
@@ -84,6 +87,7 @@ rte_eal_get_lcore_state(unsigned lcore_id)
 void
 rte_eal_mp_wait_lcore(void)
 {
+    /*等待所有worker线程运行完成*/
 	unsigned lcore_id;
 
 	RTE_LCORE_FOREACH_WORKER(lcore_id) {

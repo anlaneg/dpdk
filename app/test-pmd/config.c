@@ -1902,9 +1902,9 @@ age_action_get(const struct rte_flow_action *actions)
 /** Create flow rule. */
 int
 port_flow_create(portid_t port_id,
-		 const struct rte_flow_attr *attr,
-		 const struct rte_flow_item *pattern,
-		 const struct rte_flow_action *actions,
+		 const struct rte_flow_attr *attr/*flow对应的属性*/,
+		 const struct rte_flow_item *pattern/*flow对应的匹配项*/,
+		 const struct rte_flow_action *actions/*flow对应的动作*/,
 		 const struct tunnel_ops *tunnel_ops)
 {
     /*为此port创建指定flow rule*/
@@ -1936,6 +1936,8 @@ port_flow_create(portid_t port_id,
 		if (pft->actions)
 			actions = pft->actions;
 	}
+
+	/*创建flow*/
 	pf = port_flow_new(attr, pattern, actions, &error);
 	if (!pf)
 		return port_flow_complain(&error);
@@ -1945,6 +1947,8 @@ port_flow_create(portid_t port_id,
 	}
 	/* Poisoning to make sure PMDs update it in case of error. */
 	memset(&error, 0x22, sizeof(error));
+
+	/*调用api创建flow*/
 	flow = rte_flow_create(port_id, attr, pattern, actions, &error);
 	if (!flow) {
 		if (tunnel_ops->enabled)

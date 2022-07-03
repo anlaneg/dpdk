@@ -34,7 +34,7 @@ cmdline_file_new(cmdline_parse_ctx_t *ctx, const char *prompt, const char *path)
 }
 
 struct cmdline *
-cmdline_stdin_new(cmdline_parse_ctx_t *ctx, const char *prompt)
+cmdline_stdin_new(cmdline_parse_ctx_t *ctx/*命令行列表*/, const char *prompt/*交互信息*/)
 {
 	struct cmdline *cl;
 

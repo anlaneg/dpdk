@@ -50,6 +50,7 @@ extern "C" {
 #define PKT_RX_VLAN          (1ULL << 0)
 
 /** RX packet with RSS hash result. */
+/*用于标记收到的报文有rss hash*/
 #define PKT_RX_RSS_HASH      (1ULL << 1)
 
  /** RX packet with FDIR match indicate. */
@@ -484,7 +485,7 @@ enum {
 struct rte_mbuf {
 	RTE_MARKER cacheline0;
 
-	/*buffer起始地址*/
+	/*buffer起始地址（跳过mbuf结构及私有结构大小）*/
 	void *buf_addr;           /**< Virtual address of segment buffer. */
 	/**
 	 * Physical address of segment buffer.
@@ -515,6 +516,7 @@ struct rte_mbuf {
 	 */
 	uint16_t port;
 
+	/*报文标记，例如PKT_RX_RSS_HASH*/
 	uint64_t ol_flags;        /**< Offload features. */
 
 	/* remaining bytes are set on RX when pulling packet from descriptor */
@@ -600,9 +602,10 @@ struct rte_mbuf {
 	/** Outer VLAN TCI (CPU order), valid if PKT_RX_QINQ is set. */
 	uint16_t vlan_tci_outer;
 
-	/*此buffer长度*/
+	/*此buffer可存放数据长度*/
 	uint16_t buf_len;         /**< Length of segment buffer. */
 
+	/*所属的pool*/
 	struct rte_mempool *pool; /**< Pool from which mbuf was allocated. */
 
 	/* second cache line - fields only used in slow path or on TX */

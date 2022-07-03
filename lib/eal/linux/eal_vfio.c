@@ -1064,6 +1064,7 @@ rte_vfio_enable(const char *modname)
 int
 rte_vfio_is_enabled(const char *modname)
 {
+    /*检查vfio模块是否开启*/
 	const int mod_available = rte_eal_check_module(modname) > 0;
 	return default_vfio_cfg->vfio_enabled && mod_available;
 }

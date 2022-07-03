@@ -257,9 +257,9 @@ struct virtqueue {
 	unsigned int vq_ring_size;
 
 	union {
-		struct virtnet_rx rxq;
-		struct virtnet_tx txq;
-		struct virtnet_ctl cq;
+		struct virtnet_rx rxq;/*rx队列*/
+		struct virtnet_tx txq;/*tx队列*/
+		struct virtnet_ctl cq;/*控制队列*/
 	};
 
 	rte_iova_t vq_ring_mem; /**< physical address of vring,
@@ -571,6 +571,7 @@ virtqueue_kick_prepare_packed(struct virtqueue *vq)
 static inline void
 virtqueue_notify(struct virtqueue *vq)
 {
+    /*例如modern_notify_queue*/
 	VIRTIO_OPS(vq->hw)->notify_queue(vq->hw, vq);
 }
 

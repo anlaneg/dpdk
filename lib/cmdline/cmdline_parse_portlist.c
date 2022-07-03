@@ -16,6 +16,7 @@
 #include "cmdline_parse.h"
 #include "cmdline_parse_portlist.h"
 
+/*port list解析内容*/
 struct cmdline_token_ops cmdline_token_portlist_ops = {
 	.parse = cmdline_parse_portlist,
 	.complete_get_nb = NULL,
@@ -31,6 +32,7 @@ parse_set_list(cmdline_portlist_t *pl, size_t low, size_t high)
 	} while (low <= high);
 }
 
+/*解析ports列表*/
 static int
 parse_ports(cmdline_portlist_t *pl, const char *str)
 {
@@ -87,6 +89,7 @@ cmdline_parse_portlist(__rte_unused cmdline_parse_token_hdr_t *tk,
 
 	pl = res;
 
+	/*token长度*/
 	while (!cmdline_isendoftoken(buf[token_len]) &&
 	    (token_len < PORTLIST_TOKEN_SIZE))
 		token_len++;
@@ -100,6 +103,7 @@ cmdline_parse_portlist(__rte_unused cmdline_parse_token_hdr_t *tk,
 		pl->map = 0;
 		if (strcmp("all", portlist_str) == 0)
 			pl->map	= UINT32_MAX;
+		/*解析port列表*/
 		else if (parse_ports(pl, portlist_str) != 0)
 			return -1;
 	}

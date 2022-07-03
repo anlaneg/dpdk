@@ -156,6 +156,7 @@ virtqueue_dequeue_burst_rx_packed(struct virtqueue *vq,
 		id = desc[used_idx].id;
 		cookie = (struct rte_mbuf *)vq->vq_descx[id].cookie;
 		if (unlikely(cookie == NULL)) {
+			/*描述符上没有标明cookie*/
 			PMD_DRV_LOG(ERR, "vring descriptor with no mbuf cookie at %u",
 				vq->vq_used_cons_idx);
 			break;
@@ -189,10 +190,11 @@ virtqueue_dequeue_burst_rx(struct virtqueue *vq, struct rte_mbuf **rx_pkts,
 		used_idx = (uint16_t)(vq->vq_used_cons_idx & (vq->vq_nentries - 1));
 		uep = &vq->vq_split.ring.used->ring[used_idx];
 		desc_idx = (uint16_t) uep->id;
-		len[i] = uep->len;
-		cookie = (struct rte_mbuf *)vq->vq_descx[desc_idx].cookie;
+		len[i] = uep->len;/*报文长度*/
+		cookie = (struct rte_mbuf *)vq->vq_descx[desc_idx].cookie;/*报文地址*/
 
 		if (unlikely(cookie == NULL)) {
+			/*描述符上没有标明cookie*/
 			PMD_DRV_LOG(ERR, "vring descriptor with no mbuf cookie at %u",
 				vq->vq_used_cons_idx);
 			break;
@@ -231,6 +233,7 @@ virtqueue_dequeue_rx_inorder(struct virtqueue *vq,
 		cookie = (struct rte_mbuf *)vq->vq_descx[used_idx].cookie;
 
 		if (unlikely(cookie == NULL)) {
+			/*描述符上没有标明cookie*/
 			PMD_DRV_LOG(ERR, "vring descriptor with no mbuf cookie at %u",
 				vq->vq_used_cons_idx);
 			break;
@@ -518,7 +521,7 @@ virtqueue_enqueue_xmit_packed_fast(struct virtnet_tx *txvq,
 }
 
 static inline void
-virtqueue_enqueue_xmit(struct virtnet_tx *txvq, struct rte_mbuf *cookie,
+virtqueue_enqueue_xmit(struct virtnet_tx *txvq, struct rte_mbuf *cookie/*要发送的buffer*/,
 			uint16_t needed, int use_indirect, int can_push,
 			int in_order)
 {
@@ -526,7 +529,7 @@ virtqueue_enqueue_xmit(struct virtnet_tx *txvq, struct rte_mbuf *cookie,
 	struct vq_desc_extra *dxp;
 	struct virtqueue *vq = virtnet_txq_to_vq(txvq);
 	struct vring_desc *start_dp;
-	uint16_t seg_num = cookie->nb_segs;
+	uint16_t seg_num = cookie->nb_segs;/*有多少个segments需要发送*/
 	uint16_t head_idx, idx;
 	int16_t head_size = vq->hw->vtnet_hdr_size;
 	bool prepend_header = false;
@@ -538,12 +541,14 @@ virtqueue_enqueue_xmit(struct virtnet_tx *txvq, struct rte_mbuf *cookie,
 		dxp = &vq->vq_descx[vq->vq_avail_idx & (vq->vq_nentries - 1)];
 	else
 		dxp = &vq->vq_descx[idx];
-	dxp->cookie = (void *)cookie;
+	dxp->cookie = (void *)cookie;/*设置描述符，cookie*/
 	dxp->ndescs = needed;
 
+	/*从此处置进行填充*/
 	start_dp = vq->vq_split.ring.desc;
 
 	if (can_push) {
+	    /*在head room中空出head_size,存放virtio_net_hdr*/
 		/* prepend cannot fail, checked by caller */
 		hdr = rte_pktmbuf_mtod_offset(cookie, struct virtio_net_hdr *,
 					      -head_size);
@@ -562,7 +567,7 @@ virtqueue_enqueue_xmit(struct virtnet_tx *txvq, struct rte_mbuf *cookie,
 		start_dp[idx].addr  = txvq->virtio_net_hdr_mem +
 			RTE_PTR_DIFF(&txr[idx].tx_indir, txr);
 		start_dp[idx].len   = (seg_num + 1) * sizeof(struct vring_desc);
-		start_dp[idx].flags = VRING_DESC_F_INDIRECT;
+		start_dp[idx].flags = VRING_DESC_F_INDIRECT;/*采用indirect方式串起来*/
 		hdr = (struct virtio_net_hdr *)&txr[idx].tx_hdr;
 
 		/* loop below will fill in rest of the indirect elements */
@@ -575,7 +580,7 @@ virtqueue_enqueue_xmit(struct virtnet_tx *txvq, struct rte_mbuf *cookie,
 		start_dp[idx].addr  = txvq->virtio_net_hdr_mem +
 			RTE_PTR_DIFF(&txr[idx].tx_hdr, txr);
 		start_dp[idx].len   = vq->hw->vtnet_hdr_size;
-		start_dp[idx].flags = VRING_DESC_F_NEXT;
+		start_dp[idx].flags = VRING_DESC_F_NEXT;/*采用next方式串起来*/
 		hdr = (struct virtio_net_hdr *)&txr[idx].tx_hdr;
 
 		idx = start_dp[idx].next;
@@ -584,10 +589,14 @@ virtqueue_enqueue_xmit(struct virtnet_tx *txvq, struct rte_mbuf *cookie,
 	if (vq->hw->has_tx_offload)
 		virtqueue_xmit_offload(hdr, cookie);
 
+	/*如果有多个segment,则发出此segment*/
 	do {
+	    /*设置要发送的报文数据的起始位置（iova地址）*/
 		start_dp[idx].addr  = rte_mbuf_data_iova(cookie);
+		/*设置要发送的报文数据的长度*/
 		start_dp[idx].len   = cookie->data_len;
 		if (prepend_header) {
+		    /*指向预填充的头*/
 			start_dp[idx].addr -= head_size;
 			start_dp[idx].len += head_size;
 			prepend_header = false;
@@ -1350,7 +1359,7 @@ virtio_recv_pkts_inorder(void *rx_queue,
 }
 
 uint16_t
-virtio_recv_mergeable_pkts(void *rx_queue,
+virtio_recv_mergeable_pkts(void *rx_queue/*要收包用的queue*/,
 			struct rte_mbuf **rx_pkts,
 			uint16_t nb_pkts)
 {
@@ -1370,12 +1379,14 @@ virtio_recv_mergeable_pkts(void *rx_queue,
 	int32_t i;
 
 	if (unlikely(hw->started == 0))
+	    /*设备未up,直接返回0*/
 		return nb_rx;
 
 	nb_used = virtqueue_nused(vq);
 
 	PMD_RX_LOG(DEBUG, "used:%d", nb_used);
 
+	/*本次可收取的报文数*/
 	num = likely(nb_used <= nb_pkts) ? nb_used : nb_pkts;
 	if (unlikely(num > VIRTIO_MBUF_BURST_SZ))
 		num = VIRTIO_MBUF_BURST_SZ;
@@ -1384,8 +1395,8 @@ virtio_recv_mergeable_pkts(void *rx_queue,
 				DESC_PER_CACHELINE);
 
 
-	//自队列中出一个报文
-	num = virtqueue_dequeue_burst_rx(vq, rcv_pkts, len, num);
+	/*尝试读取num个报文*/
+	num = virtqueue_dequeue_burst_rx(vq, rcv_pkts/*出参，收到的buffer*/, len/*出参，各buffer长度*/, num);
 
 	for (i = 0; i < num; i++) {
 		struct virtio_net_hdr_mrg_rxbuf *header;
@@ -1395,7 +1406,7 @@ virtio_recv_mergeable_pkts(void *rx_queue,
 
 		rxm = rcv_pkts[i];
 
-		//报文长度校验
+		//报文长度校验，格式不符，丢弃掉
 		if (unlikely(len[i] < hdr_size + RTE_ETHER_HDR_LEN)) {
 			PMD_RX_LOG(ERR, "Packet drop");
 			nb_enqueued++;
@@ -1424,7 +1435,7 @@ virtio_recv_mergeable_pkts(void *rx_queue,
 		rx_pkts[nb_rx] = rxm;//设置收到的报文
 		prev = rxm;
 
-		//gro处理
+		//gro处理，rx offload处理失败，丢弃掉rxm,注意nb_rx并没有增加
 		if (hw->has_rx_offload &&
 				virtio_rx_offload(rxm, &header->hdr) < 0) {
 			virtio_discard_rxbuf(vq, rxm);
@@ -1433,11 +1444,13 @@ virtio_recv_mergeable_pkts(void *rx_queue,
 		}
 
 		if (hw->vlan_strip)
+		    /*剥掉vlan*/
 			rte_vlan_strip(rx_pkts[nb_rx]);
 
 		seg_res = seg_num - 1;
 
 		/* Merge remaining segments */
+		/*当前buffer有多个segments,这里需要进行合并*/
 		while (seg_res != 0 && i < (num - 1)) {
 			i++;
 
@@ -1448,18 +1461,20 @@ virtio_recv_mergeable_pkts(void *rx_queue,
 
 			rx_pkts[nb_rx]->pkt_len += (uint32_t)(len[i]);
 
-			prev->next = rxm;
+			prev->next = rxm;/*一个报文由多个buffer组成，将报文串起来*/
 			prev = rxm;
 			seg_res -= 1;
 		}
 
 		if (!seg_res) {
+		    /*统计计数更新*/
 			virtio_rx_stats_updated(rxvq, rx_pkts[nb_rx]);
 			nb_rx++;
 		}
 	}
 
 	/* Last packet still need merge segments */
+	/* 最后一个报文仍然是merge segments*/
 	while (seg_res != 0) {
 		uint16_t rcv_cnt = RTE_MIN((uint16_t)seg_res,
 					VIRTIO_MBUF_BURST_SZ);
@@ -1489,6 +1504,7 @@ virtio_recv_mergeable_pkts(void *rx_queue,
 				nb_rx++;
 			}
 		} else {
+		    /*ring里没有足够的segments,这种将收到的报文释放掉，并增加error统计*/
 			PMD_RX_LOG(ERR,
 					"No enough segments for packet.");
 			rte_pktmbuf_free(rx_pkts[nb_rx]);
@@ -1497,15 +1513,19 @@ virtio_recv_mergeable_pkts(void *rx_queue,
 		}
 	}
 
+	/*更新收方向统计计数*/
 	rxvq->stats.packets += nb_rx;
 
 	/* Allocate new mbuf for the used descriptor */
 	if (likely(!virtqueue_full(vq))) {
+	    /*补充新的mbuf*/
 		/* free_cnt may include mrg descs */
 		uint16_t free_cnt = vq->vq_free_cnt;
 		struct rte_mbuf *new_pkts[free_cnt];
 
+		/*申请一组(free_cnt个)mbuf*/
 		if (!rte_pktmbuf_alloc_bulk(rxvq->mpool, new_pkts, free_cnt)) {
+		    /*申请成功，填充mbuf到vq*/
 			error = virtqueue_enqueue_recv_refill(vq, new_pkts,
 					free_cnt);
 			if (unlikely(error)) {
@@ -1514,12 +1534,14 @@ virtio_recv_mergeable_pkts(void *rx_queue,
 			}
 			nb_enqueued += free_cnt;
 		} else {
+		    /*申请mbuf出错*/
 			struct rte_eth_dev *dev =
 				&rte_eth_devices[rxvq->port_id];
 			dev->data->rx_mbuf_alloc_failed += free_cnt;
 		}
 	}
 
+	/*补充mbuf成功，通知对端buffer可用*/
 	if (likely(nb_enqueued)) {
 		vq_update_avail_idx(vq);
 
@@ -1690,7 +1712,7 @@ virtio_recv_mergeable_pkts_packed(void *rx_queue,
 		}
 	}
 
-	//通知对端
+	//补充了buffer通知对端
 	if (likely(nb_enqueued)) {
 		if (unlikely(virtqueue_kick_prepare_packed(vq))) {
 			virtqueue_notify(vq);
@@ -1830,18 +1852,21 @@ virtio_xmit_pkts_packed(void *tx_queue, struct rte_mbuf **tx_pkts,
 }
 
 uint16_t
-virtio_xmit_pkts(void *tx_queue, struct rte_mbuf **tx_pkts, uint16_t nb_pkts)
+virtio_xmit_pkts(void *tx_queue/*发送队列*/, struct rte_mbuf **tx_pkts/*要发送的一组pkts*/, uint16_t nb_pkts/*发送的报文数*/)
 {
 	struct virtnet_tx *txvq = tx_queue;
+	/*由tx队列获得vq*/
 	struct virtqueue *vq = virtnet_txq_to_vq(txvq);
 	struct virtio_hw *hw = vq->hw;
 	uint16_t hdr_size = hw->vtnet_hdr_size;
 	uint16_t nb_used, nb_tx = 0;
 
 	if (unlikely(hw->started == 0 && tx_pkts != hw->inject_pkts))
+	    /*设备未开启*/
 		return nb_tx;
 
 	if (unlikely(nb_pkts < 1))
+	    /*传入的报文有误*/
 		return nb_pkts;
 
 	PMD_TX_LOG(DEBUG, "%d packets to xmit", nb_pkts);
@@ -1851,8 +1876,9 @@ virtio_xmit_pkts(void *tx_queue, struct rte_mbuf **tx_pkts, uint16_t nb_pkts)
 	if (likely(nb_used > vq->vq_nentries - vq->vq_free_thresh))
 		virtio_xmit_cleanup(vq, nb_used);
 
+	/*遍历每个需要发送的报文*/
 	for (nb_tx = 0; nb_tx < nb_pkts; nb_tx++) {
-		//取出要发送的报文txm
+		//取当前要发送的txm
 		struct rte_mbuf *txm = tx_pkts[nb_tx];
 		int can_push = 0, use_indirect = 0, slots, need;
 
@@ -1865,10 +1891,14 @@ virtio_xmit_pkts(void *tx_queue, struct rte_mbuf **tx_pkts, uint16_t nb_pkts)
 		    rte_pktmbuf_headroom(txm) >= hdr_size &&
 		    rte_is_aligned(rte_pktmbuf_mtod(txm, char *),
 				   __alignof__(struct virtio_net_hdr_mrg_rxbuf)))
+		    /*这种情况下可以将virtio-header直接push到buffer中*/
 			can_push = 1;
 		else if (virtio_with_feature(hw, VIRTIO_RING_F_INDIRECT_DESC) &&
 			 txm->nb_segs < VIRTIO_MAX_TX_INDIRECT)
+		    /*这种需要通过indirect方式进行处理*/
 			use_indirect = 1;
+
+		//其它情况，即不indirect,也不push
 
 		/* How many main ring entries are needed to this Tx?
 		 * any_layout => number of segments
@@ -1906,6 +1936,7 @@ virtio_xmit_pkts(void *tx_queue, struct rte_mbuf **tx_pkts, uint16_t nb_pkts)
 		vq_update_avail_idx(vq);
 
 		if (unlikely(virtqueue_kick_prepare(vq))) {
+		    /*知会对端*/
 			virtqueue_notify(vq);
 			PMD_TX_LOG(DEBUG, "Notified backend after xmit");
 		}

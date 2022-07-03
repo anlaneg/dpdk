@@ -5015,7 +5015,7 @@ rte_eth_rx_burst(uint16_t port_id, uint16_t queue_id/*读取指定queue_id*/,
 
 	if (unlikely(cb != NULL)) {
 		do {
-			/*触发所有rx回调*/
+			/*遍历触发所有rx回调*/
 			nb_rx = cb->fn.rx(port_id, queue_id, rx_pkts, nb_rx,
 						nb_pkts, cb->param);
 			cb = cb->next;

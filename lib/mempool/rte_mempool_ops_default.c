@@ -129,7 +129,7 @@ rte_mempool_op_populate_helper(struct rte_mempool *mp, unsigned int flags,
 		off += mp->header_size;
 		/*obj的起始地址*/
 		obj = va + off;
-		obj_cb(mp, obj_cb_arg, obj,
+		obj_cb(mp, obj_cb_arg, obj/*obj起始位置*/,
 		       (iova == RTE_BAD_IOVA) ? RTE_BAD_IOVA : (iova + off));
 		rte_mempool_ops_enqueue_bulk(mp, &obj, 1);
 		/*obj跳过mp->elt_size + mp->trailer_size*/

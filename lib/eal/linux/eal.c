@@ -963,6 +963,7 @@ is_iommu_enabled(void)
 }
 
 /* Launch threads, called at application init(). */
+/*dpdk初始化入口*/
 int
 rte_eal_init(int argc, char **argv)
 {
@@ -1236,6 +1237,8 @@ rte_eal_init(int argc, char **argv)
 		rte_errno = EINVAL;
 		return -1;
 	}
+
+	/*为此线程绑定main_lcore*/
 	__rte_thread_init(config->main_lcore,
 		&lcore_config[config->main_lcore].cpuset);
 
@@ -1252,8 +1255,10 @@ rte_eal_init(int argc, char **argv)
 		 * and children
 		 */
 		if (pipe(lcore_config[i].pipe_main2worker) < 0)
+		    /*main到worker线程通信管道*/
 			rte_panic("Cannot create pipe\n");
 		if (pipe(lcore_config[i].pipe_worker2main) < 0)
+		    /*worker到main线程通信管道*/
 			rte_panic("Cannot create pipe\n");
 
 		lcore_config[i].state = WAIT;
@@ -1265,6 +1270,7 @@ rte_eal_init(int argc, char **argv)
 			rte_panic("Cannot create thread\n");
 
 		/* Set thread_name for aid in debugging. */
+		/*更新worker线程名称*/
 		snprintf(thread_name, sizeof(thread_name),
 			"lcore-worker-%d", i);
 		ret = rte_thread_setname(lcore_config[i].thread_id,

@@ -20,7 +20,7 @@ struct rte_mempool_ops_table rte_mempool_ops_table = {
 };
 
 /* add a new ops struct in rte_mempool_ops_table, return its index. */
-//操作集注册
+//mempool ops操作集注册
 int
 rte_mempool_register_ops(const struct rte_mempool_ops *h)
 {
@@ -118,6 +118,7 @@ rte_mempool_ops_calc_mem_size(const struct rte_mempool *mp,
 	ops = rte_mempool_get_ops(mp->ops_index);
 
 	if (ops->calc_mem_size == NULL)
+	    /*按默认方式计算mempool内存占用*/
 		return rte_mempool_op_calc_mem_size_default(mp, obj_num,
 				pg_shift, min_chunk_size, align);
 
@@ -128,7 +129,7 @@ rte_mempool_ops_calc_mem_size(const struct rte_mempool *mp,
 int
 rte_mempool_ops_populate(struct rte_mempool *mp, unsigned int max_objs,
 				void *vaddr, rte_iova_t iova, size_t len,
-				rte_mempool_populate_obj_cb_t *obj_cb,
+				rte_mempool_populate_obj_cb_t *obj_cb/*每个obj的回调函数*/,
 				void *obj_cb_arg)
 {
 	struct rte_mempool_ops *ops;

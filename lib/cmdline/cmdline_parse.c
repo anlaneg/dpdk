@@ -34,6 +34,7 @@ isblank2(char c)
 	return 0;
 }
 
+/*检查当前字符是否为'\r'或'\n'*/
 static int
 isendofline(char c)
 {
@@ -56,6 +57,7 @@ cmdline_isendoftoken(char c)
 {
 	if (!c || iscomment(c) || isblank2(c) || isendofline(c))
 		return 1;
+	/*c为'\0',注释符，‘ ’，‘\t','\r','\n'*/
 	return 0;
 }
 
@@ -88,6 +90,7 @@ get_token(cmdline_parse_inst_t *inst, unsigned int index)
 
 	/* check presence of static tokens first */
 	if (inst->tokens[0] || !inst->f)
+	    /*命令行有tokens或者未指明function,则返回index号token*/
 		return inst->tokens[index];
 	/* generate dynamic token */
 	token_p = NULL;
@@ -110,6 +113,7 @@ match_inst(cmdline_parse_inst_t *inst, const char *buf,
 	struct cmdline_token_hdr token_hdr;
 
 	if (resbuf != NULL)
+	    /*初始化resbuf为零*/
 		memset(resbuf, 0, resbuf_size);
 	/* check if we match all tokens of inst */
 	while (!nb_match_token || i < nb_match_token) {
@@ -119,6 +123,7 @@ match_inst(cmdline_parse_inst_t *inst, const char *buf,
 		memcpy(&token_hdr, token_p, sizeof(token_hdr));
 
 		debug_printf("TK\n");
+		/*第一个token匹配成功，准备第二个token起始位置*/
 		/* skip spaces */
 		while (isblank2(*buf)) {
 			buf++;
@@ -126,6 +131,7 @@ match_inst(cmdline_parse_inst_t *inst, const char *buf,
 
 		/* end of buf */
 		if ( isendofline(*buf) || iscomment(*buf) )
+		    /*达到buffer结尾，退出*/
 			break;
 
 		if (resbuf == NULL) {
@@ -206,8 +212,10 @@ cmdline_parse(struct cmdline *cl, const char * buf)
 	char *result_buf = result.buf;
 
 	if (!cl || !buf)
+	    /*函数参数有误*/
 		return CMDLINE_PARSE_BAD_ARGS;
 
+	/*取命令列表*/
 	ctx = cl->ctx;
 
 	/*
@@ -215,20 +223,23 @@ cmdline_parse(struct cmdline *cl, const char * buf)
 	 * - look if line contains only spaces or comments
 	 * - count line length
 	 */
-	curbuf = buf;
+	curbuf = buf;/*取输入buffer*/
 	while (! isendofline(*curbuf)) {
 		if ( *curbuf == '\0' ) {
+		    /*达到命令结尾，不完全的命令*/
 			debug_printf("Incomplete buf (len=%d)\n", linelen);
 			return 0;
 		}
 		if ( iscomment(*curbuf) ) {
+		    /*遇到注释字符*/
 			comment = 1;
 		}
 		if ( ! isblank2(*curbuf) && ! comment) {
+		    /*当前非空字符且非注释内容，指明需要解析*/
 			parse_it = 1;
 		}
-		curbuf++;
-		linelen++;
+		curbuf++;/*切换到下一个字符*/
+		linelen++;/*输入内容长度*/
 	}
 
 	/* skip all endofline chars */
@@ -238,6 +249,7 @@ cmdline_parse(struct cmdline *cl, const char * buf)
 
 	/* empty line */
 	if ( parse_it == 0 ) {
+	    /*空行*/
 		debug_printf("Empty line (len=%d)\n", linelen);
 		return linelen;
 	}
@@ -246,7 +258,7 @@ cmdline_parse(struct cmdline *cl, const char * buf)
 		     linelen, linelen > 64 ? 64 : linelen, buf);
 
 	/* parse it !! */
-	inst = ctx[inst_num];
+	inst = ctx[inst_num];/*尝试此命令*/
 	while (inst) {
 		debug_printf("INST %d\n", inst_num);
 
@@ -267,6 +279,7 @@ cmdline_parse(struct cmdline *cl, const char * buf)
 			/* if end of buf -> there is no garbage after inst */
 			if (isendofline(*curbuf) || iscomment(*curbuf)) {
 				if (!f) {
+				    /*设置要执行的函数*/
 					memcpy(&f, &inst->f, sizeof(f));
 					memcpy(&data, &inst->data, sizeof(data));
 					result_buf = tmp_result.buf;
@@ -281,12 +294,14 @@ cmdline_parse(struct cmdline *cl, const char * buf)
 			}
 		}
 
+		/*尝试下一条命令*/
 		inst_num ++;
 		inst = ctx[inst_num];
 	}
 
 	/* call func */
 	if (f) {
+	    /*调用function*/
 		f(result.buf, cl, data);
 	}
 

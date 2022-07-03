@@ -80,6 +80,7 @@ rte_mbuf_user_mempool_ops(void)
 
 	mz = rte_memzone_lookup("mbuf_user_pool_ops");
 	if (mz == NULL)
+	    /*如果未指定，则返回此ops*/
 		return rte_eal_mbuf_user_pool_ops();
 	return mz->addr;
 }

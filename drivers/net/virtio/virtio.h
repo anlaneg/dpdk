@@ -168,7 +168,7 @@ struct virtio_hw {
 	struct virtqueue **vqs;
 	uint64_t guest_features;
 	uint16_t vtnet_hdr_size;
-	uint8_t started;
+	uint8_t started;/*设备是否已启动*/
 	uint8_t weak_barriers;
 	uint8_t vlan_strip;
 	uint8_t has_tx_offload;

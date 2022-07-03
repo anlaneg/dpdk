@@ -60,10 +60,12 @@ add_to_res(unsigned int c, uint64_t *res, unsigned int base)
 	if ((UINT64_MAX - c) / base < *res)
 		return -1;
 
+	/*在res上合入c*/
 	*res = (uint64_t) (*res * base + c);
 	return 0;
 }
 
+/*ressize长度不足*/
 static int
 check_res_size(struct cmdline_token_num_data *nd, unsigned ressize)
 {
@@ -96,9 +98,10 @@ check_res_size(struct cmdline_token_num_data *nd, unsigned ressize)
 
 /* parse an int */
 int
-cmdline_parse_num(cmdline_parse_token_hdr_t *tk, const char *srcbuf, void *res,
+cmdline_parse_num(cmdline_parse_token_hdr_t *tk, const char *srcbuf, void *res/*解析结果*/,
 	unsigned ressize)
 {
+    /*以下是一个好大好复杂的number解析函数*/
 	struct cmdline_token_num_data nd;
 	enum num_parse_state_t st = START;
 	const char * buf;
@@ -127,12 +130,13 @@ cmdline_parse_num(cmdline_parse_token_hdr_t *tk, const char *srcbuf, void *res,
 		switch (st) {
 		case START:
 			if (c == '-') {
-				st = DEC_NEG;
+				st = DEC_NEG;/*转负号位置*/
 			}
 			else if (c == '0') {
-				st = ZERO_OK;
+				st = ZERO_OK;/*遇到0*/
 			}
 			else if (c >= '1' && c <= '9') {
+			    /*遇到数字,将内容合入到res1中*/
 				if (add_to_res(c - '0', &res1, 10) < 0)
 					st = ERROR;
 				else
@@ -145,12 +149,15 @@ cmdline_parse_num(cmdline_parse_token_hdr_t *tk, const char *srcbuf, void *res,
 
 		case ZERO_OK:
 			if (c == 'x') {
+			    /*遇到0x*/
 				st = HEX;
 			}
 			else if (c == 'b') {
+			    /*遇到0b*/
 				st = BIN;
 			}
 			else if (c >= '0' && c <= '7') {
+			    /*遇到数字,将内容合入到res1中*/
 				if (add_to_res(c - '0', &res1, 10) < 0)
 					st = ERROR;
 				else

@@ -1905,6 +1905,7 @@ static int comp_set_modify_field_id(struct context *, const struct token *,
 			      unsigned int, char *, unsigned int);
 
 /** Token definitions. */
+/*flow相关的token list*/
 static const struct token token_list[] = {
 	/* Special tokens. */
 	[ZERO] = {
@@ -4399,6 +4400,7 @@ static const struct token token_list[] = {
 		.priv = PRIV_ACTION(RAW_ENCAP,
 			sizeof(struct action_raw_encap_data)),
 		.next = NEXT(action_raw_encap),
+		/*执行raw encap*/
 		.call = parse_vc_action_raw_encap,
 	},
 	[ACTION_RAW_ENCAP_INDEX] = {
@@ -4538,10 +4540,12 @@ static const struct token token_list[] = {
 	},
 	/* Top level command. */
 	[SET] = {
+	        /*set顶层命令*/
 		.name = "set",
 		.help = "set raw encap/decap/sample data",
 		.type = "set raw_encap|raw_decap <index> <pattern>"
 				" or set sample_actions <index> <action>",
+				/*下一层容许以下选项*/
 		.next = NEXT(NEXT_ENTRY
 			     (SET_RAW_ENCAP,
 			      SET_RAW_DECAP,
@@ -4550,6 +4554,7 @@ static const struct token token_list[] = {
 	},
 	/* Sub-level commands. */
 	[SET_RAW_ENCAP] = {
+	        /*设置raw encap*/
 		.name = "raw_encap",
 		.help = "set raw encap data",
 		.next = NEXT(next_set_raw),
@@ -4560,6 +4565,7 @@ static const struct token token_list[] = {
 		.call = parse_set_raw_encap_decap,
 	},
 	[SET_RAW_DECAP] = {
+	        /*设置raw decap*/
 		.name = "raw_decap",
 		.help = "set raw decap data",
 		.next = NEXT(next_set_raw),
@@ -4925,9 +4931,12 @@ strcmp_partial(const char *full, const char *partial, size_t partial_len)
 	int r = strncmp(full, partial, partial_len);
 
 	if (r)
+	    /*比对不相等*/
 		return r;
 	if (strlen(full) <= partial_len)
+	    /*比对相等，但full小于partial_len,返回0*/
 		return 0;
+	/*比对相等，paritial_len长度更小些，如果full还有，则不相等，否则相等*/
 	return full[partial_len];
 }
 
@@ -5240,6 +5249,7 @@ parse_vc(struct context *ctx, const struct token *token,
 		out->args.vc.attr.transfer = 1;
 		return len;
 	case ITEM_PATTERN:
+	    /*设置pattern*/
 		out->args.vc.pattern =
 			(void *)RTE_ALIGN_CEIL((uintptr_t)(out + 1),
 					       sizeof(double));
@@ -5247,6 +5257,7 @@ parse_vc(struct context *ctx, const struct token *token,
 		ctx->objmask = NULL;
 		return len;
 	case ACTIONS:
+	    /*设置flow action*/
 		out->args.vc.actions =
 			(void *)RTE_ALIGN_CEIL((uintptr_t)
 					       (out->args.vc.pattern +
@@ -8108,11 +8119,13 @@ cmd_flow_parsed(const struct buffer *in)
 				   &in->args.vc.tunnel_ops);
 		break;
 	case CREATE:
-		port_flow_create(in->port, &in->args.vc.attr,
+	    /*flow创建*/
+		port_flow_create(in->port, &in->args.vc.attr,/*flow属性*/
 				 in->args.vc.pattern, in->args.vc.actions,
 				 &in->args.vc.tunnel_ops);
 		break;
 	case DESTROY:
+	    /*flow销毁*/
 		port_flow_destroy(in->port, in->args.destroy.rule_n,
 				  in->args.destroy.rule);
 		break;
@@ -8439,7 +8452,7 @@ cmd_set_raw_parsed_sample(const struct buffer *in)
 static void
 cmd_set_raw_parsed(const struct buffer *in)
 {
-	uint32_t n = in->args.vc.pattern_n;
+	uint32_t n = in->args.vc.pattern_n;/*有多少个pattern*/
 	int i = 0;
 	struct rte_flow_item *item = NULL;
 	size_t size = 0;
@@ -8452,13 +8465,18 @@ cmd_set_raw_parsed(const struct buffer *in)
 	int gtp_psc = -1; /* GTP PSC option index. */
 
 	if (in->command == SET_SAMPLE_ACTIONS)
+	    /*set sample actions方式*/
 		return cmd_set_raw_parsed_sample(in);
+
+	/*其它仅以下两种cmd*/
 	RTE_ASSERT(in->command == SET_RAW_ENCAP ||
 		   in->command == SET_RAW_DECAP);
 	if (in->command == SET_RAW_ENCAP) {
+	    /*set raw encap方式*/
 		total_size = &raw_encap_confs[idx].size;
 		data = (uint8_t *)&raw_encap_confs[idx].data;
 	} else {
+	    /*set raw decap方式*/
 		total_size = &raw_decap_confs[idx].size;
 		data = (uint8_t *)&raw_decap_confs[idx].data;
 	}
@@ -8466,13 +8484,16 @@ cmd_set_raw_parsed(const struct buffer *in)
 	memset(data, 0x00, ACTION_RAW_ENCAP_MAX_DATA);
 	/* process hdr from upper layer to low layer (L3/L4 -> L2). */
 	data_tail = data + ACTION_RAW_ENCAP_MAX_DATA;
+	/*遍历每种pattern*/
 	for (i = n - 1 ; i >= 0; --i) {
 		const struct rte_flow_item_gtp *gtp;
 		const struct rte_flow_item_geneve_opt *opt;
 
-		item = in->args.vc.pattern + i;
+		item = in->args.vc.pattern + i;/*取待分析的pattern*/
 		if (item->spec == NULL)
+		    /*item默认的mask*/
 			item->spec = flow_item_default_mask(item);
+		/*依据各item获得对应的size,protocol*/
 		switch (item->type) {
 		case RTE_FLOW_ITEM_TYPE_ETH:
 			size = sizeof(struct rte_ether_hdr);
@@ -8610,6 +8631,7 @@ cmd_set_raw_parsed(const struct buffer *in)
 			printf("Error - Not supported item\n");
 			goto error;
 		}
+		/*统计总匹配长度*/
 		*total_size += size;
 		rte_memcpy(data_tail - (*total_size), item->spec, size);
 		/* update some fields which cannot be set by cmdline */
@@ -8641,6 +8663,7 @@ cmd_set_raw_get_help(cmdline_parse_token_hdr_t *hdr, char *dst,
 		return -1;
 	/* Set token type and update global help with details. */
 	snprintf(dst, size, "%s", (token->type ? token->type : "TOKEN"));
+	/*设置此token的帮助字符串*/
 	if (token->help)
 		cmd_set_raw.help_str = token->help;
 	else

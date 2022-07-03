@@ -50,6 +50,7 @@ rte_pktmbuf_pool_init(struct rte_mempool *mp, void *opaque_arg)
 	/* if no structure is provided, assume no mbuf private area */
 	user_mbp_priv = opaque_arg;
 	if (user_mbp_priv == NULL) {
+	    /*没有提供opaque_arg情况*/
 		memset(&default_mbp_priv, 0, sizeof(default_mbp_priv));
 		if (mp->elt_size > sizeof(struct rte_mbuf))
 			roomsz = mp->elt_size - sizeof(struct rte_mbuf);
@@ -67,6 +68,7 @@ rte_pktmbuf_pool_init(struct rte_mempool *mp, void *opaque_arg)
 	RTE_ASSERT((user_mbp_priv->flags &
 		    ~RTE_PKTMBUF_POOL_F_PINNED_EXT_BUF) == 0);
 
+	/*填充mbuf pool私有结构，保存元素情况*/
 	mbp_priv = rte_mempool_get_priv(mp);
 	memcpy(mbp_priv, user_mbp_priv, sizeof(*mbp_priv));
 }
@@ -88,7 +90,9 @@ rte_pktmbuf_init(struct rte_mempool *mp,
 	RTE_ASSERT(mp->private_data_size >=
 		   sizeof(struct rte_pktmbuf_pool_private));
 
+	/*取mbuf的私有结构体大小*/
 	priv_size = rte_pktmbuf_priv_size(mp);
+	/*mbuf及其私有结构大小*/
 	mbuf_size = sizeof(struct rte_mbuf) + priv_size;
 	buf_len = rte_pktmbuf_data_room_size(mp);
 
@@ -96,6 +100,7 @@ rte_pktmbuf_init(struct rte_mempool *mp,
 	RTE_ASSERT(mp->elt_size >= mbuf_size);
 	RTE_ASSERT(buf_len <= UINT16_MAX);
 
+	/*初始化mbuf_size*/
 	memset(m, 0, mbuf_size);
 	/* start of buffer is after mbuf structure and priv data */
 	m->priv_size = priv_size;
@@ -227,8 +232,8 @@ __rte_pktmbuf_init_extmem(struct rte_mempool *mp,
 
 /* Helper to create a mbuf pool with given mempool ops name*/
 struct rte_mempool *
-rte_pktmbuf_pool_create_by_ops(const char *name, unsigned int n/*实体数目*/,
-	unsigned int cache_size, uint16_t priv_size, uint16_t data_room_size,
+rte_pktmbuf_pool_create_by_ops(const char *name/*mbuf pool名称*/, unsigned int n/*实体数目*/,
+	unsigned int cache_size/*pool cache大小*/, uint16_t priv_size/*私有数据大小*/, uint16_t data_room_size/*数据大小*/,
 	int socket_id, const char *ops_name)
 {
 	struct rte_mempool *mp;
@@ -244,6 +249,7 @@ rte_pktmbuf_pool_create_by_ops(const char *name, unsigned int n/*实体数目*/,
 		rte_errno = EINVAL;
 		return NULL;
 	}
+
 	/*实体大小为：mbuf结构体 + priv_size + data_room*/
 	elt_size = sizeof(struct rte_mbuf) + (unsigned)priv_size +
 		(unsigned)data_room_size;
@@ -251,8 +257,9 @@ rte_pktmbuf_pool_create_by_ops(const char *name, unsigned int n/*实体数目*/,
 	mbp_priv.mbuf_data_room_size = data_room_size;
 	mbp_priv.mbuf_priv_size = priv_size;
 
+	/*创建mp结构体*/
 	mp = rte_mempool_create_empty(name, n, elt_size, cache_size,
-		 sizeof(struct rte_pktmbuf_pool_private), socket_id, 0);
+		 sizeof(struct rte_pktmbuf_pool_private)/*mp私有数据*/, socket_id, 0);
 	if (mp == NULL)
 		return NULL;
 
@@ -266,6 +273,8 @@ rte_pktmbuf_pool_create_by_ops(const char *name, unsigned int n/*实体数目*/,
 		rte_errno = -ret;
 		return NULL;
 	}
+
+	/*填充mp的私有结构*/
 	rte_pktmbuf_pool_init(mp, &mbp_priv);
 
 	ret = rte_mempool_populate_default(mp);
@@ -285,7 +294,7 @@ rte_pktmbuf_pool_create_by_ops(const char *name, unsigned int n/*实体数目*/,
 /*创建mbuf pool*/
 struct rte_mempool *
 rte_pktmbuf_pool_create(const char *name/*mbuf pool名称*/, unsigned int n/*mbuf数量*/,
-	unsigned int cache_size, uint16_t priv_size, uint16_t data_room_size,
+	unsigned int cache_size/*pool cache大小*/, uint16_t priv_size/*每个mbuf私有内存大小*/, uint16_t data_room_size,
 	int socket_id)
 {
 	return rte_pktmbuf_pool_create_by_ops(name, n, cache_size, priv_size,

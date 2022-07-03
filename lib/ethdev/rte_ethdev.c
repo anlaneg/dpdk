@@ -4159,6 +4159,7 @@ rte_eth_dev_rss_hash_update(uint16_t port_id,
 								 rss_conf));
 }
 
+/*取此port_id对应的rss配置*/
 int
 rte_eth_dev_rss_hash_conf_get(uint16_t port_id,
 			      struct rte_eth_rss_conf *rss_conf)
@@ -5164,6 +5165,8 @@ rte_eth_add_rx_callback(uint16_t port_id, uint16_t queue_id,
 		rte_errno = EINVAL;
 		return NULL;
 	}
+
+	/*申请callback*/
 	struct rte_eth_rxtx_callback *cb = rte_zmalloc(NULL, sizeof(*cb), 0);
 
 	if (cb == NULL) {
@@ -5183,11 +5186,13 @@ rte_eth_add_rx_callback(uint16_t port_id, uint16_t queue_id,
 		/* Stores to cb->fn and cb->param should complete before
 		 * cb is visible to data plane.
 		 */
+	    /*tail为空，直接存入*/
 		__atomic_store_n(
 			&rte_eth_devices[port_id].post_rx_burst_cbs[queue_id],
 			cb, __ATOMIC_RELEASE);
 
 	} else {
+	    /*tail不为空，需要遍历到结尾再存入*/
 		while (tail->next)
 			tail = tail->next;
 		/* Stores to cb->fn and cb->param should complete before

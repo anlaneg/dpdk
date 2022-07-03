@@ -68,6 +68,7 @@ mlx5_dev_configure(struct rte_eth_dev *dev)
 	struct mlx5_priv *priv = dev->data->dev_private;
 	unsigned int rxqs_n = dev->data->nb_rx_queues;
 	unsigned int txqs_n = dev->data->nb_tx_queues;
+	/*确定用户是否指定了rss key*/
 	const uint8_t use_app_rss_key =
 		!!dev->data->dev_conf.rx_adv_conf.rss_conf.rss_key;
 	int ret = 0;
@@ -75,11 +76,14 @@ mlx5_dev_configure(struct rte_eth_dev *dev)
 	if (use_app_rss_key &&
 	    (dev->data->dev_conf.rx_adv_conf.rss_conf.rss_key_len !=
 	     MLX5_RSS_HASH_KEY_LEN)) {
+	    /*key长度必须为40*/
 		DRV_LOG(ERR, "port %u RSS key len must be %s Bytes long",
 			dev->data->port_id, RTE_STR(MLX5_RSS_HASH_KEY_LEN));
 		rte_errno = EINVAL;
 		return -rte_errno;
 	}
+
+	/*为rss_key申请空间*/
 	priv->rss_conf.rss_key =
 		mlx5_realloc(priv->rss_conf.rss_key, MLX5_MEM_RTE,
 			    MLX5_RSS_HASH_KEY_LEN, 0, SOCKET_ID_ANY);

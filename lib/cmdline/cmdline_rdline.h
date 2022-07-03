@@ -81,7 +81,7 @@ struct rdline {
 	int history_cur_line;//当前历史行
 
 	/* callbacks and func pointers */
-	rdline_write_char_t *write_char;
+	rdline_write_char_t *write_char;/*输出一个字符*/
 	rdline_validate_t *validate;
 	rdline_complete_t *complete;//补全回调
 

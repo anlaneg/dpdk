@@ -61,6 +61,7 @@ virtqueue_dequeue_burst_rx(struct virtqueue *vq,
 		cop = (struct rte_crypto_op *)
 				vq->vq_descx[desc_idx].crypto_op;
 		if (unlikely(cop == NULL)) {
+		    /*此位置没有报文，退出*/
 			VIRTIO_CRYPTO_RX_LOG_DBG("vring descriptor with no "
 					"mbuf cookie at %u",
 					vq->vq_used_cons_idx);
@@ -104,6 +105,7 @@ virtqueue_dequeue_burst_rx(struct virtqueue *vq,
 		vq->vq_descx[desc_idx].crypto_op = NULL;
 	}
 
+	/*返回我们收取了多少报文*/
 	return i;
 }
 

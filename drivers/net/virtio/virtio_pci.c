@@ -485,6 +485,7 @@ modern_setup_queue(struct virtio_hw *hw, struct virtqueue *vq)
 							 ring[vq->vq_nentries]),
 				   VIRTIO_VRING_ALIGN);
 
+	/*指明当前操作此vq*/
 	rte_write16(vq->vq_queue_index, &dev->common_cfg->queue_select);
 
 	io_write64_twopart(desc_addr, &dev->common_cfg->queue_desc_lo,
@@ -494,7 +495,9 @@ modern_setup_queue(struct virtio_hw *hw, struct virtqueue *vq)
 	io_write64_twopart(used_addr, &dev->common_cfg->queue_used_lo,
 				      &dev->common_cfg->queue_used_hi);
 
+	/*取此vq对应的notify地址偏移量*/
 	notify_off = rte_read16(&dev->common_cfg->queue_notify_off);
+	/*设置notify地址*/
 	vq->notify_addr = (void *)((uint8_t *)dev->notify_base +
 				notify_off * dev->notify_off_multiplier);
 
@@ -527,6 +530,7 @@ modern_del_queue(struct virtio_hw *hw, struct virtqueue *vq)
 	rte_write16(0, &dev->common_cfg->queue_enable);
 }
 
+/*通过写寄存器通知对端*/
 static void
 modern_notify_queue(struct virtio_hw *hw, struct virtqueue *vq)
 {

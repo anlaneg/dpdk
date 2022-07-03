@@ -730,6 +730,7 @@ rxq_cq_to_mbuf(struct mlx5_rxq_data *rxq, struct rte_mbuf *pkt,
 		else
 			rss_hash_res = rte_be_to_cpu_32(mcqe->rx_hash_result);
 		if (rss_hash_res) {
+		    /*标记pkt上标有rss hash*/
 			pkt->hash.rss = rss_hash_res;
 			pkt->ol_flags |= PKT_RX_RSS_HASH;
 		}

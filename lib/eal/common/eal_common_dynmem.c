@@ -436,6 +436,7 @@ eal_dynmem_calc_num_pages_per_socket(
 			struct rte_config *cfg = rte_eal_get_configuration();
 			unsigned int main_lcore_socket;
 
+			/*取main logic core对应的socket*/
 			main_lcore_socket =
 				rte_lcore_to_socket_id(cfg->main_lcore);
 

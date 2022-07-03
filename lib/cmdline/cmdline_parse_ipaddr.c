@@ -15,7 +15,7 @@
 #include "cmdline_parse_ipaddr.h"
 
 struct cmdline_token_ops cmdline_token_ipaddr_ops = {
-	.parse = cmdline_parse_ipaddr,
+	.parse = cmdline_parse_ipaddr,/*解析ip地址*/
 	.complete_get_nb = NULL,
 	.complete_get_elt = NULL,
 	.get_help = cmdline_get_help_ipaddr,
@@ -25,7 +25,7 @@ struct cmdline_token_ops cmdline_token_ipaddr_ops = {
 #define V4PREFIXMAX 32
 
 int
-cmdline_parse_ipaddr(cmdline_parse_token_hdr_t *tk, const char *buf, void *res,
+cmdline_parse_ipaddr(cmdline_parse_token_hdr_t *tk, const char *buf/*待解析内容*/, void *res/*出参，填充解析的内容*/,
 	unsigned ressize)
 {
 	struct cmdline_token_ipaddr *tk2;
@@ -43,6 +43,7 @@ cmdline_parse_ipaddr(cmdline_parse_token_hdr_t *tk, const char *buf, void *res,
 
 	tk2 = (struct cmdline_token_ipaddr *)tk;
 
+	/*获取待解析token长度*/
 	while (!cmdline_isendoftoken(buf[token_len]))
 		token_len++;
 
@@ -64,7 +65,7 @@ cmdline_parse_ipaddr(cmdline_parse_token_hdr_t *tk, const char *buf, void *res,
 		if (errno || (*prefix_end != '\0')
 			|| prefixlen < 0 || prefixlen > PREFIXMAX)
 			return -1;
-		ipaddr.prefixlen = prefixlen;
+		ipaddr.prefixlen = prefixlen;/*前缀长度*/
 	}
 	else {
 		ipaddr.prefixlen = 0;
@@ -76,6 +77,7 @@ cmdline_parse_ipaddr(cmdline_parse_token_hdr_t *tk, const char *buf, void *res,
 		prefixlen <= V4PREFIXMAX) {
 		ipaddr.family = AF_INET;
 		if (res)
+		    /*填充ipv4地址*/
 			memcpy(res, &ipaddr, sizeof(ipaddr));
 		return token_len;
 	}
@@ -83,6 +85,7 @@ cmdline_parse_ipaddr(cmdline_parse_token_hdr_t *tk, const char *buf, void *res,
 	    inet_pton(AF_INET6, ip_str, &ipaddr.addr.ipv6) == 1) {
 		ipaddr.family = AF_INET6;
 		if (res)
+		    /*填充ipv6地址*/
 			memcpy(res, &ipaddr, sizeof(ipaddr));
 		return token_len;
 	}
@@ -90,6 +93,7 @@ cmdline_parse_ipaddr(cmdline_parse_token_hdr_t *tk, const char *buf, void *res,
 
 }
 
+/*显示ipv4帮助信息*/
 int cmdline_get_help_ipaddr(cmdline_parse_token_hdr_t *tk, char *dstbuf,
 			    unsigned int size)
 {

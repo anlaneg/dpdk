@@ -55,12 +55,13 @@ EAL_REGISTER_TAILQ(rte_ring_tailq)
 
 /* return the size of memory occupied by a ring */
 ssize_t
-rte_ring_get_memsize_elem(unsigned int esize, unsigned int count)
+rte_ring_get_memsize_elem(unsigned int esize/*元素大小*/, unsigned int count/*元素数目*/)
 {
 	ssize_t sz;
 
 	/* Check if element size is a multiple of 4B */
 	if (esize % 4 != 0) {
+	    /*元素必须以4字节对齐*/
 		RTE_LOG(ERR, RING, "element size is not a multiple of 4\n");
 
 		return -EINVAL;
@@ -68,6 +69,7 @@ rte_ring_get_memsize_elem(unsigned int esize, unsigned int count)
 
 	/* count must be a power of 2 */
 	if ((!POWEROF2(count)) || (count > RTE_RING_SZ_MASK )) {
+	    /*count必须为2的N次积，count必须小于ring_size*/
 		RTE_LOG(ERR, RING,
 			"Requested number of elements is invalid, must be power of 2, and not exceed %u\n",
 			RTE_RING_SZ_MASK);
@@ -75,6 +77,7 @@ rte_ring_get_memsize_elem(unsigned int esize, unsigned int count)
 		return -EINVAL;
 	}
 
+	/*返回ring的大小（含rte_ring结构体大小）*/
 	sz = sizeof(struct rte_ring) + count * esize;
 	sz = RTE_ALIGN(sz, RTE_CACHE_LINE_SIZE);
 	return sz;
@@ -84,6 +87,7 @@ rte_ring_get_memsize_elem(unsigned int esize, unsigned int count)
 ssize_t
 rte_ring_get_memsize(unsigned int count)
 {
+    /*ring中存放指定，一共包含count个，返回需要的内存大小*/
 	return rte_ring_get_memsize_elem(sizeof(void *), count);
 }
 
@@ -179,7 +183,7 @@ get_sync_type(uint32_t flags, enum rte_ring_sync_type *prod_st,
 }
 
 int
-rte_ring_init(struct rte_ring *r, const char *name, unsigned int count,
+rte_ring_init(struct rte_ring *r, const char *name/*ring名称*/, unsigned int count/*元素数*/,
 	unsigned int flags)
 {
 	int ret;

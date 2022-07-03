@@ -126,7 +126,7 @@ struct rte_ring {
 	 * compatibility requirements, it could be changed to RTE_RING_NAMESIZE
 	 * next time the ABI changes
 	 */
-	char name[RTE_MEMZONE_NAMESIZE] __rte_cache_aligned;
+	char name[RTE_MEMZONE_NAMESIZE] __rte_cache_aligned;/*ring名称*/
 	/**< Name of the ring. */
 	int flags;               /**< Flags supplied at creation. */
 	const struct rte_memzone *memzone;

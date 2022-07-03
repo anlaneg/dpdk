@@ -15,6 +15,7 @@
 #include "cmdline_parse.h"
 #include "cmdline_parse_string.h"
 
+/*字符串解析*/
 struct cmdline_token_ops cmdline_token_string_ops = {
 	.parse = cmdline_parse_string,
 	.complete_get_nb = cmdline_complete_get_nb_string,

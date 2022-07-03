@@ -109,7 +109,7 @@ struct rte_eth_dev {
 	 * User-supplied functions called from rx_burst to post-process
 	 * received packets before passing them to the user
 	 */
-	/*每个队列一个cb*/
+	/*每个队列一组cb*/
 	struct rte_eth_rxtx_callback *post_rx_burst_cbs[RTE_MAX_QUEUES_PER_PORT];/*传报文给上层时回调使用*/
 	/**
 	 * User-supplied functions called from tx_burst to pre-process
@@ -153,7 +153,7 @@ struct rte_eth_dev_data {
 			 */
 
 	struct rte_eth_link dev_link;   /**< Link-level information & status. */
-	/*设备配置*/
+	/*设备配置,见rte_eth_dev_configure函数中给定的配置值*/
 	struct rte_eth_conf dev_conf;   /**< Configuration applied to device. */
 	/*此设备对应的mtu*/
 	uint16_t mtu;                   /**< Maximum Transmission Unit. */

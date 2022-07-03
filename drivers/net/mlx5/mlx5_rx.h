@@ -93,7 +93,9 @@ struct mlx5_rxq_data {
 	unsigned int sges_n:3; /* Log 2 of SGEs (max buffers per packet). */
 	unsigned int cqe_n:4; /* Log 2 of CQ elements. */
 	unsigned int elts_n:4; /* Log 2 of Mbufs. */
+	/*rx队列是否开启rss hash功能*/
 	unsigned int rss_hash:1; /* RSS hash result is enabled. */
+	/*rx队列是否开启fddir功能*/
 	unsigned int mark:1; /* Marked flow available on the queue. */
 	unsigned int strd_num_n:5; /* Log 2 of the number of stride. */
 	unsigned int strd_sz_n:4; /* Log 2 of stride size. */

@@ -109,6 +109,7 @@ static bool get_ether_addr3(const char *s, struct rte_ether_addr *ea)
 int
 rte_ether_unformat_addr(const char *s, struct rte_ether_addr *ea)
 {
+    /*解析mac地址，先尝试6节格式，再尝试3节格式*/
 	if (get_ether_addr6(s, ea))
 		return 0;
 	if (get_ether_addr3(s, ea))

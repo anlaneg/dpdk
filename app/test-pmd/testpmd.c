@@ -3991,6 +3991,7 @@ main(int argc, char** argv)
 			printf("Start automatic packet forwarding\n");
 			start_packet_forwarding(0);
 		}
+		/*执行命令行交互*/
 		prompt();
 		pmd_test_exit();
 	} else

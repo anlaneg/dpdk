@@ -47,8 +47,8 @@ rdline_init(struct rdline *rdl,
 	rdl->validate = validate;
 	rdl->complete = complete;
 	rdl->write_char = write_char;
-	rdl->status = RDLINE_INIT;
-	//初始化history指针
+	rdl->status = RDLINE_INIT;/*指明初始化状态*/
+	//初始化命令history指针
 	return cirbuf_init(&rdl->history, rdl->history_buf, 0, RDLINE_HISTORY_BUF_SIZE);
 }
 

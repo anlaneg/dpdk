@@ -81,6 +81,7 @@ int32_t
 rte_service_init(void)
 {
 	if (rte_service_library_initialized) {
+	    /*重复调用*/
 		RTE_LOG(NOTICE, EAL,
 			"service library init() called, init flag %d\n",
 			rte_service_library_initialized);
@@ -106,8 +107,10 @@ rte_service_init(void)
 	int count = 0;
 	struct rte_config *cfg = rte_eal_get_configuration();
 	for (i = 0; i < RTE_MAX_LCORE; i++) {
+	    /*遍历所有service core*/
 		if (lcore_config[i].core_role == ROLE_SERVICE) {
 			if ((unsigned int)i == cfg->main_lcore)
+			    /*跳过main logic core*/
 				continue;
 			rte_service_lcore_add(i);
 			count++;

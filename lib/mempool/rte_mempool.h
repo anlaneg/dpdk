@@ -102,8 +102,11 @@ struct rte_mempool_cache {
  * A structure that stores the size of mempool elements.
  */
 struct rte_mempool_objsz {
+    /*单个元素大小*/
 	uint32_t elt_size;     /**< Size of an element. */
+	/*头部大小*/
 	uint32_t header_size;  /**< Size of header (before elt). */
+	/*尾部大小*/
 	uint32_t trailer_size; /**< Size of trailer (after elt). */
 	uint32_t total_size;
 	/**< Total size of an object (header + elt + trailer). */
@@ -232,7 +235,7 @@ struct rte_mempool {
 	int socket_id;                   /**< Socket id passed at create. */
 	/*mempool的元素大小*/
 	uint32_t size;                   /**< Max size of the mempool. */
-	/*mempool中的cache数目*/
+	/*mempool中的每个core的cache数目*/
 	uint32_t cache_size;
 	/**< Size of per-lcore default local cache. */
 
@@ -252,7 +255,7 @@ struct rte_mempool {
 	 * to facilitate any secondary processes that may want to use
 	 * this mempool.
 	 */
-	int32_t ops_index;
+	int32_t ops_index;/*mempool操作集索引*/
 
 	/*每个core一个local cache*/
 	struct rte_mempool_cache *local_cache; /**< Per-lcore local cache */

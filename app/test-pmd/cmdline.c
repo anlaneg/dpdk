@@ -17598,7 +17598,7 @@ cmdline_parse_ctx_t main_ctx[] = {
 	(cmdline_parse_inst_t *)&cmd_set_flow_director_mac_vlan_mask,
 	(cmdline_parse_inst_t *)&cmd_set_flow_director_tunnel_mask,
 	(cmdline_parse_inst_t *)&cmd_set_flow_director_flex_payload,
-	(cmdline_parse_inst_t *)&cmd_flow,
+	(cmdline_parse_inst_t *)&cmd_flow,/*flow相关的命令*/
 	(cmdline_parse_inst_t *)&cmd_show_port_meter_cap,
 	(cmdline_parse_inst_t *)&cmd_add_port_meter_profile_srtcm,
 	(cmdline_parse_inst_t *)&cmd_add_port_meter_profile_trtcm,
@@ -17720,7 +17720,7 @@ cmdline_parse_ctx_t main_ctx[] = {
 	(cmdline_parse_inst_t *)&cmd_show_tx_metadata,
 	(cmdline_parse_inst_t *)&cmd_show_rx_tx_desc_status,
 	(cmdline_parse_inst_t *)&cmd_show_rx_queue_desc_used_count,
-	(cmdline_parse_inst_t *)&cmd_set_raw,
+	(cmdline_parse_inst_t *)&cmd_set_raw,/*raw格式相关命令*/
 	(cmdline_parse_inst_t *)&cmd_show_set_raw,
 	(cmdline_parse_inst_t *)&cmd_show_set_raw_all,
 	(cmdline_parse_inst_t *)&cmd_config_tx_dynf_specific,
@@ -17761,10 +17761,11 @@ prompt(void)
 	cmd_set_fwd_mode_init();
 	cmd_set_fwd_retry_mode_init();
 
-	testpmd_cl = cmdline_stdin_new(main_ctx, "testpmd> ");
+	testpmd_cl = cmdline_stdin_new(main_ctx/*命令列表*/, "testpmd> ");
 	if (testpmd_cl == NULL)
 		return;
 
+	/*注册退出回调*/
 	ret = atexit(prompt_exit);
 	if (ret != 0)
 		printf("Cannot set exit function for cmdline\n");

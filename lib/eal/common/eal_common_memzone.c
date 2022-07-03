@@ -54,7 +54,7 @@ memzone_lookup_thread_unsafe(const char *name)
 }
 
 static const struct rte_memzone *
-memzone_reserve_aligned_thread_unsafe(const char *name, size_t len,
+memzone_reserve_aligned_thread_unsafe(const char *name/*mz名称*/, size_t len,
 		int socket_id, unsigned int flags, unsigned int align,
 		unsigned int bound)
 {
@@ -72,7 +72,7 @@ memzone_reserve_aligned_thread_unsafe(const char *name, size_t len,
 
 	/* no more room in config */
 	if (arr->count >= arr->len) {
-	        //不能完成memzone的分配，空闲的memzone均已被填充
+	    //不能完成memzone的分配，空闲的memzone均已被填充
 		RTE_LOG(ERR, EAL,
 		"%s(): Number of requested memzone segments exceeds RTE_MAX_MEMZONE\n",
 			__func__);
@@ -97,6 +97,7 @@ memzone_reserve_aligned_thread_unsafe(const char *name, size_t len,
 
 	/* if alignment is not a power of two */
 	if (align && !rte_is_power_of_2(align)) {
+	    /*必须按2的N次方进行对齐*/
 		RTE_LOG(ERR, EAL, "%s(): Invalid alignment: %u\n", __func__,
 				align);
 		rte_errno = EINVAL;
@@ -113,6 +114,7 @@ memzone_reserve_aligned_thread_unsafe(const char *name, size_t len,
 		return NULL;
 	}
 
+	/*len对齐*/
 	len = RTE_ALIGN_CEIL(len, RTE_CACHE_LINE_SIZE);
 
 	/* save minimal requested  length */
@@ -189,7 +191,7 @@ memzone_reserve_aligned_thread_unsafe(const char *name, size_t len,
 }
 
 static const struct rte_memzone *
-rte_memzone_reserve_thread_safe(const char *name, size_t len, int socket_id,
+rte_memzone_reserve_thread_safe(const char *name/*mz名称*/, size_t len, int socket_id/*分配在哪个socket*/,
 		unsigned int flags, unsigned int align, unsigned int bound)
 {
 	struct rte_mem_config *mcfg;

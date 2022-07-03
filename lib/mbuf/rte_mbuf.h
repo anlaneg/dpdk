@@ -286,7 +286,9 @@ rte_mbuf_to_priv(struct rte_mbuf *m)
  * appended after the mempool structure (in private data).
  */
 struct rte_pktmbuf_pool_private {
+    /*存放数据的大小*/
 	uint16_t mbuf_data_room_size; /**< Size of data space in each mbuf. */
+	/*存放mbuf私有数据的大小*/
 	uint16_t mbuf_priv_size;      /**< Size of private area in each mbuf. */
 	uint32_t flags; /**< reserved for future use. */
 };
@@ -363,6 +365,7 @@ rte_mbuf_refcnt_read(const struct rte_mbuf *m)
 static inline void
 rte_mbuf_refcnt_set(struct rte_mbuf *m, uint16_t new_value)
 {
+    /*设置mbuf引用计数*/
 	__atomic_store_n(&m->refcnt, new_value, __ATOMIC_RELAXED);
 }
 
@@ -370,6 +373,7 @@ rte_mbuf_refcnt_set(struct rte_mbuf *m, uint16_t new_value)
 static inline uint16_t
 __rte_mbuf_refcnt_update(struct rte_mbuf *m, int16_t value)
 {
+    /*增加mbuf引用计数*/
 	return __atomic_add_fetch(&m->refcnt, (uint16_t)value,
 				 __ATOMIC_ACQ_REL);
 }
@@ -395,10 +399,12 @@ rte_mbuf_refcnt_update(struct rte_mbuf *m, int16_t value)
 	 */
 	if (likely(rte_mbuf_refcnt_read(m) == 1)) {
 		++value;
+		/*旧值为1，在value上增加1，并写入*/
 		rte_mbuf_refcnt_set(m, (uint16_t)value);
 		return (uint16_t)value;
 	}
 
+	/*并不为1，在原有基础上新增*/
 	return __rte_mbuf_refcnt_update(m, value);
 }
 
@@ -555,6 +561,7 @@ int rte_mbuf_check(const struct rte_mbuf *m, int is_header,
 static __rte_always_inline void
 __rte_mbuf_raw_sanity_check(__rte_unused const struct rte_mbuf *m)
 {
+    /*引用计数必须为1*/
 	RTE_ASSERT(rte_mbuf_refcnt_read(m) == 1);
 	RTE_ASSERT(m->next == NULL);
 	RTE_ASSERT(m->nb_segs == 1);
@@ -613,6 +620,7 @@ rte_mbuf_raw_free(struct rte_mbuf *m)
 	RTE_ASSERT(!RTE_MBUF_CLONED(m) &&
 		  (!RTE_MBUF_HAS_EXTBUF(m) || RTE_MBUF_HAS_PINNED_EXTBUF(m)));
 	__rte_mbuf_raw_sanity_check(m);
+	/*将mbuf还入pool中*/
 	rte_mempool_put(m->pool, m);
 }
 
@@ -1215,9 +1223,11 @@ __rte_pktmbuf_free_direct(struct rte_mbuf *m)
 
 	md = rte_mbuf_from_indirect(m);
 
+	/*引用计数如果减为0，则将计数变更为1*/
 	if (rte_mbuf_refcnt_update(md, -1) == 0) {
 		md->next = NULL;
 		md->nb_segs = 1;
+		/*将引用计数更新为1*/
 		rte_mbuf_refcnt_set(md, 1);
 		rte_mbuf_raw_free(md);
 	}
@@ -1490,7 +1500,7 @@ rte_pktmbuf_copy(const struct rte_mbuf *m, struct rte_mempool *mp,
 static inline void rte_pktmbuf_refcnt_update(struct rte_mbuf *m, int16_t v)
 {
 	__rte_mbuf_sanity_check(m, 1);
-
+	/*通过next指针，将一串mbuf的引用计数全更新了*/
 	do {
 		rte_mbuf_refcnt_update(m, v);
 	} while ((m = m->next) != NULL);
@@ -1765,21 +1775,22 @@ static inline int rte_pktmbuf_chain(struct rte_mbuf *head, struct rte_mbuf *tail
 
 	/* Check for number-of-segments-overflow */
 	if (head->nb_segs + tail->nb_segs > RTE_MBUF_MAX_NB_SEGS)
+	    /*nb_segs超限，报错*/
 		return -EOVERFLOW;
 
 	/* Chain 'tail' onto the old tail */
-	cur_tail = rte_pktmbuf_lastseg(head);
-	cur_tail->next = tail;
+	cur_tail = rte_pktmbuf_lastseg(head);/*找到最后一个seg*/
+	cur_tail->next = tail;/*串入最后一块*/
 
 	/* accumulate number of segments and total length.
 	 * NB: elaborating the addition like this instead of using
 	 *     -= allows us to ensure the result type is uint16_t
 	 *     avoiding compiler warnings on gcc 8.1 at least */
-	head->nb_segs = (uint16_t)(head->nb_segs + tail->nb_segs);
-	head->pkt_len += tail->pkt_len;
+	head->nb_segs = (uint16_t)(head->nb_segs + tail->nb_segs);/*更新报文segs总数*/
+	head->pkt_len += tail->pkt_len;/*更新报文总大小*/
 
 	/* pkt_len is only set in the head */
-	tail->pkt_len = tail->data_len;
+	tail->pkt_len = tail->data_len;/*更新报文数据长度*/
 
 	return 0;
 }

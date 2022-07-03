@@ -17,17 +17,20 @@ terminal_adjust(struct cmdline *cl)
 
 	memcpy(&term, &cl->oldterm, sizeof(term));
 	term.c_lflag &= ~(ICANON | ECHO | ISIG);
-	tcsetattr(0, TCSANOW, &term);
+	tcsetattr(0, TCSANOW, &term);/*设置新的终端配置*/
 
+	/*关闭stdin的buffer能力*/
 	setbuf(stdin, NULL);
 }
 
 void
 terminal_restore(const struct cmdline *cl)
 {
+    /*恢复终端属性*/
 	tcsetattr(fileno(stdin), TCSANOW, &cl->oldterm);
 }
 
+/*poll stdin描述符的读事件*/
 int
 cmdline_poll_char(struct cmdline *cl)
 {
@@ -43,11 +46,13 @@ cmdline_poll_char(struct cmdline *cl)
 ssize_t
 cmdline_read_char(struct cmdline *cl, char *c)
 {
+    /*自标准输入读取一个字符*/
 	return read(cl->s_in, c, 1);
 }
 
 int
 cmdline_vdprintf(int fd, const char *format, va_list op)
 {
+    /*格式化内容向fd输出*/
 	return vdprintf(fd, format, op);
 }

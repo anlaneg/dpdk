@@ -30,12 +30,12 @@ extern "C" {
 #ifndef RTE_EXEC_ENV_WINDOWS
 
 struct cmdline {
-	int s_in;
-	int s_out;
-	cmdline_parse_ctx_t *ctx;
+	int s_in;/*stdin对应的fd*/
+	int s_out;/*stdout对应的fd*/
+	cmdline_parse_ctx_t *ctx;/*命令列表*/
 	struct rdline rdl;
-	char prompt[RDLINE_PROMPT_SIZE];
-	struct termios oldterm;
+	char prompt[RDLINE_PROMPT_SIZE];/*命令行提示符*/
+	struct termios oldterm;/*旧的终端配置*/
 };
 
 #else

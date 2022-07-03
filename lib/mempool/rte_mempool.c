@@ -154,7 +154,7 @@ get_min_page_size(int socket_id)
 /*将obj加入到mempool中*/
 static void
 mempool_add_elem(struct rte_mempool *mp, __rte_unused void *opaque,
-		 void *obj, rte_iova_t iova)
+		 void *obj/*mempool中的元素*/, rte_iova_t iova)
 {
 	struct rte_mempool_objhdr *hdr;
 	struct rte_mempool_objtlr *tlr __rte_unused;
@@ -212,7 +212,7 @@ rte_mempool_mem_iter(struct rte_mempool *mp,
 
 /* get the header, trailer and total size of a mempool element. */
 uint32_t
-rte_mempool_calc_obj_size(uint32_t elt_size, uint32_t flags,
+rte_mempool_calc_obj_size(uint32_t elt_size/*实体大小*/, uint32_t flags,
 	struct rte_mempool_objsz *sz)
 {
 	struct rte_mempool_objsz lsz;
@@ -355,6 +355,7 @@ rte_mempool_populate_iova(struct rte_mempool *mp, char *vaddr,
 		goto fail;
 	}
 
+	/*遍历填充每个elem*/
 	i = rte_mempool_ops_populate(mp, mp->size - mp->populated_size,
 		(char *)vaddr + off,
 		(iova == RTE_BAD_IOVA) ? RTE_BAD_IOVA : (iova + off),
@@ -788,8 +789,8 @@ rte_mempool_cache_free(struct rte_mempool_cache *cache)
 
 /* create an empty mempool */
 struct rte_mempool *
-rte_mempool_create_empty(const char *name, unsigned n/*实体数目*/, unsigned elt_size,
-	unsigned cache_size, unsigned private_data_size/*mempool私有数据大小*/,
+rte_mempool_create_empty(const char *name, unsigned n/*实体数目*/, unsigned elt_size/*实体大小*/,
+	unsigned cache_size/*cache数目*/, unsigned private_data_size/*mempool私有数据大小*/,
 	int socket_id, unsigned flags)
 {
 	char mz_name[RTE_MEMZONE_NAMESIZE];
@@ -838,6 +839,7 @@ rte_mempool_create_empty(const char *name, unsigned n/*实体数目*/, unsigned 
 		flags |= MEMPOOL_F_NO_SPREAD;
 
 	/* calculate mempool object sizes. */
+	/*计算实际obj大小*/
 	if (!rte_mempool_calc_obj_size(elt_size, flags, &objsz)) {
 		rte_errno = EINVAL;
 		return NULL;
@@ -861,9 +863,9 @@ rte_mempool_create_empty(const char *name, unsigned n/*实体数目*/, unsigned 
 	}
 
 	/*mempool大小*/
-	mempool_size = MEMPOOL_HEADER_SIZE(mp, cache_size);
-	mempool_size += private_data_size;
-	mempool_size = RTE_ALIGN_CEIL(mempool_size, RTE_MEMPOOL_ALIGN);
+	mempool_size = MEMPOOL_HEADER_SIZE(mp, cache_size);/*考虑Cache情况*/
+	mempool_size += private_data_size;/*mp私有数据大小*/
+	mempool_size = RTE_ALIGN_CEIL(mempool_size, RTE_MEMPOOL_ALIGN);/*对齐*/
 
 	/*memzone名称*/
 	ret = snprintf(mz_name, sizeof(mz_name), RTE_MEMPOOL_MZ_FORMAT, name);
@@ -872,7 +874,7 @@ rte_mempool_create_empty(const char *name, unsigned n/*实体数目*/, unsigned 
 		goto exit_unlock;
 	}
 
-	/*申请memzone*/
+	/*申请memzone，分配mp结构体空间*/
 	mz = rte_memzone_reserve(mz_name, mempool_size, socket_id, mz_flags);
 	if (mz == NULL)
 		goto exit_unlock;
@@ -902,10 +904,12 @@ rte_mempool_create_empty(const char *name, unsigned n/*实体数目*/, unsigned 
 	 * local_cache pointer is set even if cache_size is zero.
 	 * The local_cache points to just past the elt_pa[] array.
 	 */
+	/*每个core一个rte_mempool_cache结构*/
 	mp->local_cache = (struct rte_mempool_cache *)
 		RTE_PTR_ADD(mp, MEMPOOL_HEADER_SIZE(mp, 0));
 
 	/* Init all default caches. */
+	/*初始化cache*/
 	if (cache_size != 0) {
 		for (lcore_id = 0; lcore_id < RTE_MAX_LCORE; lcore_id++)
 			mempool_cache_init(&mp->local_cache[lcore_id],
