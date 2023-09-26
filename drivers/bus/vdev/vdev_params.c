@@ -51,6 +51,7 @@ rte_vdev_dev_iterate(const void *start,
 	struct rte_device *dev;
 
 	if (str != NULL) {
+		/*将str构造成kvargs*/
 		kvargs = rte_kvargs_parse(str, vdev_params_keys);
 		if (kvargs == NULL) {
 			VDEV_LOG(ERR, "cannot parse argument list\n");
@@ -58,6 +59,7 @@ rte_vdev_dev_iterate(const void *start,
 			return NULL;
 		}
 	}
+	/*通过kvargs查找对应的vdev设备*/
 	dev = rte_vdev_find_device(start, vdev_dev_match, kvargs);
 	rte_kvargs_free(kvargs);
 	return dev;

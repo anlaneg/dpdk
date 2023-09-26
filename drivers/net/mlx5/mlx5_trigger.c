@@ -52,16 +52,21 @@ mlx5_txq_start(struct rte_eth_dev *dev)
 	unsigned int i;
 	int ret;
 
+	/*遍历此设备的所有txq*/
 	for (i = 0; i != priv->txqs_n; ++i) {
+		/*取i号txq*/
 		struct mlx5_txq_ctrl *txq_ctrl = mlx5_txq_get(dev, i);
 		struct mlx5_txq_data *txq_data = &txq_ctrl->txq;
 		uint32_t flags = MLX5_MEM_RTE | MLX5_MEM_ZERO;
 
 		if (!txq_ctrl)
+			/*此队列不存在，忽略*/
 			continue;
 		if (!txq_ctrl->is_hairpin)
+			/*针对非hairpin队列，申请tx queue element*/
 			txq_alloc_elts(txq_ctrl);
 		MLX5_ASSERT(!txq_ctrl->obj);
+		/*申请mlx5_txq_obj*/
 		txq_ctrl->obj = mlx5_malloc(flags, sizeof(struct mlx5_txq_obj),
 					    0, txq_ctrl->socket);
 		if (!txq_ctrl->obj) {
@@ -1206,6 +1211,8 @@ continue_dev_start:
 		if (ret)
 			goto error;
 	}
+
+	/*使能txq*/
 	ret = mlx5_txq_start(dev);
 	if (ret) {
 		DRV_LOG(ERR, "port %u Tx queue allocation failed: %s",
@@ -1305,7 +1312,9 @@ continue_dev_start:
 		goto error;
 	}
 	rte_wmb();
+	/*依据设备上开启的功能，选择相应的tx burst函数*/
 	dev->tx_pkt_burst = mlx5_select_tx_function(dev);
+	/*依据设备上开启的功能，选择相应的rx burst函数*/
 	dev->rx_pkt_burst = mlx5_select_rx_function(dev);
 	/* Enable datapath on secondary process. */
 	mlx5_mp_os_req_start_rxtx(dev);

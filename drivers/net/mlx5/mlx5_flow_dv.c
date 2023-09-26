@@ -4267,6 +4267,7 @@ flow_dv_port_id_create_cb(void *tool_ctx, void *cb_ctx)
 							ref->port_id,
 							&resource->action);
 	if (ret) {
+		/*创建flow action失败，向上层居然返回ENOMEM*/
 		mlx5_ipool_free(sh->ipool[MLX5_IPOOL_PORT_ID], idx);
 		rte_flow_error_set(ctx->error, ENOMEM,
 				   RTE_FLOW_ERROR_TYPE_UNSPECIFIED, NULL,
@@ -7006,6 +7007,7 @@ flow_dv_validate_attributes(struct rte_eth_dev *dev,
 	RTE_SET_USED(tunnel);
 	RTE_SET_USED(grp_info);
 	if (attributes->group)
+		/*不支持group非零的情况*/
 		return rte_flow_error_set(error, ENOTSUP,
 					  RTE_FLOW_ERROR_TYPE_ATTR_GROUP,
 					  NULL,
@@ -7022,11 +7024,13 @@ flow_dv_validate_attributes(struct rte_eth_dev *dev,
 #endif
 	if (attributes->priority != MLX5_FLOW_LOWEST_PRIO_INDICATOR &&
 	    attributes->priority > lowest_priority)
+		/*优先级超限情况*/
 		return rte_flow_error_set(error, ENOTSUP,
 					  RTE_FLOW_ERROR_TYPE_ATTR_PRIORITY,
 					  NULL,
 					  "priority out of range");
 	if (attributes->transfer && !priv->sh->config.dv_esw_en)
+		/*指定了transfer,但未开启switchdev*/
 		return rte_flow_error_set(error, ENOTSUP,
 					  RTE_FLOW_ERROR_TYPE_UNSPECIFIED, NULL,
 					  "E-Switch dr is not supported");
@@ -7320,8 +7324,8 @@ flow_dv_validate(struct rte_eth_dev *dev, const struct rte_flow_attr *attr,
 		 bool external, int hairpin, struct rte_flow_error *error)
 {
 	int ret;
-	uint64_t aso_mask, action_flags = 0;
-	uint64_t item_flags = 0;
+	uint64_t aso_mask, action_flags = 0;/*标记需要执行哪些action*/
+	uint64_t item_flags = 0;/*标记需要匹配哪些字段*/
 	uint64_t last_item = 0;
 	uint8_t next_protocol = 0xff;
 	uint16_t ether_type = 0;
@@ -7401,6 +7405,7 @@ flow_dv_validate(struct rte_eth_dev *dev, const struct rte_flow_attr *attr,
 	tunnel = is_tunnel_offload_active(dev) ?
 		 mlx5_get_tof(items, actions, &tof_rule_type) : NULL;
 	if (tunnel) {
+		/*tunnel offload的情况*/
 		if (!dev_conf->dv_flow_en)
 			return rte_flow_error_set
 				(error, ENOTSUP,
@@ -7419,10 +7424,14 @@ flow_dv_validate(struct rte_eth_dev *dev, const struct rte_flow_attr *attr,
 		grp_info.std_tbl_fix = tunnel_use_standard_attr_group_translate
 					(dev, attr, tunnel, tof_rule_type);
 	}
+
+	/*对规则属性进行检查*/
 	ret = flow_dv_validate_attributes(dev, tunnel, attr, &grp_info, error);
 	if (ret < 0)
 		return ret;
 	is_root = (uint64_t)ret;
+
+	/*对匹配字段进行校验*/
 	for (; items->type != RTE_FLOW_ITEM_TYPE_END; items++) {
 		int tunnel = !!(item_flags & MLX5_FLOW_LAYER_TUNNEL);
 		int type = items->type;
@@ -7822,12 +7831,16 @@ flow_dv_validate(struct rte_eth_dev *dev, const struct rte_flow_attr *attr,
 		}
 		item_flags |= last_item;
 	}
+
+	/*对匹配intergrity做特殊处理*/
 	if (item_flags & MLX5_FLOW_ITEM_INTEGRITY) {
 		ret = flow_dv_validate_item_integrity_post(integrity_items,
 							   item_flags, error);
 		if (ret)
 			return ret;
 	}
+
+	/*对action进行校验*/
 	for (; actions->type != RTE_FLOW_ACTION_TYPE_END; actions++) {
 		int type = actions->type;
 
@@ -7858,7 +7871,7 @@ flow_dv_validate(struct rte_eth_dev *dev, const struct rte_flow_attr *attr,
 							      error);
 			if (ret)
 				return ret;
-			action_flags |= MLX5_FLOW_ACTION_PORT_ID;
+			action_flags |= MLX5_FLOW_ACTION_PORT_ID;/*标记执行了哪些action*/
 			++actions_n;
 			break;
 		case RTE_FLOW_ACTION_TYPE_FLAG:
@@ -8430,6 +8443,7 @@ flow_dv_validate(struct rte_eth_dev *dev, const struct rte_flow_attr *attr,
 	 * - TAG & META are reserved for future uses.
 	 */
 	if (action_flags & MLX5_FLOW_ACTION_TUNNEL_SET) {
+		/*有tunnel set相关的action的校验*/
 		uint64_t bad_actions_mask = MLX5_FLOW_ACTION_DECAP    |
 					    MLX5_FLOW_ACTION_MARK     |
 					    MLX5_FLOW_ACTION_SET_TAG  |
@@ -8454,6 +8468,8 @@ flow_dv_validate(struct rte_eth_dev *dev, const struct rte_flow_attr *attr,
 					RTE_FLOW_ERROR_TYPE_ACTION, NULL,
 					"tunnel flows for ingress and transfer traffic only");
 	}
+
+	/*有tunnel匹配相关action的校验*/
 	if (action_flags & MLX5_FLOW_ACTION_TUNNEL_MATCH) {
 		uint64_t bad_actions_mask = MLX5_FLOW_ACTION_JUMP    |
 					    MLX5_FLOW_ACTION_MARK    |
@@ -8477,6 +8493,7 @@ flow_dv_validate(struct rte_eth_dev *dev, const struct rte_flow_attr *attr,
 			    MLX5_FLOW_ACTION_TUNNEL_MATCH));
 	else if ((action_flags & MLX5_FLOW_ACTION_DROP) &&
 	    (action_flags & ~(MLX5_FLOW_ACTION_DROP | MLX5_FLOW_DROP_INCLUSIVE_ACTIONS)))
+		/*对drop action进行校验（drop只容许count/sample/age三种action)*/
 		return rte_flow_error_set(error, EINVAL,
 					  RTE_FLOW_ERROR_TYPE_ACTION, NULL,
 					  "Drop action is mutually-exclusive "
@@ -8486,26 +8503,31 @@ flow_dv_validate(struct rte_eth_dev *dev, const struct rte_flow_attr *attr,
 	if (attr->transfer) {
 		if (!mlx5_flow_ext_mreg_supported(dev) &&
 		    action_flags & MLX5_FLOW_ACTION_FLAG)
+			/*指明了flag,但硬件不支持*/
 			return rte_flow_error_set(error, ENOTSUP,
 						  RTE_FLOW_ERROR_TYPE_ACTION,
 						  NULL,
 						  "unsupported action FLAG");
 		if (!mlx5_flow_ext_mreg_supported(dev) &&
 		    action_flags & MLX5_FLOW_ACTION_MARK)
+			/*指明了mark但硬件不支持*/
 			return rte_flow_error_set(error, ENOTSUP,
 						  RTE_FLOW_ERROR_TYPE_ACTION,
 						  NULL,
 						  "unsupported action MARK");
 		if (action_flags & MLX5_FLOW_ACTION_QUEUE)
+			/*不容许指定queue*/
 			return rte_flow_error_set(error, ENOTSUP,
 						  RTE_FLOW_ERROR_TYPE_ACTION,
 						  NULL,
 						  "unsupported action QUEUE");
 		if (action_flags & MLX5_FLOW_ACTION_RSS)
+			/*不容许指定rss*/
 			return rte_flow_error_set(error, ENOTSUP,
 						  RTE_FLOW_ERROR_TYPE_ACTION,
 						  NULL,
 						  "unsupported action RSS");
+		/*没有包含fate指定的action*/
 		if (!(action_flags & MLX5_FLOW_FATE_ESWITCH_ACTIONS))
 			return rte_flow_error_set(error, EINVAL,
 						  RTE_FLOW_ERROR_TYPE_ACTION,

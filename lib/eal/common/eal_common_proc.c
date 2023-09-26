@@ -164,6 +164,7 @@ rte_eal_primary_proc_alive(const char *config_file_path)
 	return !!ret;
 }
 
+/*通过name在action_entry_list上查找action_entry*/
 static struct action_entry *
 find_action_entry_by_name(const char *name)
 {
@@ -181,22 +182,26 @@ static int
 validate_action_name(const char *name)
 {
 	if (name == NULL) {
+		/*名称为空*/
 		RTE_LOG(ERR, EAL, "Action name cannot be NULL\n");
 		rte_errno = EINVAL;
 		return -1;
 	}
 	if (strnlen(name, RTE_MP_MAX_NAME_LEN) == 0) {
+		/*名称长度为0*/
 		RTE_LOG(ERR, EAL, "Length of action name is zero\n");
 		rte_errno = EINVAL;
 		return -1;
 	}
 	if (strnlen(name, RTE_MP_MAX_NAME_LEN) == RTE_MP_MAX_NAME_LEN) {
+		/*名称长度过长*/
 		rte_errno = E2BIG;
 		return -1;
 	}
 	return 0;
 }
 
+/*注册action entry(响应请求）*/
 int
 rte_mp_action_register(const char *name, rte_mp_t action)
 {
@@ -208,6 +213,7 @@ rte_mp_action_register(const char *name, rte_mp_t action)
 		return -1;
 
 	if (internal_conf->no_shconf) {
+		/*必须开启share file模式*/
 		RTE_LOG(DEBUG, EAL, "No shared files mode enabled, IPC is disabled\n");
 		rte_errno = ENOTSUP;
 		return -1;
@@ -218,12 +224,14 @@ rte_mp_action_register(const char *name, rte_mp_t action)
 		rte_errno = ENOMEM;
 		return -1;
 	}
+	/*设置action名称及action结构体*/
 	strlcpy(entry->action_name, name, sizeof(entry->action_name));
 	entry->action = action;
 
 	pthread_mutex_lock(&mp_mutex_action);
 	if (find_action_entry_by_name(name) != NULL) {
 		pthread_mutex_unlock(&mp_mutex_action);
+		/*重复注册*/
 		rte_errno = EEXIST;
 		free(entry);
 		return -1;
@@ -233,6 +241,7 @@ rte_mp_action_register(const char *name, rte_mp_t action)
 	return 0;
 }
 
+/*依据指定名称的action entry*/
 void
 rte_mp_action_unregister(const char *name)
 {
@@ -241,6 +250,7 @@ rte_mp_action_unregister(const char *name)
 		eal_get_internal_configuration();
 
 	if (validate_action_name(name) != 0)
+		/*名称长度过长*/
 		return;
 
 	if (internal_conf->no_shconf) {
@@ -248,6 +258,7 @@ rte_mp_action_unregister(const char *name)
 		return;
 	}
 
+	/*通过name查找entry,并移除*/
 	pthread_mutex_lock(&mp_mutex_action);
 	entry = find_action_entry_by_name(name);
 	if (entry == NULL) {

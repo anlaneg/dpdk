@@ -39,6 +39,7 @@ static const char sys_pages_numa_dir_path[] = "/sys/devices/system/node";
 static void *
 map_shared_memory(const char *filename, const size_t mem_size, int flags)
 {
+	/*打开此文件，并map相应长度的内存*/
 	void *retval;
 	int fd = open(filename, flags, 0600);
 	if (fd < 0)
@@ -48,17 +49,20 @@ map_shared_memory(const char *filename, const size_t mem_size, int flags)
 		return NULL;
 	}
 	retval = mmap(NULL, mem_size, PROT_READ | PROT_WRITE,
-			MAP_SHARED, fd, 0);
+			MAP_SHARED/*映射share类型的内存*/, fd, 0);
+	/*关闭此文件*/
 	close(fd);
 	return retval == MAP_FAILED ? NULL : retval;
 }
 
+/*映射share类型的内存（关联filename)*/
 static void *
 open_shared_memory(const char *filename, const size_t mem_size)
 {
 	return map_shared_memory(filename, mem_size, O_RDWR);
 }
 
+/*映射share类型的内存（关联filename,如果文件不存在，则创建)*/
 static void *
 create_shared_memory(const char *filename, const size_t mem_size)
 {
@@ -71,6 +75,7 @@ static int get_hp_sysfs_value(const char *subdir, const char *file, unsigned lon
 
 	snprintf(path, sizeof(path), "%s/%s/%s",
 			sys_dir_path, subdir, file);
+	/*按int理解此sysfs*/
 	return eal_parse_sysfs_value(path, val);
 }
 
@@ -86,33 +91,40 @@ get_num_hugepages(const char *subdir, size_t sz, unsigned int reusable_pages)
 	const char *nr_splus_file = "surplus_hugepages";
 
 	/* first, check how many reserved pages kernel reports */
+	/*取此类型大页的已被预留的总数*/
 	if (get_hp_sysfs_value(subdir, nr_rsvd_file, &resv_pages) < 0)
 		return 0;
 
+	/*取当前空闲的大页*/
 	if (get_hp_sysfs_value(subdir, nr_hp_file, &num_pages) < 0)
 		return 0;
 
+	/*取当前容许的可最大分配的大页数目*/
 	if (get_hp_sysfs_value(subdir, nr_over_file, &over_pages) < 0)
 		over_pages = 0;
 
+	/*取当前需要释放，但还未释放的大页数目*/
 	if (get_hp_sysfs_value(subdir, nr_splus_file, &surplus_pages) < 0)
 		surplus_pages = 0;
 
 	/* adjust num_pages */
 	if (num_pages >= resv_pages)
-		num_pages -= resv_pages;
+		num_pages -= resv_pages;/*移除预留的总数*/
 	else if (resv_pages)
-		num_pages = 0;
+		num_pages = 0;/*空闲数都不足以减（异常情况）*/
 
+	/*减去应释放，还未释放的大页数目*/
 	if (over_pages >= surplus_pages)
 		over_pages -= surplus_pages;
 	else
 		over_pages = 0;
 
+	/*没有找到可用的页面*/
 	if (num_pages == 0 && over_pages == 0 && reusable_pages)
 		RTE_LOG(WARNING, EAL, "No available %zu kB hugepages reported\n",
 				sz >> 10);
 
+	/*加上容许增加的大页页数*/
 	num_pages += over_pages;
 	if (num_pages < over_pages) /* overflow */
 		num_pages = UINT32_MAX;
@@ -149,6 +161,7 @@ get_num_hugepages_on_node(const char *subdir, unsigned int socket, size_t sz)
 		return 0;
 	}
 
+	/*取此node上配置的空闲大页数目*/
 	snprintf(path, sizeof(path), "%s/%s/%s",
 			socketpath, subdir, nr_hp_file);
 	if (eal_parse_sysfs_value(path, &num_pages) < 0)
@@ -168,6 +181,7 @@ get_num_hugepages_on_node(const char *subdir, unsigned int socket, size_t sz)
 	return num_pages;
 }
 
+/*取默认的大页大小,利用/proc/meminfo中描明的Hugepagesize字段，其为默认大页size*/
 static uint64_t
 get_default_hp_size(void)
 {
@@ -181,6 +195,7 @@ get_default_hp_size(void)
 	if (fd == NULL)
 		rte_panic("Cannot open %s\n", proc_meminfo);
 	while(fgets(buffer, sizeof(buffer), fd)){
+		/*取hugepagesize一列，并转换其对应的数值*/
 		if (strncmp(buffer, str_hugepagesz, hugepagesz_len) == 0){
 			size = rte_str_to_size(&buffer[hugepagesz_len]);
 			break;
@@ -192,8 +207,9 @@ get_default_hp_size(void)
 	return size;
 }
 
+/*查找挂载了hugepage_size的大页目录*/
 static int
-get_hugepage_dir(uint64_t hugepage_sz, char *hugedir, int len)
+get_hugepage_dir(uint64_t hugepage_sz, char *hugedir/*出参，大页挂载目录*/, int len/*hugedir buffer可用长度*/)
 {
 	enum proc_mount_fieldnames {
 		DEVICE = 0,
@@ -223,47 +239,59 @@ get_hugepage_dir(uint64_t hugepage_sz, char *hugedir, int len)
 	 */
 	if (internal_conf->hugepage_dir != NULL &&
 		stat(internal_conf->hugepage_dir, &st) != 0) {
+		/*指明了要使用的大页目录，但此目录不存在*/
 		return -1;
 	}
 
+	/*打开/proc/mounts文件，检查挂载情况*/
 	FILE *fd = fopen(proc_mounts, "r");
 	if (fd == NULL)
 		rte_panic("Cannot open %s\n", proc_mounts);
 
 	if (default_size == 0)
+		/*取默认页大小*/
 		default_size = get_default_hp_size();
 
+	/*读取/proc/mounts文件*/
 	while (fgets(buf, sizeof(buf), fd)){
 		const char *pagesz_str;
 		size_t mountpt_len = 0;
 
+		/*按照split_tok划分挂载信息*/
 		if (rte_strsplit(buf, sizeof(buf), splitstr, _FIELDNAME_MAX,
 				split_tok) != _FIELDNAME_MAX) {
 			RTE_LOG(ERR, EAL, "Error parsing %s\n", proc_mounts);
 			break; /* return NULL */
 		}
 
+		/*忽略非hugetlbfs文件系统*/
 		if (strncmp(splitstr[FSTYPE], hugetlbfs_str, htlbfs_str_len) != 0)
 			continue;
 
+		/*取大页页面信息*/
 		pagesz_str = strstr(splitstr[OPTIONS], pagesize_opt);
 
 		/* if no explicit page size, the default page size is compared */
 		if (pagesz_str == NULL) {
+			/*未指定大页size的，则为默认大页*/
 			if (hugepage_sz != default_size)
+				/*与参数要求的大页size不符，跳过*/
 				continue;
 		}
 		/* there is an explicit page size, so check it */
 		else {
 			uint64_t pagesz = rte_str_to_size(&pagesz_str[pagesize_opt_len]);
 			if (pagesz != hugepage_sz)
+				/*与参数要求的大页size不符，跳过*/
 				continue;
 		}
 
+		/*与参数指明的大页size匹配*/
 		/*
 		 * If no --huge-dir option has been given, we're done.
 		 */
 		if (internal_conf->hugepage_dir == NULL) {
+			/*如果没有指明hugepage_dir,则取mounts中获得的挂载点*/
 			strlcpy(found, splitstr[MOUNTPT], len);
 			break;
 		}
@@ -278,6 +306,7 @@ get_hugepage_dir(uint64_t hugepage_sz, char *hugedir, int len)
 				mountpt_len) != 0 ||
 			(hugepage_dir_len > mountpt_len &&
 				internal_conf->hugepage_dir[mountpt_len] != '/')) {
+			/*忽略掉与指定挂载点不同的大页配置*/
 			continue;
 		}
 
@@ -291,6 +320,7 @@ get_hugepage_dir(uint64_t hugepage_sz, char *hugedir, int len)
 
 	fclose(fd);
 
+	/*打到了匹配的hugedir,填充hugedir并返回*/
 	if (found[0] != '\0') {
 		/* If needed, return the requested dir, not the mount point. */
 		strlcpy(hugedir, internal_conf->hugepage_dir != NULL ?
@@ -323,6 +353,7 @@ walk_hugedir(const char *hugedir, walk_hugedir_t *cb, void *user_data)
 	int dir_fd, fd, lck_result;
 	const char filter[] = "*map_*"; /* matches hugepage files */
 
+	/*打开大页挂载点*/
 	dir = opendir(hugedir);
 	if (!dir) {
 		RTE_LOG(ERR, EAL, "Unable to open hugepage directory %s\n",
@@ -341,6 +372,7 @@ walk_hugedir(const char *hugedir, walk_hugedir_t *cb, void *user_data)
 	while (dirent != NULL) {
 		/* skip files that don't match the hugepage pattern */
 		if (fnmatch(filter, dirent->d_name, 0) > 0) {
+			/*只考虑包含map_的文件*/
 			dirent = readdir(dir);
 			continue;
 		}
@@ -350,6 +382,7 @@ walk_hugedir(const char *hugedir, walk_hugedir_t *cb, void *user_data)
 
 		/* skip to next file */
 		if (fd == -1) {
+			/*打开此文件失败，忽略*/
 			dirent = readdir(dir);
 			continue;
 		}
@@ -362,7 +395,7 @@ walk_hugedir(const char *hugedir, walk_hugedir_t *cb, void *user_data)
 			cb(&(struct walk_hugedir_data){
 				.dir_fd = dir_fd,
 				.file_fd = fd,
-				.file_name = dirent->d_name,
+				.file_name = dirent->d_name,/*map文件名称*/
 				.user_data = user_data,
 			});
 
@@ -386,6 +419,7 @@ error:
 static void
 clear_hugedir_cb(const struct walk_hugedir_data *whd)
 {
+	/*移除此文件*/
 	unlinkat(whd->dir_fd, whd->file_name, 0);
 }
 
@@ -393,6 +427,7 @@ clear_hugedir_cb(const struct walk_hugedir_data *whd)
 static int
 clear_hugedir(const char *hugedir)
 {
+	/*移除其上所有*map_*文件*/
 	return walk_hugedir(hugedir, clear_hugedir_cb, NULL);
 }
 
@@ -406,6 +441,7 @@ inspect_hugedir_cb(const struct walk_hugedir_data *whd)
 		RTE_LOG(DEBUG, EAL, "%s(): stat(\"%s\") failed: %s",
 				__func__, whd->file_name, strerror(errno));
 	else
+		/*合并上此文件的大小*/
 		(*total_size) += st.st_size;
 }
 
@@ -416,6 +452,7 @@ inspect_hugedir_cb(const struct walk_hugedir_data *whd)
 static int
 inspect_hugedir(const char *hugedir, uint64_t *total_size)
 {
+	/*计算未被其它进程map的内存大小*/
 	return walk_hugedir(hugedir, inspect_hugedir_cb, total_size);
 }
 
@@ -428,6 +465,7 @@ compare_hpi(const void *a, const void *b)
 	return hpi_b->hugepage_sz - hpi_a->hugepage_sz;
 }
 
+/*填充此类型页面可用的大页数目*/
 static void
 calc_num_pages(struct hugepage_info *hpi, struct dirent *dirent,
 		unsigned int reusable_pages)
@@ -453,19 +491,21 @@ calc_num_pages(struct hugepage_info *hpi, struct dirent *dirent,
 	 */
 	if (!internal_conf->legacy_mem && reusable_pages == 0)
 		for (i = 0; i < rte_socket_count(); i++) {
+			/*遍历每个socket上空闲的大页数目*/
 			int socket = rte_socket_id_by_idx(i);
 			unsigned int num_pages =
 					get_num_hugepages_on_node(
 						dirent->d_name, socket,
 						hpi->hugepage_sz);
 			hpi->num_pages[socket] = num_pages;
-			total_pages += num_pages;
+			total_pages += num_pages;/*计算numa总大页数*/
 		}
 	/*
 	 * we failed to sort memory from the get go, so fall
 	 * back to old way
 	 */
 	if (total_pages == 0) {
+		/*此机器可能是非numa机器，获取reusable_pages*/
 		hpi->num_pages[0] = get_num_hugepages(dirent->d_name,
 				hpi->hugepage_sz, reusable_pages);
 
@@ -490,6 +530,7 @@ hugepage_info_init(void)
 	struct internal_config *internal_conf =
 		eal_get_internal_configuration();
 
+	/*打开/sys/kernel/mm/hugepages目录*/
 	dir = opendir(sys_dir_path);
 	if (dir == NULL) {
 		RTE_LOG(ERR, EAL,
@@ -498,27 +539,37 @@ hugepage_info_init(void)
 		return -1;
 	}
 
+	/*遍历dir,获取其下所有目录*/
 	for (dirent = readdir(dir); dirent != NULL; dirent = readdir(dir)) {
 		struct hugepage_info *hpi;
 
 		if (strncmp(dirent->d_name, dirent_start_text,
 			    dirent_start_len) != 0)
+			/*跳过不关心的目录（目录不以‘hugepages-’开头）*/
 			continue;
 
 		if (num_sizes >= MAX_HUGEPAGE_SIZES)
+			/*数量超限，退出*/
 			break;
 
+		/*拿一个空闲结构体*/
 		hpi = &internal_conf->hugepage_info[num_sizes];
+
+		/*设置hpi页面大小*/
 		hpi->hugepage_sz =
 			rte_str_to_size(&dirent->d_name[dirent_start_len]);
 
 		/* first, check if we have a mountpoint */
 		if (get_hugepage_dir(hpi->hugepage_sz,
 			hpi->hugedir, sizeof(hpi->hugedir)) < 0) {
+			/*此大页类型配置了，但没有找到挂载点*/
 			uint32_t num_pages;
 
+			/*返回未挂载的大页数目*/
 			num_pages = get_num_hugepages(dirent->d_name,
 					hpi->hugepage_sz, 0);
+
+			/*显示配置了，但未挂载的大页数目*/
 			if (num_pages > 0)
 				RTE_LOG(NOTICE, EAL,
 					"%" PRIu32 " hugepages of size "
@@ -560,15 +611,20 @@ hugepage_info_init(void)
 		 */
 		reusable_pages = 0;
 		if (!internal_conf->hugepage_file.unlink_existing) {
+			/*不重新unlink*/
 			reusable_bytes = 0;
+			/*计算可重用的大页大小*/
 			if (inspect_hugedir(hpi->hugedir,
 					&reusable_bytes) < 0)
 				break;
 			RTE_ASSERT(reusable_bytes % hpi->hugepage_sz == 0);
 			reusable_pages = reusable_bytes / hpi->hugepage_sz;
 		} else if (clear_hugedir(hpi->hugedir) < 0) {
+			/*unlink大页失败，退出*/
 			break;
 		}
+
+		/*计算此大页总大页数*/
 		calc_num_pages(hpi, dirent, reusable_pages);
 
 		num_sizes++;
@@ -577,11 +633,13 @@ hugepage_info_init(void)
 
 	/* something went wrong, and we broke from the for loop above */
 	if (dirent != NULL)
+		/*遇错直接跳出了，故dirent不为NULL*/
 		return -1;
 
-	internal_conf->num_hugepage_sizes = num_sizes;
+	internal_conf->num_hugepage_sizes = num_sizes;/*大页类型数*/
 
 	/* sort the page directory entries by size, largest to smallest */
+	/*按页面大小，从小到大排列*/
 	qsort(&internal_conf->hugepage_info[0], num_sizes,
 	      sizeof(internal_conf->hugepage_info[0]), compare_hpi);
 
@@ -594,11 +652,12 @@ hugepage_info_init(void)
 		for (j = 0; j < RTE_MAX_NUMA_NODES; j++)
 			num_pages += hpi->num_pages[j];
 		if (num_pages > 0)
+			/*此大页数型，且有大页可用，返回0*/
 			return 0;
 	}
 
 	/* no valid hugepage mounts available, return error */
-	return -1;
+	return -1;/*没有有效的大页*/
 }
 
 /*
@@ -609,20 +668,24 @@ hugepage_info_init(void)
 int
 eal_hugepage_info_init(void)
 {
+	/*写大页信息到文件*/
 	struct hugepage_info *hpi, *tmp_hpi;
 	unsigned int i;
 	struct internal_config *internal_conf =
 		eal_get_internal_configuration();
 
+	/*加载kernel配置的大页信息*/
 	if (hugepage_info_init() < 0)
 		return -1;
 
 	/* for no shared files mode, we're done */
 	if (internal_conf->no_shconf)
+		/*如果不share config,则直接返回*/
 		return 0;
 
 	hpi = &internal_conf->hugepage_info[0];
 
+	/*创建share内存，mmap大页的配置*/
 	tmp_hpi = create_shared_memory(eal_hugepage_info_path(),
 			sizeof(internal_conf->hugepage_info));
 	if (tmp_hpi == NULL) {
@@ -630,6 +693,7 @@ eal_hugepage_info_init(void)
 		return -1;
 	}
 
+	/*将其填充进tmp_hpi*/
 	memcpy(tmp_hpi, hpi, sizeof(internal_conf->hugepage_info));
 
 	/* we've copied file descriptors along with everything else, but they
@@ -640,6 +704,7 @@ eal_hugepage_info_init(void)
 		tmp->lock_descriptor = -1;
 	}
 
+	/*移除映射，内容映射到文件*/
 	if (munmap(tmp_hpi, sizeof(internal_conf->hugepage_info)) < 0) {
 		RTE_LOG(ERR, EAL, "Failed to unmap shared memory!\n");
 		return -1;
@@ -654,6 +719,7 @@ int eal_hugepage_info_read(void)
 	struct hugepage_info *hpi = &internal_conf->hugepage_info[0];
 	struct hugepage_info *tmp_hpi;
 
+	/*从进程直接读取hugepage_info*/
 	tmp_hpi = open_shared_memory(eal_hugepage_info_path(),
 				  sizeof(internal_conf->hugepage_info));
 	if (tmp_hpi == NULL) {
@@ -661,8 +727,10 @@ int eal_hugepage_info_read(void)
 		return -1;
 	}
 
+	/*拿到hugepage info*/
 	memcpy(hpi, tmp_hpi, sizeof(internal_conf->hugepage_info));
 
+	/*移除映射*/
 	if (munmap(tmp_hpi, sizeof(internal_conf->hugepage_info)) < 0) {
 		RTE_LOG(ERR, EAL, "Failed to unmap shared memory!\n");
 		return -1;

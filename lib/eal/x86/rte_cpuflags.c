@@ -150,6 +150,7 @@ rte_cpu_get_flag_enabled(enum rte_cpu_flag_t feature)
 	cpuid_registers_t regs;
 	unsigned int maxleaf;
 
+	/*feature index检查*/
 	if (feature >= RTE_CPUFLAG_NUMFLAGS)
 		/* Flag does not match anything in the feature tables */
 		return -ENOENT;

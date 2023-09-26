@@ -992,7 +992,7 @@ struct token {
 	/** Type displayed during completion (defaults to "TOKEN"). */
 	const char *type;
 	/** Help displayed during completion (defaults to token name). */
-	const char *help;
+	const char *help;/*针对此token的帮助信息*/
 	/** Private data used by parser functions. */
 	const void *priv;
 	/**
@@ -1025,7 +1025,7 @@ struct token {
 	int (*comp)(struct context *ctx, const struct token *token,
 		    unsigned int ent, char *buf, unsigned int size);
 	/** Mandatory token name, no default value. */
-	const char *name;
+	const char *name;/*关键字名称*/
 };
 
 /** Static initializer for the next field. */
@@ -2930,7 +2930,7 @@ static const struct token token_list[] = {
 		.name = "{port_id}",
 		.type = "PORT ID",
 		.help = "port identifier",
-		.call = parse_port,
+		.call = parse_port,/*解析port id*/
 		.comp = comp_port,
 	},
 	[COMMON_GROUP_ID] = {
@@ -3011,7 +3011,7 @@ static const struct token token_list[] = {
 		.comp = comp_queue_id,
 	},
 	/* Top-level command. */
-	[FLOW] = {
+	[FLOW] = {/*顶层命令*/
 		.name = "flow",
 		.type = "{command} {port_id} [{arg} [...]]",
 		.help = "manage ingress/egress flow rules",
@@ -3023,10 +3023,10 @@ static const struct token token_list[] = {
 			      TABLE,
 			      INDIRECT_ACTION,
 			      VALIDATE,
-			      CREATE,
+			      CREATE,/*创建规则*/
 			      DESTROY,
 			      FLUSH,
-			      DUMP,
+			      DUMP,/*dump规则*/
 			      LIST,
 			      AGED,
 			      QUERY,
@@ -5924,10 +5924,13 @@ static const struct token token_list[] = {
 		.call = parse_vc,
 	},
 	[ACTION_COUNT] = {
+		/*针对规则进行计数*/
 		.name = "count",
 		.help = "enable counters for this rule",
+		/*指明action type及action结构体大小*/
 		.priv = PRIV_ACTION(COUNT,
 				    sizeof(struct rte_flow_action_count)),
+		/*指明容许的action id*/
 		.next = NEXT(action_count),
 		.call = parse_vc,
 	},
@@ -9995,6 +9998,7 @@ parse_isolate(struct context *ctx, const struct token *token,
 			return -1;
 		if (sizeof(*out) > size)
 			return -1;
+		/*指明command为isolate*/
 		out->command = ctx->curr;
 		ctx->objdata = 0;
 		ctx->object = out;
@@ -11986,7 +11990,7 @@ cmd_flow_context_init(struct context *ctx)
 
 /** Parse a token (cmdline API). */
 static int
-cmd_flow_parse(cmdline_parse_token_hdr_t *hdr, const char *src, void *result,
+cmd_flow_parse(cmdline_parse_token_hdr_t *hdr, const char *src/*待解析的字符串*/, void *result,
 	       unsigned int size)
 {
 	struct context *ctx = &cmd_flow_context;
@@ -11996,13 +12000,16 @@ cmd_flow_parse(cmdline_parse_token_hdr_t *hdr, const char *src, void *result,
 	int i;
 
 	(void)hdr;
-	token = &token_list[ctx->curr];
+	token = &token_list[ctx->curr];/*指向token*/
 	/* Check argument length. */
 	ctx->eol = 0;
 	ctx->last = 1;
 	for (len = 0; src[len]; ++len)
 		if (src[len] == '#' || isspace(src[len]))
+			/*遇到注释符，退出；遇到空格（token分隔符，退出）*/
 			break;
+
+	/*内容为空，退出*/
 	if (!len)
 		return -1;
 	/* Last argument and EOL detection. */
@@ -12013,11 +12020,13 @@ cmd_flow_parse(cmdline_parse_token_hdr_t *hdr, const char *src, void *result,
 			ctx->last = 0;
 			break;
 		}
+
 	for (; src[i]; ++i)
 		if (src[i] == '\r' || src[i] == '\n') {
-			ctx->eol = 1;
+			ctx->eol = 1;/*有行尾标记*/
 			break;
 		}
+
 	/* Initialize context if necessary. */
 	if (!ctx->next_num) {
 		if (!token->next)
@@ -12028,21 +12037,26 @@ cmd_flow_parse(cmdline_parse_token_hdr_t *hdr, const char *src, void *result,
 	ctx->prev = ctx->curr;
 	list = ctx->next[ctx->next_num - 1];
 	for (i = 0; list[i]; ++i) {
+		/*取此编号的token*/
 		const struct token *next = &token_list[list[i]];
 		int tmp;
 
 		ctx->curr = list[i];
 		if (next->call)
+			/*有call回调，则触发call回调*/
 			tmp = next->call(ctx, next, src, len, result, size);
 		else
 			tmp = parse_default(ctx, next, src, len, result, size);
 		if (tmp == -1 || tmp != len)
-			continue;
+			continue;/*不匹配，继续在list集合中查找*/
+
+		/*token命中，跳出*/
 		token = next;
 		break;
 	}
 	if (!list[i])
 		return -1;
+
 	--ctx->next_num;
 	/* Push subsequent tokens if any. */
 	if (token->next)
@@ -12156,19 +12170,23 @@ cmd_flow_complete_get_elt(cmdline_parse_token_hdr_t *hdr, int index,
 
 /** Populate help strings for current token (cmdline API). */
 static int
-cmd_flow_get_help(cmdline_parse_token_hdr_t *hdr, char *dst, unsigned int size)
+cmd_flow_get_help(cmdline_parse_token_hdr_t *hdr, char *dst/*出参，填写token type,默认为"TOKEN"*/, unsigned int size/*dst buffer可用长度*/)
 {
 	struct context *ctx = &cmd_flow_context;
-	const struct token *token = &token_list[ctx->prev];
+	const struct token *token = &token_list[ctx->prev];/*取当前分析的token*/
 
 	(void)hdr;
 	if (!size)
+		/*size不得为0*/
 		return -1;
+
 	/* Set token type and update global help with details. */
 	strlcpy(dst, (token->type ? token->type : "TOKEN"), size);
 	if (token->help)
+		/*如果token指明了help信息，则使用help*/
 		cmd_flow.help_str = token->help;
 	else
+		/*否则使用token名称做为help信息*/
 		cmd_flow.help_str = token->name;
 	return 0;
 }
@@ -12187,18 +12205,21 @@ static struct cmdline_token_hdr cmd_flow_token_hdr = {
 /** Populate the next dynamic token. */
 static void
 cmd_flow_tok(cmdline_parse_token_hdr_t **hdr,
-	     cmdline_parse_token_hdr_t **hdr_inst)
+	     cmdline_parse_token_hdr_t **hdr_inst/*指向N号token对应的地址，从框架实现来看，这个指针可能会指向的是一个不可访问的地址*/)
 {
 	struct context *ctx = &cmd_flow_context;
 
 	/* Always reinitialize context before requesting the first token. */
 	if (!(hdr_inst - cmd_flow.tokens))
+		/*首次解析first token，执行初始化cmd_flow_context*/
 		cmd_flow_context_init(ctx);
+
 	/* Return NULL when no more tokens are expected. */
 	if (!ctx->next_num && ctx->curr) {
 		*hdr = NULL;
 		return;
 	}
+
 	/* Determine if command should end here. */
 	if (ctx->eol && ctx->last && ctx->next_num) {
 		const enum index *list = ctx->next[ctx->next_num - 1];
@@ -12211,7 +12232,8 @@ cmd_flow_tok(cmdline_parse_token_hdr_t **hdr,
 			return;
 		}
 	}
-	*hdr = &cmd_flow_token_hdr;
+
+	*hdr = &cmd_flow_token_hdr;/*返回flow token*/
 }
 
 static SLIST_HEAD(, indlst_conf) indlst_conf_head =
@@ -12500,12 +12522,12 @@ cmd_flow_cb(void *arg0, struct cmdline *cl, void *arg2)
 }
 
 /** Global parser instance (cmdline API). */
-cmdline_parse_inst_t cmd_flow = {
+cmdline_parse_inst_t cmd_flow = {/*全局解析instance cmd_flow_tok会初始化此变量*/
 	.f = cmd_flow_cb,
 	.data = NULL, /**< Unused. */
 	.help_str = NULL, /**< Updated by cmd_flow_get_help(). */
 	.tokens = {
-		NULL,
+		NULL,/*tokens[0]为NULL，故将通过cmd_flow_cb进行处理*/
 	}, /**< Tokens are returned by cmd_flow_tok(). */
 };
 

@@ -564,7 +564,7 @@ struct rte_dma_vchan_conf {
 	 */
 	enum rte_dma_direction direction;
 	/** Number of descriptor for the virtual DMA channel */
-	uint16_t nb_desc;
+	uint16_t nb_desc;/*队列长度*/
 	/** 1) Used to describes the device access port parameter in the
 	 * device-to-memory transfer scenario.
 	 * 2) Used to describes the source device access port parameter in the
@@ -854,6 +854,7 @@ static inline int
 rte_dma_copy(int16_t dev_id, uint16_t vchan, rte_iova_t src, rte_iova_t dst,
 	     uint32_t length, uint64_t flags)
 {
+	/*找出对应的dsa设备*/
 	struct rte_dma_fp_object *obj = &rte_dma_fp_objs[dev_id];
 
 #ifdef RTE_DMADEV_DEBUG

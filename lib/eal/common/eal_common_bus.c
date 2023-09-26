@@ -13,15 +13,18 @@
 
 #include "eal_private.h"
 
+/*记录系统所有bus*/
 static struct rte_bus_list rte_bus_list =
 	TAILQ_HEAD_INITIALIZER(rte_bus_list);
 
+/*返回bus名称*/
 const char *
 rte_bus_name(const struct rte_bus *bus)
 {
 	return bus->name;
 }
 
+/*注册rte bus*/
 void
 rte_bus_register(struct rte_bus *bus)
 {
@@ -34,6 +37,7 @@ rte_bus_register(struct rte_bus *bus)
 	/* Buses supporting driver plug also require unplug. */
 	RTE_VERIFY(!bus->plug || bus->unplug);
 
+	/*将bus串连进链表*/
 	TAILQ_INSERT_TAIL(&rte_bus_list, bus, next);
 	RTE_LOG(DEBUG, EAL, "Registered [%s] bus.\n", rte_bus_name(bus));
 }
@@ -52,6 +56,7 @@ rte_bus_scan(void)
 	int ret;
 	struct rte_bus *bus = NULL;
 
+	/*扫描系统所有bus*/
 	TAILQ_FOREACH(bus, &rte_bus_list, next) {
 		ret = bus->scan();
 		if (ret)
@@ -147,10 +152,13 @@ rte_bus_find(const struct rte_bus *start, rte_bus_cmp_t cmp,
 	struct rte_bus *bus;
 
 	if (start != NULL)
+		/*起点不为NULL，获取其对应的bus*/
 		bus = TAILQ_NEXT(start, next);
 	else
+		/*起点为NULL，取首个元素*/
 		bus = TAILQ_FIRST(&rte_bus_list);
 	while (bus != NULL) {
+		/*调用比对函数，如果返回0，则跳出并返回此bus*/
 		if (cmp(bus, data) == 0)
 			break;
 		bus = TAILQ_NEXT(bus, next);

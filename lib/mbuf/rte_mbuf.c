@@ -256,6 +256,7 @@ rte_pktmbuf_pool_create_by_ops(const char *name, unsigned int n,
 
 	ret = rte_mempool_populate_default(mp);
 	if (ret < 0) {
+		/*填充时返回失败，释放mp*/
 		rte_mempool_free(mp);
 		rte_errno = -ret;
 		return NULL;

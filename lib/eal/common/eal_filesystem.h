@@ -68,6 +68,7 @@ eal_get_fbarray_path(char *buffer, size_t buflen, const char *name) {
 static inline const char *
 eal_hugepage_info_path(void)
 {
+	/*指明hugepage_info对应的文件路径*/
 	static char buffer[PATH_MAX]; /* static so auto-zeroed */
 
 	snprintf(buffer, sizeof(buffer), "%s/%s", rte_eal_get_runtime_dir(),
@@ -80,6 +81,7 @@ eal_hugepage_info_path(void)
 static inline const char *
 eal_hugepage_data_path(void)
 {
+	/*创建hugepage的data文件路径*/
 	static char buffer[PATH_MAX]; /* static so auto-zeroed */
 
 	snprintf(buffer, sizeof(buffer), "%s/%s", rte_eal_get_runtime_dir(),
@@ -92,8 +94,8 @@ eal_hugepage_data_path(void)
 static inline const char *
 eal_get_hugefile_path(char *buffer, size_t buflen, const char *hugedir, int f_id)
 {
-	snprintf(buffer, buflen, HUGEFILE_FMT, hugedir,
-			eal_get_hugefile_prefix(), f_id);
+	snprintf(buffer, buflen, HUGEFILE_FMT, hugedir/*大页目录*/,
+			eal_get_hugefile_prefix()/*大页文件前缀*/, f_id/*文件id*/);
 	return buffer;
 }
 

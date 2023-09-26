@@ -985,7 +985,7 @@ mlx5_common_dev_probe(struct rte_device *eal_dev)
 	classes = ret;
 	if (classes == 0)
 		/* Default to net class. */
-		classes = MLX5_CLASS_ETH;
+		classes = MLX5_CLASS_ETH;/*默认为net class*/
 	/*
 	 * MLX5 common driver supports probing again in two scenarios:
 	 * - Add new driver under existing common device (regardless of the
@@ -999,6 +999,7 @@ mlx5_common_dev_probe(struct rte_device *eal_dev)
 	cdev = to_mlx5_device(eal_dev);
 	if (!cdev) {
 		/* It isn't probing again, creates a new device. */
+		/*设备还不存在，创建一个新的设备*/
 		cdev = mlx5_common_dev_create(eal_dev, classes, mkvlist_p);
 		if (!cdev) {
 			ret = -ENOMEM;

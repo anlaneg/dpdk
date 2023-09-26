@@ -31,12 +31,14 @@
 static struct rte_bus rte_vdev_bus;
 
 
+/*记录系统中所有vdev设备*/
 static TAILQ_HEAD(, rte_vdev_device) vdev_device_list =
 	TAILQ_HEAD_INITIALIZER(vdev_device_list);
 /* The lock needs to be recursive because a vdev can manage another vdev. */
 static rte_spinlock_recursive_t vdev_device_list_lock =
 	RTE_SPINLOCK_RECURSIVE_INITIALIZER;
 
+/*记录系统中所有vdev驱动*/
 static TAILQ_HEAD(, rte_vdev_driver) vdev_driver_list =
 	TAILQ_HEAD_INITIALIZER(vdev_driver_list);
 
@@ -54,6 +56,7 @@ static rte_spinlock_t vdev_custom_scan_lock = RTE_SPINLOCK_INITIALIZER;
 void
 rte_vdev_register(struct rte_vdev_driver *driver)
 {
+	/*注册vdev驱动*/
 	TAILQ_INSERT_TAIL(&vdev_driver_list, driver, next);
 }
 
@@ -61,6 +64,7 @@ rte_vdev_register(struct rte_vdev_driver *driver)
 void
 rte_vdev_unregister(struct rte_vdev_driver *driver)
 {
+	/*移除vdev注册*/
 	TAILQ_REMOVE(&vdev_driver_list, driver, next);
 }
 
@@ -112,6 +116,7 @@ rte_vdev_remove_custom_scan(rte_vdev_scan_callback callback, void *user_arg)
 	return 0;
 }
 
+/*按name进行vdev驱动匹配*/
 static int
 vdev_parse(const char *name, void *addr)
 {
@@ -121,12 +126,16 @@ vdev_parse(const char *name, void *addr)
 	TAILQ_FOREACH(driver, &vdev_driver_list, next) {
 		if (strncmp(driver->driver.name, name,
 			    strlen(driver->driver.name)) == 0)
+			/*驱动名称区配*/
 			break;
 		if (driver->driver.alias &&
 		    strncmp(driver->driver.alias, name,
 			    strlen(driver->driver.alias)) == 0)
+			/*驱动别名匹配*/
 			break;
 	}
+
+	/*driver匹配，且指定了addr,则设置出参*/
 	if (driver != NULL &&
 	    addr != NULL)
 		*out = driver;
@@ -183,6 +192,7 @@ vdev_dma_unmap(struct rte_device *dev, void *addr, uint64_t iova, size_t len)
 	return 0;
 }
 
+/*为vdev probe驱动*/
 static int
 vdev_probe_all_drivers(struct rte_vdev_device *dev)
 {
@@ -194,9 +204,11 @@ vdev_probe_all_drivers(struct rte_vdev_device *dev)
 	if (rte_dev_is_probed(&dev->device))
 		return -EEXIST;
 
+	/*返回设备名称*/
 	name = rte_vdev_device_name(dev);
 	VDEV_LOG(DEBUG, "Search driver to probe device %s", name);
 
+	/*通过名称（驱动名称）获得driver*/
 	if (vdev_parse(name, &driver))
 		return -1;
 
@@ -207,6 +219,7 @@ vdev_probe_all_drivers(struct rte_vdev_device *dev)
 		return -1;
 	}
 
+	/*使驱动probe此设备*/
 	ret = driver->probe(dev);
 	if (ret == 0)
 		dev->device.driver = &driver->driver;
@@ -222,6 +235,7 @@ find_vdev(const char *name)
 	if (!name)
 		return NULL;
 
+	/*通过名称查找vdev设备*/
 	TAILQ_FOREACH(dev, &vdev_device_list, next) {
 		const char *devname = rte_vdev_device_name(dev);
 
@@ -260,7 +274,7 @@ alloc_devargs(const char *name, const char *args)
 }
 
 static int
-insert_vdev(const char *name, const char *args,
+insert_vdev(const char *name/*设备名称*/, const char *args,
 		struct rte_vdev_device **p_dev,
 		bool init)
 {
@@ -281,11 +295,13 @@ insert_vdev(const char *name, const char *args,
 		goto fail;
 	}
 
+	/*设置设备bus，名称，numa_node*/
 	dev->device.bus = &rte_vdev_bus;
 	dev->device.numa_node = SOCKET_ID_ANY;
 	dev->device.name = devargs->name;
 
 	if (find_vdev(name)) {
+		/*此vdev已存在，报错*/
 		/*
 		 * A vdev is expected to have only one port.
 		 * So there is no reason to try probing again,
@@ -457,6 +473,7 @@ vdev_action(const struct rte_mp_msg *mp_msg, const void *peer)
 	return 0;
 }
 
+/*vdev bus扫描设备，并填充到vdev_device_list*/
 static int
 vdev_scan(void)
 {
@@ -533,6 +550,7 @@ scan:
 		dev->device.numa_node = SOCKET_ID_ANY;
 		dev->device.name = devargs->name;
 
+		/*添加vdev扫描出来的device*/
 		TAILQ_INSERT_TAIL(&vdev_device_list, dev, next);
 
 		rte_spinlock_recursive_unlock(&vdev_device_list_lock);
@@ -541,6 +559,7 @@ scan:
 	return 0;
 }
 
+/*针对vdev_device_list上所有设备，为其探测驱动*/
 static int
 vdev_probe(void)
 {
@@ -554,7 +573,7 @@ vdev_probe(void)
 		 * we call each driver probe.
 		 */
 
-		r = vdev_probe_all_drivers(dev);
+		r = vdev_probe_all_drivers(dev);/*为此dev探测驱动*/
 		if (r != 0) {
 			if (r == -EEXIST)
 				continue;
@@ -609,8 +628,11 @@ rte_vdev_find_device(const struct rte_device *start, rte_dev_cmp_t cmp,
 		vstart = RTE_DEV_TO_VDEV_CONST(start);
 		dev = TAILQ_NEXT(vstart, next);
 	} else {
+		/*start为空，选首个dev*/
 		dev = TAILQ_FIRST(&vdev_device_list);
 	}
+
+	/*通过cmp回调进行dev匹配*/
 	while (dev != NULL) {
 		if (cmp(&dev->device, data) == 0)
 			break;
@@ -621,12 +643,14 @@ rte_vdev_find_device(const struct rte_device *start, rte_dev_cmp_t cmp,
 	return dev ? &dev->device : NULL;
 }
 
+/*插入此vdev设备（为其探测驱动）*/
 static int
 vdev_plug(struct rte_device *dev)
 {
 	return vdev_probe_all_drivers(RTE_DEV_TO_VDEV(dev));
 }
 
+/*移除此vdev设备*/
 static int
 vdev_unplug(struct rte_device *dev)
 {

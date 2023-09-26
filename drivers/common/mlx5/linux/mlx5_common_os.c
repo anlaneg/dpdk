@@ -699,6 +699,7 @@ mlx5_os_get_ibv_dev(const struct rte_device *dev)
 	struct ibv_device *ibv;
 
 	if (mlx5_dev_is_pci(dev))
+		/*通过pci地址找对应的ibv设备*/
 		ibv = mlx5_os_get_ibv_device(RTE_DEV_TO_PCI_CONST(dev));
 	else
 		ibv = mlx5_get_aux_ibv_device(RTE_DEV_TO_AUXILIARY_CONST(dev));
@@ -797,6 +798,15 @@ mlx5_open_device(struct mlx5_common_device *cdev, uint32_t classes)
 	dbmap_env = mlx5_config_doorbell_mapping_env(cdev->config.dbnc);
 	/* Try to open IB device with DV first, then usual Verbs. */
 	errno = 0;
+	/*打开此ibv设备，创建ctx,例如：
+	 * (gdb) p *ibv
+$7 = {_ops = {_dummy1 = 0x0, _dummy2 = 0x0}, node_type = IBV_NODE_CA,
+  transport_type = IBV_TRANSPORT_IB, name = "mlx5_0", '\000' <repeats 57 times>,
+  dev_name = "uverbs0", '\000' <repeats 56 times>,
+  dev_path = "/sys/class/infiniband_verbs/uverbs0", '\000' <repeats 220 times>,
+  ibdev_path = "/sys/class/infiniband/mlx5_0", '\000' <repeats 227 times>}
+(gdb)
+	 * */
 	ctx = mlx5_glue->dv_open_device(ibv);
 	if (ctx) {
 		cdev->config.devx = 1;
@@ -861,6 +871,7 @@ mlx5_os_open_device(struct mlx5_common_device *cdev, uint32_t classes)
 	struct ibv_context *ctx = NULL;
 
 	if (cdev->config.device_fd == MLX5_ARG_UNSET)
+		/*打开相应的设备*/
 		ctx = mlx5_open_device(cdev, classes);
 	else
 		ctx = mlx5_import_device(cdev);

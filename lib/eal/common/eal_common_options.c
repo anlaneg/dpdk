@@ -176,8 +176,8 @@ rte_set_application_usage_hook(rte_usage_hook_t usage_func)
 }
 
 #ifndef RTE_EXEC_ENV_WINDOWS
-static char **eal_args;
-static char **eal_app_args;
+static char **eal_args;/*记录eal参数*/
+static char **eal_app_args;/*记录eal app参数*/
 
 #define EAL_PARAM_REQ "/eal/params"
 #define EAL_APP_PARAM_REQ "/eal/app_params"
@@ -205,6 +205,7 @@ handle_eal_info_request(const char *cmd, const char *params __rte_unused,
 	return used;
 }
 
+/*保存eal_args,eal_app_args*/
 int
 eal_save_args(int argc, char **argv)
 {
@@ -224,15 +225,20 @@ eal_save_args(int argc, char **argv)
 
 	for (i = 0; i < argc; i++) {
 		if (strcmp(argv[i], "--") == 0)
+			/*遇到'--'，自此开始为应用的命令，忽略*/
 			break;
+
+		/*复制参数*/
 		eal_args[i] = strdup(argv[i]);
 	}
+	/*结束复制*/
 	eal_args[i++] = NULL; /* always finish with NULL */
 
 	/* allow reporting of any app args we know about too */
 	if (i >= argc)
 		return 0;
 
+	/*在上面遇到过'--',复制app参数*/
 	eal_app_args = calloc(argc - i + 1, sizeof(*eal_args));
 	if (eal_app_args == NULL)
 		return -1;
@@ -297,7 +303,9 @@ eal_get_hugefile_prefix(void)
 		eal_get_internal_configuration();
 
 	if (internal_conf->hugefile_prefix != NULL)
+		/*如果设置了前缀，则返回前缀*/
 		return internal_conf->hugefile_prefix;
+	/*否则使用默认前缀*/
 	return HUGEFILE_PREFIX_DEFAULT;
 }
 
@@ -1768,6 +1776,7 @@ eal_parse_common_option(int opt, const char *optarg,
 		break;
 
 	case OPT_NO_HUGE_NUM:
+		/* 指明不使用大页 */
 		conf->no_hugetlbfs = 1;
 		/* no-huge is legacy mem */
 		conf->legacy_mem = 1;

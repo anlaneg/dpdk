@@ -2009,6 +2009,7 @@ error:
 int
 mlx5_getenv_int(const char *name)
 {
+	/*取环境变量并将其转为int型内容*/
 	const char *val = getenv(name);
 
 	if (val == NULL)
@@ -2308,6 +2309,7 @@ const struct eth_dev_ops mlx5_dev_ops = {
 	.rx_queue_avail_thresh_set = mlx5_rx_queue_lwm_set,
 	.rx_queue_avail_thresh_query = mlx5_rx_queue_lwm_query,
 	.rx_hairpin_queue_setup = mlx5_rx_hairpin_queue_setup,
+	/*使能idx号tx队列*/
 	.tx_queue_setup = mlx5_tx_queue_setup,
 	.tx_hairpin_queue_setup = mlx5_tx_hairpin_queue_setup,
 	.rx_queue_release = mlx5_rx_queue_release,

@@ -26,6 +26,7 @@
 #include "mlx5_rxtx.h"
 #include "mlx5_tx.h"
 
+/*指明tx回调函数及其对应的offload flags*/
 #define MLX5_TXOFF_INFO(func, olx) {mlx5_tx_burst_##func, olx},
 
 /**
@@ -295,6 +296,7 @@ const struct {
 	eth_tx_burst_t func;
 	unsigned int olx;
 } txoff_func[] = {
+		/*按照用户配置的不同offload flags,调用不同的回调函数*/
 MLX5_TXOFF_INFO(full_empw,
 		MLX5_TXOFF_CONFIG_MULTI | MLX5_TXOFF_CONFIG_TSO |
 		MLX5_TXOFF_CONFIG_SWP |	MLX5_TXOFF_CONFIG_CSUM |
@@ -502,6 +504,7 @@ mlx5_select_tx_function(struct rte_eth_dev *dev)
 {
 	struct mlx5_priv *priv = dev->data->dev_private;
 	struct mlx5_port_config *config = &priv->config;
+	/*为设备配置的tx offloads*/
 	uint64_t tx_offloads = dev->data->dev_conf.txmode.offloads;
 	unsigned int diff = 0, olx = 0, i, m;
 
@@ -533,7 +536,7 @@ mlx5_select_tx_function(struct rte_eth_dev *dev)
 	}
 	if (tx_offloads & RTE_ETH_TX_OFFLOAD_VLAN_INSERT) {
 		/* We should support VLAN insertion. */
-		olx |= MLX5_TXOFF_CONFIG_VLAN;
+		olx |= MLX5_TXOFF_CONFIG_VLAN;/*支持vlan插入*/
 	}
 	if (tx_offloads & RTE_ETH_TX_OFFLOAD_SEND_ON_TIMESTAMP &&
 	    rte_mbuf_dynflag_lookup
@@ -541,7 +544,7 @@ mlx5_select_tx_function(struct rte_eth_dev *dev)
 	    rte_mbuf_dynfield_lookup
 			(RTE_MBUF_DYNFIELD_TIMESTAMP_NAME, NULL) >= 0) {
 		/* Offload configured, dynamic entities registered. */
-		olx |= MLX5_TXOFF_CONFIG_TXPP;
+		olx |= MLX5_TXOFF_CONFIG_TXPP;/*支持发送加时间签*/
 	}
 	if (priv->txqs_n && (*priv->txqs)[0]) {
 		struct mlx5_txq_data *txd = (*priv->txqs)[0];
@@ -595,12 +598,12 @@ mlx5_select_tx_function(struct rte_eth_dev *dev)
 		tmp = txoff_func[i].olx;
 		if (tmp == olx) {
 			/* Meets requested offloads exactly.*/
-			m = i;
+			m = i;/*与olx完全匹配*/
 			break;
 		}
 		if ((tmp & olx) != olx) {
 			/* Does not meet requested offloads at all. */
-			continue;
+			continue;/*未完全匹配，但olx不是tmp的子集，忽略*/
 		}
 		if ((olx ^ tmp) & MLX5_TXOFF_CONFIG_MPW)
 			/* Do not enable legacy MPW if not configured. */
@@ -641,6 +644,7 @@ mlx5_select_tx_function(struct rte_eth_dev *dev)
 				dev->data->port_id, olx);
 		return NULL;
 	}
+	/*指明port上开启了哪些功能*/
 	DRV_LOG(DEBUG, "port %u has selected Tx function"
 		       " supporting offloads %04X/%04X",
 			dev->data->port_id, olx, txoff_func[m].olx);
@@ -666,7 +670,7 @@ mlx5_select_tx_function(struct rte_eth_dev *dev)
 		else
 			DRV_LOG(DEBUG, "\tEMPW  (Enhanced MPW)");
 	}
-	return txoff_func[m].func;
+	return txoff_func[m].func;/*返回匹配的函数指针*/
 }
 
 /**

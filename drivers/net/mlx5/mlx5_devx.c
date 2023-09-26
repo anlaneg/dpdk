@@ -906,6 +906,7 @@ mlx5_devx_hrxq_new(struct rte_eth_dev *dev, struct mlx5_hrxq *hrxq,
 	mlx5_devx_tir_attr_set(dev, hrxq->rss_key, hrxq->hash_fields,
 			       hrxq->ind_table, tunnel, hrxq->symmetric_hash_function,
 			       &tir_attr);
+	/*按照属性创建tir*/
 	hrxq->tir = mlx5_devx_cmd_create_tir(priv->sh->cdev->ctx, &tir_attr);
 	if (!hrxq->tir) {
 		DRV_LOG(ERR, "Port %u cannot create DevX TIR.",

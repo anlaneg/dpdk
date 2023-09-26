@@ -54,7 +54,7 @@ pkt_burst_receive(struct fwd_stream *fs)
 	if (unlikely(nb_rx == 0))
 		return false;
 
-	rte_pktmbuf_free_bulk(pkts_burst, nb_rx);
+	rte_pktmbuf_free_bulk(pkts_burst, nb_rx);/*收到的报文被丢弃*/
 
 	return true;
 }

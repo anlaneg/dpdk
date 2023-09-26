@@ -190,7 +190,7 @@ streamid_t nb_fwd_streams;       /**< Is equal to (nb_ports * nb_rxq). */
  */
 struct fwd_engine * fwd_engines[] = {
 	&io_fwd_engine,
-	&mac_fwd_engine,
+	&mac_fwd_engine,/*mac更新并转发*/
 	&mac_swap_engine,
 	&flow_gen_engine,
 	&rx_only_engine,
@@ -2515,6 +2515,7 @@ start_packet_forwarding(int with_tx_first)
 	if (!pkt_fwd_shared_rxq_check())
 		return;
 
+	/*初始化每条流*/
 	if (stream_init != NULL) {
 		if (rte_eal_process_type() == RTE_PROC_SECONDARY)
 			update_queue_state();
@@ -2522,6 +2523,7 @@ start_packet_forwarding(int with_tx_first)
 			stream_init(fwd_streams[i]);
 	}
 
+	/*触发port_fwd_begin函数，例如准备要发送的报文*/
 	port_fwd_begin = cur_fwd_config.fwd_eng->port_fwd_begin;
 	if (port_fwd_begin != NULL) {
 		for (i = 0; i < cur_fwd_config.nb_fwd_ports; i++) {
@@ -2553,7 +2555,7 @@ start_packet_forwarding(int with_tx_first)
 
 	rxtx_config_display();
 
-	fwd_stats_reset();
+	fwd_stats_reset();/*清空统计信息*/
 	if (with_tx_first) {
 		while (with_tx_first--) {
 			launch_packet_forwarding(

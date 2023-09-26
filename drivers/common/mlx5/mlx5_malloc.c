@@ -161,6 +161,7 @@ mlx5_alloc_align(size_t size, unsigned int align, unsigned int zero)
 	return buf;
 }
 
+/*在socket上申请size长度的内存，要求按align进行对齐*/
 void *
 mlx5_malloc(uint32_t flags, size_t size, unsigned int align, int socket)
 {
@@ -172,13 +173,16 @@ mlx5_malloc(uint32_t flags, size_t size, unsigned int align, int socket)
 	 * memory according to mlx5_sys_mem.enable.
 	 */
 	if (flags & MLX5_MEM_RTE)
+		/*需要rte内存*/
 		rte_mem = true;
 	else if (flags & MLX5_MEM_SYS)
+		/*需要非rte内存*/
 		rte_mem = false;
 	else
 		rte_mem = mlx5_sys_mem.enable ? false : true;
 	if (rte_mem) {
 		if (flags & MLX5_MEM_ZERO)
+			/*通过rte申请初始化为0的内存*/
 			addr = rte_zmalloc_socket(NULL, size, align, socket);
 		else
 			addr = rte_malloc_socket(NULL, size, align, socket);

@@ -21,12 +21,14 @@ rte_cpu_is_supported(void)
 		ret = rte_cpu_get_flag_enabled(compile_time_flags[i]);
 
 		if (ret < 0) {
+			/*cpu功能查询失败*/
 			fprintf(stderr,
 				"ERROR: CPU feature flag lookup failed with error %d\n",
 				ret);
 			return 0;
 		}
 		if (!ret) {
+			/*cpu未开启此功能*/
 			fprintf(stderr,
 			        "ERROR: This system does not support \"%s\".\n"
 			        "Please check that RTE_MACHINE is set correctly.\n",

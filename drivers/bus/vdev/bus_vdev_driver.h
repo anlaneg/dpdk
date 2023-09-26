@@ -132,15 +132,18 @@ __rte_internal
 void rte_vdev_unregister(struct rte_vdev_driver *driver);
 
 #define RTE_PMD_REGISTER_VDEV(nm, vdrv)\
+	/*定义驱动别名变量*/\
 static const char *vdrvinit_ ## nm ## _alias;\
 RTE_INIT(vdrvinitfn_ ##vdrv)\
 {\
+	/*设置驱动名称及别名，并注册驱动*/\
 	(vdrv).driver.name = RTE_STR(nm);\
 	(vdrv).driver.alias = vdrvinit_ ## nm ## _alias;\
 	rte_vdev_register(&vdrv);\
 } \
 RTE_PMD_EXPORT_NAME(nm, __COUNTER__)
 
+/*设置驱动别名变量*/
 #define RTE_PMD_REGISTER_ALIAS(nm, alias)\
 static const char *vdrvinit_ ## nm ## _alias = RTE_STR(alias)
 

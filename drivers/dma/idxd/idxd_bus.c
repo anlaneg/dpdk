@@ -36,6 +36,7 @@ struct rte_dsa_device {
 	struct rte_device device;           /**< Inherit core device */
 	TAILQ_ENTRY(rte_dsa_device) next;   /**< next dev in list */
 
+	/*设备名称，例如wq1.2*/
 	char wq_name[32];                   /**< the workqueue name/number e.g. wq0.1 */
 	struct dsa_wq_addr addr;            /**< Identifies the specific WQ */
 };
@@ -82,6 +83,7 @@ dsa_get_dev_path(void)
 	return path ? path : DSA_DEV_PATH;
 }
 
+/*返回dsa设备路径*/
 static inline const char *
 dsa_get_sysfs_path(void)
 {
@@ -122,6 +124,7 @@ idxd_bus_mmap_wq(struct rte_dsa_device *dev)
 		return NULL;
 	}
 
+	/*映射wq*/
 	addr = mmap(NULL, 0x1000, PROT_WRITE, MAP_SHARED, fd, 0);
 	close(fd);
 	if (addr == MAP_FAILED) {
@@ -160,6 +163,7 @@ read_wq_string(struct rte_dsa_device *dev, const char *filename,
 	return 0;
 }
 
+/*读取指定wq下的文件（整数文件）*/
 static int
 read_wq_int(struct rte_dsa_device *dev, const char *filename,
 		int *value)
@@ -168,6 +172,7 @@ read_wq_int(struct rte_dsa_device *dev, const char *filename,
 	FILE *f;
 	int ret = 0;
 
+	/*例如/sys/bus/dsa/devices/wq1.2*/
 	snprintf(sysfs_node, sizeof(sysfs_node), "%s/%s/%s",
 			dsa_get_sysfs_path(), dev->wq_name, filename);
 	f = fopen(sysfs_node, "r");
@@ -214,6 +219,7 @@ read_device_int(struct rte_dsa_device *dev, const char *filename,
 	return ret;
 }
 
+/*dsa设备探测*/
 static int
 idxd_probe_dsa(struct rte_dsa_device *dev)
 {
@@ -222,9 +228,10 @@ idxd_probe_dsa(struct rte_dsa_device *dev)
 
 	IDXD_PMD_INFO("Probing device %s on numa node %d",
 			dev->wq_name, dev->device.numa_node);
+	/*读取此queue设备的size文件*/
 	if (read_wq_int(dev, "size", &ret) < 0)
 		return -1;
-	idxd.max_batches = ret;
+	idxd.max_batches = ret;/*按size设置最大batch*/
 	if (read_wq_int(dev, "max_batch_size", &ret) < 0)
 		return -1;
 	idxd.max_batch_size = ret;
@@ -238,7 +245,8 @@ idxd_probe_dsa(struct rte_dsa_device *dev)
 		return -ENOENT;
 	}
 
-	ret = idxd_dmadev_create(dev->wq_name, &dev->device, &idxd, &idxd_bus_ops);
+	/*创建dma设备*/
+	ret = idxd_dmadev_create(dev->wq_name/*设备名称*/, &dev->device, &idxd, &idxd_bus_ops);
 	if (ret) {
 		IDXD_PMD_ERR("Failed to create dmadev %s", dev->wq_name);
 		return ret;

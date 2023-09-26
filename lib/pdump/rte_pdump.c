@@ -56,10 +56,10 @@ struct pdump_response {
 };
 
 static struct pdump_rxtx_cbs {
-	struct rte_ring *ring;
-	struct rte_mempool *mp;
+	struct rte_ring *ring;/*用于收集复制的报文*/
+	struct rte_mempool *mp;/*复制时申请用mempool*/
 	const struct rte_eth_rxtx_callback *cb;
-	const struct rte_bpf *filter;
+	const struct rte_bpf *filter;/*bpf filter过滤器*/
 	enum pdump_version ver;
 	uint32_t snaplen;
 } rx_cbs[RTE_MAX_ETHPORTS][RTE_MAX_QUEUES_PER_PORT],
@@ -82,9 +82,9 @@ static struct {
 static void
 pdump_copy(uint16_t port_id, uint16_t queue,
 	   enum rte_pcapng_direction direction,
-	   struct rte_mbuf **pkts, uint16_t nb_pkts,
+	   struct rte_mbuf **pkts/*待过滤的报文*/, uint16_t nb_pkts,
 	   const struct pdump_rxtx_cbs *cbs,
-	   struct rte_pdump_stats *stats)
+	   struct rte_pdump_stats *stats/*数据统计*/)
 {
 	unsigned int i;
 	int ring_enq;
@@ -96,8 +96,9 @@ pdump_copy(uint16_t port_id, uint16_t queue,
 	struct rte_mbuf *p;
 	uint64_t rcs[nb_pkts];
 
+	/*按filter过滤pkts*/
 	if (cbs->filter)
-		rte_bpf_exec_burst(cbs->filter, (void **)pkts, rcs, nb_pkts);
+		rte_bpf_exec_burst(cbs->filter, (void **)pkts, rcs/*过滤结果*/, nb_pkts);
 
 	ts = rte_get_tsc_cycles();
 	ring = cbs->ring;
@@ -127,14 +128,18 @@ pdump_copy(uint16_t port_id, uint16_t queue,
 			p = rte_pktmbuf_copy(pkts[i], mp, 0, cbs->snaplen);
 
 		if (unlikely(p == NULL))
+			/*mbuf复制失败统计*/
 			__atomic_fetch_add(&stats->nombuf, 1, __ATOMIC_RELAXED);
 		else
-			dup_bufs[d_pkts++] = p;
+			dup_bufs[d_pkts++] = p;/*收集复制的mbuf*/
 	}
 
+	/*统计共有多少报文被匹配且完成复制*/
 	__atomic_fetch_add(&stats->accepted, d_pkts, __ATOMIC_RELAXED);
 
+	/*将这些报文入队*/
 	ring_enq = rte_ring_enqueue_burst(ring, (void *)&dup_bufs[0], d_pkts, NULL);
+	/*释放因入队失败而需要释放的报文*/
 	if (unlikely(ring_enq < d_pkts)) {
 		unsigned int drops = d_pkts - ring_enq;
 
@@ -151,6 +156,7 @@ pdump_rx(uint16_t port, uint16_t queue,
 	const struct pdump_rxtx_cbs *cbs = user_params;
 	struct rte_pdump_stats *stats = &pdump_stats->rx[port][queue];
 
+	/*rx方向packet dump*/
 	pdump_copy(port, queue, RTE_PCAPNG_DIRECTION_IN,
 		   pkts, nb_pkts, cbs, stats);
 	return nb_pkts;
@@ -163,16 +169,18 @@ pdump_tx(uint16_t port, uint16_t queue,
 	const struct pdump_rxtx_cbs *cbs = user_params;
 	struct rte_pdump_stats *stats = &pdump_stats->tx[port][queue];
 
+	/*tx方向packet dump*/
 	pdump_copy(port, queue, RTE_PCAPNG_DIRECTION_OUT,
 		   pkts, nb_pkts, cbs, stats);
 	return nb_pkts;
 }
 
+/*rx方向注册抓包点*/
 static int
 pdump_register_rx_callbacks(enum pdump_version ver,
 			    uint16_t end_q, uint16_t port, uint16_t queue,
-			    struct rte_ring *ring, struct rte_mempool *mp,
-			    struct rte_bpf *filter,
+			    struct rte_ring *ring/*收集过滤报文的ring*/, struct rte_mempool *mp/*复制用申请mbuf的pool*/,
+			    struct rte_bpf *filter/*bpf filter条件*/,
 			    uint16_t operation, uint32_t snaplen)
 {
 	uint16_t qid;
@@ -194,6 +202,7 @@ pdump_register_rx_callbacks(enum pdump_version ver,
 			cbs->snaplen = snaplen;
 			cbs->filter = filter;
 
+			/*注册rx方向callback*/
 			cbs->cb = rte_eth_add_first_rx_callback(port, qid,
 								pdump_rx, cbs);
 			if (cbs->cb == NULL) {
@@ -211,6 +220,8 @@ pdump_register_rx_callbacks(enum pdump_version ver,
 					port, qid);
 				return -EINVAL;
 			}
+
+			/*移除rx方向的抓包回调*/
 			ret = rte_eth_remove_rx_callback(port, qid, cbs->cb);
 			if (ret < 0) {
 				PDUMP_LOG(ERR,
@@ -225,6 +236,7 @@ pdump_register_rx_callbacks(enum pdump_version ver,
 	return 0;
 }
 
+/*tx方向注册抓包点*/
 static int
 pdump_register_tx_callbacks(enum pdump_version ver,
 			    uint16_t end_q, uint16_t port, uint16_t queue,
@@ -283,6 +295,7 @@ pdump_register_tx_callbacks(enum pdump_version ver,
 	return 0;
 }
 
+/*同时使用rx,tx方向抓包点，且提供抓包所需全部参数*/
 static int
 set_pdump_rxtx_cbs(const struct pdump_request *p)
 {
@@ -387,11 +400,12 @@ set_pdump_rxtx_cbs(const struct pdump_request *p)
 	return ret;
 }
 
+/*server端通过本函数响应packet dump rx/tx抓包初始化*/
 static int
 pdump_server(const struct rte_mp_msg *mp_msg, const void *peer)
 {
 	struct rte_mp_msg mp_resp;
-	const struct pdump_request *cli_req;
+	const struct pdump_request *cli_req;/*pdump请求结构体*/
 	struct pdump_response *resp = (struct pdump_response *)&mp_resp.param;
 
 	/* recv client requests */
@@ -402,9 +416,10 @@ pdump_server(const struct rte_mp_msg *mp_msg, const void *peer)
 		cli_req = (const struct pdump_request *)mp_msg->param;
 		resp->ver = cli_req->ver;
 		resp->res_op = cli_req->op;
-		resp->err_value = set_pdump_rxtx_cbs(cli_req);
+		resp->err_value = set_pdump_rxtx_cbs(cli_req);/*响应请求，使能rx/tx抓包*/
 	}
 
+	/*给对端响应请求结果*/
 	rte_strscpy(mp_resp.name, PDUMP_MP, RTE_MP_MAX_NAME_LEN);
 	mp_resp.len_param = sizeof(*resp);
 	mp_resp.num_fds = 0;
@@ -417,6 +432,7 @@ pdump_server(const struct rte_mp_msg *mp_msg, const void *peer)
 	return 0;
 }
 
+/*初始化pdump,注册抓包请求响应*/
 int
 rte_pdump_init(void)
 {
@@ -439,6 +455,7 @@ rte_pdump_init(void)
 	return 0;
 }
 
+/*移除pdump 注册的action*/
 int
 rte_pdump_uninit(void)
 {

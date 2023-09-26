@@ -58,6 +58,7 @@ struct rxtx_transmission_config {
 struct dma_port_statistics {
 	uint64_t rx[RTE_MAX_ETHPORTS];
 	uint64_t tx[RTE_MAX_ETHPORTS];
+	unin64_t pre_tx[RTE_MAX_ETHPORTS];
 	uint64_t tx_dropped[RTE_MAX_ETHPORTS];
 	uint64_t copy_dropped[RTE_MAX_ETHPORTS];
 };
@@ -65,6 +66,7 @@ struct dma_port_statistics port_statistics;
 struct total_statistics {
 	uint64_t total_packets_dropped;
 	uint64_t total_packets_tx;
+	uint64_t total_packets_pre_tx;
 	uint64_t total_packets_rx;
 	uint64_t total_submitted;
 	uint64_t total_completed;
@@ -133,11 +135,13 @@ print_port_stats(uint16_t port_id)
 {
 	printf("\nStatistics for port %u ------------------------------"
 		"\nPackets sent: %34"PRIu64
+		"\nPackets pre-sent: %34"PRIu64
 		"\nPackets received: %30"PRIu64
 		"\nPackets dropped on tx: %25"PRIu64
 		"\nPackets dropped on copy: %23"PRIu64,
 		port_id,
 		port_statistics.tx[port_id],
+		port_statistics.pre_tx[port_id],
 		port_statistics.rx[port_id],
 		port_statistics.tx_dropped[port_id],
 		port_statistics.copy_dropped[port_id]);
@@ -158,9 +162,11 @@ print_total_stats(struct total_statistics *ts)
 {
 	printf("\nAggregate statistics ==============================="
 		"\nTotal packets Tx: %22"PRIu64" [pkt/s]"
+		"\nTotal packets Pre-Tx: %22"PRIu64" [pkt/s]"
 		"\nTotal packets Rx: %22"PRIu64" [pkt/s]"
 		"\nTotal packets dropped: %17"PRIu64" [pkt/s]",
 		ts->total_packets_tx / stats_interval,
+		ts->total_packets_pre_tx / stats_interval,
 		ts->total_packets_rx / stats_interval,
 		ts->total_packets_dropped / stats_interval);
 
@@ -235,9 +241,12 @@ print_stats(char *prgname)
 			port_id = cfg.ports[i].rxtx_port;
 			print_port_stats(port_id);
 
+			/*add*/
 			delta_ts.total_packets_dropped +=
 				port_statistics.tx_dropped[port_id]
 				+ port_statistics.copy_dropped[port_id];
+			delta_ts.total_packets_pre_tx +=
+					port_statistics.pre_tx[port_id];
 			delta_ts.total_packets_tx +=
 				port_statistics.tx[port_id];
 			delta_ts.total_packets_rx +=
@@ -258,6 +267,8 @@ print_stats(char *prgname)
 			}
 		}
 
+		/*diff*/
+		delta_ts.total_packets_pre_tx -=ts.total_packets_pre_tx;
 		delta_ts.total_packets_tx -= ts.total_packets_tx;
 		delta_ts.total_packets_rx -= ts.total_packets_rx;
 		delta_ts.total_packets_dropped -= ts.total_packets_dropped;
@@ -270,6 +281,8 @@ print_stats(char *prgname)
 
 		fflush(stdout);
 
+		/*add*/
+		ts.total_packets_pre_tx += delta_ts.total_packets_pre_tx;
 		ts.total_packets_tx += delta_ts.total_packets_tx;
 		ts.total_packets_rx += delta_ts.total_packets_rx;
 		ts.total_packets_dropped += delta_ts.total_packets_dropped;
@@ -418,6 +431,10 @@ dma_rx_port(struct rxtx_port_config *rx_config)
 		}
 
 		port_statistics.rx[rx_config->rxtx_port] += nb_rx;
+		/* Free any unsent packets. */
+		rte_mempool_put_bulk(dma_pktmbuf_pool,
+		(void *)&pkts_burst, nb_rx);
+		continue;
 
 		ret = rte_mempool_get_bulk(dma_pktmbuf_pool,
 			(void *)pkts_burst_copy, nb_rx);
@@ -499,6 +516,7 @@ dma_tx_port(struct rxtx_port_config *tx_config)
 		nb_tx = rte_eth_tx_burst(tx_config->rxtx_port, 0,
 				(void *)mbufs, nb_dq);
 
+		port_statistics.pre_tx[tx_config->rxtx_port] += nb_dq;
 		port_statistics.tx[tx_config->rxtx_port] += nb_tx;
 
 		if (unlikely(nb_tx < nb_dq)) {

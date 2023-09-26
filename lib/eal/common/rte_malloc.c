@@ -50,6 +50,7 @@ eal_free_no_trace(void *addr)
 	return mem_free(addr, false);
 }
 
+/*在指定socket上申请内存*/
 static void *
 malloc_socket(const char *type, size_t size, unsigned int align,
 		int socket_arg, const bool trace_ena)
@@ -58,6 +59,7 @@ malloc_socket(const char *type, size_t size, unsigned int align,
 
 	/* return NULL if size is 0 or alignment is not power-of-2 */
 	if (size == 0 || (align && !rte_is_power_of_2(align)))
+		/*参数无效，返回NULL*/
 		return NULL;
 
 	/* if there are no hugepages and if we are not allocating from an
@@ -106,7 +108,7 @@ rte_malloc(const char *type, size_t size, unsigned align)
  * Allocate zero'd memory on specified heap.
  */
 void *
-rte_zmalloc_socket(const char *type, size_t size, unsigned align, int socket)
+rte_zmalloc_socket(const char *type, size_t size/*内存长度*/, unsigned align/*内存对齐*/, int socket/*所属socket*/)
 {
 	void *ptr = rte_malloc_socket(type, size, align, socket);
 

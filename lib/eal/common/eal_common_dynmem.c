@@ -207,6 +207,7 @@ hugepage_count_walk(const struct rte_memseg_list *msl, void *arg)
 	struct hugepage_info *hpi = arg;
 
 	if (msl->page_sz != hpi->hugepage_sz)
+		/*页大小不一致，返回0*/
 		return 0;
 
 	hpi->num_pages[msl->socket_id] += msl->memseg_arr.len;
@@ -242,7 +243,7 @@ eal_dynmem_hugepage_init(void)
 #endif
 		/* also initialize used_hp hugepage sizes in used_hp */
 		struct hugepage_info *hpi;
-		hpi = &internal_conf->hugepage_info[hp_sz_idx];
+		hpi = &internal_conf->hugepage_info[hp_sz_idx];/*取此类型的大页*/
 		used_hp[hp_sz_idx].hugepage_sz = hpi->hugepage_sz;
 
 #ifndef RTE_ARCH_64
@@ -300,7 +301,7 @@ eal_dynmem_hugepage_init(void)
 			do {
 				int i, cur_pages, needed;
 
-				needed = num_pages - num_pages_alloc;
+				needed = num_pages - num_pages_alloc;/*需要申请的页数*/
 
 				pages = malloc(sizeof(*pages) * needed);
 				if (pages == NULL) {
@@ -439,10 +440,12 @@ eal_dynmem_calc_num_pages_per_socket(
 			struct rte_config *cfg = rte_eal_get_configuration();
 			unsigned int main_lcore_socket;
 
+			/*主线程所在的socket，这句可以移到for循环外*/
 			main_lcore_socket =
 				rte_lcore_to_socket_id(cfg->main_lcore);
 
 			if (main_lcore_socket != socket)
+				/*仅main_lcore socket被考虑*/
 				continue;
 
 			/* Update sizes */
@@ -458,6 +461,7 @@ eal_dynmem_calc_num_pages_per_socket(
 		for (i = 0; i < num_hp_info && memory[socket] != 0; i++) {
 			rte_strscpy(hp_used[i].hugedir, hp_info[i].hugedir,
 				sizeof(hp_used[i].hugedir));
+			/*由页大小算出页数*/
 			hp_used[i].num_pages[socket] = RTE_MIN(
 					memory[socket] / hp_info[i].hugepage_sz,
 					hp_info[i].num_pages[socket]);

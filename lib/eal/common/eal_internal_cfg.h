@@ -27,9 +27,11 @@
  * mount points of hugepages
  */
 struct hugepage_info {
+	/*此类型大页的页面size*/
 	uint64_t hugepage_sz;   /**< size of a huge page */
+	/*此类型大页的挂载点*/
 	char hugedir[PATH_MAX];    /**< dir where hugetlbfs is mounted */
-	uint32_t num_pages[RTE_MAX_NUMA_NODES];
+	uint32_t num_pages[RTE_MAX_NUMA_NODES];/*各node上页面数*/
 	/**< number of hugepages of that size on each socket */
 	int lock_descriptor;    /**< file descriptor for hugepage dir */
 };
@@ -45,7 +47,7 @@ struct hugepage_file_discipline {
 	/** Unlink files before mapping them to leave no trace in hugetlbfs. */
 	bool unlink_before_mapping;
 	/** Unlink existing files at startup, re-create them before mapping. */
-	bool unlink_existing;
+	bool unlink_existing;/*启动时是否unlink存在的文件*/
 };
 
 /**
@@ -55,6 +57,7 @@ struct internal_config {
 	volatile size_t memory;           /**< amount of asked memory */
 	volatile unsigned force_nchannel; /**< force number of channels */
 	volatile unsigned force_nrank;    /**< force number of ranks */
+	/*为true时禁用大页*/
 	volatile unsigned no_hugetlbfs;   /**< true to disable hugetlbfs */
 	struct hugepage_file_discipline hugepage_file;
 	volatile unsigned no_pci;         /**< true to disable PCI */
@@ -70,8 +73,10 @@ struct internal_config {
 	volatile enum rte_proc_type_t process_type; /**< multi-process proc type */
 	/** true to try allocating memory on specific sockets */
 	volatile unsigned force_sockets;
+	/*--socket-mem 设置的各socket内存*/
 	volatile uint64_t socket_mem[RTE_MAX_NUMA_NODES]; /**< amount of memory per socket */
 	volatile unsigned force_socket_limits;
+	/*--socket-limit 设置的各socket limit内存*/
 	volatile uint64_t socket_limit[RTE_MAX_NUMA_NODES]; /**< limit amount of memory per socket */
 	uintptr_t base_virtaddr;          /**< base address to try and reserve memory from */
 	volatile unsigned legacy_mem;
@@ -90,11 +95,13 @@ struct internal_config {
 	/** the shared VF token for VFIO-PCI bound PF and VFs devices */
 	rte_uuid_t vfio_vf_token;
 	char *hugefile_prefix;      /**< the base filename of hugetlbfs files */
+	/*指明要占用的大页目录*/
 	char *hugepage_dir;         /**< specific hugetlbfs directory to use */
 	char *user_mbuf_pool_ops_name;
 			/**< user defined mbuf pool ops name */
+	/*hugepage_info数组长度*/
 	unsigned num_hugepage_sizes;      /**< how many sizes on this system */
-	struct hugepage_info hugepage_info[MAX_HUGEPAGE_SIZES];
+	struct hugepage_info hugepage_info[MAX_HUGEPAGE_SIZES];/*各类大页的配置情况*/
 	enum rte_iova_mode iova_mode ;    /**< Set IOVA mode on this system  */
 	rte_cpuset_t ctrl_cpuset;         /**< cpuset for ctrl threads */
 	volatile unsigned int init_complete;

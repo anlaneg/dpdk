@@ -50,10 +50,11 @@ pkt_burst_io_forward(struct fwd_stream *fs)
 	/*
 	 * Receive a burst of packets and forward them.
 	 */
-	nb_rx = common_fwd_stream_receive(fs, pkts_burst, nb_pkt_per_burst);
+	nb_rx = common_fwd_stream_receive(fs, pkts_burst, nb_pkt_per_burst);/*收取一组报文*/
 	if (unlikely(nb_rx == 0))
 		return false;
 
+	/*将这组报文直接发送出去*/
 	common_fwd_stream_transmit(fs, pkts_burst, nb_rx);
 
 	return true;

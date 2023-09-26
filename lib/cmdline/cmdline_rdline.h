@@ -39,11 +39,11 @@ extern "C" {
 
 struct rdline;
 
-typedef int (rdline_write_char_t)(struct rdline *rdl, char);
+typedef int (rdline_write_char_t)(struct rdline *rdl, char/*要输出的字符*/);
 typedef void (rdline_validate_t)(struct rdline *rdl,
 				 const char *buf, unsigned int size);
-typedef int (rdline_complete_t)(struct rdline *rdl, const char *buf,
-				char *dstbuf, unsigned int dstsize,
+typedef int (rdline_complete_t)(struct rdline *rdl, const char *buf/*补全前输入*/,
+				char *dstbuf/*补全后的输入*/, unsigned int dstsize,
 				int *state);
 
 /**

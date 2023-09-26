@@ -330,6 +330,7 @@ reply_to_icmp_echo_rqsts(struct fwd_stream *fs)
 
 		/* Reply to ARP requests */
 		if (eth_type == RTE_ETHER_TYPE_ARP) {
+			/*响应arp请求*/
 			arp_h = (struct rte_arp_hdr *) ((char *)eth_h + l2_len);
 			arp_op = RTE_BE_TO_CPU_16(arp_h->arp_opcode);
 			arp_pro = RTE_BE_TO_CPU_16(arp_h->arp_protocol);

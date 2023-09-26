@@ -1210,7 +1210,7 @@ err_secondary:
 	 * register to match on vport index. The engaged part of metadata
 	 * register is defined by mask.
 	 */
-	if (sh->esw_mode) {
+	if (sh->esw_mode/*网卡处于eswitch模式*/) {
 		err = mlx5_glue->devx_port_query(sh->cdev->ctx,
 						 spawn->phys_port,
 						 &vport_info);
@@ -2383,6 +2383,7 @@ mlx5_os_pci_probe_pf(struct mlx5_common_device *cdev,
 		rte_eth_dev_probing_finish(list[i].eth_dev);
 	}
 	if (i != ns) {
+		/*没有成功probe设备，执行roll back*/
 		DRV_LOG(ERR,
 			"probe of PCI device " PCI_PRI_FMT " aborted after"
 			" encountering an error: %s",

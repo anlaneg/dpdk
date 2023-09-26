@@ -144,23 +144,24 @@ rte_eal_cpu_init(void)
 	unsigned lcore_id;
 	unsigned count = 0;
 	unsigned int socket_id, prev_socket_id;
-	int lcore_to_socket_id[RTE_MAX_LCORE];
+	int lcore_to_socket_id[RTE_MAX_LCORE];/*core id与socket id的映射表*/
 
 	/*
 	 * Parse the maximum set of logical cores, detect the subset of running
 	 * ones and enable them by default.
 	 */
 	for (lcore_id = 0; lcore_id < RTE_MAX_LCORE; lcore_id++) {
-		lcore_config[lcore_id].core_index = count;
+		lcore_config[lcore_id].core_index = count;/*设置遍历序号*/
 
 		/* init cpuset for per lcore config */
 		CPU_ZERO(&lcore_config[lcore_id].cpuset);
 
 		/* find socket first */
 		socket_id = eal_cpu_socket_id(lcore_id);
-		lcore_to_socket_id[lcore_id] = socket_id;
+		lcore_to_socket_id[lcore_id] = socket_id;/*填充core->socket的映射表*/
 
 		if (eal_cpu_detected(lcore_id) == 0) {
+			/*未找到此cpu,更新core_index为-1,core角色置为off*/
 			config->lcore_role[lcore_id] = ROLE_OFF;
 			lcore_config[lcore_id].core_index = -1;
 			continue;
@@ -180,9 +181,13 @@ rte_eal_cpu_init(void)
 				lcore_config[lcore_id].socket_id);
 		count++;
 	}
+
+	/*显示被跳过的core*/
 	for (; lcore_id < CPU_SETSIZE; lcore_id++) {
 		if (eal_cpu_detected(lcore_id) == 0)
+			/*忽略掉未检测到的lcore*/
 			continue;
+		/*指明这些core被跳过了*/
 		RTE_LOG(DEBUG, EAL, "Skipped lcore %u as core %u on socket %u\n",
 			lcore_id, eal_cpu_core_id(lcore_id),
 			eal_cpu_socket_id(lcore_id));
@@ -193,17 +198,21 @@ rte_eal_cpu_init(void)
 	RTE_LOG(DEBUG, EAL,
 			"Maximum logical cores by configuration: %u\n",
 			RTE_MAX_LCORE);
+	/*指出检测到的cpu总数*/
 	RTE_LOG(INFO, EAL, "Detected CPU lcores: %u\n", config->lcore_count);
 
 	/* sort all socket id's in ascending order */
+	/*按socket id对映射表进行排序。映射关系被破坏*/
 	qsort(lcore_to_socket_id, RTE_DIM(lcore_to_socket_id),
 			sizeof(lcore_to_socket_id[0]), socket_id_cmp);
 
+	/*记录系统中有哪些socket id（支持socket id不连续）*/
 	prev_socket_id = -1;
 	config->numa_node_count = 0;
 	for (lcore_id = 0; lcore_id < RTE_MAX_LCORE; lcore_id++) {
 		socket_id = lcore_to_socket_id[lcore_id];
 		if (socket_id != prev_socket_id)
+			/*出现新的socket id*/
 			config->numa_nodes[config->numa_node_count++] =
 					socket_id;
 		prev_socket_id = socket_id;

@@ -930,6 +930,7 @@ static inline int rte_pktmbuf_alloc_bulk(struct rte_mempool *pool,
 	unsigned idx = 0;
 	int rc;
 
+	/*取count个mbuf*/
 	rc = rte_mempool_get_bulk(pool, (void **)mbufs, count);
 	if (unlikely(rc))
 		return rc;

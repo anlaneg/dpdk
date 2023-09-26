@@ -86,11 +86,13 @@ rdline_newline(struct rdline *rdl, const char *prompt)
 	cirbuf_init(&rdl->left, rdl->left_buf, 0, RDLINE_BUF_SIZE);
 	cirbuf_init(&rdl->right, rdl->right_buf, 0, RDLINE_BUF_SIZE);
 
+	/*设置命令提示符*/
 	rdl->prompt_size = strnlen(prompt, RDLINE_PROMPT_SIZE-1);
 	if (prompt != rdl->prompt)
 		memcpy(rdl->prompt, prompt, rdl->prompt_size);
 	rdl->prompt[RDLINE_PROMPT_SIZE-1] = '\0';
 
+	/*逐个输出字符*/
 	for (i=0 ; i<rdl->prompt_size ; i++)
 		rdl->write_char(rdl, rdl->prompt[i]);
 	rdl->status = RDLINE_RUNNING;
@@ -203,34 +205,41 @@ rdline_char_in(struct rdline *rdl, char c)
 
 	if (rdl->status == RDLINE_EXITED)
 		return RDLINE_RES_EXITED;
+
+	/*rdl状态必须为running*/
 	if (rdl->status != RDLINE_RUNNING)
 		return RDLINE_RES_NOT_RUNNING;
 
+	/*存入c,检查是否为vt100命令*/
 	cmd = vt100_parser(&rdl->vt100, c);
 	if (cmd == -2)
 		return RDLINE_RES_SUCCESS;
 
 	if (cmd >= 0) {
+		/*查找到命令索引，按要求处理*/
 		switch (cmd) {
 		/* move caret 1 char to the left */
-		case CMDLINE_KEY_CTRL_B:
+		case CMDLINE_KEY_CTRL_B:/*向左移一格*/
 		case CMDLINE_KEY_LEFT_ARR:
 			if (CIRBUF_IS_EMPTY(&rdl->left))
+				/*buffer是空的，退出*/
 				break;
 			tmp = cirbuf_get_tail(&rdl->left);
 			cirbuf_del_tail(&rdl->left);
 			cirbuf_add_head(&rdl->right, tmp);
+			/*写左移字符*/
 			rdline_puts(rdl, vt100_left_arr);
 			break;
 
 		/* move caret 1 char to the right */
-		case CMDLINE_KEY_CTRL_F:
+		case CMDLINE_KEY_CTRL_F:/*向右移一格*/
 		case CMDLINE_KEY_RIGHT_ARR:
 			if (CIRBUF_IS_EMPTY(&rdl->right))
 				break;
 			tmp = cirbuf_get_head(&rdl->right);
 			cirbuf_del_head(&rdl->right);
 			cirbuf_add_tail(&rdl->left, tmp);
+			/*写右移字符*/
 			rdline_puts(rdl, vt100_right_arr);
 			break;
 
@@ -240,6 +249,7 @@ rdline_char_in(struct rdline *rdl, char c)
 			while (! CIRBUF_IS_EMPTY(&rdl->left) &&
 			       (tmp = cirbuf_get_tail(&rdl->left)) &&
 			       isblank2(tmp)) {
+				/*向左移一个word*/
 				rdline_puts(rdl, vt100_left_arr);
 				cirbuf_del_tail(&rdl->left);
 				cirbuf_add_head(&rdl->right, tmp);
@@ -255,7 +265,7 @@ rdline_char_in(struct rdline *rdl, char c)
 
 		/* move caret 1 word to the right */
 		/* keyboard equivalent: Alt+F */
-		case CMDLINE_KEY_WRIGHT:
+		case CMDLINE_KEY_WRIGHT:/*向右移一个word*/
 			while (! CIRBUF_IS_EMPTY(&rdl->right) &&
 			       (tmp = cirbuf_get_head(&rdl->right)) &&
 			       isblank2(tmp)) {
@@ -273,7 +283,7 @@ rdline_char_in(struct rdline *rdl, char c)
 			break;
 
 		/* move caret to the left */
-		case CMDLINE_KEY_CTRL_A:
+		case CMDLINE_KEY_CTRL_A:/*向左移到开始位置*/
 			if (CIRBUF_IS_EMPTY(&rdl->left))
 				break;
 			rdline_miniprintf(rdl, vt100_multi_left,
@@ -286,7 +296,7 @@ rdline_char_in(struct rdline *rdl, char c)
 			break;
 
 		/* move caret to the right */
-		case CMDLINE_KEY_CTRL_E:
+		case CMDLINE_KEY_CTRL_E:/*向右移到结束位置*/
 			if (CIRBUF_IS_EMPTY(&rdl->right))
 				break;
 			rdline_miniprintf(rdl, vt100_multi_right,
@@ -299,7 +309,7 @@ rdline_char_in(struct rdline *rdl, char c)
 			break;
 
 		/* delete 1 char from the left */
-		case CMDLINE_KEY_BKSPACE:
+		case CMDLINE_KEY_BKSPACE:/*向左删除一个字符*/
 		case CMDLINE_KEY_BKSPACE2:
 			if(!cirbuf_del_tail_safe(&rdl->left)) {
 				rdline_puts(rdl, vt100_bs);
@@ -308,7 +318,7 @@ rdline_char_in(struct rdline *rdl, char c)
 			break;
 
 		/* delete 1 char from the right */
-		case CMDLINE_KEY_SUPPR:
+		case CMDLINE_KEY_SUPPR:/*向右删除一个字符*/
 		case CMDLINE_KEY_CTRL_D:
 			if (cmd == CMDLINE_KEY_CTRL_D &&
 			    CIRBUF_IS_EMPTY(&rdl->left) &&
@@ -321,7 +331,7 @@ rdline_char_in(struct rdline *rdl, char c)
 			break;
 
 		/* delete 1 word from the left */
-		case CMDLINE_KEY_META_BKSPACE:
+		case CMDLINE_KEY_META_BKSPACE:/*向左删除一个word*/
 		case CMDLINE_KEY_CTRL_W:
 			while (! CIRBUF_IS_EMPTY(&rdl->left) && isblank2(cirbuf_get_tail(&rdl->left))) {
 				rdline_puts(rdl, vt100_bs);
@@ -335,7 +345,7 @@ rdline_char_in(struct rdline *rdl, char c)
 			break;
 
 		/* delete 1 word from the right */
-		case CMDLINE_KEY_META_D:
+		case CMDLINE_KEY_META_D:/*向右删除一个word*/
 			while (! CIRBUF_IS_EMPTY(&rdl->right) && isblank2(cirbuf_get_head(&rdl->right)))
 				cirbuf_del_head(&rdl->right);
 			while (! CIRBUF_IS_EMPTY(&rdl->right) && !isblank2(cirbuf_get_head(&rdl->right)))
@@ -344,7 +354,7 @@ rdline_char_in(struct rdline *rdl, char c)
 			break;
 
 		/* set kill buffer to contents on the right side of caret */
-		case CMDLINE_KEY_CTRL_K:
+		case CMDLINE_KEY_CTRL_K:/*向右清空buffer*/
 			cirbuf_get_buf_head(&rdl->right, rdl->kill_buf, RDLINE_BUF_SIZE);
 			rdl->kill_size = CIRBUF_GET_LEN(&rdl->right);
 			cirbuf_del_buf_head(&rdl->right, rdl->kill_size);
@@ -352,7 +362,7 @@ rdline_char_in(struct rdline *rdl, char c)
 			break;
 
 		/* paste contents of kill buffer to the left side of caret */
-		case CMDLINE_KEY_CTRL_Y:
+		case CMDLINE_KEY_CTRL_Y:/*复制左侧buffer*/
 			i=0;
 			while(CIRBUF_GET_LEN(&rdl->right) + CIRBUF_GET_LEN(&rdl->left) <
 			      RDLINE_BUF_SIZE &&
@@ -365,19 +375,19 @@ rdline_char_in(struct rdline *rdl, char c)
 			break;
 
 		/* clear and newline */
-		case CMDLINE_KEY_CTRL_C:
+		case CMDLINE_KEY_CTRL_C:/*清空并换行*/
 			rdline_puts(rdl, "\r\n");
 			rdline_newline(rdl, rdl->prompt);
 			break;
 
 		/* redisplay (helps when prompt is lost in other output) */
-		case CMDLINE_KEY_CTRL_L:
+		case CMDLINE_KEY_CTRL_L:/*重新显示*/
 			rdline_redisplay(rdl);
 			break;
 
 		/* autocomplete */
 		case CMDLINE_KEY_TAB:
-		case CMDLINE_KEY_HELP:
+		case CMDLINE_KEY_HELP:/*遇到tab,提供帮助信息*/
 			cirbuf_align_left(&rdl->left);
 			rdl->left_buf[CIRBUF_GET_LEN(&rdl->left)] = '\0';
 			if (rdl->complete) {
@@ -394,15 +404,16 @@ rdline_char_in(struct rdline *rdl, char c)
 				/* see in parse.h for help on complete() */
 				ret = rdl->complete(rdl, rdl->left_buf,
 						    tmp_buf, sizeof(tmp_buf),
-						    &complete_state);
+						    &complete_state);/*调用回调，尝试补全*/
 				/* no completion or error */
 				if (ret <= 0) {
+					/*补全失败*/
 					return RDLINE_RES_COMPLETE;
 				}
 
 				tmp_size = strnlen(tmp_buf, sizeof(tmp_buf));
 				/* add chars */
-				if (ret == RDLINE_RES_COMPLETE) {
+				if (ret == RDLINE_RES_COMPLETE) {/*补全成功，显示补全字符*/
 					i=0;
 					while(CIRBUF_GET_LEN(&rdl->right) + CIRBUF_GET_LEN(&rdl->left) <
 					      RDLINE_BUF_SIZE &&
@@ -416,7 +427,7 @@ rdline_char_in(struct rdline *rdl, char c)
 				}
 
 				/* choice */
-				rdline_puts(rdl, "\r\n");
+				rdline_puts(rdl, "\r\n");/*遇到多个选项，显示选项*/
 				while (ret) {
 					rdl->write_char(rdl, ' ');
 					for (i=0 ; tmp_buf[i] ; i++)
@@ -433,7 +444,7 @@ rdline_char_in(struct rdline *rdl, char c)
 
 		/* complete buffer */
 		case CMDLINE_KEY_RETURN:
-		case CMDLINE_KEY_RETURN2:
+		case CMDLINE_KEY_RETURN2:/*遇到回车，记录内容*/
 			rdline_get_buffer(rdl);
 			rdl->status = RDLINE_INIT;
 			rdline_puts(rdl, "\r\n");
@@ -441,7 +452,7 @@ rdline_char_in(struct rdline *rdl, char c)
 				rdline_remove_first_history_item(rdl);
 
 			if (rdl->validate)
-				rdl->validate(rdl, rdl->left_buf, CIRBUF_GET_LEN(&rdl->left)+2);
+				rdl->validate(rdl, rdl->left_buf/*命令输入*/, CIRBUF_GET_LEN(&rdl->left)+2);
 			/* user may have stopped rdline */
 			if (rdl->status == RDLINE_EXITED)
 				return RDLINE_RES_EXITED;
@@ -449,7 +460,7 @@ rdline_char_in(struct rdline *rdl, char c)
 
 		/* previous element in history */
 		case CMDLINE_KEY_UP_ARR:
-		case CMDLINE_KEY_CTRL_P:
+		case CMDLINE_KEY_CTRL_P:/*实现命令上翻*/
 			if (rdl->history_cur_line == 0) {
 				rdline_remove_first_history_item(rdl);
 			}
@@ -472,7 +483,7 @@ rdline_char_in(struct rdline *rdl, char c)
 
 		/* next element in history */
 		case CMDLINE_KEY_DOWN_ARR:
-		case CMDLINE_KEY_CTRL_N:
+		case CMDLINE_KEY_CTRL_N:/*命令下翻*/
 			if (rdl->history_cur_line - 1 < 0)
 				break;
 
@@ -490,22 +501,28 @@ rdline_char_in(struct rdline *rdl, char c)
 
 
 		default:
-			break;
+			break;/*其它情况*/
 		}
 
+		/*命令被成功处理*/
 		return RDLINE_RES_SUCCESS;
 	}
 
+	/*遇到非vty命令字符*/
 	if (!isprint((int)c))
+		/*非显示字符*/
 		return RDLINE_RES_SUCCESS;
 
 	/* standard chars */
 	if (CIRBUF_GET_LEN(&rdl->left) + CIRBUF_GET_LEN(&rdl->right) >= RDLINE_BUF_SIZE)
+		/*字符超限*/
 		return RDLINE_RES_SUCCESS;
 
+	/*将字符加入到left集合*/
 	if (cirbuf_add_tail_safe(&rdl->left, c))
 		return RDLINE_RES_SUCCESS;
 
+	/*显示字符c,显示右侧字符*/
 	rdl->write_char(rdl, c);
 	display_right_buffer(rdl, 0);
 

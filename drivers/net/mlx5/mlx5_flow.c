@@ -6990,6 +6990,7 @@ flow_create_split_sample(struct rte_eth_dev *dev,
 		sfx_actions = mlx5_malloc(MLX5_MEM_ZERO, (act_size +
 					  item_size), 0, SOCKET_ID_ANY);
 		if (!sfx_actions)
+			/*申请内存失败*/
 			return rte_flow_error_set(error, ENOMEM,
 						  RTE_FLOW_ERROR_TYPE_ACTION,
 						  NULL, "no memory to split "
@@ -7505,6 +7506,8 @@ mlx5_flow_create_devx_sq_miss_flow(struct rte_eth_dev *dev, uint32_t sq_num)
 	struct mlx5_rte_flow_item_sq sq_spec = {
 		.queue = sq_num,
 	};
+
+	/*匹配port,queue*/
 	struct rte_flow_item pattern[] = {
 		{
 			.type = RTE_FLOW_ITEM_TYPE_PORT_ID,

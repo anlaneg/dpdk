@@ -66,7 +66,7 @@ struct rte_dma_fp_object {
 	 * rte_dma_dev.data->dev_private to this field during initialization.
 	 */
 	void *dev_private;
-	rte_dma_copy_t             copy;
+	rte_dma_copy_t             copy;/*设备的copy回调*/
 	rte_dma_copy_sg_t          copy_sg;
 	rte_dma_fill_t             fill;
 	rte_dma_submit_t           submit;

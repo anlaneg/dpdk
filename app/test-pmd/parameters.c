@@ -1044,6 +1044,7 @@ launch_args_parse(int argc, char** argv)
 						 optarg);
 			}
 			if (!strcmp(lgopts[opt_idx].name, "forward-mode"))
+				/*按参数设置转发模式*/
 				set_pkt_forwarding_mode(optarg);
 			if (!strcmp(lgopts[opt_idx].name, "rss-ip"))
 				rss_hf = RTE_ETH_RSS_IP;

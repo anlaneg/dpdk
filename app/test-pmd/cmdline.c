@@ -68,7 +68,7 @@
 #include "bpf_cmd.h"
 
 static struct cmdline *testpmd_cl;
-static cmdline_parse_ctx_t *main_ctx;
+static cmdline_parse_ctx_t *main_ctx;/*收集了test-pmd所有可用命令*/
 static TAILQ_HEAD(, testpmd_driver_commands) driver_commands_head =
 	TAILQ_HEAD_INITIALIZER(driver_commands_head);
 
@@ -1677,6 +1677,7 @@ cmd_config_rx_tx_parsed(void *parsed_result,
 	struct cmd_config_rx_tx *res = parsed_result;
 
 	if (!all_ports_stopped()) {
+		/*此配置要求先停止所有port*/
 		fprintf(stderr, "Please stop all ports first\n");
 		return;
 	}
@@ -3717,6 +3718,7 @@ static void cmd_set_parsed(void *parsed_result,
 	} else if (!strcmp(res->what, "burst"))
 		set_nb_pkt_per_burst(res->value);
 	else if (!strcmp(res->what, "verbose"))
+		/*标明日志verbose*/
 		set_verbose_level(res->value);
 }
 
@@ -5630,7 +5632,7 @@ static void cmd_set_fwd_retry_mode_parsed(void *parsed_result,
 {
 	struct cmd_set_fwd_retry_mode_result *res = parsed_result;
 
-	retry_enabled = 1;
+	retry_enabled = 1;/*开启retry机制*/
 	set_pkt_forwarding_mode(res->mode);
 }
 
@@ -12786,6 +12788,7 @@ static cmdline_parse_inst_t cmd_config_tx_affinity_map = {
 /* ******************************************************************************** */
 
 /* list of instructions */
+/*testpmd所有内置命令*/
 static cmdline_parse_ctx_t builtin_ctx[] = {
 	(cmdline_parse_inst_t *)&cmd_help_brief,
 	(cmdline_parse_inst_t *)&cmd_help_long,
@@ -12909,7 +12912,7 @@ static cmdline_parse_ctx_t builtin_ctx[] = {
 	(cmdline_parse_inst_t *)&cmd_cleanup_txq_mbufs,
 	(cmdline_parse_inst_t *)&cmd_dump,
 	(cmdline_parse_inst_t *)&cmd_dump_one,
-	(cmdline_parse_inst_t *)&cmd_flow,
+	(cmdline_parse_inst_t *)&cmd_flow,/*flow相关的命令（所有注册在这里的顶层变量，其含的回调f均用来做整体命令的处理）*/
 	(cmdline_parse_inst_t *)&cmd_show_port_meter_cap,
 	(cmdline_parse_inst_t *)&cmd_add_port_meter_profile_srtcm,
 	(cmdline_parse_inst_t *)&cmd_add_port_meter_profile_trtcm,
@@ -13037,9 +13040,12 @@ init_cmdline(void)
 	cmd_set_fwd_mode_init();
 	cmd_set_fwd_retry_mode_init();
 
+	/*取内置的命令数目*/
 	count = 0;
 	for (i = 0; builtin_ctx[i] != NULL; i++)
 		count++;
+
+	/*driver命令数目*/
 	TAILQ_FOREACH(c, &driver_commands_head, next) {
 		for (i = 0; c->commands[i].ctx != NULL; i++)
 			count++;
@@ -13050,9 +13056,12 @@ init_cmdline(void)
 	if (main_ctx == NULL)
 		return -1;
 
+	/*填充内置命令到main_ctx*/
 	count = 0;
 	for (i = 0; builtin_ctx[i] != NULL; i++, count++)
 		main_ctx[count] = builtin_ctx[i];
+
+	/*填充内置命令到main_ctx*/
 	TAILQ_FOREACH(c, &driver_commands_head, next) {
 		for (i = 0; c->commands[i].ctx != NULL; i++, count++)
 			main_ctx[count] = c->commands[i].ctx;
@@ -13075,6 +13084,7 @@ cmdline_read_from_file(const char *filename)
 		return;
 	}
 
+	/*自文件中读取cmd并执行*/
 	cmdline_interact(cl);
 	cmdline_quit(cl);
 
@@ -13093,6 +13103,7 @@ prompt_exit(void)
 void
 prompt(void)
 {
+	/*自标准输入读取命令行，并执行*/
 	testpmd_cl = cmdline_stdin_new(main_ctx, "testpmd> ");
 	if (testpmd_cl == NULL) {
 		fprintf(stderr,

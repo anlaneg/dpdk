@@ -42,10 +42,12 @@ txq_alloc_elts(struct mlx5_txq_ctrl *txq_ctrl)
 	const unsigned int elts_n = 1 << txq_ctrl->txq.elts_n;
 	unsigned int i;
 
+	/*初始化elts_n个指针为NULL*/
 	for (i = 0; (i != elts_n); ++i)
 		txq_ctrl->txq.elts[i] = NULL;
 	DRV_LOG(DEBUG, "port %u Tx queue %u allocated and configured %u WRs",
 		PORT_ID(txq_ctrl->priv), txq_ctrl->txq.idx, elts_n);
+	/*均初始化为0*/
 	txq_ctrl->txq.elts_head = 0;
 	txq_ctrl->txq.elts_tail = 0;
 	txq_ctrl->txq.elts_comp = 0;
@@ -333,6 +335,7 @@ mlx5_tx_queue_pre_setup(struct rte_eth_dev *dev, uint16_t idx, uint16_t *desc)
 	struct mlx5_priv *priv = dev->data->dev_private;
 
 	if (*desc <= MLX5_TX_COMP_THRESH) {
+		/*描述符过小，告警*/
 		DRV_LOG(WARNING,
 			"port %u number of descriptors requested for Tx queue"
 			" %u must be higher than MLX5_TX_COMP_THRESH, using %u"
@@ -341,6 +344,7 @@ mlx5_tx_queue_pre_setup(struct rte_eth_dev *dev, uint16_t idx, uint16_t *desc)
 		*desc = MLX5_TX_COMP_THRESH + 1;
 	}
 	if (!rte_is_power_of_2(*desc)) {
+		/*必须为2的N次方*/
 		*desc = 1 << log2above(*desc);
 		DRV_LOG(WARNING,
 			"port %u increased number of descriptors in Tx queue"
@@ -350,17 +354,20 @@ mlx5_tx_queue_pre_setup(struct rte_eth_dev *dev, uint16_t idx, uint16_t *desc)
 	DRV_LOG(DEBUG, "port %u configuring queue %u for %u descriptors",
 		dev->data->port_id, idx, *desc);
 	if (idx >= priv->txqs_n) {
+		/*索引有误，超过txq的最大值*/
 		DRV_LOG(ERR, "port %u Tx queue index out of range (%u >= %u)",
 			dev->data->port_id, idx, priv->txqs_n);
 		rte_errno = EOVERFLOW;
 		return -rte_errno;
 	}
 	if (!mlx5_txq_releasable(dev, idx)) {
+		/*此队列不可释放，报错*/
 		rte_errno = EBUSY;
 		DRV_LOG(ERR, "port %u unable to release queue index %u",
 			dev->data->port_id, idx);
 		return -rte_errno;
 	}
+	/*移除此队列*/
 	mlx5_txq_release(dev, idx);
 	return 0;
 }
@@ -395,12 +402,15 @@ mlx5_tx_queue_setup(struct rte_eth_dev *dev, uint16_t idx, uint16_t desc,
 	res = mlx5_tx_queue_pre_setup(dev, idx, &desc);
 	if (res)
 		return res;
+	/*创建并初始化txq*/
 	txq_ctrl = mlx5_txq_new(dev, idx, desc, socket, conf);
 	if (!txq_ctrl) {
 		DRV_LOG(ERR, "port %u unable to allocate queue index %u",
 			dev->data->port_id, idx);
 		return -rte_errno;
 	}
+
+	/*为此设备设置idx号队列*/
 	DRV_LOG(DEBUG, "port %u adding Tx queue %u to list",
 		dev->data->port_id, idx);
 	(*priv->txqs)[idx] = &txq_ctrl->txq;
@@ -1068,12 +1078,14 @@ error:
  *   A DPDK queue object on success, NULL otherwise and rte_errno is set.
  */
 struct mlx5_txq_ctrl *
-mlx5_txq_new(struct rte_eth_dev *dev, uint16_t idx, uint16_t desc,
-	     unsigned int socket, const struct rte_eth_txconf *conf)
+mlx5_txq_new(struct rte_eth_dev *dev, uint16_t idx/*队列编号*/, uint16_t desc/*描述符数目，必须为2^n*/,
+	     unsigned int socket/*队列内存所需的socket id*/, const struct rte_eth_txconf *conf/*tx队列配置*/)
 {
+	//创建此设备的txq
 	struct mlx5_priv *priv = dev->data->dev_private;
 	struct mlx5_txq_ctrl *tmpl;
 
+	/*创建txq（实际上创建了desc个mbuf指针 + mlx5_txq_ctrl结构体）*/
 	tmpl = mlx5_malloc(MLX5_MEM_RTE | MLX5_MEM_ZERO, sizeof(*tmpl) +
 			   desc * sizeof(struct rte_mbuf *), 0, socket);
 	if (!tmpl) {
@@ -1109,7 +1121,7 @@ mlx5_txq_new(struct rte_eth_dev *dev, uint16_t idx, uint16_t desc,
 		goto error;
 	}
 	__atomic_fetch_add(&tmpl->refcnt, 1, __ATOMIC_RELAXED);
-	tmpl->is_hairpin = false;
+	tmpl->is_hairpin = false;/*默认不开启hairpin*/
 	LIST_INSERT_HEAD(&priv->txqsctrl, tmpl, next);
 	return tmpl;
 error:
@@ -1197,14 +1209,19 @@ mlx5_txq_get(struct rte_eth_dev *dev, uint16_t idx)
 int
 mlx5_txq_release(struct rte_eth_dev *dev, uint16_t idx)
 {
+	/*释放idx号队列*/
 	struct mlx5_priv *priv = dev->data->dev_private;
 	struct mlx5_txq_ctrl *txq_ctrl;
 
 	if (priv->txqs == NULL || (*priv->txqs)[idx] == NULL)
+		/*此设备没有队列/或者idx号队列为空，正常返回*/
 		return 0;
+	/*取txq ctrl*/
 	txq_ctrl = container_of((*priv->txqs)[idx], struct mlx5_txq_ctrl, txq);
+	/*检查引用计数，如引用计数不为1，则返回1释放失败*/
 	if (__atomic_fetch_sub(&txq_ctrl->refcnt, 1, __ATOMIC_RELAXED) - 1 > 1)
 		return 1;
+
 	if (txq_ctrl->obj) {
 		priv->obj_ops.txq_obj_release(txq_ctrl->obj);
 		LIST_REMOVE(txq_ctrl->obj, next);
@@ -1247,8 +1264,11 @@ mlx5_txq_releasable(struct rte_eth_dev *dev, uint16_t idx)
 	struct mlx5_txq_ctrl *txq;
 
 	if (!(*priv->txqs)[idx])
+		/*此队列不存在，返回-1*/
 		return -1;
+	/*由txq反推txq ctl*/
 	txq = container_of((*priv->txqs)[idx], struct mlx5_txq_ctrl, txq);
+	/*检查引用计数*/
 	return (__atomic_load_n(&txq->refcnt, __ATOMIC_RELAXED) == 1);
 }
 

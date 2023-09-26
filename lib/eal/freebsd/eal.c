@@ -370,6 +370,7 @@ eal_log_level_parse(int argc, char **argv)
 	int opt;
 	char **argvopt;
 	int option_index;
+	/*getopt会有一些内置的，这里先将其保存，后面再恢复*/
 	const int old_optind = optind;
 	const int old_optopt = optopt;
 	const int old_optreset = optreset;
@@ -390,6 +391,7 @@ eal_log_level_parse(int argc, char **argv)
 		if (opt == '?')
 			break;
 
+		/*仅处理log level对应的选项*/
 		ret = (opt == OPT_LOG_LEVEL_NUM) ?
 		    eal_parse_common_option(opt, optarg, internal_conf) : 0;
 
@@ -592,6 +594,7 @@ rte_eal_init(int argc, char **argv)
 
 	/* checks if the machine is adequate */
 	if (!rte_cpu_is_supported()) {
+		/*cpu标记检查失败*/
 		rte_eal_init_alert("unsupported cpu type.");
 		rte_errno = ENOTSUP;
 		return -1;
@@ -607,10 +610,10 @@ rte_eal_init(int argc, char **argv)
 	eal_reset_internal_config(internal_conf);
 
 	/* clone argv to report out later in telemetry */
-	eal_save_args(argc, argv);
+	eal_save_args(argc, argv);/*复制参数*/
 
 	/* set log level as early as possible */
-	eal_log_level_parse(argc, argv);
+	eal_log_level_parse(argc, argv);/*仅设置log level*/
 
 	if (rte_eal_cpu_init() < 0) {
 		rte_eal_init_alert("Cannot detect lcores.");

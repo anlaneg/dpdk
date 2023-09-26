@@ -26,11 +26,14 @@ struct rte_driver {
  */
 struct rte_device {
 	RTE_TAILQ_ENTRY(rte_device) next; /**< Next device */
+	/*设备名称*/
 	const char *name;             /**< Device name */
 	const char *bus_info;         /**< Device bus specific information */
 	const struct rte_driver *driver; /**< Driver assigned after probing */
 	const struct rte_bus *bus;    /**< Bus handle assigned on scan */
+	/*设备所属numa*/
 	int numa_node;                /**< NUMA node connection */
+	/*设备属性*/
 	struct rte_devargs *devargs;  /**< Arguments for latest probing */
 };
 

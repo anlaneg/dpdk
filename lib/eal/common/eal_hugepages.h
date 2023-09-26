@@ -16,12 +16,16 @@
  * through the files in hugetlbfs.
  */
 struct hugepage_file {
+	/*此页虚拟地址*/
 	void *orig_va;      /**< virtual addr of first mmap() */
 	void *final_va;     /**< virtual addr of 2nd mmap() */
+	/*此页对应的物理地址*/
 	uint64_t physaddr;  /**< physical addr */
+	/*页大小*/
 	size_t size;        /**< the page size */
 	int socket_id;      /**< NUMA socket ID */
 	int file_id;        /**< the '%d' in HUGEFILE_FMT */
+	/*此大页对应的文件名称*/
 	char filepath[MAX_HUGEPAGE_PATH]; /**< path to backing file on filesystem */
 };
 

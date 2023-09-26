@@ -1586,6 +1586,7 @@ struct mlx5_hrxq {
 /* Verbs/DevX Tx queue elements. */
 struct mlx5_txq_obj {
 	LIST_ENTRY(mlx5_txq_obj) next; /* Pointer to the next element. */
+	/*指向所属的rxq_ctrl*/
 	struct mlx5_txq_ctrl *txq_ctrl; /* Pointer to the control queue. */
 	union {
 		struct {
@@ -1756,10 +1757,13 @@ struct mlx5_priv {
 	int32_t pf_bond; /* >=0, representor owner PF index in bonding. */
 	unsigned int if_index; /* Associated kernel network device index. */
 	/* RX/TX queues. */
+	/*rxq数目*/
 	unsigned int rxqs_n; /* RX queues array size. */
+	/*txq数目*/
 	unsigned int txqs_n; /* TX queues array size. */
 	struct mlx5_external_rxq *ext_rxqs; /* External RX queues array. */
 	struct mlx5_rxq_priv *(*rxq_privs)[]; /* RX queue non-shared data. */
+	/*指向此设备的txq*/
 	struct mlx5_txq_data *(*txqs)[]; /* TX queues. */
 	struct rte_mempool *mprq_mp; /* Mempool for Multi-Packet RQ. */
 	struct rte_eth_rss_conf rss_conf; /* RSS configuration. */
@@ -1784,6 +1788,7 @@ struct mlx5_priv {
 	LIST_HEAD(rxq, mlx5_rxq_ctrl) rxqsctrl; /* DPDK Rx queues. */
 	LIST_HEAD(rxqobj, mlx5_rxq_obj) rxqsobj; /* Verbs/DevX Rx queues. */
 	struct mlx5_list *hrxqs; /* Hash Rx queues. */
+	/*串连此设备的所有txqctl*/
 	LIST_HEAD(txq, mlx5_txq_ctrl) txqsctrl; /* DPDK Tx queues. */
 	LIST_HEAD(txqobj, mlx5_txq_obj) txqsobj; /* Verbs/DevX Tx queues. */
 	/* Indirection tables. */

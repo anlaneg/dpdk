@@ -58,6 +58,7 @@ struct mr_cache_entry {
 /* MR Cache table for Binary search. */
 struct mlx5_mr_btree {
 	uint32_t len; /* Number of entries. */
+	/*table总大小*/
 	uint32_t size; /* Total number of entries. */
 	struct mr_cache_entry (*table)[];
 } __rte_packed;

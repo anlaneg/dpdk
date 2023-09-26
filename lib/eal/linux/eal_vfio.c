@@ -1108,6 +1108,7 @@ rte_vfio_enable(const char *modname)
 
 	/* return error directly */
 	if (vfio_available == -1) {
+		/*vfio模块没有被加载*/
 		RTE_LOG(INFO, EAL, "Could not get loaded module details!\n");
 		return -1;
 	}

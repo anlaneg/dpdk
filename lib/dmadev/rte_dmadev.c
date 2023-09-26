@@ -593,10 +593,12 @@ rte_dma_vchan_setup(int16_t dev_id, uint16_t vchan,
 		return -EINVAL;
 	}
 	if (dev->data->dev_conf.nb_vchans == 0) {
+		/*nb_vchans为0，设备需要先配置*/
 		RTE_DMA_LOG(ERR, "Device %d must be configured first", dev_id);
 		return -EINVAL;
 	}
 	if (vchan >= dev_info.nb_vchans) {
+		/*vchannel不得大于硬件支持*/
 		RTE_DMA_LOG(ERR, "Device %d vchan out range!", dev_id);
 		return -EINVAL;
 	}

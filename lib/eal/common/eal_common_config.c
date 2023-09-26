@@ -42,14 +42,14 @@ eal_set_runtime_dir(const char *run_dir)
 struct rte_config *
 rte_eal_get_configuration(void)
 {
-	return &rte_config;
+	return &rte_config;/*返回配置结构体*/
 }
 
 /* Return a pointer to the internal configuration structure */
 struct internal_config *
 eal_get_internal_configuration(void)
 {
-	return &internal_config;
+	return &internal_config;/*返回internal配置结构体*/
 }
 
 enum rte_iova_mode

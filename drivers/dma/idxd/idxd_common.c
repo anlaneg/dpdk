@@ -79,6 +79,7 @@ __submit(struct idxd_dmadev *idxd)
 
 	idxd->stats.submitted += idxd->batch_size;
 
+	/*现在提交，标记下次batch的起始位置*/
 	idxd->batch_start += idxd->batch_size;
 	idxd->batch_size = 0;
 	idxd->batch_idx_ring[idxd->batch_idx_write] = idxd->batch_start;
@@ -96,9 +97,10 @@ __idxd_write_desc(struct idxd_dmadev *idxd,
 		const uint32_t flags)
 {
 	uint16_t mask = idxd->desc_ring_mask;
+	/*标记当前job的id号*/
 	uint16_t job_id = idxd->batch_start + idxd->batch_size;
 	/* we never wrap batches, so we only mask the start and allow start+size to overflow */
-	uint16_t write_idx = (idxd->batch_start & mask) + idxd->batch_size;
+	uint16_t write_idx = (idxd->batch_start & mask) + idxd->batch_size;/*找到描述符的填写位置*/
 
 	/* first check batch ring space then desc ring space */
 	if ((idxd->batch_idx_read == 0 && idxd->batch_idx_write == idxd->max_batches) ||
@@ -109,16 +111,17 @@ __idxd_write_desc(struct idxd_dmadev *idxd,
 
 	/* write desc. Note: descriptors don't wrap, but the completion address does */
 	const uint64_t op_flags64 = (uint64_t)(op_flags | IDXD_FLAG_COMPLETION_ADDR_VALID) << 32;
-	const uint64_t comp_addr = __desc_idx_to_iova(idxd, write_idx & mask);
+	const uint64_t comp_addr = __desc_idx_to_iova(idxd, write_idx & mask);/*取complete地址对应的*/
 	_mm256_store_si256((void *)&idxd->desc_ring[write_idx],
 			_mm256_set_epi64x(dst, src, comp_addr, op_flags64));
 	_mm256_store_si256((void *)&idxd->desc_ring[write_idx].size,
 			_mm256_set_epi64x(0, 0, 0, size));
 
-	idxd->batch_size++;
+	idxd->batch_size++;/*增加batch大小*/
 
 	rte_prefetch0_write(&idxd->desc_ring[write_idx + 1]);
 
+	/*标记需要，执行提交*/
 	if (flags & RTE_DMA_OP_FLAG_SUBMIT)
 		__submit(idxd);
 
@@ -535,8 +538,9 @@ idxd_vchan_setup(struct rte_dma_dev *dev, uint16_t vchan __rte_unused,
 	if (sizeof(struct rte_dma_vchan_conf) != qconf_sz)
 		return -EINVAL;
 
-	idxd->qcfg = *qconf;
+	idxd->qcfg = *qconf;/*队列配置*/
 
+	/*更新最大描述符*/
 	if (!rte_is_power_of_2(max_desc))
 		max_desc = rte_align32pow2(max_desc);
 	IDXD_PMD_DEBUG("DMA dev %u using %u descriptors", dev->data->dev_id, max_desc);
@@ -544,9 +548,10 @@ idxd_vchan_setup(struct rte_dma_dev *dev, uint16_t vchan __rte_unused,
 	idxd->qcfg.nb_desc = max_desc;
 
 	/* in case we are reconfiguring a device, free any existing memory */
-	rte_free(idxd->desc_ring);
+	rte_free(idxd->desc_ring);/*释放原有内存*/
 
 	/* allocate the descriptor ring at 2x size as batches can't wrap */
+	/*申请2倍的描述符*/
 	idxd->desc_ring = rte_zmalloc(NULL, sizeof(*idxd->desc_ring) * max_desc * 2, 0);
 	if (idxd->desc_ring == NULL)
 		return -ENOMEM;
@@ -593,6 +598,7 @@ idxd_dmadev_create(const char *name, struct rte_device *dev,
 	dmadev->dev_ops = ops;
 	dmadev->device = dev;
 
+	/*设置回调函数*/
 	dmadev->fp_obj->copy = idxd_enqueue_copy;
 	dmadev->fp_obj->fill = idxd_enqueue_fill;
 	dmadev->fp_obj->submit = idxd_submit;

@@ -163,6 +163,7 @@ struct mlx5dv_steering_anchor {
 struct mlx5_glue {
 	const char *version;
 	int (*fork_init)(void);
+	/*申请pd*/
 	struct ibv_pd *(*alloc_pd)(struct ibv_context *context);
 	int (*dealloc_pd)(struct ibv_pd *pd);
 	struct ibv_pd *(*import_pd)(struct ibv_context *context,

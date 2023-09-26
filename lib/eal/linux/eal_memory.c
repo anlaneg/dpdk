@@ -100,7 +100,7 @@ rte_mem_virt2phy(const void *virtaddr)
 		return RTE_BAD_IOVA;
 
 	/* standard page size */
-	page_size = getpagesize();
+	page_size = getpagesize();/*标准页大小*/
 
 	fd = open("/proc/self/pagemap", O_RDONLY);
 	if (fd < 0) {
@@ -109,8 +109,10 @@ rte_mem_virt2phy(const void *virtaddr)
 		return RTE_BAD_IOVA;
 	}
 
+	/*虚拟地址对应的页帧编号*/
 	virt_pfn = (unsigned long)virtaddr / page_size;
-	offset = sizeof(uint64_t) * virt_pfn;
+	offset = sizeof(uint64_t) * virt_pfn;/*每个页帧对应一个uint64_t,以此计算偏移*/
+	/*偏移至此文件*/
 	if (lseek(fd, offset, SEEK_SET) == (off_t) -1) {
 		RTE_LOG(INFO, EAL, "%s(): seek error in /proc/self/pagemap: %s\n",
 				__func__, strerror(errno));
@@ -118,6 +120,7 @@ rte_mem_virt2phy(const void *virtaddr)
 		return RTE_BAD_IOVA;
 	}
 
+	/*读取此page地址*/
 	retval = read(fd, &page, PFN_MASK_SIZE);
 	close(fd);
 	if (retval < 0) {
@@ -138,6 +141,7 @@ rte_mem_virt2phy(const void *virtaddr)
 	if ((page & 0x7fffffffffffffULL) == 0)
 		return RTE_BAD_IOVA;
 
+	/*取虚拟地址对应的页地址*/
 	physaddr = ((page & 0x7fffffffffffffULL) * page_size)
 		+ ((unsigned long)virtaddr % page_size);
 
@@ -162,6 +166,7 @@ find_physaddrs(struct hugepage_file *hugepg_tbl, struct hugepage_info *hpi)
 	unsigned int i;
 	phys_addr_t addr;
 
+	/*设置大页对应的物理地址*/
 	for (i = 0; i < hpi->num_pages[0]; i++) {
 		addr = rte_mem_virt2phy(hugepg_tbl[i].orig_va);
 		if (addr == RTE_BAD_PHYS_ADDR)
@@ -178,7 +183,7 @@ static int
 set_physaddrs(struct hugepage_file *hugepg_tbl, struct hugepage_info *hpi)
 {
 	unsigned int i;
-	static phys_addr_t addr;
+	static phys_addr_t addr;/*从0开始对物理地址编号，并逐个填充*/
 
 	for (i = 0; i < hpi->num_pages[0]; i++) {
 		hugepg_tbl[i].physaddr = addr;
@@ -267,6 +272,7 @@ map_all_hugepages(struct hugepage_file *hugepg_tbl, struct hugepage_info *hpi,
 
 	/* Check if kernel supports NUMA. */
 	if (numa_available() != 0) {
+		/*kernel不支持numa*/
 		RTE_LOG(DEBUG, EAL, "NUMA is not supported.\n");
 		have_numa = false;
 	}
@@ -281,14 +287,16 @@ map_all_hugepages(struct hugepage_file *hugepg_tbl, struct hugepage_info *hpi,
 				"Assuming MPOL_DEFAULT.\n", strerror(errno));
 			oldpolicy = MPOL_DEFAULT;
 		}
+		/*获知node最大数*/
 		for (i = 0; i < RTE_MAX_NUMA_NODES; i++)
 			if (internal_conf->socket_mem[i])
 				maxnode = i + 1;
 	}
 #endif
 
+	/*映射并填充所有大页*/
 	for (i = 0; i < hpi->num_pages[0]; i++) {
-		struct hugepage_file *hf = &hugepg_tbl[i];
+		struct hugepage_file *hf = &hugepg_tbl[i];/*取i号大页对应的结构体*/
 		uint64_t hugepage_sz = hpi->hugepage_sz;
 
 #ifdef RTE_EAL_NUMA_AWARE_HUGEPAGES
@@ -323,14 +331,15 @@ map_all_hugepages(struct hugepage_file *hugepg_tbl, struct hugepage_info *hpi,
 		}
 #endif
 
-		hf->file_id = i;
-		hf->size = hugepage_sz;
+		hf->file_id = i;/*页面编号编号*/
+		hf->size = hugepage_sz;/*页大小*/
+		/*得此页文件名称*/
 		eal_get_hugefile_path(hf->filepath, sizeof(hf->filepath),
 				hpi->hugedir, hf->file_id);
 		hf->filepath[sizeof(hf->filepath) - 1] = '\0';
 
 		/* try to create hugepage file */
-		fd = open(hf->filepath, O_CREAT | O_RDWR, 0600);
+		fd = open(hf->filepath, O_CREAT | O_RDWR, 0600);/*创建大页文件*/
 		if (fd < 0) {
 			RTE_LOG(DEBUG, EAL, "%s(): open failed: %s\n", __func__,
 					strerror(errno));
@@ -342,8 +351,8 @@ map_all_hugepages(struct hugepage_file *hugepg_tbl, struct hugepage_info *hpi,
 		 * this gets mapped - we already have contiguous memory areas
 		 * ready for us to map into.
 		 */
-		virtaddr = mmap(NULL, hugepage_sz, PROT_READ | PROT_WRITE,
-				MAP_SHARED | MAP_POPULATE, fd, 0);
+		virtaddr = mmap(NULL, hugepage_sz/*长度必须为页尺寸的整数倍*/, PROT_READ | PROT_WRITE,
+				MAP_SHARED | MAP_POPULATE, fd, 0);/*映射此页拿到虚地址*/
 		if (virtaddr == MAP_FAILED) {
 			RTE_LOG(DEBUG, EAL, "%s(): mmap failed: %s\n", __func__,
 					strerror(errno));
@@ -361,6 +370,7 @@ map_all_hugepages(struct hugepage_file *hugepg_tbl, struct hugepage_info *hpi,
 		 * back here.
 		 */
 		if (huge_wrap_sigsetjmp()) {
+			/*映射大页超限，关闭此fd,移除文件*/
 			RTE_LOG(DEBUG, EAL, "SIGBUS: Cannot mmap more "
 				"hugepages of size %u MB\n",
 				(unsigned int)(hugepage_sz / 0x100000));
@@ -374,6 +384,8 @@ map_all_hugepages(struct hugepage_file *hugepg_tbl, struct hugepage_info *hpi,
 #endif
 			goto out;
 		}
+
+		/*在此页首位添加0,目的？*/
 		*(int *)virtaddr = 0;
 
 		/* set shared lock on the file. */
@@ -1142,6 +1154,7 @@ eal_legacy_hugepage_init(void)
 
 	/* hugetlbfs can be disabled */
 	if (internal_conf->no_hugetlbfs) {
+		/*大页被禁止 */
 		void *prealloc_addr;
 		size_t mem_sz;
 		struct rte_memseg_list *msl;
@@ -1161,7 +1174,7 @@ eal_legacy_hugepage_init(void)
 		msl = &mcfg->memsegs[0];
 
 		mem_sz = internal_conf->memory;
-		page_sz = RTE_PGSIZE_4K;
+		page_sz = RTE_PGSIZE_4K;/*页大小使用4K*/
 		n_segs = mem_sz / page_sz;
 
 		if (eal_memseg_list_init_named(
@@ -1170,8 +1183,8 @@ eal_legacy_hugepage_init(void)
 		}
 
 		/* set up parameters for anonymous mmap */
-		fd = -1;
-		flags = MAP_PRIVATE | MAP_ANONYMOUS;
+		fd = -1;/*fd不需要打开*/
+		flags = MAP_PRIVATE | MAP_ANONYMOUS/*私有，匿名映射*/;
 
 #ifdef MEMFD_SUPPORTED
 		/* create a memfd and store it in the segment fd table */
@@ -1209,7 +1222,7 @@ eal_legacy_hugepage_init(void)
 
 		prealloc_addr = msl->base_va;
 		addr = mmap(prealloc_addr, mem_sz, PROT_READ | PROT_WRITE,
-				flags | MAP_FIXED, fd, 0);
+				flags | MAP_FIXED, fd, 0);/*映射普通页*/
 		if (addr == MAP_FAILED || addr != prealloc_addr) {
 			RTE_LOG(ERR, EAL, "%s: mmap() failed: %s\n", __func__,
 					strerror(errno));
@@ -1241,7 +1254,7 @@ eal_legacy_hugepage_init(void)
 					__func__);
 			goto fail;
 		}
-		return 0;
+		return 0;/*非大页情况返回*/
 	}
 
 	/* calculate total number of hugepages available. at this point we haven't
@@ -1250,6 +1263,7 @@ eal_legacy_hugepage_init(void)
 		/* meanwhile, also initialize used_hp hugepage sizes in used_hp */
 		used_hp[i].hugepage_sz = internal_conf->hugepage_info[i].hugepage_sz;
 
+		/*取大页总数*/
 		nr_hugepages += internal_conf->hugepage_info[i].num_pages[0];
 	}
 
@@ -1261,16 +1275,18 @@ eal_legacy_hugepage_init(void)
 	 */
 	tmp_hp = malloc(nr_hugepages * sizeof(struct hugepage_file));
 	if (tmp_hp == NULL)
+		/*申请nr_hugepages个struct hugepage_file失败*/
 		goto fail;
 
 	memset(tmp_hp, 0, nr_hugepages * sizeof(struct hugepage_file));
 
 	hp_offset = 0; /* where we start the current page size entries */
 
-	huge_register_sigbus();
+	huge_register_sigbus();/*注册sigbus,以便获知大页使用极限*/
 
 	/* make a copy of socket_mem, needed for balanced allocation. */
 	for (i = 0; i < RTE_MAX_NUMA_NODES; i++)
+		/*收集各numa上内存占用情况*/
 		memory[i] = internal_conf->socket_mem[i];
 
 	/* map all hugepages and sort them */
@@ -1290,8 +1306,10 @@ eal_legacy_hugepage_init(void)
 
 		/* map all hugepages available */
 		pages_old = hpi->num_pages[0];
+		/*映射此类型（hpi)大页的所有页面,采用有名映射*/
 		pages_new = map_all_hugepages(&tmp_hp[hp_offset], hpi, memory);
 		if (pages_new < pages_old) {
+			/*映射的页面小于检测到的页面数*/
 			RTE_LOG(DEBUG, EAL,
 				"%d not %d hugepages of size %u MB allocated\n",
 				pages_new, pages_old,
@@ -1300,15 +1318,16 @@ eal_legacy_hugepage_init(void)
 			int pages = pages_old - pages_new;
 
 			nr_hugepages -= pages;
-			hpi->num_pages[0] = pages_new;
+			hpi->num_pages[0] = pages_new;/*更新检测数*/
 			if (pages_new == 0)
 				continue;
 		}
 
-		if (rte_eal_using_phys_addrs() &&
+		if (rte_eazl_using_phys_addrs() &&
 				rte_eal_iova_mode() != RTE_IOVA_VA) {
 			/* find physical addresses for each hugepage */
 			if (find_physaddrs(&tmp_hp[hp_offset], hpi) < 0) {
+				/*查找hpi类型页对应的物理页失败*/
 				RTE_LOG(DEBUG, EAL, "Failed to find phys addr "
 					"for %u MB pages\n",
 					(unsigned int)(hpi->hugepage_sz / 0x100000));
@@ -1316,6 +1335,7 @@ eal_legacy_hugepage_init(void)
 			}
 		} else {
 			/* set physical addresses for each hugepage */
+			/*从零开始设置设置物理地址（连续）*/
 			if (set_physaddrs(&tmp_hp[hp_offset], hpi) < 0) {
 				RTE_LOG(DEBUG, EAL, "Failed to set phys addr "
 					"for %u MB pages\n",
@@ -1324,12 +1344,14 @@ eal_legacy_hugepage_init(void)
 			}
 		}
 
+		/*设置此hpi类型页面对应的numa socket id*/
 		if (find_numasocket(&tmp_hp[hp_offset], hpi) < 0){
 			RTE_LOG(DEBUG, EAL, "Failed to find NUMA socket for %u MB pages\n",
 					(unsigned)(hpi->hugepage_sz / 0x100000));
 			goto fail;
 		}
 
+		/*按物理地址对tmp_hp进行排序*/
 		qsort(&tmp_hp[hp_offset], hpi->num_pages[0],
 		      sizeof(struct hugepage_file), cmp_physaddr);
 
@@ -1337,13 +1359,15 @@ eal_legacy_hugepage_init(void)
 		hp_offset += hpi->num_pages[0];
 	}
 
-	huge_recover_sigbus();
+	huge_recover_sigbus();/*回复sigbus信号处理*/
 
+	/*设置使用的内存*/
 	if (internal_conf->memory == 0 && internal_conf->force_sockets == 0)
 		internal_conf->memory = eal_get_hugepage_mem_size();
 
 	nr_hugefiles = nr_hugepages;
 
+	/*上面关于num_pages信息是检测而来的，非实际映射而来，清空，并重新按实际情况设置*/
 
 	/* clean out the numbers of pages */
 	for (i = 0; i < (int) internal_conf->num_hugepage_sizes; i++)
@@ -1378,6 +1402,7 @@ eal_legacy_hugepage_init(void)
 	if (nr_hugepages < 0)
 		goto fail;
 
+	/*显示内存情况*/
 	/* reporting in! */
 	for (i = 0; i < (int) internal_conf->num_hugepage_sizes; i++) {
 		for (j = 0; j < RTE_MAX_NUMA_NODES; j++) {
@@ -1395,7 +1420,7 @@ eal_legacy_hugepage_init(void)
 
 	/* create shared memory */
 	hugepage = create_shared_memory(eal_hugepage_data_path(),
-			nr_hugefiles * sizeof(struct hugepage_file));
+			nr_hugefiles * sizeof(struct hugepage_file));/*创建shared文件，记录各大页情况*/
 
 	if (hugepage == NULL) {
 		RTE_LOG(ERR, EAL, "Failed to create shared memory!\n");
@@ -1407,6 +1432,7 @@ eal_legacy_hugepage_init(void)
 	 * unmap pages that we won't need (looks at used_hp).
 	 * also, sets final_va to NULL on pages that were unmapped.
 	 */
+	/*释放掉未使用的大页*/
 	if (unmap_unneeded_hugepages(tmp_hp, used_hp,
 			internal_conf->num_hugepage_sizes) < 0) {
 		RTE_LOG(ERR, EAL, "Unmapping and locking hugepages failed!\n");
@@ -1657,8 +1683,8 @@ rte_eal_hugepage_init(void)
 		eal_get_internal_configuration();
 
 	return internal_conf->legacy_mem ?
-			eal_legacy_hugepage_init() :
-			eal_dynmem_hugepage_init();
+			eal_legacy_hugepage_init() /*传统大页初始化*/:
+			eal_dynmem_hugepage_init() /*动态内存大页初始化*/;
 }
 
 int

@@ -61,6 +61,7 @@ def set_hugepages(path, reqpages):
     '''Write the number of reserved huge pages'''
     filename = path + '/nr_hugepages'
     try:
+        # 执行大页设置
         with open(filename, 'w') as nr_hugepages:
             nr_hugepages.write('{}\n'.format(reqpages))
     except PermissionError:
@@ -68,6 +69,7 @@ def set_hugepages(path, reqpages):
     except FileNotFoundError:
         sys.exit("Invalid page size. Valid page sizes: {}".format(
                  get_valid_page_sizes(path)))
+    # 读取大页设置，并执行检查
     gotpages = get_hugepages(path)
     if gotpages != reqpages:
         sys.exit('Unable to set pages ({} instead of {} in {}).'.format(
@@ -119,6 +121,7 @@ def clear_pages():
     else:
         dirs = glob.glob('/sys/kernel/mm/hugepages/hugepages-*')
 
+    # 将这些大页的配置设置为0
     for path in dirs:
         set_hugepages(path, 0)
 
@@ -135,8 +138,10 @@ def default_pagesize():
 def set_numa_pages(pages, hugepgsz, node=None):
     '''Set huge page reservation on Numa system'''
     if node:
+        # 只设置指定node
         nodes = ['/sys/devices/system/node/node{}/hugepages'.format(node)]
     else:
+        # 设置所有node
         nodes = glob.glob('/sys/devices/system/node/node*/hugepages')
 
     for node_path in nodes:
@@ -153,8 +158,10 @@ def set_non_numa_pages(pages, hugepgsz):
 def reserve_pages(pages, hugepgsz, node=None):
     '''Set the number of huge pages to be reserved'''
     if node or is_numa():
+        # 指定了node 或设备是numa机器，按numa进行配置
         set_numa_pages(pages, hugepgsz, node=node)
     else:
+        # 指定非numa 大页
         set_non_numa_pages(pages, hugepgsz)
 
 
@@ -166,6 +173,7 @@ def get_mountpoints():
             fields = line.split()
             if fields[2] != 'hugetlbfs':
                 continue
+            # 收集hugetlbfs挂载点
             mounted.append(fields[1])
     return mounted
 
@@ -278,25 +286,37 @@ To a complete setup of with 2 Gigabyte of 1G huge pages:
     if args.pagesize:
         pagesize_kb = get_memsize(args.pagesize)
     else:
+        # 使用默认页大小
         pagesize_kb = default_pagesize()
+    
+    # 要预留的页过小，退出
     if not pagesize_kb:
         sys.exit("Invalid page size: {}kB".format(pagesize_kb))
 
+    # 移除大页配置
     if args.clear:
         clear_pages()
+    
+    # 执行大页解挂载
     if args.unmount:
         umount_huge(args.directory)
 
     if args.reserve:
+        # 取要求预留的内存大小
         reserve_kb = get_memsize(args.reserve)
         if reserve_kb % pagesize_kb != 0:
             sys.exit(
                 'Huge reservation {}kB is not a multiple of page size {}kB'.
                 format(reserve_kb, pagesize_kb))
+        # 完成大页预留
         reserve_pages(
             int(reserve_kb / pagesize_kb), pagesize_kb, node=args.node)
+        
+    # 完成大页挂载
     if args.mount:
         mount_huge(pagesize_kb, args.directory, args.user, args.group)
+        
+    # 显示各node配置情况
     if args.show:
         show_pages()
         print()

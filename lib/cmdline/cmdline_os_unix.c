@@ -40,6 +40,7 @@ cmdline_poll_char(struct cmdline *cl)
 	return poll(&pfd, 1, 0);
 }
 
+/*自in fd中读取一个字符*/
 ssize_t
 cmdline_read_char(struct cmdline *cl, char *c)
 {

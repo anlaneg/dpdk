@@ -15,13 +15,15 @@
 
 #include "cmdline_private.h"
 
+/*校验输入的buffer,并执行其对应的命令*/
 static void
 cmdline_valid_buffer(struct rdline *rdl, const char *buf,
 		     __rte_unused unsigned int size)
 {
-	struct cmdline *cl = rdl->opaque;
+	struct cmdline *cl = rdl->opaque;/*取对应的命令行*/
 	int ret;
 	ret = cmdline_parse(cl, buf);
+	/*针对出错，显示响应*/
 	if (ret == CMDLINE_PARSE_AMBIGUOUS)
 		cmdline_printf(cl, "Ambiguous command\n");
 	else if (ret == CMDLINE_PARSE_NOMATCH)
@@ -39,6 +41,7 @@ cmdline_complete_buffer(struct rdline *rdl, const char *buf,
 	return cmdline_complete(cl, buf, state, dstbuf, dstsize);
 }
 
+/*如果s_out存在，则向其输出单个字符*/
 int
 cmdline_write_char(struct rdline *rdl, char c)
 {
@@ -56,7 +59,7 @@ cmdline_write_char(struct rdline *rdl, char c)
 	return ret;
 }
 
-
+/*设置命令提示符*/
 void
 cmdline_set_prompt(struct cmdline *cl, const char *prompt)
 {
@@ -89,6 +92,7 @@ cmdline_new(cmdline_parse_ctx_t *ctx, const char *prompt, int s_in, int s_out)
 		return NULL;
 	}
 
+	/*设置命令提示符，输出命令提示符*/
 	cmdline_set_prompt(cl, prompt);
 	rdline_newline(&cl->rdl, cl->prompt);
 
@@ -143,9 +147,11 @@ cmdline_in(struct cmdline *cl, const char *buf, int size)
 		return -1;
 
 	for (i=0; i<size; i++) {
+		/*提供命令给rdl*/
 		ret = rdline_char_in(&cl->rdl, buf[i]);
 
 		if (ret == RDLINE_RES_VALIDATED) {
+			/*有效命令，命令加入历史记录，显示新行*/
 			buffer = rdline_get_buffer(&cl->rdl);
 			history = rdline_get_history_item(&cl->rdl, 0);
 			if (history) {
@@ -221,8 +227,10 @@ cmdline_interact(struct cmdline *cl)
 
 	c = -1;
 	while (1) {
+		/*读取一个字符*/
 		if (cmdline_read_char(cl, &c) <= 0)
 			break;
+		/*将字符提供给cl,检查是否为vt100控制符/执行输出/执行命令*/
 		if (cmdline_in(cl, &c, 1) < 0)
 			break;
 	}

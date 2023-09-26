@@ -29,6 +29,7 @@ mlx5_glue_fork_init(void)
 static struct ibv_pd *
 mlx5_glue_alloc_pd(struct ibv_context *context)
 {
+	/*通过context创建pd*/
 	return ibv_alloc_pd(context);
 }
 
@@ -244,6 +245,7 @@ mlx5_glue_destroy_flow_action(void *action)
 static struct ibv_qp *
 mlx5_glue_create_qp(struct ibv_pd *pd, struct ibv_qp_init_attr *qp_init_attr)
 {
+	/*通过ibv_qp_init_attr创建qp*/
 	return ibv_create_qp(pd, qp_init_attr);
 }
 
@@ -251,6 +253,7 @@ static struct ibv_qp *
 mlx5_glue_create_qp_ex(struct ibv_context *context,
 		       struct ibv_qp_init_attr_ex *qp_init_attr_ex)
 {
+	/*通过ibv_qp_init_attr_ex创建qp*/
 	return ibv_create_qp_ex(context, qp_init_attr_ex);
 }
 

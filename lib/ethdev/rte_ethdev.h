@@ -1534,6 +1534,7 @@ struct rte_eth_conf {
 /**
  * Tx offload capabilities of a device.
  */
+/*支持vlan insert offload*/
 #define RTE_ETH_TX_OFFLOAD_VLAN_INSERT      RTE_BIT64(0)
 #define RTE_ETH_TX_OFFLOAD_IPV4_CKSUM       RTE_BIT64(1)
 #define RTE_ETH_TX_OFFLOAD_UDP_CKSUM        RTE_BIT64(2)
@@ -1554,6 +1555,7 @@ struct rte_eth_conf {
  */
 #define RTE_ETH_TX_OFFLOAD_MT_LOCKFREE      RTE_BIT64(14)
 /** Device supports multi segment send. */
+/*设置支持发送多个segment*/
 #define RTE_ETH_TX_OFFLOAD_MULTI_SEGS       RTE_BIT64(15)
 /**
  * Device supports optimization for fast release of mbufs.

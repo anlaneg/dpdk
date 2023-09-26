@@ -59,6 +59,7 @@ struct rte_kvargs_pair {
 
 /** Store a list of key/value associations */
 struct rte_kvargs {
+	/*解析来源的str*/
 	char *str;      /**< copy of the argument string */
 	unsigned count; /**< number of entries in the list */
 	struct rte_kvargs_pair pairs[RTE_KVARGS_MAX]; /**< list of key/values */

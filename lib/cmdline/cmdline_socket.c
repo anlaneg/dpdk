@@ -13,19 +13,22 @@
 #include "cmdline_socket.h"
 
 struct cmdline *
-cmdline_file_new(cmdline_parse_ctx_t *ctx, const char *prompt, const char *path)
+cmdline_file_new(cmdline_parse_ctx_t *ctx/*一组解析指令*/, const char *prompt, const char *path)
 {
 	int fd;
 
 	/* everything else is checked in cmdline_new() */
 	if (!path)
+		/*命令文件不存在，返回NULL*/
 		return NULL;
 
+	/*打开命令文件*/
 	fd = open(path, O_RDONLY, 0);
 	if (fd < 0) {
 		dprintf("open() failed\n");
 		return NULL;
 	}
+	/*初始化cmdline*/
 	return cmdline_new(ctx, prompt, fd, -1);
 }
 

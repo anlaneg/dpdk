@@ -412,10 +412,13 @@ rte_devargs_next(const char *busname, const struct rte_devargs *start)
 {
 	struct rte_devargs *da;
 
+	/*start选择*/
 	if (start != NULL)
 		da = TAILQ_NEXT(start, next);
 	else
 		da = TAILQ_FIRST(&devargs_list);
+
+	/*检查devargs，如果bus名称匹配，则返回此devargs*/
 	while (da != NULL) {
 		if (busname == NULL ||
 		    (strcmp(busname, da->bus->name) == 0))

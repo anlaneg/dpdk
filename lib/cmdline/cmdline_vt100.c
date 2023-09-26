@@ -56,6 +56,7 @@ match_command(char *buf, unsigned int size)
 	size_t cmdlen;
 	unsigned int i = 0;
 
+	/*检查buffer中存放的是否为cmdline vt100的命令，如果是，返回对应的命令index,如果不是，返回-1*/
 	for (i=0 ; i<sizeof(cmdline_vt100_commands)/sizeof(const char *) ; i++) {
 		cmd = *(cmdline_vt100_commands + i);
 
@@ -83,12 +84,13 @@ vt100_parser(struct cmdline_vt100 *vt, char ch)
 		vt->bufpos = 0;
 	}
 
-	vt->buf[vt->bufpos++] = c;
+	vt->buf[vt->bufpos++] = c;/*将c存入buffer*/
 	size = vt->bufpos;
 
 	switch (vt->state) {
 	case CMDLINE_VT100_INIT:
 		if (c == 033) {
+			/*遇到033,进入escap状态*/
 			vt->state = CMDLINE_VT100_ESCAPE;
 		}
 		else {
@@ -121,6 +123,7 @@ vt100_parser(struct cmdline_vt100 *vt, char ch)
 		break;
 	}
 
+	/*字符被消费，需要更多字符*/
 	return -2;
 
  match_command:

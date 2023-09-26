@@ -1655,8 +1655,11 @@ mlx5_devx_cmd_create_tir(void *ctx,
 		rte_errno = ENOMEM;
 		return NULL;
 	}
+	/*设置结构体mlx5_ifc_create_tir_in_bits的成员opcode*/
 	MLX5_SET(create_tir_in, in, opcode, MLX5_CMD_OP_CREATE_TIR);
+	/*取结构体mlx5_ifc_create_tir_in_bits的成员ctx,其为mlx5_ifc_tirc_bits类型*/
 	tir_ctx = MLX5_ADDR_OF(create_tir_in, in, ctx);
+	/*填充tir_ctx*/
 	MLX5_SET(tirc, tir_ctx, disp_type, tir_attr->disp_type);
 	MLX5_SET(tirc, tir_ctx, lro_timeout_period_usecs,
 		 tir_attr->lro_timeout_period_usecs);
@@ -1670,8 +1673,10 @@ mlx5_devx_cmd_create_tir(void *ctx,
 	MLX5_SET(tirc, tir_ctx, rx_hash_fn, tir_attr->rx_hash_fn);
 	MLX5_SET(tirc, tir_ctx, self_lb_block, tir_attr->self_lb_block);
 	MLX5_SET(tirc, tir_ctx, transport_domain, tir_attr->transport_domain);
+	/*取rss_key，并填充*/
 	rss_key = MLX5_ADDR_OF(tirc, tir_ctx, rx_hash_toeplitz_key);
 	memcpy(rss_key, tir_attr->rx_hash_toeplitz_key, MLX5_RSS_HASH_KEY_LEN);
+	/*取rx_hash_field_selector_outer,并填充*/
 	outer = MLX5_ADDR_OF(tirc, tir_ctx, rx_hash_field_selector_outer);
 	MLX5_SET(rx_hash_field_select, outer, l3_prot_type,
 		 tir_attr->rx_hash_field_selector_outer.l3_prot_type);
@@ -1679,6 +1684,7 @@ mlx5_devx_cmd_create_tir(void *ctx,
 		 tir_attr->rx_hash_field_selector_outer.l4_prot_type);
 	MLX5_SET(rx_hash_field_select, outer, selected_fields,
 		 tir_attr->rx_hash_field_selector_outer.selected_fields);
+	/*取rx_hash_field_selector_inner，并填充*/
 	inner = MLX5_ADDR_OF(tirc, tir_ctx, rx_hash_field_selector_inner);
 	MLX5_SET(rx_hash_field_select, inner, l3_prot_type,
 		 tir_attr->rx_hash_field_selector_inner.l3_prot_type);
@@ -1686,6 +1692,8 @@ mlx5_devx_cmd_create_tir(void *ctx,
 		 tir_attr->rx_hash_field_selector_inner.l4_prot_type);
 	MLX5_SET(rx_hash_field_select, inner, selected_fields,
 		 tir_attr->rx_hash_field_selector_inner.selected_fields);
+
+	/*in buffer填充完成，调用回调进行创建*/
 	tir->obj = mlx5_glue->devx_obj_create(ctx, in, sizeof(in),
 						   out, sizeof(out));
 	if (!tir->obj) {

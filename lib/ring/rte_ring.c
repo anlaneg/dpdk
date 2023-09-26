@@ -133,6 +133,7 @@ get_sync_type(uint32_t flags, enum rte_ring_sync_type *prod_st,
 		(RING_F_SC_DEQ | RING_F_MC_RTS_DEQ | RING_F_MC_HTS_DEQ);
 
 	switch (flags & prod_st_flags) {
+	/*未设置有效flags,默认为多线程同步模式*/
 	case 0:
 		*prod_st = RTE_RING_SYNC_MT;
 		break;

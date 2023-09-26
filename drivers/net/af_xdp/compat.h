@@ -50,6 +50,7 @@ create_shared_socket(struct xsk_socket **xsk_ptr __rte_unused,
 static int
 tx_syscall_needed(struct xsk_ring_prod *q)
 {
+	/*检查tx是否需要wakeup*/
 	return xsk_ring_prod__needs_wakeup(q);
 }
 #else
@@ -88,6 +89,7 @@ out:
 #else
 static int load_program(const char *prog_path, struct bpf_object **obj)
 {
+	/*加载bpf prog*/
 	int ret, prog_fd;
 
 	ret = bpf_prog_load(prog_path, BPF_PROG_TYPE_XDP, obj, &prog_fd);

@@ -35,8 +35,8 @@ client_handler(void *socket);
 #endif /* !RTE_EXEC_ENV_WINDOWS */
 
 struct cmd_callback {
-	char cmd[MAX_CMD_LEN];
-	telemetry_cb fn;
+	char cmd[MAX_CMD_LEN];/*命令*/
+	telemetry_cb fn;/*回调*/
 	char help[RTE_TEL_MAX_STRING_LEN];
 };
 
@@ -67,6 +67,7 @@ static rte_spinlock_t callback_sl = RTE_SPINLOCK_INITIALIZER;
 static uint16_t v2_clients;
 #endif /* !RTE_EXEC_ENV_WINDOWS */
 
+/*注册telemeter命令*/
 int
 rte_telemetry_register_cmd(const char *cmd, telemetry_cb fn, const char *help)
 {
@@ -85,6 +86,7 @@ rte_telemetry_register_cmd(const char *cmd, telemetry_cb fn, const char *help)
 	}
 
 	rte_spinlock_lock(&callback_sl);
+	/*申请或扩大callbacks空间*/
 	new_callbacks = realloc(callbacks, sizeof(callbacks[0]) * (num_callbacks + 1));
 	if (new_callbacks == NULL) {
 		rte_spinlock_unlock(&callback_sl);
@@ -94,11 +96,13 @@ rte_telemetry_register_cmd(const char *cmd, telemetry_cb fn, const char *help)
 
 	while (i < num_callbacks && strcmp(cmd, callbacks[i].cmd) > 0)
 		i++;
+	/*向后移动，空出格子*/
 	if (i != num_callbacks)
 		/* Move elements to keep the list alphabetical */
 		memmove(callbacks + i + 1, callbacks + i,
 			sizeof(struct cmd_callback) * (num_callbacks - i));
 
+	/*填充此格子*/
 	strlcpy(callbacks[i].cmd, cmd, MAX_CMD_LEN);
 	callbacks[i].fn = fn;
 	strlcpy(callbacks[i].help, help, RTE_TEL_MAX_STRING_LEN);
@@ -119,6 +123,7 @@ list_commands(const char *cmd __rte_unused, const char *params __rte_unused,
 	rte_tel_data_start_array(d, RTE_TEL_STRING_VAL);
 	rte_spinlock_lock(&callback_sl);
 	for (i = 0; i < num_callbacks; i++)
+		/*收集cmd*/
 		rte_tel_data_add_array_string(d, callbacks[i].cmd);
 	rte_spinlock_unlock(&callback_sl);
 	return 0;
@@ -348,6 +353,7 @@ perform_command(telemetry_cb fn, const char *cmd, const char *param, int s)
 {
 	struct rte_tel_data data = {0};
 
+	/*执行回调*/
 	int ret = fn(cmd, param, &data);
 	if (ret < 0) {
 		char out_buf[MAX_CMD_LEN + 10];
@@ -394,11 +400,14 @@ client_handler(void *sock_id)
 			rte_spinlock_lock(&callback_sl);
 			for (i = 0; i < num_callbacks; i++)
 				if (strcmp(cmd, callbacks[i].cmd) == 0) {
+					/*命令命中，设置对应的回调，跳出*/
 					fn = callbacks[i].fn;
 					break;
 				}
 			rte_spinlock_unlock(&callback_sl);
 		}
+
+		/*执行命令回调*/
 		perform_command(fn, cmd, param, s);
 
 		bytes = read(s, buffer, sizeof(buffer) - 1);

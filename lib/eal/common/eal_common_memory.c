@@ -762,6 +762,7 @@ rte_memseg_list_walk_thread_unsafe(rte_memseg_list_walk_t func, void *arg)
 	struct rte_mem_config *mcfg = rte_eal_get_configuration()->mem_config;
 	int i, ret = 0;
 
+	/*通过func遍历mcfg->memsegs*/
 	for (i = 0; i < RTE_MAX_MEMSEG_LISTS; i++) {
 		struct rte_memseg_list *msl = &mcfg->memsegs[i];
 
@@ -1093,8 +1094,8 @@ rte_eal_memory_init(void)
 		goto fail;
 
 	retval = rte_eal_process_type() == RTE_PROC_PRIMARY ?
-			rte_eal_hugepage_init() :
-			rte_eal_hugepage_attach();
+			rte_eal_hugepage_init() /*主进程大页初始化*/:
+			rte_eal_hugepage_attach();/*从进程大页attach*/
 	if (retval < 0)
 		goto fail;
 

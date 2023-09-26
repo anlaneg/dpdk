@@ -502,7 +502,7 @@ eal_parse_socket_arg(char *strval, volatile uint64_t *socket_arg)
 				(arg[i][0] == '\0') || (end == NULL) || (*end != '\0'))
 			return -1;
 		val <<= 20;
-		socket_arg[i] = val;
+		socket_arg[i] = val;/*为每个socket设置内存*/
 	}
 
 	return 0;
@@ -671,6 +671,7 @@ eal_parse_args(int argc, char **argv)
 
 		case OPT_HUGE_DIR_NUM:
 		{
+			/*设置使用的大页目录*/
 			char *hdir = strdup(optarg);
 			if (hdir == NULL)
 				RTE_LOG(ERR, EAL, "Could not store hugepage directory\n");
@@ -694,6 +695,7 @@ eal_parse_args(int argc, char **argv)
 			break;
 		}
 		case OPT_SOCKET_MEM_NUM:
+			/*设置socket内存*/
 			if (eal_parse_socket_arg(optarg,
 					internal_conf->socket_mem) < 0) {
 				RTE_LOG(ERR, EAL, "invalid parameters for --"
@@ -706,6 +708,7 @@ eal_parse_args(int argc, char **argv)
 			break;
 
 		case OPT_SOCKET_LIMIT_NUM:
+			/*设置socket limit内存*/
 			if (eal_parse_socket_arg(optarg,
 					internal_conf->socket_limit) < 0) {
 				RTE_LOG(ERR, EAL, "invalid parameters for --"
@@ -966,6 +969,7 @@ out:
 int
 rte_eal_init(int argc, char **argv)
 {
+	/*eal初始化*/
 	int i, fctret, ret;
 	static uint32_t run_once;
 	uint32_t has_run = 0;
@@ -1058,6 +1062,7 @@ rte_eal_init(int argc, char **argv)
 		}
 	}
 
+	/*遍历系统所有bus,扫描所有设备*/
 	if (rte_bus_scan()) {
 		rte_eal_init_alert("Cannot scan the buses for devices");
 		rte_errno = ENODEV;
@@ -1118,10 +1123,11 @@ rte_eal_init(int argc, char **argv)
 		rte_eal_iova_mode() == RTE_IOVA_PA ? "PA" : "VA");
 
 	if (internal_conf->no_hugetlbfs == 0) {
+		/*大页未禁用，依据进程类型，初始化大页配置信息*/
 		/* rte_config isn't initialized yet */
 		ret = internal_conf->process_type == RTE_PROC_PRIMARY ?
-				eal_hugepage_info_init() :
-				eal_hugepage_info_read();
+				eal_hugepage_info_init()/*主进程初始化大页配置信息*/ :
+				eal_hugepage_info_read()/*从进程读取大页配置信息*/;
 		if (ret < 0) {
 			rte_eal_init_alert("Cannot get hugepage information.");
 			rte_errno = EACCES;
@@ -1132,6 +1138,7 @@ rte_eal_init(int argc, char **argv)
 
 	if (internal_conf->memory == 0 && internal_conf->force_sockets == 0) {
 		if (internal_conf->no_hugetlbfs)
+			/*禁用大页，则设置memory为64M*/
 			internal_conf->memory = MEMSIZE_IF_NO_HUGE_PAGE;
 	}
 
@@ -1174,6 +1181,7 @@ rte_eal_init(int argc, char **argv)
 
 	rte_mcfg_mem_read_lock();
 
+	/*eal内存初始化*/
 	if (rte_eal_memory_init() < 0) {
 		rte_mcfg_mem_read_unlock();
 		rte_eal_init_alert("Cannot init memory");

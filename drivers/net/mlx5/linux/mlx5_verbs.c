@@ -861,6 +861,7 @@ mlx5_txq_ibv_qp_create(struct rte_eth_dev *dev, uint16_t idx)
 			container_of(txq_data, struct mlx5_txq_ctrl, txq);
 	struct ibv_qp *qp_obj = NULL;
 	struct ibv_qp_init_attr_ex qp_attr = { 0 };
+	/*取设置的txq对应的描述符大小*/
 	const int desc = 1 << txq_data->elts_n;
 
 	MLX5_ASSERT(txq_ctrl->obj->cq);
@@ -877,10 +878,10 @@ mlx5_txq_ibv_qp_create(struct rte_eth_dev *dev, uint16_t idx)
 	 * dev_cap.max_sge limit and will still work properly.
 	 */
 	qp_attr.cap.max_send_sge = 1;
-	qp_attr.qp_type = IBV_QPT_RAW_PACKET,
+	qp_attr.qp_type = IBV_QPT_RAW_PACKET,/*指明qp类型为raw packet*/
 	/* Do *NOT* enable this, completions events are managed per Tx burst. */
 	qp_attr.sq_sig_all = 0;
-	qp_attr.pd = priv->sh->cdev->pd;
+	qp_attr.pd = priv->sh->cdev->pd;/*指定pd*/
 	qp_attr.comp_mask = IBV_QP_INIT_ATTR_PD;
 	if (txq_data->inlen_send)
 		qp_attr.cap.max_inline_data = txq_ctrl->max_inline_data;
@@ -888,6 +889,7 @@ mlx5_txq_ibv_qp_create(struct rte_eth_dev *dev, uint16_t idx)
 		qp_attr.max_tso_header = txq_ctrl->max_tso_header;
 		qp_attr.comp_mask |= IBV_QP_INIT_ATTR_MAX_TSO_HEADER;
 	}
+	/*指定属性创建qp*/
 	qp_obj = mlx5_glue->create_qp_ex(priv->sh->cdev->ctx, &qp_attr);
 	if (qp_obj == NULL) {
 		DRV_LOG(ERR, "Port %u Tx queue %u QP creation failure.",
@@ -948,6 +950,7 @@ int
 mlx5_txq_ibv_obj_new(struct rte_eth_dev *dev, uint16_t idx)
 {
 	struct mlx5_priv *priv = dev->data->dev_private;
+	/*取idx号txq队列*/
 	struct mlx5_txq_data *txq_data = (*priv->txqs)[idx];
 	struct mlx5_txq_ctrl *txq_ctrl =
 		container_of(txq_data, struct mlx5_txq_ctrl, txq);
@@ -963,6 +966,7 @@ mlx5_txq_ibv_obj_new(struct rte_eth_dev *dev, uint16_t idx)
 	MLX5_ASSERT(txq_obj);
 	txq_obj->txq_ctrl = txq_ctrl;
 	if (mlx5_getenv_int("MLX5_ENABLE_CQE_COMPRESSION")) {
+		/*此环境变量被设置，报错*/
 		DRV_LOG(ERR, "Port %u MLX5_ENABLE_CQE_COMPRESSION "
 			"must never be set.", dev->data->port_id);
 		rte_errno = EINVAL;
@@ -974,6 +978,7 @@ mlx5_txq_ibv_obj_new(struct rte_eth_dev *dev, uint16_t idx)
 	else
 		cqe_n = desc / MLX5_TX_COMP_THRESH +
 			1 + MLX5_TX_COMP_THRESH_INLINE_DIV;
+	/*创建cq*/
 	txq_obj->cq = mlx5_glue->create_cq(priv->sh->cdev->ctx, cqe_n,
 					   NULL, NULL, 0);
 	if (txq_obj->cq == NULL) {
@@ -982,6 +987,8 @@ mlx5_txq_ibv_obj_new(struct rte_eth_dev *dev, uint16_t idx)
 		rte_errno = errno;
 		goto error;
 	}
+
+	/*创建qp*/
 	txq_obj->qp = mlx5_txq_ibv_qp_create(dev, idx);
 	if (txq_obj->qp == NULL) {
 		rte_errno = errno;
@@ -1001,6 +1008,8 @@ mlx5_txq_ibv_obj_new(struct rte_eth_dev *dev, uint16_t idx)
 	if (priv->sh->cdev->config.devx && !priv->sh->tdn)
 		qp.comp_mask |= MLX5DV_QP_MASK_RAW_QP_HANDLES;
 #endif
+
+	/*提供cqin,qpin,获得cqout,qpout*/
 	obj.cq.in = txq_obj->cq;
 	obj.cq.out = &cq_info;
 	obj.qp.in = txq_obj->qp;
@@ -1022,7 +1031,7 @@ mlx5_txq_ibv_obj_new(struct rte_eth_dev *dev, uint16_t idx)
 	txq_data->cqe_s = 1 << txq_data->cqe_n;
 	txq_data->cqe_m = txq_data->cqe_s - 1;
 	txq_data->qp_num_8s = ((struct ibv_qp *)txq_obj->qp)->qp_num << 8;
-	txq_data->wqes = qp.sq.buf;
+	txq_data->wqes = qp.sq.buf;/*qp对应的send queue*/
 	txq_data->wqe_n = log2above(qp.sq.wqe_cnt);
 	txq_data->wqe_s = 1 << txq_data->wqe_n;
 	txq_data->wqe_m = txq_data->wqe_s - 1;

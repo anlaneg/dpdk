@@ -27,6 +27,7 @@ eal_cpu_detected(unsigned lcore_id)
 	if (access(path, F_OK) != 0)
 		return 0;
 
+	/*利用sysfs检查此core是否存在*/
 	return 1;
 }
 
@@ -42,6 +43,7 @@ eal_cpu_socket_id(unsigned lcore_id)
 {
 	unsigned socket;
 
+	/*遍历尝试lcore_id对应的socket id*/
 	for (socket = 0; socket < RTE_MAX_NUMA_NODES; socket++) {
 		char path[PATH_MAX];
 
@@ -50,6 +52,7 @@ eal_cpu_socket_id(unsigned lcore_id)
 		if (access(path, F_OK) == 0)
 			return socket;
 	}
+	/*默认为socket 0*/
 	return 0;
 }
 
@@ -60,6 +63,7 @@ eal_cpu_core_id(unsigned lcore_id)
 	char path[PATH_MAX];
 	unsigned long id;
 
+	/*取lcore_id号cpu对应的core_id*/
 	int len = snprintf(path, sizeof(path), SYS_CPU_DIR "/%s", lcore_id, CORE_ID_FILE);
 	if (len <= 0 || (unsigned)len >= sizeof(path))
 		goto err;

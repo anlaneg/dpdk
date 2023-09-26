@@ -70,11 +70,13 @@ uint16_t mlx5_tx_burst_##func(void *txq, \
 			      struct rte_mbuf **pkts, \
 			      uint16_t pkts_n)
 
+/*定义函数名称，并传入olx,并执行tx发包*/
 #define MLX5_TXOFF_DECL(func, olx) \
 uint16_t mlx5_tx_burst_##func(void *txq, \
 			      struct rte_mbuf **pkts, \
 			      uint16_t pkts_n) \
 { \
+	/*实现按olx规定的标记，实现报文发送*/\
 	return mlx5_tx_burst_tmpl((struct mlx5_txq_data *)txq, \
 		    pkts, pkts_n, (olx)); \
 }
@@ -116,7 +118,9 @@ struct mlx5_txq_data {
 	uint16_t elts_head; /* Current counter in (*elts)[]. */
 	uint16_t elts_tail; /* Counter of first element awaiting completion. */
 	uint16_t elts_comp; /* elts index since last completion request. */
+	/*txq队列长度（tx描述符数目）*/
 	uint16_t elts_s; /* Number of mbuf elements. */
+	/*txq队列长度mask(elts_s必须为2^N)*/
 	uint16_t elts_m; /* Mask for mbuf elements indices. */
 	/* Fields related to elts mbuf storage. */
 	uint16_t wqe_ci; /* Consumer index for work queue. */
@@ -151,6 +155,7 @@ struct mlx5_txq_data {
 	uint32_t qp_num_8s; /* QP number shifted by 8. */
 	uint64_t offloads; /* Offloads for Tx Queue. */
 	struct mlx5_mr_ctrl mr_ctrl; /* MR control descriptor. */
+	/*work queue队列，指向一组wqe*/
 	struct mlx5_wqe *wqes; /* Work queue. */
 	struct mlx5_wqe *wqes_end; /* Work queue array limit. */
 #ifdef RTE_LIBRTE_MLX5_DEBUG
@@ -161,7 +166,9 @@ struct mlx5_txq_data {
 	volatile struct mlx5_cqe *cqes; /* Completion queue. */
 	volatile uint32_t *qp_db; /* Work queue doorbell. */
 	volatile uint32_t *cq_db; /* Completion queue doorbell. */
+	/*此txq从属于哪个rte_eth_dev设备*/
 	uint16_t port_id; /* Port ID of device. */
+	/*此txq的队列编号*/
 	uint16_t idx; /* Queue index. */
 	uint64_t rt_timemask; /* Scheduling timestamp mask. */
 	uint64_t ts_mask; /* Timestamp flag dynamic mask. */
@@ -171,7 +178,7 @@ struct mlx5_txq_data {
 	struct mlx5_txq_stats stats; /* TX queue counters. */
 	struct mlx5_txq_stats stats_reset; /* stats on last reset. */
 	struct mlx5_uar_data uar_data;
-	struct rte_mbuf *elts[0];
+	struct rte_mbuf *elts[0];/*保存tx队列数据*/
 	/* Storage for queued packets, must be the last field. */
 } __rte_cache_aligned;
 
@@ -179,6 +186,7 @@ struct mlx5_txq_data {
 struct mlx5_txq_ctrl {
 	LIST_ENTRY(mlx5_txq_ctrl) next; /* Pointer to the next element. */
 	uint32_t refcnt; /* Reference counter. */
+	/*内存在哪个socket上*/
 	unsigned int socket; /* CPU socket ID for allocations. */
 	bool is_hairpin; /* Whether TxQ type is Hairpin. */
 	unsigned int max_inline_data; /* Max inline data. */
@@ -2705,9 +2713,9 @@ next_empw:
 		if (unlikely(loc->elts_free < part)) {
 			/* We have no enough elts to save all mbufs. */
 			if (unlikely(loc->elts_free < MLX5_EMPW_MIN_PACKETS))
-				return MLX5_TXCMP_CODE_EXIT;
+				return MLX5_TXCMP_CODE_EXIT;/*实体数目太少，返回错误*/
 			/* But we still able to send at least minimal eMPW. */
-			part = loc->elts_free;
+			part = loc->elts_free;/*实体数目小于part,更新part*/
 		}
 		if (MLX5_TXOFF_CONFIG(TXPP)) {
 			enum mlx5_txcmp_code wret;
@@ -2723,8 +2731,9 @@ next_empw:
 		if (unlikely(loc->wqe_free < ((2 + part + 3) / 4))) {
 			if (unlikely(loc->wqe_free <
 				((2 + MLX5_EMPW_MIN_PACKETS + 3) / 4)))
+				/*wqe空闲数量过少，返回错误*/
 				return MLX5_TXCMP_CODE_EXIT;
-			part = (loc->wqe_free * 4) - 2;
+			part = (loc->wqe_free * 4) - 2;/*weq数目小于part,更新part*/
 		}
 		if (likely(part > 1))
 			rte_prefetch0(*pkts);
@@ -3502,10 +3511,10 @@ ordinary_send:
  *   Number of packets successfully transmitted (<= pkts_n).
  */
 static __rte_always_inline uint16_t
-mlx5_tx_burst_tmpl(struct mlx5_txq_data *__rte_restrict txq,
-		   struct rte_mbuf **__rte_restrict pkts,
-		   uint16_t pkts_n,
-		   unsigned int olx)
+mlx5_tx_burst_tmpl(struct mlx5_txq_data *__rte_restrict txq/*负责发送的queue*/,
+		   struct rte_mbuf **__rte_restrict pkts/*要发送的一组报文*/,
+		   uint16_t pkts_n/*这组报文数目*/,
+		   unsigned int olx/*offload标记*/)
 {
 	struct mlx5_txq_local loc;
 	enum mlx5_txcmp_code ret;
@@ -3513,8 +3522,11 @@ mlx5_tx_burst_tmpl(struct mlx5_txq_data *__rte_restrict txq,
 
 	MLX5_ASSERT(txq->elts_s >= (uint16_t)(txq->elts_head - txq->elts_tail));
 	MLX5_ASSERT(txq->wqe_s >= (uint16_t)(txq->wqe_ci - txq->wqe_pi));
+
 	if (unlikely(!pkts_n))
+		/*要发送的报数为0，直接返回*/
 		return 0;
+
 	if (MLX5_TXOFF_CONFIG(INLINE))
 		loc.mbuf_free = 0;
 	loc.pkts_sent = 0;

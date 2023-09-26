@@ -5030,7 +5030,7 @@ pkt_fwd_config_display(struct fwd_config *cfg)
 
 	printf("%s%s%s packet forwarding%s - ports=%d - cores=%d - streams=%d - "
 		"NUMA support %s, MP allocation mode: %s\n",
-		cfg->fwd_eng->fwd_mode_name,
+		cfg->fwd_eng->fwd_mode_name,/*转发方式名称*/
 		cfg->fwd_eng->status ? "-" : "",
 		cfg->fwd_eng->status ? cfg->fwd_eng->status : "",
 		retry_enabled == 0 ? "" : " with retry",
@@ -5896,6 +5896,7 @@ set_pkt_forwarding_mode(const char *fwd_mode_name)
 	struct fwd_engine *fwd_eng;
 	unsigned i;
 
+	/*通过名称设置转发模式*/
 	i = 0;
 	while ((fwd_eng = fwd_engines[i]) != NULL) {
 		if (! strcmp(fwd_eng->fwd_mode_name, fwd_mode_name)) {

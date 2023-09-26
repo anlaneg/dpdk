@@ -469,8 +469,11 @@ extern uint16_t mempool_flags;
  */
 struct fwd_config {
 	struct fwd_engine *fwd_eng; /**< Packet forwarding mode. */
+	/*fwd流数目*/
 	streamid_t nb_fwd_streams;  /**< Nb. of forward streams to process. */
+	/*参与转发的core数目*/
 	lcoreid_t  nb_fwd_lcores;   /**< Nb. of logical cores to launch. */
+	/*参与转发的port数目*/
 	portid_t   nb_fwd_ports;    /**< Nb. of ports involved. */
 };
 

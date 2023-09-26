@@ -32,20 +32,22 @@ struct rdline {
 	char right_buf[RDLINE_BUF_SIZE];
 
 	char prompt[RDLINE_PROMPT_SIZE];
-	unsigned int prompt_size;
+	unsigned int prompt_size;/*命令提示符长度*/
 
 	char kill_buf[RDLINE_BUF_SIZE];
 	unsigned int kill_size;
 
 	/* history */
 	struct cirbuf history;
-	char history_buf[RDLINE_HISTORY_BUF_SIZE];
+	char history_buf[RDLINE_HISTORY_BUF_SIZE];/*保存历史记录*/
 	int history_cur_line;
 
 	/* callbacks and func pointers */
+	/*字符输出函数，一般为cmdline_write_char*/
 	rdline_write_char_t *write_char;
+	/*遇到回车时，仅对用户输入进行校验，并执行命令*/
 	rdline_validate_t *validate;
-	rdline_complete_t *complete;
+	rdline_complete_t *complete;/*命令补全*/
 
 	/* vt100 parser */
 	struct cmdline_vt100 vt100;
@@ -64,10 +66,14 @@ struct terminal {
 #endif
 
 struct cmdline {
+	/*输入fd*/
 	int s_in;
+	/*输出fd(可以为-1）*/
 	int s_out;
+	/*对应的parse_ctx（用于解析指令）*/
 	cmdline_parse_ctx_t *ctx;
 	struct rdline rdl;
+	/*命令提示符*/
 	char prompt[RDLINE_PROMPT_SIZE];
 #ifdef RTE_EXEC_ENV_WINDOWS
 	struct terminal oldterm;

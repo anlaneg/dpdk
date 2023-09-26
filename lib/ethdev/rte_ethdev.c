@@ -1220,9 +1220,10 @@ eth_dev_validate_mtu(uint16_t port_id, struct rte_eth_dev_info *dev_info,
 		return -EINVAL;
 	}
 
+	/*取overhead长度*/
 	overhead_len = eth_dev_get_overhead_len(dev_info->max_rx_pktlen,
 			dev_info->max_mtu);
-	frame_size = mtu + overhead_len;
+	frame_size = mtu + overhead_len;/*即为帧最大长度*/
 	if (frame_size < RTE_ETHER_MIN_LEN) {
 		RTE_ETHDEV_LOG(ERR,
 			"Frame size (%u) < min frame size (%u) for port_id %u\n",
@@ -1279,6 +1280,7 @@ rte_eth_dev_configure(uint16_t port_id, uint16_t nb_rx_q, uint16_t nb_tx_q,
 	dev->data->dev_configured = 0;
 
 	 /* Store original config, as rollback required on failure */
+	/*备份旧的设备配置*/
 	memcpy(&orig_conf, &dev->data->dev_conf, sizeof(dev->data->dev_conf));
 
 	/*
@@ -1287,11 +1289,12 @@ rte_eth_dev_configure(uint16_t port_id, uint16_t nb_rx_q, uint16_t nb_tx_q,
 	 */
 	if (dev_conf != &dev->data->dev_conf)
 		memcpy(&dev->data->dev_conf, dev_conf,
-		       sizeof(dev->data->dev_conf));
+		       sizeof(dev->data->dev_conf));/*更新dev_conf*/
 
 	/* Backup mtu for rollback */
 	old_mtu = dev->data->mtu;
 
+	/*取设备info*/
 	ret = rte_eth_dev_info_get(port_id, &dev_info);
 	if (ret != 0)
 		goto rollback;
@@ -1312,6 +1315,7 @@ rte_eth_dev_configure(uint16_t port_id, uint16_t nb_rx_q, uint16_t nb_tx_q,
 	}
 
 	if (nb_rx_q > RTE_MAX_QUEUES_PER_PORT) {
+		/*超过rte支持范围*/
 		RTE_ETHDEV_LOG(ERR,
 			"Number of Rx queues requested (%u) is greater than max supported(%d)\n",
 			nb_rx_q, RTE_MAX_QUEUES_PER_PORT);
@@ -1320,6 +1324,7 @@ rte_eth_dev_configure(uint16_t port_id, uint16_t nb_rx_q, uint16_t nb_tx_q,
 	}
 
 	if (nb_tx_q > RTE_MAX_QUEUES_PER_PORT) {
+		/*超过rte支持范围*/
 		RTE_ETHDEV_LOG(ERR,
 			"Number of Tx queues requested (%u) is greater than max supported(%d)\n",
 			nb_tx_q, RTE_MAX_QUEUES_PER_PORT);
@@ -1333,6 +1338,7 @@ rte_eth_dev_configure(uint16_t port_id, uint16_t nb_rx_q, uint16_t nb_tx_q,
 	 * configured device.
 	 */
 	if (nb_rx_q > dev_info.max_rx_queues) {
+		/*超过设备支持范围*/
 		RTE_ETHDEV_LOG(ERR, "Ethdev port_id=%u nb_rx_queues=%u > %u\n",
 			port_id, nb_rx_q, dev_info.max_rx_queues);
 		ret = -EINVAL;
@@ -1340,6 +1346,7 @@ rte_eth_dev_configure(uint16_t port_id, uint16_t nb_rx_q, uint16_t nb_tx_q,
 	}
 
 	if (nb_tx_q > dev_info.max_tx_queues) {
+		/*超过设备支持范围*/
 		RTE_ETHDEV_LOG(ERR, "Ethdev port_id=%u nb_tx_queues=%u > %u\n",
 			port_id, nb_tx_q, dev_info.max_tx_queues);
 		ret = -EINVAL;
@@ -1362,14 +1369,17 @@ rte_eth_dev_configure(uint16_t port_id, uint16_t nb_rx_q, uint16_t nb_tx_q,
 		goto rollback;
 	}
 
+	/*未指定mtu时，使用默认mtu*/
 	if (dev_conf->rxmode.mtu == 0)
 		dev->data->dev_conf.rxmode.mtu = RTE_ETHER_MTU;
 
 	ret = eth_dev_validate_mtu(port_id, &dev_info,
 			dev->data->dev_conf.rxmode.mtu);
 	if (ret != 0)
+		/*mtu校验不通过，回退到原始配置*/
 		goto rollback;
 
+	/*设置mtu*/
 	dev->data->mtu = dev->data->dev_conf.rxmode.mtu;
 
 	/*

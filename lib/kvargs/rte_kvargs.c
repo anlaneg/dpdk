@@ -39,6 +39,7 @@ rte_kvargs_tokenize(struct rte_kvargs *kvlist, const char *params)
 	str = kvlist->str;
 	start = str; /* start of current key or value */
 	while (1) {
+		/*解析token，确认位置*/
 		switch (*str) {
 		case '=': /* End of key. */
 			end_key = true;
@@ -77,20 +78,22 @@ rte_kvargs_tokenize(struct rte_kvargs *kvlist, const char *params)
 		if (!save) {
 			/* Continue if not end of key or value. */
 			str++;
-			continue;
+			continue;/*中间状态，继续移动*/
 		}
 
+		/*kvlist超限，报错*/
 		if (kvlist->count >= RTE_KVARGS_MAX)
 			return -1;
 
 		if (end_value)
 			/* Value parsed */
-			kvlist->pairs[kvlist->count].value = start;
+			kvlist->pairs[kvlist->count].value = start;/*记录value*/
 		else if (end_key)
 			/* Key parsed. */
-			kvlist->pairs[kvlist->count].key = start;
+			kvlist->pairs[kvlist->count].key = start;/*记录key*/
 
 		if (end_pair) {
+			/*达到键值对结尾，count++*/
 			if (end_value || str != start)
 				/* Ignore empty pair. */
 				kvlist->count++;
@@ -141,6 +144,7 @@ check_for_valid_keys(struct rte_kvargs *kvlist,
 		pair = &kvlist->pairs[i];
 		ret = is_valid_key(valid, pair->key);
 		if (!ret)
+			/*存在invalid key,返回-1*/
 			return -1;
 	}
 	return 0;
@@ -172,9 +176,9 @@ rte_kvargs_count(const struct rte_kvargs *kvlist, const char *key_match)
  */
 int
 rte_kvargs_process(const struct rte_kvargs *kvlist,
-		const char *key_match,
-		arg_handler_t handler,
-		void *opaque_arg)
+		const char *key_match/*需要匹配的key*/,
+		arg_handler_t handler/*处理回调*/,
+		void *opaque_arg/*回调对应的参数*/)
 {
 	const struct rte_kvargs_pair *pair;
 	unsigned i;
@@ -185,6 +189,7 @@ rte_kvargs_process(const struct rte_kvargs *kvlist,
 	for (i = 0; i < kvlist->count; i++) {
 		pair = &kvlist->pairs[i];
 		if (key_match == NULL || strcmp(pair->key, key_match) == 0) {
+			/*key_match如果未指定，则不匹配，否则需要匹配*/
 			if ((*handler)(pair->key, pair->value, opaque_arg) < 0)
 				return -1;
 		}
@@ -241,16 +246,19 @@ rte_kvargs_parse(const char *args, const char * const valid_keys[])
 {
 	struct rte_kvargs *kvlist;
 
+	/*初始化kvlist*/
 	kvlist = malloc(sizeof(*kvlist));
 	if (kvlist == NULL)
 		return NULL;
 	memset(kvlist, 0, sizeof(*kvlist));
 
+	/*先按','划分kv对儿，然后再拆分kv，填充kvlist->pairs*/
 	if (rte_kvargs_tokenize(kvlist, args) < 0) {
 		rte_kvargs_free(kvlist);
 		return NULL;
 	}
 
+	/*检查valid_keys数组*/
 	if (valid_keys != NULL && check_for_valid_keys(kvlist, valid_keys) < 0) {
 		rte_kvargs_free(kvlist);
 		return NULL;

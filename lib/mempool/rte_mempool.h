@@ -230,6 +230,7 @@ struct rte_mempool {
 	uint32_t cache_size;
 	/**< Size of per-lcore default local cache. */
 
+	/*单个元素大小*/
 	uint32_t elt_size;               /**< Size of an element. */
 	uint32_t header_size;            /**< Size of header (before elt). */
 	uint32_t trailer_size;           /**< Size of trailer (after elt). */
@@ -247,6 +248,7 @@ struct rte_mempool {
 	struct rte_mempool_cache *local_cache; /**< Per-lcore local cache */
 
 	uint32_t populated_size;         /**< Number of populated objects. */
+	/*pool中所有元素串在此链表上*/
 	struct rte_mempool_objhdr_list elt_list; /**< List of objects in pool */
 	uint32_t nb_mem_chunks;          /**< Number of memory chunks */
 	struct rte_mempool_memhdr_list mem_list; /**< List of memory chunks */

@@ -41,7 +41,7 @@ struct idxd_pci_common {
 };
 
 struct idxd_dmadev {
-	struct idxd_hw_desc *desc_ring;
+	struct idxd_hw_desc *desc_ring;/*描述符ring*/
 
 	/* counters to track the batches */
 	unsigned short max_batches;
@@ -49,11 +49,11 @@ struct idxd_dmadev {
 	unsigned short batch_idx_write;
 
 	/* track descriptors and handles */
-	unsigned short desc_ring_mask;
+	unsigned short desc_ring_mask;/*desc_ring的掩码形式（ring_size须为2的N次方）*/
 	unsigned short ids_avail; /* handles for ops completed */
 	unsigned short ids_returned; /* the read pointer for hdls/desc rings */
 	unsigned short batch_start; /* start+size == write pointer for hdls/desc */
-	unsigned short batch_size;
+	unsigned short batch_size;/*batch大小*/
 
 	void *portal; /* address to write the batch descriptor */
 
@@ -63,11 +63,12 @@ struct idxd_dmadev {
 	struct rte_dma_stats stats;
 
 	rte_iova_t batch_iova; /* base address of the batch comp ring */
+	/*desc_ring对应的iova地址*/
 	rte_iova_t desc_iova; /* base address of desc ring, needed for completions */
 
 	unsigned short max_batch_size;
 
-	struct rte_dma_dev *dmadev;
+	struct rte_dma_dev *dmadev;/*对应的dma设备*/
 	struct rte_dma_vchan_conf qcfg;
 	uint8_t sva_support;
 	uint8_t qid;

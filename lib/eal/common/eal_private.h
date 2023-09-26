@@ -29,11 +29,16 @@ struct lcore_config {
 	volatile int ret;          /**< return value of function */
 
 	volatile enum rte_lcore_state_t state; /**< lcore state */
+	/*此core对应的socket id*/
 	unsigned int socket_id;    /**< physical socket id for this lcore */
+	/*此lcore对应的core number*/
 	unsigned int core_id;      /**< core number on socket for this lcore */
+	/*core序号（如果此cpu未检测到，则置为-1）*/
 	int core_index;            /**< relative index, starting from 0 */
+	/*此core的角色，默认为0，来源于枚举rte_lcore_role_t*/
 	uint8_t core_role;         /**< role of core eg: OFF, RTE, SERVICE */
 
+	/*此core对应的cpuset*/
 	rte_cpuset_t cpuset;       /**< cpu set which the lcore affinity to */
 };
 
@@ -44,10 +49,14 @@ extern struct lcore_config lcore_config[RTE_MAX_LCORE];
  */
 struct rte_config {
 	uint32_t main_lcore;         /**< Id of the main lcore */
+	/*实际可用的core数目*/
 	uint32_t lcore_count;        /**< Number of available logical cores. */
+	/*系统中socket id总数*/
 	uint32_t numa_node_count;    /**< Number of detected NUMA nodes. */
+	/*记录系统中各socket id(支持不连续）*/
 	uint32_t numa_nodes[RTE_MAX_NUMA_NODES]; /**< List of detected NUMA nodes. */
 	uint32_t service_lcore_count;/**< Number of available service cores. */
+	/*指明cpu角色，例如开启/关闭等*/
 	enum rte_lcore_role_t lcore_role[RTE_MAX_LCORE]; /**< State of cores. */
 
 	/** Primary or secondary configuration */
