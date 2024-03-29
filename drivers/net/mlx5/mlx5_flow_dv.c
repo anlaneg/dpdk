@@ -269,15 +269,20 @@ struct field_modify_info modify_tcp[] = {
 
 static void
 mlx5_flow_tunnel_ip_check(const struct rte_flow_item *item __rte_unused,
-			  uint8_t next_protocol, uint64_t *item_flags,
+			  uint8_t next_protocol/*l4协议*/, uint64_t *item_flags,
 			  int *tunnel)
 {
+	/*只处理ipv4,ipv6两种匹配*/
 	MLX5_ASSERT(item->type == RTE_FLOW_ITEM_TYPE_IPV4 ||
 		    item->type == RTE_FLOW_ITEM_TYPE_IPV6);
+
+	/*内层为ip协议*/
 	if (next_protocol == IPPROTO_IPIP) {
 		*item_flags |= MLX5_FLOW_LAYER_IPIP;
 		*tunnel = 1;
 	}
+
+	/*内层为ipv6*/
 	if (next_protocol == IPPROTO_IPV6) {
 		*item_flags |= MLX5_FLOW_LAYER_IPV6_ENCAP;
 		*tunnel = 1;
@@ -1048,6 +1053,7 @@ flow_dv_convert_action_set_tag
 	enum mlx5_modification_field reg_type;
 	int ret;
 
+	/*取tag寄存器*/
 	ret = mlx5_flow_get_reg_id(dev, MLX5_APP_TAG, conf->index, error);
 	if (ret < 0)
 		return ret;
@@ -1194,13 +1200,15 @@ flow_dv_get_metadata_reg(struct rte_eth_dev *dev,
 			 const struct rte_flow_attr *attr,
 			 struct rte_flow_error *error)
 {
+	/*取对应的寄存器*/
 	int reg =
 		mlx5_flow_get_reg_id(dev, attr->transfer ?
-					  MLX5_METADATA_FDB :
+					  MLX5_METADATA_FDB /*transfer指定时仅送fdb表*/:
 					    attr->egress ?
-					    MLX5_METADATA_TX :
-					    MLX5_METADATA_RX, 0, error);
+					    MLX5_METADATA_TX /*送ingress表*/:
+					    MLX5_METADATA_RX/*送egress表*/, 0, error);
 	if (reg < 0)
+		/*未找到可用的寄存器*/
 		return rte_flow_error_set(error,
 					  ENOTSUP, RTE_FLOW_ERROR_TYPE_ITEM,
 					  NULL, "unavailable "
@@ -1233,8 +1241,8 @@ flow_dv_convert_action_set_meta
 			 const struct rte_flow_action_set_meta *conf,
 			 struct rte_flow_error *error)
 {
-	uint32_t mask = rte_cpu_to_be_32(conf->mask);
-	uint32_t data = rte_cpu_to_be_32(conf->data) & mask;
+	uint32_t mask = rte_cpu_to_be_32(conf->mask);/*配置对应的mask*/
+	uint32_t data = rte_cpu_to_be_32(conf->data) & mask;/*配置对应的值*/
 	struct rte_flow_item item = {
 		.spec = &data,
 		.mask = &mask,
@@ -1245,8 +1253,9 @@ flow_dv_convert_action_set_meta
 	int reg = flow_dv_get_metadata_reg(dev, attr, error);
 
 	if (reg < 0)
+		/*取metadata寄存器失败，返回error*/
 		return reg;
-	MLX5_ASSERT(reg != REG_NON);
+	MLX5_ASSERT(reg != REG_NON);/*一定不是REG_NON寄存器*/
 	if (reg == REG_C_0) {
 		struct mlx5_priv *priv = dev->data->dev_private;
 		uint32_t msk_c0 = priv->sh->dv_regc0_mask;
@@ -1390,10 +1399,12 @@ mlx5_flow_item_field_width(struct rte_eth_dev *dev,
 	case RTE_FLOW_FIELD_GTP_TEID:
 	case RTE_FLOW_FIELD_MPLS:
 	case RTE_FLOW_FIELD_TAG:
+		/*tag字段长度为32*/
 		return 32;
 	case RTE_FLOW_FIELD_MARK:
 		return rte_popcount32(priv->sh->dv_mark_mask);
 	case RTE_FLOW_FIELD_META:
+		/*获取meta寄存器位宽*/
 		return (flow_dv_get_metadata_reg(dev, attr, error) == REG_C_0) ?
 			rte_popcount32(priv->sh->dv_meta_mask) : 32;
 	case RTE_FLOW_FIELD_POINTER:
@@ -2172,11 +2183,12 @@ flow_dv_validate_item_mark(struct rte_eth_dev *dev,
 	const struct rte_flow_item_mark *spec = item->spec;
 	const struct rte_flow_item_mark *mask = item->mask;
 	const struct rte_flow_item_mark nic_mask = {
-		.id = priv->sh->dv_mark_mask,
+		.id = priv->sh->dv_mark_mask,/*网卡支持的mark掩码*/
 	};
 	int ret;
 
 	if (config->dv_xmeta_en == MLX5_XMETA_MODE_LEGACY)
+		/*xmeta_en未开启，报错*/
 		return rte_flow_error_set(error, ENOTSUP,
 					  RTE_FLOW_ERROR_TYPE_ITEM, item,
 					  "extended metadata feature"
@@ -2214,7 +2226,7 @@ flow_dv_validate_item_mark(struct rte_eth_dev *dev,
 	ret = mlx5_flow_item_acceptable(item, (const uint8_t *)mask,
 					(const uint8_t *)&nic_mask,
 					sizeof(struct rte_flow_item_mark),
-					MLX5_ITEM_RANGE_NOT_ACCEPTED, error);
+					MLX5_ITEM_RANGE_NOT_ACCEPTED/*不按受range*/, error);
 	if (ret < 0)
 		return ret;
 	return 0;
@@ -2400,65 +2412,86 @@ flow_dv_validate_item_port_id(struct rte_eth_dev *dev,
 			      const struct rte_flow_item *item,
 			      const struct rte_flow_attr *attr,
 			      uint64_t item_flags,
-			      struct mlx5_priv **act_priv,
+			      struct mlx5_priv **act_priv/*记录此匹配对应的eswitch info*/,
 			      struct rte_flow_error *error)
 {
-	const struct rte_flow_item_port_id *spec = item->spec;
-	const struct rte_flow_item_port_id *mask = item->mask;
+	const struct rte_flow_item_port_id *spec = item->spec;/*port_id匹配的key*/
+	const struct rte_flow_item_port_id *mask = item->mask;/*port_id匹配的value*/
 	const struct rte_flow_item_port_id switch_mask = {
-			.id = 0xffffffff,
+			.id = 0xffffffff,/*4字节全为‘1’*/
 	};
 	struct mlx5_priv *esw_priv;
 	struct mlx5_priv *dev_priv;
 	int ret;
 
 	if (!attr->transfer)
+		/*port_id的匹配必须开启transfer标记*/
 		return rte_flow_error_set(error, EINVAL,
 					  RTE_FLOW_ERROR_TYPE_ITEM,
 					  NULL,
 					  "match on port id is valid only"
 					  " when transfer flag is enabled");
 	if (item_flags & MLX5_FLOW_ITEM_PORT_ID)
+		/*已知指明过了port_id的匹配，又发现一次，报错*/
 		return rte_flow_error_set(error, ENOTSUP,
 					  RTE_FLOW_ERROR_TYPE_ITEM, item,
 					  "multiple source ports are not"
 					  " supported");
 	if (!mask)
+		/*未指明mask,使用全掩码*/
 		mask = &switch_mask;
+
 	if (mask->id != 0xffffffff)
+		/*port_id的匹配只支持全'1'*/
 		return rte_flow_error_set(error, ENOTSUP,
 					   RTE_FLOW_ERROR_TYPE_ITEM_MASK,
 					   mask,
 					   "no support for partial mask on"
 					   " \"id\" field");
+
+	/*检查参数是否可接收*/
 	ret = mlx5_flow_item_acceptable
 				(item, (const uint8_t *)mask,
 				 (const uint8_t *)&rte_flow_item_port_id_mask,
 				 sizeof(struct rte_flow_item_port_id),
-				 MLX5_ITEM_RANGE_NOT_ACCEPTED, error);
+				 MLX5_ITEM_RANGE_NOT_ACCEPTED/*不支持range检查*/, error);
+
+	/*如果执行出错（非零），则直接返回*/
 	if (ret)
 		return ret;
+
+	/*spec为NULL，返回成功*/
 	if (!spec)
 		return 0;
+
+	/*指定的port 为MLX5_PORT_ESW_MGR时，返回成功*/
 	if (spec->id == MLX5_PORT_ESW_MGR)
 		return 0;
+
+	/*校验并返回spec->id对应的eswitch info*/
 	esw_priv = mlx5_port_to_eswitch_info(spec->id, false);
 	if (!esw_priv)
 		return rte_flow_error_set(error, rte_errno,
 					  RTE_FLOW_ERROR_TYPE_ITEM_SPEC, spec,
 					  "failed to obtain E-Switch info for"
 					  " port");
+
+	/*取dev对应的eswitch info*/
 	dev_priv = mlx5_dev_to_eswitch_info(dev);
 	if (!dev_priv)
 		return rte_flow_error_set(error, rte_errno,
 					  RTE_FLOW_ERROR_TYPE_UNSPECIFIED,
 					  NULL,
 					  "failed to obtain E-Switch info");
+
+	/*两者的eswitch info必须相等*/
 	if (esw_priv->domain_id != dev_priv->domain_id)
 		return rte_flow_error_set(error, EINVAL,
 					  RTE_FLOW_ERROR_TYPE_ITEM_SPEC, spec,
 					  "cannot match on a port from a"
 					  " different E-Switch");
+
+	/*记录此匹配对应的eswitch info*/
 	*act_priv = esw_priv;
 	return 0;
 }
@@ -2498,15 +2531,20 @@ flow_dv_validate_item_represented_port(struct rte_eth_dev *dev,
 	int ret;
 
 	if (!attr->transfer)
+		/*transfer必须为1*/
 		return rte_flow_error_set(error, EINVAL,
 					  RTE_FLOW_ERROR_TYPE_ITEM, NULL,
 					  "match on port id is valid only when transfer flag is enabled");
 	if (item_flags & MLX5_FLOW_ITEM_REPRESENTED_PORT)
+		/*不支持匹配多个*/
 		return rte_flow_error_set(error, ENOTSUP,
 					  RTE_FLOW_ERROR_TYPE_ITEM, item,
 					  "multiple source ports are not supported");
 	if (!mask)
+		/*未指定掩码，使用全掩码*/
 		mask = &switch_mask;
+
+	/*只支持全掩码*/
 	if (mask->port_id != UINT16_MAX)
 		return rte_flow_error_set(error, ENOTSUP,
 					   RTE_FLOW_ERROR_TYPE_ITEM_MASK, mask,
@@ -2515,26 +2553,35 @@ flow_dv_validate_item_represented_port(struct rte_eth_dev *dev,
 				(item, (const uint8_t *)mask,
 				 (const uint8_t *)&rte_flow_item_ethdev_mask,
 				 sizeof(struct rte_flow_item_ethdev),
-				 MLX5_ITEM_RANGE_NOT_ACCEPTED, error);
+				 MLX5_ITEM_RANGE_NOT_ACCEPTED/*不支持range*/, error);
 	if (ret)
 		return ret;
 	if (!spec || spec->port_id == UINT16_MAX)
+		/*spec为NULL或者port_id为UINT16_MAX，返回成功*/
 		return 0;
+
+	/*取指定设备的eswitch info,此port必须为rte_eth设备*/
 	esw_priv = mlx5_port_to_eswitch_info(spec->port_id, false);
 	if (!esw_priv)
 		return rte_flow_error_set(error, rte_errno,
 					  RTE_FLOW_ERROR_TYPE_ITEM_SPEC, spec,
 					  "failed to obtain E-Switch info for port");
+
+	/*取dev对应的eswitch info*/
 	dev_priv = mlx5_dev_to_eswitch_info(dev);
 	if (!dev_priv)
 		return rte_flow_error_set(error, rte_errno,
 					  RTE_FLOW_ERROR_TYPE_UNSPECIFIED,
 					  NULL,
 					  "failed to obtain E-Switch info");
+
+	/*两者必须为同一个eswitch info*/
 	if (esw_priv->domain_id != dev_priv->domain_id)
 		return rte_flow_error_set(error, EINVAL,
 					  RTE_FLOW_ERROR_TYPE_ITEM_SPEC, spec,
 					  "cannot match on a port from a different E-Switch");
+
+	/*返回匹配项关联的eswitch info*/
 	*act_priv = esw_priv;
 	return 0;
 }
@@ -2770,6 +2817,7 @@ flow_dv_validate_item_ipv4(struct rte_eth_dev *dev,
 	const struct rte_flow_item_ipv4 *mask = item->mask;
 	rte_be16_t fragment_offset_spec = 0;
 	rte_be16_t fragment_offset_last = 0;
+	/*ipv4层支持的字段*/
 	struct rte_flow_item_ipv4 nic_ipv4_mask = {
 		.hdr = {
 			.src_addr = RTE_BE32(0xffffffff),
@@ -2781,26 +2829,30 @@ flow_dv_validate_item_ipv4(struct rte_eth_dev *dev,
 		},
 	};
 
+	/*依据硬件不同，有些支持ipv4_ihl*/
 	if (mask && (mask->hdr.version_ihl & RTE_IPV4_HDR_IHL_MASK)) {
-		int tunnel = !!(item_flags & MLX5_FLOW_LAYER_TUNNEL);
+		int tunnel = !!(item_flags & MLX5_FLOW_LAYER_TUNNEL);/*是否有隧道*/
 		bool ihl_cap = !tunnel ?
-			       attr->outer_ipv4_ihl : attr->inner_ipv4_ihl;
+			       attr->outer_ipv4_ihl : attr->inner_ipv4_ihl;/*按隧道分内外层*/
 		if (!ihl_cap)
+			/*硬件不支持对ihl进行offload*/
 			return rte_flow_error_set(error, ENOTSUP,
 						  RTE_FLOW_ERROR_TYPE_ITEM,
 						  item,
 						  "IPV4 ihl offload not supported");
+		/*取用户指定的mask做为nic_ipv4_mask(即所有mask均支持）*/
 		nic_ipv4_mask.hdr.version_ihl = mask->hdr.version_ihl;
 	}
 	ret = mlx5_flow_validate_item_ipv4(item, item_flags, last_item,
 					   ether_type, &nic_ipv4_mask,
-					   MLX5_ITEM_RANGE_ACCEPTED, error);
+					   MLX5_ITEM_RANGE_ACCEPTED/*容许range格式*/, error);
 	if (ret < 0)
 		return ret;
 	if (spec && mask)
 		fragment_offset_spec = spec->hdr.fragment_offset &
 				       mask->hdr.fragment_offset;
 	if (!fragment_offset_spec)
+		/*未指明对fragement offset的指定，返回0*/
 		return 0;
 	/*
 	 * spec and mask are valid, enforce using full mask to make sure the
@@ -3606,7 +3658,7 @@ flow_hit_aso_supported(const struct mlx5_priv *priv, bool root)
  *   0 on success, a negative errno value otherwise and rte_errno is set.
  */
 static int
-flow_dv_validate_action_count(struct rte_eth_dev *dev, bool shared,
+flow_dv_validate_action_count(struct rte_eth_dev *dev, bool shared/*此counter是否为共享的*/,
 			      uint64_t action_flags,
 			      bool root,
 			      struct rte_flow_error *error)
@@ -3616,6 +3668,7 @@ flow_dv_validate_action_count(struct rte_eth_dev *dev, bool shared,
 	if (!priv->sh->cdev->config.devx)
 		goto notsup_err;
 	if (action_flags & MLX5_FLOW_ACTION_COUNT)
+		/*多次指定counter,报错*/
 		return rte_flow_error_set(error, EINVAL,
 					  RTE_FLOW_ERROR_TYPE_ACTION, NULL,
 					  "duplicate count actions set");
@@ -4343,6 +4396,7 @@ flow_dv_port_id_action_resource_register
 	entry = mlx5_list_register(priv->sh->port_id_action_list, &ctx);
 	if (!entry)
 		return -rte_errno;
+	/*返回port资源*/
 	resource = container_of(entry, typeof(*resource), entry);
 	dev_flow->dv.port_id_action = resource;
 	dev_flow->handle->rix_port_id_action = resource->idx;
@@ -5322,6 +5376,7 @@ flow_dv_validate_action_modify_field(struct rte_eth_dev *dev,
 	if (src_data->field != RTE_FLOW_FIELD_VALUE &&
 	    src_data->field != RTE_FLOW_FIELD_POINTER) {
 		if (root)
+			/*不支持对根表进行操作*/
 			return rte_flow_error_set(error, ENOTSUP,
 					RTE_FLOW_ERROR_TYPE_ACTION, action,
 					"modify field action is not"
@@ -5519,12 +5574,14 @@ flow_dv_validate_action_port_id(struct rte_eth_dev *dev,
 	uint16_t port;
 
 	if (!attr->transfer)
+		/*必须指明transfer*/
 		return rte_flow_error_set(error, ENOTSUP,
 					  RTE_FLOW_ERROR_TYPE_UNSPECIFIED,
 					  NULL,
 					  "port action is valid in transfer"
 					  " mode only");
 	if (!action || !action->conf)
+		/*必须指明action*/
 		return rte_flow_error_set(error, ENOTSUP,
 					  RTE_FLOW_ERROR_TYPE_ACTION_CONF,
 					  NULL,
@@ -5532,10 +5589,13 @@ flow_dv_validate_action_port_id(struct rte_eth_dev *dev,
 					  " specified");
 	if (action_flags & (MLX5_FLOW_FATE_ACTIONS |
 			    MLX5_FLOW_FATE_ESWITCH_ACTIONS))
+		/*一条流中仅能指明一个fate action*/
 		return rte_flow_error_set(error, EINVAL,
 					  RTE_FLOW_ERROR_TYPE_ACTION, NULL,
 					  "can have only one fate actions in"
 					  " a flow");
+
+	/*取此设备对应的eswitch info*/
 	dev_priv = mlx5_dev_to_eswitch_info(dev);
 	if (!dev_priv)
 		return rte_flow_error_set(error, rte_errno,
@@ -5545,25 +5605,30 @@ flow_dv_validate_action_port_id(struct rte_eth_dev *dev,
 	switch (action->type) {
 	case RTE_FLOW_ACTION_TYPE_PORT_ID:
 		port_id = action->conf;
-		port = port_id->original ? dev->data->port_id : port_id->id;
+		port = port_id->original ? dev->data->port_id : port_id->id;/*取output 接口id*/
 		break;
 	case RTE_FLOW_ACTION_TYPE_REPRESENTED_PORT:
 		ethdev = action->conf;
-		port = ethdev->port_id;
+		port = ethdev->port_id;/*取output represented port接口id*/
 		break;
 	default:
+		/*不能处理其它action*/
 		MLX5_ASSERT(false);
 		return rte_flow_error_set
 				(error, EINVAL,
 				 RTE_FLOW_ERROR_TYPE_ACTION, action,
 				 "unknown E-Switch action");
 	}
+
+	/*取此port对应的eswitch info，此设备必须有对应的rte_dev*/
 	act_priv = mlx5_port_to_eswitch_info(port, false);
 	if (!act_priv)
 		return rte_flow_error_set
 				(error, rte_errno,
 				 RTE_FLOW_ERROR_TYPE_ACTION_CONF, action->conf,
 				 "failed to obtain E-Switch port id for port");
+
+	/*两者eswitch domain必须一致*/
 	if (act_priv->domain_id != dev_priv->domain_id)
 		return rte_flow_error_set
 				(error, EINVAL,
@@ -7007,7 +7072,7 @@ flow_dv_validate_attributes(struct rte_eth_dev *dev,
 	RTE_SET_USED(tunnel);
 	RTE_SET_USED(grp_info);
 	if (attributes->group)
-		/*不支持group非零的情况*/
+		/*此情况下不支持group非零的情况*/
 		return rte_flow_error_set(error, ENOTSUP,
 					  RTE_FLOW_ERROR_TYPE_ATTR_GROUP,
 					  NULL,
@@ -7020,6 +7085,7 @@ flow_dv_validate_attributes(struct rte_eth_dev *dev,
 	if (ret)
 		return ret;
 	if (!table)
+		/*table为0，返回root level*/
 		ret = MLX5DV_DR_ACTION_FLAGS_ROOT_LEVEL;
 #endif
 	if (attributes->priority != MLX5_FLOW_LOWEST_PRIO_INDICATOR &&
@@ -7030,11 +7096,12 @@ flow_dv_validate_attributes(struct rte_eth_dev *dev,
 					  NULL,
 					  "priority out of range");
 	if (attributes->transfer && !priv->sh->config.dv_esw_en)
-		/*指定了transfer,但未开启switchdev*/
+		/*指定了transfer,但未开启switchdev(transfer要求eswitch)*/
 		return rte_flow_error_set(error, ENOTSUP,
 					  RTE_FLOW_ERROR_TYPE_UNSPECIFIED, NULL,
 					  "E-Switch dr is not supported");
 	if (attributes->ingress + attributes->egress + attributes->transfer != 1) {
+		/*ingress,egress,transfer只能标注一个为真*/
 		return rte_flow_error_set(error, EINVAL,
 					  RTE_FLOW_ERROR_TYPE_ATTR, NULL,
 					  "must specify exactly one of "
@@ -7268,6 +7335,7 @@ mlx5_flow_validate_item_ib_bth(struct rte_eth_dev *dev,
 
 	valid_mask = &rte_flow_item_ib_bth_mask;
 	if (udp_dport && udp_dport != MLX5_UDP_PORT_ROCEv2)
+		/*指定了udp-port,但udp port不是4791,报错*/
 		return rte_flow_error_set(error, EINVAL,
 					  RTE_FLOW_ERROR_TYPE_ITEM, item,
 					  "protocol filtering not compatible"
@@ -7276,11 +7344,13 @@ mlx5_flow_validate_item_ib_bth(struct rte_eth_dev *dev,
 		mask->hdr.tver || mask->hdr.pkey || mask->hdr.f || mask->hdr.b ||
 		mask->hdr.rsvd0 || mask->hdr.a || mask->hdr.rsvd1 ||
 		mask->hdr.psn[0] || mask->hdr.psn[1] || mask->hdr.psn[2]))
+		/*当前只支持对opcode,dst_qp进行匹配*/
 		return rte_flow_error_set(error, EINVAL,
 					  RTE_FLOW_ERROR_TYPE_ITEM, item,
 					  "only opcode and dst_qp are supported");
 	if (root || priv->sh->steering_format_version ==
 		MLX5_STEERING_LOGIC_FORMAT_CONNECTX_5)
+		/*root table不支持，cx5不支持*/
 		return rte_flow_error_set(error, EINVAL,
 					  RTE_FLOW_ERROR_TYPE_ITEM,
 					  item,
@@ -7290,7 +7360,7 @@ mlx5_flow_validate_item_ib_bth(struct rte_eth_dev *dev,
 	ret = mlx5_flow_item_acceptable(item, (const uint8_t *)mask,
 					(const uint8_t *)valid_mask,
 					sizeof(struct rte_flow_item_ib_bth),
-					MLX5_ITEM_RANGE_NOT_ACCEPTED, error);
+					MLX5_ITEM_RANGE_NOT_ACCEPTED/*不支持range*/, error);
 	if (ret < 0)
 		return ret;
 	return 0;
@@ -7326,10 +7396,10 @@ flow_dv_validate(struct rte_eth_dev *dev, const struct rte_flow_attr *attr,
 	int ret;
 	uint64_t aso_mask, action_flags = 0;/*标记需要执行哪些action*/
 	uint64_t item_flags = 0;/*标记需要匹配哪些字段*/
-	uint64_t last_item = 0;
+	uint64_t last_item = 0;/*记录上一个匹配项*/
 	uint8_t next_protocol = 0xff;
 	uint16_t ether_type = 0;
-	int actions_n = 0;
+	int actions_n = 0;/*记录action数量*/
 	uint8_t item_ipv6_proto = 0;
 	int fdb_mirror = 0;
 	int modify_after_mirror = 0;
@@ -7378,7 +7448,7 @@ flow_dv_validate(struct rte_eth_dev *dev, const struct rte_flow_attr *attr,
 	uint16_t queue_index = 0xFFFF;
 	const struct rte_flow_item_vlan *vlan_m = NULL;
 	uint32_t rw_act_num = 0;
-	uint64_t is_root;
+	uint64_t is_root;/*是否指定了root表*/
 	const struct mlx5_flow_tunnel *tunnel;
 	enum mlx5_tof_rule_type tof_rule_type;
 	struct flow_grp_info grp_info = {
@@ -7389,9 +7459,9 @@ flow_dv_validate(struct rte_eth_dev *dev, const struct rte_flow_attr *attr,
 	};
 	const struct rte_eth_hairpin_conf *conf;
 	const struct rte_flow_item *integrity_items[2] = {NULL, NULL};
-	const struct rte_flow_item *port_id_item = NULL;
+	const struct rte_flow_item *port_id_item = NULL;/*记录port_id匹配项，仅容许出现一次*/
 	bool def_policy = false;
-	bool shared_count = false;
+	bool shared_count = false;/*默认count是不共享的*/
 	uint16_t udp_dport = 0;
 	uint32_t tag_id = 0, tag_bitmap = 0;
 	const struct rte_flow_action_age *non_shared_age = NULL;
@@ -7403,15 +7473,17 @@ flow_dv_validate(struct rte_eth_dev *dev, const struct rte_flow_attr *attr,
 	if (items == NULL)
 		return -1;
 	tunnel = is_tunnel_offload_active(dev) ?
-		 mlx5_get_tof(items, actions, &tof_rule_type) : NULL;
+		 mlx5_get_tof(items, actions, &tof_rule_type/*出参，规则类型*/) : NULL;
 	if (tunnel) {
-		/*tunnel offload的情况*/
+		/*tunnel offload的情况（mellanox定义的特别的match/action)*/
 		if (!dev_conf->dv_flow_en)
+			/*未开启dv flow interface*/
 			return rte_flow_error_set
 				(error, ENOTSUP,
 				 RTE_FLOW_ERROR_TYPE_UNSPECIFIED,
 				 NULL, "tunnel offload requires DV flow interface");
 		if (priv->representor)
+			/*针对representor进行decap操作，这类操作需要下发给pf接口，故报错*/
 			return rte_flow_error_set
 				(error, ENOTSUP,
 				 RTE_FLOW_ERROR_TYPE_UNSPECIFIED,
@@ -7437,6 +7509,7 @@ flow_dv_validate(struct rte_eth_dev *dev, const struct rte_flow_attr *attr,
 		int type = items->type;
 
 		if (!mlx5_flow_os_item_supported(type))
+			/*此type不支持，报错*/
 			return rte_flow_error_set(error, ENOTSUP,
 						  RTE_FLOW_ERROR_TYPE_ITEM,
 						  NULL, "item not supported");
@@ -7452,8 +7525,9 @@ flow_dv_validate(struct rte_eth_dev *dev, const struct rte_flow_attr *attr,
 			last_item = MLX5_FLOW_ITEM_ESP;
 			break;
 		case RTE_FLOW_ITEM_TYPE_PORT_ID:
+			/*指明匹配port_id，必须为匹配的rte_eth_dev或者MLX5_PORT_ESW_MGR*/
 			ret = flow_dv_validate_item_port_id
-					(dev, items, attr, item_flags, &act_priv, error);
+					(dev, items/*匹配项*/, attr/*规则属性*/, item_flags/*已指明的item*/, &act_priv/*出参，此port匹配项对应的eswitch info*/, error);
 			if (ret < 0)
 				return ret;
 			last_item = MLX5_FLOW_ITEM_PORT_ID;
@@ -7461,6 +7535,7 @@ flow_dv_validate(struct rte_eth_dev *dev, const struct rte_flow_attr *attr,
 			break;
 		case RTE_FLOW_ITEM_TYPE_REPRESENTED_PORT:
 		case RTE_FLOW_ITEM_TYPE_PORT_REPRESENTOR:
+			/*指明匹配represented_port，必须为匹配的rte_eth_dev或者UINT16_MAX*/
 			ret = flow_dv_validate_item_represented_port
 					(dev, items, attr, item_flags, &act_priv, error);
 			if (ret < 0)
@@ -7469,13 +7544,15 @@ flow_dv_validate(struct rte_eth_dev *dev, const struct rte_flow_attr *attr,
 			port_id_item = items;
 			break;
 		case RTE_FLOW_ITEM_TYPE_ETH:
+			/*以太头匹配*/
 			ret = mlx5_flow_validate_item_eth(items, item_flags,
-							  true, error);
+							  true/*支持有vlan*/, error);
 			if (ret < 0)
 				return ret;
 			last_item = tunnel ? MLX5_FLOW_LAYER_INNER_L2 :
-					     MLX5_FLOW_LAYER_OUTER_L2;
+					     MLX5_FLOW_LAYER_OUTER_L2;/*如果前面已指明tunnel,则匹配为内层还是外层*/
 			if (items->mask != NULL && items->spec != NULL) {
+				/*同时指明了掩码，确定ether_type掩后的实际值*/
 				ether_type =
 					((const struct rte_flow_item_eth *)
 					 items->spec)->hdr.ether_type;
@@ -7484,17 +7561,20 @@ flow_dv_validate(struct rte_eth_dev *dev, const struct rte_flow_attr *attr,
 					 items->mask)->hdr.ether_type;
 				ether_type = rte_be_to_cpu_16(ether_type);
 			} else {
+				/*不匹配ether_type*/
 				ether_type = 0;
 			}
 			break;
 		case RTE_FLOW_ITEM_TYPE_VLAN:
+			/*vlan匹配*/
 			ret = flow_dv_validate_item_vlan(items, item_flags,
 							 dev, error);
 			if (ret < 0)
 				return ret;
 			last_item = tunnel ? MLX5_FLOW_LAYER_INNER_VLAN :
-					     MLX5_FLOW_LAYER_OUTER_VLAN;
+					     MLX5_FLOW_LAYER_OUTER_VLAN;/*依据tunnel确定是内层匹配还是外层匹配*/
 			if (items->mask != NULL && items->spec != NULL) {
+				/*确定vlan负载后指明的ether_type*/
 				ether_type =
 					((const struct rte_flow_item_vlan *)
 					 items->spec)->hdr.eth_proto;
@@ -7507,11 +7587,12 @@ flow_dv_validate(struct rte_eth_dev *dev, const struct rte_flow_attr *attr,
 			}
 			/* Store outer VLAN mask for of_push_vlan action. */
 			if (!tunnel)
-				vlan_m = items->mask;
+				vlan_m = items->mask;/*存储外层的vlan mask*/
 			break;
 		case RTE_FLOW_ITEM_TYPE_IPV4:
 			mlx5_flow_tunnel_ip_check(items, next_protocol,
-						  &item_flags, &tunnel);
+						  &item_flags, &tunnel/*是否tunnel*/);
+			/*校验ipv4匹配*/
 			ret = flow_dv_validate_item_ipv4(dev, items, item_flags,
 							 last_item, ether_type,
 							 error);
@@ -7522,6 +7603,7 @@ flow_dv_validate(struct rte_eth_dev *dev, const struct rte_flow_attr *attr,
 			if (items->mask != NULL &&
 			    ((const struct rte_flow_item_ipv4 *)
 			     items->mask)->hdr.next_proto_id) {
+				/*确定l4层协议*/
 				next_protocol =
 					((const struct rte_flow_item_ipv4 *)
 					 (items->spec))->hdr.next_proto_id;
@@ -7586,6 +7668,7 @@ flow_dv_validate(struct rte_eth_dev *dev, const struct rte_flow_attr *attr,
 			}
 			break;
 		case RTE_FLOW_ITEM_TYPE_TCP:
+			/*校验tcp*/
 			ret = mlx5_flow_validate_item_tcp
 						(items, item_flags,
 						 next_protocol,
@@ -7597,6 +7680,7 @@ flow_dv_validate(struct rte_eth_dev *dev, const struct rte_flow_attr *attr,
 					     MLX5_FLOW_LAYER_OUTER_L4_TCP;
 			break;
 		case RTE_FLOW_ITEM_TYPE_UDP:
+			/*校验udp*/
 			ret = mlx5_flow_validate_item_udp(items, item_flags,
 							  next_protocol,
 							  error);
@@ -7644,6 +7728,7 @@ flow_dv_validate(struct rte_eth_dev *dev, const struct rte_flow_attr *attr,
 			last_item = MLX5_FLOW_LAYER_GRE_KEY;
 			break;
 		case RTE_FLOW_ITEM_TYPE_VXLAN:
+			/*校验vxlan*/
 			ret = mlx5_flow_validate_item_vxlan(dev, udp_dport,
 							    items, item_flags,
 							    is_root, error);
@@ -7688,6 +7773,7 @@ flow_dv_validate(struct rte_eth_dev *dev, const struct rte_flow_attr *attr,
 			break;
 
 		case RTE_FLOW_ITEM_TYPE_MARK:
+			/*校验mark*/
 			ret = flow_dv_validate_item_mark(dev, items, attr,
 							 error);
 			if (ret < 0)
@@ -7702,6 +7788,7 @@ flow_dv_validate(struct rte_eth_dev *dev, const struct rte_flow_attr *attr,
 			last_item = MLX5_FLOW_ITEM_METADATA;
 			break;
 		case RTE_FLOW_ITEM_TYPE_ICMP:
+			/*icmp类型的flow校验*/
 			ret = mlx5_flow_validate_item_icmp(items, item_flags,
 							   next_protocol,
 							   error);
@@ -7710,6 +7797,7 @@ flow_dv_validate(struct rte_eth_dev *dev, const struct rte_flow_attr *attr,
 			last_item = MLX5_FLOW_LAYER_ICMP;
 			break;
 		case RTE_FLOW_ITEM_TYPE_ICMP6:
+			/*icmpv6类型的flow校验*/
 			ret = mlx5_flow_validate_item_icmp6(items, item_flags,
 							    next_protocol,
 							    error);
@@ -7817,19 +7905,21 @@ flow_dv_validate(struct rte_eth_dev *dev, const struct rte_flow_attr *attr,
 			last_item = MLX5_FLOW_ITEM_AGGR_AFFINITY;
 			break;
 		case RTE_FLOW_ITEM_TYPE_IB_BTH:
+			/*匹配bth头*/
 			ret = mlx5_flow_validate_item_ib_bth(dev, udp_dport,
-							    items, is_root, error);
+							    items, is_root/*是否为root table*/, error);
 			if (ret < 0)
 				return ret;
 
 			last_item = MLX5_FLOW_ITEM_IB_BTH;
 			break;
 		default:
+			/*不支持其它字段*/
 			return rte_flow_error_set(error, ENOTSUP,
 						  RTE_FLOW_ERROR_TYPE_ITEM,
 						  NULL, "item not supported");
 		}
-		item_flags |= last_item;
+		item_flags |= last_item;/*记录已解析了哪些type*/
 	}
 
 	/*对匹配intergrity做特殊处理*/
@@ -7845,16 +7935,19 @@ flow_dv_validate(struct rte_eth_dev *dev, const struct rte_flow_attr *attr,
 		int type = actions->type;
 
 		if (!mlx5_flow_os_action_supported(type))
+			/*遇到不支持的action,报错*/
 			return rte_flow_error_set(error, ENOTSUP,
 						  RTE_FLOW_ERROR_TYPE_ACTION,
 						  actions,
 						  "action not supported");
 		if (actions_n == MLX5_DV_MAX_NUMBER_OF_ACTIONS)
+			/*action数量过大，报错*/
 			return rte_flow_error_set(error, ENOTSUP,
 						  RTE_FLOW_ERROR_TYPE_ACTION,
 						  actions, "too many actions");
 		if (action_flags &
 			MLX5_FLOW_ACTION_METER_WITH_TERMINATED_POLICY)
+			/*此action只能是最后一个*/
 			return rte_flow_error_set(error, ENOTSUP,
 				RTE_FLOW_ERROR_TYPE_ACTION,
 				NULL, "meter action with policy "
@@ -7864,6 +7957,7 @@ flow_dv_validate(struct rte_eth_dev *dev, const struct rte_flow_attr *attr,
 			break;
 		case RTE_FLOW_ACTION_TYPE_PORT_ID:
 		case RTE_FLOW_ACTION_TYPE_REPRESENTED_PORT:
+			/*输出到port_id,represented_port*/
 			ret = flow_dv_validate_action_port_id(dev,
 							      action_flags,
 							      actions,
@@ -7871,7 +7965,7 @@ flow_dv_validate(struct rte_eth_dev *dev, const struct rte_flow_attr *attr,
 							      error);
 			if (ret)
 				return ret;
-			action_flags |= MLX5_FLOW_ACTION_PORT_ID;/*标记执行了哪些action*/
+			action_flags |= MLX5_FLOW_ACTION_PORT_ID;/*统一标记为port_id action被解析*/
 			++actions_n;
 			break;
 		case RTE_FLOW_ACTION_TYPE_FLAG:
@@ -7996,6 +8090,7 @@ flow_dv_validate(struct rte_eth_dev *dev, const struct rte_flow_attr *attr,
 			++actions_n;
 			break;
 		case MLX5_RTE_FLOW_ACTION_TYPE_COUNT:
+			/*这类count是shared的*/
 			shared_count = true;
 			/* fall-through. */
 		case RTE_FLOW_ACTION_TYPE_COUNT:
@@ -8044,6 +8139,7 @@ flow_dv_validate(struct rte_eth_dev *dev, const struct rte_flow_attr *attr,
 			action_flags |= MLX5_FLOW_ACTION_OF_SET_VLAN_PCP;
 			break;
 		case RTE_FLOW_ACTION_TYPE_OF_SET_VLAN_VID:
+			/*更新vlan id*/
 			ret = flow_dv_validate_action_set_vlan_vid
 						(item_flags, action_flags,
 						 actions, error);
@@ -8057,6 +8153,7 @@ flow_dv_validate(struct rte_eth_dev *dev, const struct rte_flow_attr *attr,
 			break;
 		case RTE_FLOW_ACTION_TYPE_VXLAN_ENCAP:
 		case RTE_FLOW_ACTION_TYPE_NVGRE_ENCAP:
+			/*解析vxlan encap*/
 			ret = flow_dv_validate_action_l2_encap(dev,
 							       action_flags,
 							       actions, attr,
@@ -8068,6 +8165,7 @@ flow_dv_validate(struct rte_eth_dev *dev, const struct rte_flow_attr *attr,
 			break;
 		case RTE_FLOW_ACTION_TYPE_VXLAN_DECAP:
 		case RTE_FLOW_ACTION_TYPE_NVGRE_DECAP:
+			/*解析vxlan decap*/
 			ret = flow_dv_validate_action_decap(dev, action_flags,
 							    actions, item_flags,
 							    attr, error);
@@ -8108,6 +8206,7 @@ flow_dv_validate(struct rte_eth_dev *dev, const struct rte_flow_attr *attr,
 			break;
 		case RTE_FLOW_ACTION_TYPE_SET_MAC_SRC:
 		case RTE_FLOW_ACTION_TYPE_SET_MAC_DST:
+			/*更新mac地址*/
 			ret = flow_dv_validate_action_modify_mac(action_flags,
 								 actions,
 								 item_flags,
@@ -8134,6 +8233,7 @@ flow_dv_validate(struct rte_eth_dev *dev, const struct rte_flow_attr *attr,
 			break;
 		case RTE_FLOW_ACTION_TYPE_SET_IPV4_SRC:
 		case RTE_FLOW_ACTION_TYPE_SET_IPV4_DST:
+			/*更新ipv4地址*/
 			ret = flow_dv_validate_action_modify_ipv4(action_flags,
 								  actions,
 								  item_flags,
@@ -8153,6 +8253,7 @@ flow_dv_validate(struct rte_eth_dev *dev, const struct rte_flow_attr *attr,
 			break;
 		case RTE_FLOW_ACTION_TYPE_SET_IPV6_SRC:
 		case RTE_FLOW_ACTION_TYPE_SET_IPV6_DST:
+			/*更新ipv6地址*/
 			ret = flow_dv_validate_action_modify_ipv6(action_flags,
 								  actions,
 								  item_flags,
@@ -8178,6 +8279,7 @@ flow_dv_validate(struct rte_eth_dev *dev, const struct rte_flow_attr *attr,
 			break;
 		case RTE_FLOW_ACTION_TYPE_SET_TP_SRC:
 		case RTE_FLOW_ACTION_TYPE_SET_TP_DST:
+			/*更新tcp/udp src/dst port*/
 			ret = flow_dv_validate_action_modify_tp(action_flags,
 								actions,
 								item_flags,
@@ -8197,6 +8299,7 @@ flow_dv_validate(struct rte_eth_dev *dev, const struct rte_flow_attr *attr,
 			break;
 		case RTE_FLOW_ACTION_TYPE_DEC_TTL:
 		case RTE_FLOW_ACTION_TYPE_SET_TTL:
+			/*更新ttl*/
 			ret = flow_dv_validate_action_modify_ttl(action_flags,
 								 actions,
 								 item_flags,
@@ -8337,6 +8440,7 @@ flow_dv_validate(struct rte_eth_dev *dev, const struct rte_flow_attr *attr,
 			++actions_n;
 			break;
 		case RTE_FLOW_ACTION_TYPE_SET_IPV4_DSCP:
+			/*更新dscp*/
 			ret = flow_dv_validate_action_modify_ipv4_dscp
 							 (action_flags,
 							  actions,
@@ -8426,6 +8530,7 @@ flow_dv_validate(struct rte_eth_dev *dev, const struct rte_flow_attr *attr,
 			break;
 #endif
 		default:
+			/*遇到不认识的action*/
 			return rte_flow_error_set(error, ENOTSUP,
 						  RTE_FLOW_ERROR_TYPE_ACTION,
 						  actions,
@@ -8443,7 +8548,7 @@ flow_dv_validate(struct rte_eth_dev *dev, const struct rte_flow_attr *attr,
 	 * - TAG & META are reserved for future uses.
 	 */
 	if (action_flags & MLX5_FLOW_ACTION_TUNNEL_SET) {
-		/*有tunnel set相关的action的校验*/
+		/*action设置了tunnel,则以下action不得存在。*/
 		uint64_t bad_actions_mask = MLX5_FLOW_ACTION_DECAP    |
 					    MLX5_FLOW_ACTION_MARK     |
 					    MLX5_FLOW_ACTION_SET_TAG  |
@@ -8469,8 +8574,8 @@ flow_dv_validate(struct rte_eth_dev *dev, const struct rte_flow_attr *attr,
 					"tunnel flows for ingress and transfer traffic only");
 	}
 
-	/*有tunnel匹配相关action的校验*/
 	if (action_flags & MLX5_FLOW_ACTION_TUNNEL_MATCH) {
+		/*有tunnel匹配相关action，以下action不能存在*/
 		uint64_t bad_actions_mask = MLX5_FLOW_ACTION_JUMP    |
 					    MLX5_FLOW_ACTION_MARK    |
 					    MLX5_FLOW_ACTION_SET_TAG |
@@ -8503,7 +8608,7 @@ flow_dv_validate(struct rte_eth_dev *dev, const struct rte_flow_attr *attr,
 	if (attr->transfer) {
 		if (!mlx5_flow_ext_mreg_supported(dev) &&
 		    action_flags & MLX5_FLOW_ACTION_FLAG)
-			/*指明了flag,但硬件不支持*/
+			/*transfer下，如果指明了flag,但硬件不支持*/
 			return rte_flow_error_set(error, ENOTSUP,
 						  RTE_FLOW_ERROR_TYPE_ACTION,
 						  NULL,
@@ -8534,6 +8639,7 @@ flow_dv_validate(struct rte_eth_dev *dev, const struct rte_flow_attr *attr,
 						  actions,
 						  "no fate action is found");
 	} else {
+		/*ingress被指定，但action_flags未标记fate action*/
 		if (!(action_flags & MLX5_FLOW_FATE_ACTIONS) && attr->ingress)
 			return rte_flow_error_set(error, EINVAL,
 						  RTE_FLOW_ERROR_TYPE_ACTION,
@@ -8581,6 +8687,7 @@ flow_dv_validate(struct rte_eth_dev *dev, const struct rte_flow_attr *attr,
 		}
 		if (attr->ingress) {
 			if (action_flags & MLX5_FLOW_ACTION_ENCAP)
+				/*ingress方向不支持vxlan encap*/
 				return rte_flow_error_set
 						(error, ENOTSUP,
 						 RTE_FLOW_ERROR_TYPE_ACTION,
@@ -8749,11 +8856,14 @@ flow_dv_prepare(struct rte_eth_dev *dev,
 	wks->vport_meta_tag = 0;
 	/* In case of corrupting the memory. */
 	if (wks->flow_idx >= MLX5_NUM_MAX_DEV_FLOWS) {
+		//flow_idx过大，报错
 		rte_flow_error_set(error, ENOSPC,
 				   RTE_FLOW_ERROR_TYPE_UNSPECIFIED, NULL,
 				   "not free temporary device flow");
 		return NULL;
 	}
+
+	/*申请一个flow_handle*/
 	dev_handle = mlx5_ipool_zmalloc(priv->sh->ipool[MLX5_IPOOL_MLX5_FLOW],
 				   &handle_idx);
 	if (!dev_handle) {
@@ -8762,8 +8872,9 @@ flow_dv_prepare(struct rte_eth_dev *dev,
 				   "not enough memory to create flow handle");
 		return NULL;
 	}
+
 	MLX5_ASSERT(wks->flow_idx < RTE_DIM(wks->flows));
-	dev_flow = &wks->flows[wks->flow_idx++];
+	dev_flow = &wks->flows[wks->flow_idx++];/*使用flow_idx指定的flow,并将flow_idx加1*/
 	memset(dev_flow, 0, sizeof(*dev_flow));
 	dev_flow->handle = dev_handle;
 	dev_flow->handle_idx = handle_idx;
@@ -11797,6 +11908,7 @@ flow_dv_translate_action_port_id(struct rte_eth_dev *dev,
 	uint32_t port;
 	struct mlx5_priv *priv;
 
+	/*取action给定的port*/
 	switch (action->type) {
 	case RTE_FLOW_ACTION_TYPE_PORT_ID: {
 		const struct rte_flow_action_port_id *conf;
@@ -11819,6 +11931,7 @@ flow_dv_translate_action_port_id(struct rte_eth_dev *dev,
 					  "unknown E-Switch action");
 	}
 
+	/*port必须在rte_eth中被指明，获取其对应的eswitch info*/
 	priv = mlx5_port_to_eswitch_info(port, false);
 	if (!priv)
 		return rte_flow_error_set(error, -rte_errno,
@@ -11837,7 +11950,7 @@ flow_dv_translate_action_port_id(struct rte_eth_dev *dev,
 	 * This parameter is transferred to
 	 * mlx5dv_dr_action_create_dest_vport().
 	 */
-	*dst_port_id = priv->vport_id;
+	*dst_port_id = priv->vport_id;/*取此设备对应的vport_id*/
 #endif
 	return 0;
 }
@@ -12756,6 +12869,7 @@ flow_dv_translate_action_send_to_kernel(struct rte_eth_dev *dev,
 
 	sh = MLX5_SH(dev);
 	if (sh->send_to_kernel_action.action)
+		/*返回去往kernel的action*/
 		return sh->send_to_kernel_action.action;
 	priority = mlx5_get_send_to_kernel_priority(dev);
 	if (priority == (uint32_t)-1) {
@@ -12781,8 +12895,8 @@ flow_dv_translate_action_send_to_kernel(struct rte_eth_dev *dev,
 		goto err;
 	}
 	MLX5_ASSERT(action);
-	sh->send_to_kernel_action.action = action;
-	sh->send_to_kernel_action.tbl = tbl;
+	sh->send_to_kernel_action.action = action;/*设置发送给kernel的action*/
+	sh->send_to_kernel_action.tbl = tbl;/*设置对应的table*/
 	return action;
 err:
 	flow_dv_tbl_resource_release(sh, tbl);
@@ -14306,6 +14420,7 @@ flow_dv_translate(struct rte_eth_dev *dev,
 	};
 
 	if (!wks)
+		/*wks必须不为空*/
 		return rte_flow_error_set(error, ENOMEM,
 					  RTE_FLOW_ERROR_TYPE_UNSPECIFIED,
 					  NULL,
@@ -14313,6 +14428,8 @@ flow_dv_translate(struct rte_eth_dev *dev,
 	rss_desc = &wks->rss_desc;
 	memset(&mdest_res, 0, sizeof(struct mlx5_flow_dv_dest_array_resource));
 	memset(&sample_res, 0, sizeof(struct mlx5_flow_dv_sample_resource));
+
+	/*如果是egress,则使用nic_tx表，否则用nic_rx表*/
 	mhdr_res->ft_type = attr->egress ? MLX5DV_FLOW_TABLE_TYPE_NIC_TX :
 					   MLX5DV_FLOW_TABLE_TYPE_NIC_RX;
 	/* update normal path action resource into last index of array */
@@ -14330,14 +14447,18 @@ flow_dv_translate(struct rte_eth_dev *dev,
 		grp_info.std_tbl_fix = tunnel_use_standard_attr_group_translate
 					(dev, attr, tunnel, dev_flow->tof_type);
 	}
+	/*无效代码，又设置一遍*/
 	mhdr_res->ft_type = attr->egress ? MLX5DV_FLOW_TABLE_TYPE_NIC_TX :
 					   MLX5DV_FLOW_TABLE_TYPE_NIC_RX;
+
+	/*由group确定规则下发到哪个table*/
 	ret = mlx5_flow_group_to_table(dev, tunnel, attr->group, &table,
 				       &grp_info, error);
 	if (ret)
 		return ret;
 	dev_flow->dv.group = table;
 	if (attr->transfer)
+		/*如果指明transfer,则下发到fdb表中*/
 		mhdr_res->ft_type = MLX5DV_FLOW_TABLE_TYPE_FDB;
 	/* number of actions must be set to 0 in case of dirty stack. */
 	mhdr_res->actions_num = 0;
@@ -14370,6 +14491,8 @@ flow_dv_translate(struct rte_eth_dev *dev,
 			action_flags |= MLX5_FLOW_ACTION_DECAP;
 		}
 	}
+
+	/*遍历所有action*/
 	for (; !actions_end ; actions++) {
 		const struct rte_flow_action_queue *queue;
 		const struct rte_flow_action_rss *rss;
@@ -14387,18 +14510,21 @@ flow_dv_translate(struct rte_eth_dev *dev,
 		struct mlx5_aso_ct_action *ct;
 
 		if (!mlx5_flow_os_action_supported(action_type))
+			/*遇到不认识的action,报错*/
 			return rte_flow_error_set(error, ENOTSUP,
 						  RTE_FLOW_ERROR_TYPE_ACTION,
 						  actions,
 						  "action not supported");
 		switch (action_type) {
 		case MLX5_RTE_FLOW_ACTION_TYPE_TUNNEL_SET:
+			/*设置tunnel*/
 			action_flags |= MLX5_FLOW_ACTION_TUNNEL_SET;
 			break;
 		case RTE_FLOW_ACTION_TYPE_VOID:
 			break;
 		case RTE_FLOW_ACTION_TYPE_PORT_ID:
 		case RTE_FLOW_ACTION_TYPE_REPRESENTED_PORT:
+			/*转换action指明的port_id*/
 			if (flow_dv_translate_action_port_id(dev, action,
 							     &port_id, error))
 				return -rte_errno;
@@ -14412,7 +14538,7 @@ flow_dv_translate(struct rte_eth_dev *dev,
 			action_flags |= MLX5_FLOW_ACTION_PORT_ID;
 			dev_flow->handle->fate_action = MLX5_FLOW_FATE_PORT_ID;
 			sample_act->action_flags |= MLX5_FLOW_ACTION_PORT_ID;
-			num_of_dest++;
+			num_of_dest++;/*目的点数目增加*/
 			break;
 		case RTE_FLOW_ACTION_TYPE_FLAG:
 			action_flags |= MLX5_FLOW_ACTION_FLAG;
@@ -14489,6 +14615,7 @@ flow_dv_translate(struct rte_eth_dev *dev,
 			action_flags |= MLX5_FLOW_ACTION_SET_TAG;
 			break;
 		case RTE_FLOW_ACTION_TYPE_DROP:
+			/*标准为drop flow*/
 			action_flags |= MLX5_FLOW_ACTION_DROP;
 			dev_flow->handle->fate_action = MLX5_FLOW_FATE_DROP;
 			break;
@@ -14532,6 +14659,7 @@ flow_dv_translate(struct rte_eth_dev *dev,
 			action_flags |= MLX5_FLOW_ACTION_AGE;
 			break;
 		case RTE_FLOW_ACTION_TYPE_SEND_TO_KERNEL:
+			/*转换此action*/
 			dev_flow->dv.actions[actions_n] =
 				flow_dv_translate_action_send_to_kernel(dev,
 							error);
@@ -14548,7 +14676,9 @@ flow_dv_translate(struct rte_eth_dev *dev,
 			action_flags |= MLX5_FLOW_ACTION_AGE;
 			break;
 		case MLX5_RTE_FLOW_ACTION_TYPE_COUNT:
+			/*取count对应的idx*/
 			owner_idx = (uint32_t)(uintptr_t)action->conf;
+			/*取此idx对应的counter action*/
 			cnt_act = flow_dv_counter_get_by_idx(dev, owner_idx,
 							     NULL);
 			MLX5_ASSERT(cnt_act != NULL);
@@ -14630,6 +14760,7 @@ flow_dv_translate(struct rte_eth_dev *dev,
 			break;
 		case RTE_FLOW_ACTION_TYPE_VXLAN_ENCAP:
 		case RTE_FLOW_ACTION_TYPE_NVGRE_ENCAP:
+			/*执行vxlan encap*/
 			if (flow_dv_create_action_l2_encap(dev, actions,
 							   dev_flow,
 							   attr->transfer,
@@ -15060,7 +15191,7 @@ flow_dv_translate(struct rte_eth_dev *dev,
 	    matcher.priority <= MLX5_REG_BITS)
 		matcher.priority += MLX5_REG_BITS;
 	/* reserved field no needs to be set to 0 here. */
-	tbl_key.is_fdb = attr->transfer;
+	tbl_key.is_fdb = attr->transfer;/*是否为fdb表*/
 	tbl_key.is_egress = attr->egress;
 	tbl_key.level = dev_flow->dv.group;
 	tbl_key.id = dev_flow->dv.table_id;
@@ -15333,6 +15464,7 @@ flow_dv_apply(struct rte_eth_dev *dev, struct rte_flow *flow,
 		}
 		misc_mask = flow_dv_matcher_enable(dv_h->matcher->mask.buf);
 		__flow_dv_adjust_buf_size(&dv->value.size, misc_mask);
+		/*创建flow*/
 		err = mlx5_flow_os_create_flow(dv_h->matcher->matcher_object,
 					       (void *)&dv->value, n,
 					       dv->actions, &dh->drv_flow);
@@ -15812,7 +15944,7 @@ flow_dv_destroy(struct rte_eth_dev *dev, struct rte_flow *flow)
 
 	if (!flow)
 		return;
-	flow_dv_remove(dev, flow);
+	flow_dv_remove(dev, flow);/*先移除此flow*/
 	if (flow->counter) {
 		flow_dv_counter_free(dev, flow->counter);
 		flow->counter = 0;
@@ -19657,17 +19789,20 @@ flow_dv_sync_domain(struct rte_eth_dev *dev, uint32_t domains, uint32_t flags)
 	int ret = 0;
 
 	if ((domains & MLX5_DOMAIN_BIT_NIC_RX) && priv->sh->rx_domain != NULL) {
+		/*nic rx方向*/
 		ret = mlx5_os_flow_dr_sync_domain(priv->sh->rx_domain,
 						flags);
 		if (ret != 0)
 			return ret;
 	}
 	if ((domains & MLX5_DOMAIN_BIT_NIC_TX) && priv->sh->tx_domain != NULL) {
+		/*nic tx方向*/
 		ret = mlx5_os_flow_dr_sync_domain(priv->sh->tx_domain, flags);
 		if (ret != 0)
 			return ret;
 	}
 	if ((domains & MLX5_DOMAIN_BIT_FDB) && priv->sh->fdb_domain != NULL) {
+		/*fdb同步*/
 		ret = mlx5_os_flow_dr_sync_domain(priv->sh->fdb_domain, flags);
 		if (ret != 0)
 			return ret;
@@ -19781,10 +19916,11 @@ flow_dv_discover_priorities(struct rte_eth_dev *dev,
 	return ret;
 }
 
+/*MLX5_FLOW_TYPE_DV模式驱动*/
 const struct mlx5_flow_driver_ops mlx5_flow_dv_drv_ops = {
-	.validate = flow_dv_validate,
-	.prepare = flow_dv_prepare,
-	.translate = flow_dv_translate,
+	.validate = flow_dv_validate,/*校验flow,用于检查flow格式及语义*/
+	.prepare = flow_dv_prepare,/*准备mlx5_flow结构*/
+	.translate = flow_dv_translate,/*将flow转换为mlx5_flow*/
 	.apply = flow_dv_apply,
 	.remove = flow_dv_remove,
 	.destroy = flow_dv_destroy,
@@ -19804,7 +19940,7 @@ const struct mlx5_flow_driver_ops mlx5_flow_dv_drv_ops = {
 	.meter_sub_policy_rss_prepare = flow_dv_meter_sub_policy_rss_prepare,
 	.meter_hierarchy_rule_create = flow_dv_meter_hierarchy_rule_create,
 	.destroy_sub_policy_with_rxq = flow_dv_destroy_sub_policy_with_rxq,
-	.counter_alloc = flow_dv_counter_allocate,
+	.counter_alloc = flow_dv_counter_allocate,/*counter申请*/
 	.counter_free = flow_dv_counter_free,
 	.counter_query = flow_dv_counter_query,
 	.get_aged_flows = flow_dv_get_aged_flows,

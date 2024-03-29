@@ -56,7 +56,7 @@ struct rte_gpu_info {
 	/** ID of the parent device, RTE_GPU_ID_NONE if no parent */
 	int16_t parent;
 	/** Total processors available on device. */
-	uint32_t processor_count;
+	uint32_t processor_count;/*此设备上处理器数目*/
 	/** Total memory available on device. */
 	size_t total_memory;
 	/** GPU memory page size. */

@@ -9333,6 +9333,7 @@ flow_hw_get_aged_flows(struct rte_eth_dev *dev, void **contexts,
 	return flow_hw_get_q_aged_flows(dev, 0, contexts, nb_contexts, error);
 }
 
+/*MLX5_FLOW_TYPE_HW模式驱动*/
 const struct mlx5_flow_driver_ops mlx5_flow_hw_drv_ops = {
 	.info_get = flow_hw_info_get,
 	.configure = flow_hw_configure,

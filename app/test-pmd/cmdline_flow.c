@@ -918,6 +918,7 @@ struct rte_flow_action_vf sample_vf[RAW_SAMPLE_CONFS_MAX_NUM];
 struct rte_flow_action_ethdev sample_port_representor[RAW_SAMPLE_CONFS_MAX_NUM];
 struct rte_flow_action_ethdev sample_represented_port[RAW_SAMPLE_CONFS_MAX_NUM];
 
+/*modify_field关键字对应的ops*/
 static const char *const modify_field_ops[] = {
 	"set", "add", "sub", NULL
 };
@@ -963,11 +964,15 @@ struct context {
 	const enum index *next[CTX_STACK_SIZE];
 	/** Arguments for stacked tokens. */
 	const void *args[CTX_STACK_SIZE];
+	/*当前token在token_list中指向的索引(当前token)*/
 	enum index curr; /**< Current token index. */
+	/*指向上一个token*/
 	enum index prev; /**< Index of the last token seen. */
 	int next_num; /**< Number of entries in next[]. */
 	int args_num; /**< Number of entries in args[]. */
+	/*是否end of line*/
 	uint32_t eol:1; /**< EOL has been detected. */
+	/*是否最后一个参数*/
 	uint32_t last:1; /**< No more arguments. */
 	portid_t port; /**< Current port ID (for completions). */
 	uint32_t objdata; /**< Object-specific data. */
@@ -6679,7 +6684,7 @@ static const struct token token_list[] = {
 	[ACTION_MODIFY_FIELD_DST_TYPE_VALUE] = {
 		.name = "{dst_type}",
 		.help = "destination field type value",
-		.call = parse_vc_modify_field_id,
+		.call = parse_vc_modify_field_id,/*取得dst_type*/
 		.comp = comp_set_modify_field_id,
 	},
 	[ACTION_MODIFY_FIELD_DST_LEVEL] = {
@@ -6758,7 +6763,7 @@ static const struct token token_list[] = {
 		.comp = comp_none,
 	},
 	[ACTION_MODIFY_FIELD_SRC_TAG_INDEX] = {
-		.name = "stc_tag_index",
+		.name = "stc_tag_index",/*tag数组的index*/
 		.help = "source field tag array",
 		.next = NEXT(action_modify_field_src,
 			     NEXT_ENTRY(COMMON_UNSIGNED)),
@@ -7517,10 +7522,12 @@ strcmp_partial(const char *full, const char *partial, size_t partial_len)
 	int r = strncmp(full, partial, partial_len);
 
 	if (r)
+		/*匹配失败*/
 		return r;
 	if (strlen(full) <= partial_len)
+		/*成功匹配*/
 		return 0;
-	return full[partial_len];
+	return full[partial_len];/*如果字符串为空，返回0*/
 }
 
 /**
@@ -7606,8 +7613,9 @@ parse_default(struct context *ctx, const struct token *token,
 	(void)buf;
 	(void)size;
 	if (strcmp_partial(token->name, str, len))
+		/*token->name与str不匹配*/
 		return -1;
-	return len;
+	return len;/*匹配*/
 }
 
 /** Parse flow command, initialize output buffer for subsequent tokens. */
@@ -7894,8 +7902,8 @@ parse_mp(struct context *ctx, const struct token *token,
 
 /** Parse tokens for validate/create commands. */
 static int
-parse_vc(struct context *ctx, const struct token *token,
-	 const char *str, unsigned int len,
+parse_vc(struct context *ctx, const struct token *token/*尝试解析的token*/,
+	 const char *str/*待解析的命令行*/, unsigned int len,
 	 void *buf, unsigned int size)
 {
 	struct buffer *out = buf;
@@ -7904,16 +7912,20 @@ parse_vc(struct context *ctx, const struct token *token,
 
 	/* Token name must match. */
 	if (parse_default(ctx, token, str, len, NULL, 0) < 0)
+		/*token与str不能匹配，退出*/
 		return -1;
 	/* Nothing else to do if there is no buffer. */
 	if (!out)
+		/*未指定out,指出匹配长度*/
 		return len;
 	if (!out->command) {
+		/*command为0时，当前token必须是以下情况*/
 		if (ctx->curr != VALIDATE && ctx->curr != CREATE &&
 		    ctx->curr != PATTERN_TEMPLATE_CREATE &&
 		    ctx->curr != ACTIONS_TEMPLATE_CREATE)
 			return -1;
 		if (sizeof(*out) > size)
+			/*结构体检查*/
 			return -1;
 		out->command = ctx->curr;
 		ctx->objdata = 0;
@@ -8007,6 +8019,7 @@ parse_vc(struct context *ctx, const struct token *token,
 		ctx->object = item;
 		ctx->objmask = NULL;
 	} else {
+		/*取此token的私有数据*/
 		const struct parse_action_priv *priv = token->priv;
 		struct rte_flow_action *action =
 			out->args.vc.actions + out->args.vc.actions_n;
@@ -8017,6 +8030,7 @@ parse_vc(struct context *ctx, const struct token *token,
 					       sizeof(double));
 		if ((uint8_t *)action + sizeof(*action) > data)
 			return -1;
+		/*设置action*/
 		*action = (struct rte_flow_action){
 			.type = priv->type,
 			.conf = data_size ? data : NULL,
@@ -8103,7 +8117,7 @@ parse_vc_conf(struct context *ctx, const struct token *token,
 
 	(void)size;
 	/* Token name must match. */
-	if (parse_default(ctx, token, str, len, NULL, 0) < 0)
+	if (parse_default(ctx, token, str, len, NULL, 0) < 0)/*匹配token对应的字段*/
 		return -1;
 	/* Nothing else to do if there is no buffer. */
 	if (!out)
@@ -9626,14 +9640,17 @@ parse_vc_modify_field_id(struct context *ctx, const struct token *token,
 	if (ctx->curr != ACTION_MODIFY_FIELD_DST_TYPE_VALUE &&
 		ctx->curr != ACTION_MODIFY_FIELD_SRC_TYPE_VALUE)
 		return -1;
+	/*遍历modify_field_ids列表，如果str与ids明确的字符串匹配，则确认filed_id*/
 	for (i = 0; modify_field_ids[i]; ++i)
 		if (!strcmp_partial(modify_field_ids[i], str, len))
 			break;
 	if (!modify_field_ids[i])
+		/*与现有的filed不匹配*/
 		return -1;
 	if (!ctx->object)
 		return len;
 	action_modify_field = ctx->object;
+	/*依据当前是dst,还是src,设置field id*/
 	if (ctx->curr == ACTION_MODIFY_FIELD_DST_TYPE_VALUE)
 		action_modify_field->dst.field = (enum rte_flow_field_id)i;
 	else
@@ -12006,7 +12023,7 @@ cmd_flow_parse(cmdline_parse_token_hdr_t *hdr, const char *src/*待解析的字�
 	ctx->last = 1;
 	for (len = 0; src[len]; ++len)
 		if (src[len] == '#' || isspace(src[len]))
-			/*遇到注释符，退出；遇到空格（token分隔符，退出）*/
+			/*遍历src,如遇到注释符，退出；遇到空格（token分隔符，退出）*/
 			break;
 
 	/*内容为空，退出*/
@@ -12017,7 +12034,7 @@ cmd_flow_parse(cmdline_parse_token_hdr_t *hdr, const char *src/*待解析的字�
 		if (src[i] == '#' || src[i] == '\r' || src[i] == '\n')
 			break;
 		else if (!isspace(src[i])) {
-			ctx->last = 0;
+			ctx->last = 0;/*空格后存在非空格，则说明非last参数*/
 			break;
 		}
 
@@ -12037,15 +12054,16 @@ cmd_flow_parse(cmdline_parse_token_hdr_t *hdr, const char *src/*待解析的字�
 	ctx->prev = ctx->curr;
 	list = ctx->next[ctx->next_num - 1];
 	for (i = 0; list[i]; ++i) {
-		/*取此编号的token*/
+		/*取此编号(list[i])的token*/
 		const struct token *next = &token_list[list[i]];
 		int tmp;
 
 		ctx->curr = list[i];
 		if (next->call)
-			/*有call回调，则触发call回调*/
+			/*此token有call回调，则触发call回调*/
 			tmp = next->call(ctx, next, src, len, result, size);
 		else
+			/*此token无call回调，检查next->name是否与src token匹配*/
 			tmp = parse_default(ctx, next, src, len, result, size);
 		if (tmp == -1 || tmp != len)
 			continue;/*不匹配，继续在list集合中查找*/
@@ -12452,6 +12470,7 @@ cmd_flow_parsed(const struct buffer *in)
 				   &in->args.vc.tunnel_ops);
 		break;
 	case CREATE:
+		/*流规则创建*/
 		port_flow_create(in->port, &in->args.vc.attr,
 				 in->args.vc.pattern, in->args.vc.actions,
 				 &in->args.vc.tunnel_ops, in->args.vc.user_id);
@@ -12516,8 +12535,10 @@ static void
 cmd_flow_cb(void *arg0, struct cmdline *cl, void *arg2)
 {
 	if (cl == NULL)
+		/*首次进入，解析token*/
 		cmd_flow_tok(arg0, arg2);
 	else
+		/*再次进入，执行命令*/
 		cmd_flow_parsed(arg0);
 }
 

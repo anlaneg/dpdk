@@ -150,14 +150,16 @@ __list_cache_clean(struct mlx5_list_inconst *l_inconst,
 		   int lcore_index)
 {
 	struct mlx5_list_cache *c = l_inconst->cache[lcore_index];
-	struct mlx5_list_entry *entry = LIST_FIRST(&c->h);
+	struct mlx5_list_entry *entry = LIST_FIRST(&c->h);/*cache的首个元素*/
 	uint32_t inv_cnt = __atomic_exchange_n(&c->inv_cnt, 0,
 					       __ATOMIC_RELAXED);
 
 	while (inv_cnt != 0 && entry != NULL) {
+		/*先提前取后一个元素*/
 		struct mlx5_list_entry *nentry = LIST_NEXT(entry, next);
 
 		if (__atomic_load_n(&entry->ref_cnt, __ATOMIC_RELAXED) == 0) {
+			/*当前entry引用计数减为0，将其从链中摘取，并释放它*/
 			LIST_REMOVE(entry, next);
 			if (l_const->lcores_share)
 				l_const->cb_clone_free(l_const->ctx, entry);
@@ -165,7 +167,7 @@ __list_cache_clean(struct mlx5_list_inconst *l_inconst,
 				l_const->cb_remove(l_const->ctx, entry);
 			inv_cnt--;
 		}
-		entry = nentry;
+		entry = nentry;/*切到下一个元素*/
 	}
 }
 
@@ -178,6 +180,7 @@ _mlx5_list_register(struct mlx5_list_inconst *l_inconst,
 	volatile uint32_t prev_gen_cnt = 0;
 	MLX5_ASSERT(l_inconst);
 	if (unlikely(!l_inconst->cache[lcore_index])) {
+		/*cache为空，创建cache（申请struct mlx5_list_cache结构体）*/
 		l_inconst->cache[lcore_index] = mlx5_malloc(0,
 					sizeof(struct mlx5_list_cache),
 					RTE_CACHE_LINE_SIZE, SOCKET_ID_ANY);
@@ -185,9 +188,11 @@ _mlx5_list_register(struct mlx5_list_inconst *l_inconst,
 			rte_errno = ENOMEM;
 			return NULL;
 		}
+		/*初始化链表，链表为空*/
 		l_inconst->cache[lcore_index]->inv_cnt = 0;
 		LIST_INIT(&l_inconst->cache[lcore_index]->h);
 	}
+
 	/* 0. Free entries that was invalidated by other lcores. */
 	__list_cache_clean(l_inconst, l_const, lcore_index);
 	/* 1. Lookup in local cache. */

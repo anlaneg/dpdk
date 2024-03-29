@@ -1254,7 +1254,7 @@ continue_dev_start:
 		goto error;
 	}
 	/* Set started flag here for the following steps like control flow. */
-	dev->data->dev_started = 1;
+	dev->data->dev_started = 1;/*指明设备启动*/
 	ret = mlx5_rx_intr_vec_enable(dev);
 	if (ret) {
 		DRV_LOG(ERR, "port %u Rx interrupt vector creation failed",

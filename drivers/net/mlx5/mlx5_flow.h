@@ -125,9 +125,9 @@ struct mlx5_rte_flow_item_sq {
 enum mlx5_feature_name {
 	MLX5_HAIRPIN_RX,
 	MLX5_HAIRPIN_TX,
-	MLX5_METADATA_RX,
-	MLX5_METADATA_TX,
-	MLX5_METADATA_FDB,
+	MLX5_METADATA_RX,/*nic table rx方向支持的metadata*/
+	MLX5_METADATA_TX,/*nic table tx方向支持的metadata*/
+	MLX5_METADATA_FDB,/*fdb表支持的metadata*/
 	MLX5_FLOW_MARK,
 	MLX5_APP_TAG,
 	MLX5_COPY_MARK,
@@ -165,6 +165,7 @@ enum mlx5_feature_name {
 
 /* General pattern items bits. */
 #define MLX5_FLOW_ITEM_METADATA (1u << 16)
+/*匹配port-id*/
 #define MLX5_FLOW_ITEM_PORT_ID (1u << 17)
 #define MLX5_FLOW_ITEM_TAG (1u << 18)
 #define MLX5_FLOW_ITEM_MARK (1u << 19)
@@ -582,6 +583,7 @@ struct mlx5_flow_dv_modify_hdr_resource {
 	void *action; /**< Modify header action object. */
 	uint32_t idx;
 	/* Key area for hash list matching: */
+	/*表的类型*/
 	uint8_t ft_type; /**< Flow table type, Rx or Tx. */
 	uint8_t actions_num; /**< Number of modification actions. */
 	bool root; /**< Whether action is in root table. */
@@ -793,6 +795,7 @@ struct mlx5_flow_handle {
 struct mlx5_flow_dv_workspace {
 	uint32_t group; /**< The group index. */
 	uint32_t table_id; /**< Flow table identifier. */
+	/*标记规则是否指明了transfer属性*/
 	uint8_t transfer; /**< 1 if the flow is E-Switch flow. */
 	int actions_n; /**< number of actions. */
 	void *actions[MLX5_DV_MAX_NUMBER_OF_ACTIONS]; /**< Action list. */
@@ -884,8 +887,8 @@ struct mlx5_flow_verbs_workspace {
  */
 enum mlx5_tof_rule_type {
 	MLX5_TUNNEL_OFFLOAD_NONE = 0,
-	MLX5_TUNNEL_OFFLOAD_SET_RULE,
-	MLX5_TUNNEL_OFFLOAD_MATCH_RULE,
+	MLX5_TUNNEL_OFFLOAD_SET_RULE,/*设置tunnel?*/
+	MLX5_TUNNEL_OFFLOAD_MATCH_RULE,/*匹配tunnel?*/
 	MLX5_TUNNEL_OFFLOAD_MISS_RULE,
 };
 
@@ -898,6 +901,7 @@ struct mlx5_flow {
 	uint64_t act_flags;
 	/**< Bit-fields of detected actions, see MLX5_FLOW_ACTION_*. */
 	bool external; /**< true if the flow is created external to PMD. */
+	/*标记是否为ingress方向*/
 	uint8_t ingress:1; /**< 1 if the flow is ingress. */
 	uint8_t skip_scale:2;
 	uint8_t symmetric_hash_function:1;
@@ -922,7 +926,8 @@ struct mlx5_flow {
 		struct mlx5_flow_verbs_workspace verbs;
 #endif
 	};
-	struct mlx5_flow_handle *handle;
+	struct mlx5_flow_handle *handle;/*指向一个mlx5_flow_handle结构体*/
+	/*指明handle在pool中的index*/
 	uint32_t handle_idx; /* Index of the mlx5 flow handle memory. */
 	const struct mlx5_flow_tunnel *tunnel;
 	enum mlx5_tof_rule_type tof_type;
@@ -1506,6 +1511,7 @@ struct mlx5_flow_workspace {
 	uint32_t inuse; /* can't create new flow with current. */
 	struct mlx5_flow flows[MLX5_NUM_MAX_DEV_FLOWS];
 	struct mlx5_flow_rss_desc rss_desc;
+	/*指出当前使用的是flows数组中的哪个mlx5_flow*/
 	uint32_t flow_idx; /* Intermediate device flow index. */
 	struct mlx5_flow_meter_info *fm; /* Pointer to the meter in flow. */
 	struct mlx5_flow_meter_policy *policy;

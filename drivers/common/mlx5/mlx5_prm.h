@@ -845,6 +845,7 @@ enum mlx5_modification_field {
 /* Total number of metadata reg_c's. */
 #define MLX5_MREG_C_NUM (MLX5_MODI_META_REG_C_7 - MLX5_MODI_META_REG_C_0 + 1)
 
+/*各类寄存器*/
 enum modify_reg {
 	REG_NON = 0,
 	REG_A,
@@ -917,7 +918,7 @@ typedef uint8_t u8;
 #define MLX5_ADDR_OF(typ, p, fld) ((char *)(p) + MLX5_BYTE_OFF(typ, fld))
 
 /* insert a value to a struct */
-#define MLX5_SET(typ, p, fld, v) \
+#define MLX5_SET(typ/*结构体类型*/, p/*结构体指针*/, fld/*成员名称*/, v) \
 	do { \
 		u32 _v = v; \
 		/*设置结构体p(typ类型）的成员fld的值为v*/\

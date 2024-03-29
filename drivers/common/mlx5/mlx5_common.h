@@ -319,7 +319,9 @@ enum mlx5_class {
 
 /* devX creation object */
 struct mlx5_devx_obj {
+	/*通过devx_obj_create创建*/
 	void *obj; /* The DV object. */
+	/*obj对应的id*/
 	int id; /* The object ID. */
 };
 
@@ -506,9 +508,9 @@ struct mlx5_common_dev_config {
 };
 
 struct mlx5_common_device {
-	struct rte_device *dev;
+	struct rte_device *dev;/*对应的rte_device*/
 	TAILQ_ENTRY(mlx5_common_device) next;
-	uint32_t classes_loaded;
+	uint32_t classes_loaded;/*标记此设备的哪种类型驱动已加载，例如压缩类驱动已加载*/
 	void *ctx; /* Verbs/DV/DevX context. */
 	void *pd; /* Protection Domain. */
 	uint32_t pdn; /* Protection Domain Number. */
@@ -552,11 +554,13 @@ typedef int (mlx5_class_driver_remove_t)(struct mlx5_common_device *cdev);
  */
 struct mlx5_class_driver {
 	TAILQ_ENTRY(mlx5_class_driver) next;
+	/*指明驱动的类型，例如以太，加密，压缩等*/
 	enum mlx5_class drv_class;            /**< Class of this driver. */
 	const char *name;                     /**< Driver name. */
 	mlx5_class_driver_probe_t *probe;     /**< Device probe function. */
 	mlx5_class_driver_remove_t *remove;   /**< Device remove function. */
 	const struct rte_pci_id *id_table;    /**< ID table, NULL terminated. */
+	/*标记此设备是否支持重复probe*/
 	uint32_t probe_again:1;
 	/**< Device already probed can be probed again to check new device. */
 	uint32_t intr_lsc:1; /**< Supports link state interrupt. */

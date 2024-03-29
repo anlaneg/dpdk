@@ -108,6 +108,7 @@ mlx5_dev_is_pci(const struct rte_device *dev)
 	return strcmp(dev->bus->name, "pci") == 0;
 }
 
+/*检查给定的pci设备是否为vf*/
 bool
 mlx5_dev_is_vf_pci(const struct rte_pci_device *pci_dev)
 {
@@ -116,7 +117,7 @@ mlx5_dev_is_vf_pci(const struct rte_pci_device *pci_dev)
 	case PCI_DEVICE_ID_MELLANOX_CONNECTX4LXVF:
 	case PCI_DEVICE_ID_MELLANOX_CONNECTX5VF:
 	case PCI_DEVICE_ID_MELLANOX_CONNECTX5EXVF:
-	case PCI_DEVICE_ID_MELLANOX_BLUEFIELDVF:
+	case PCI_DEVICE_ID_MELLANOX_BLUEFIELDVF:/*bluefield vf*/
 	case PCI_DEVICE_ID_MELLANOX_CONNECTX6VF:
 	case PCI_DEVICE_ID_MELLANOX_CONNECTXVF:
 		return true;
@@ -165,6 +166,7 @@ static int
 mlx5_common_pci_probe(struct rte_pci_driver *pci_drv __rte_unused,
 		      struct rte_pci_device *pci_dev)
 {
+	/*匹配pci设备*/
 	return mlx5_common_dev_probe(&pci_dev->device);
 }
 
@@ -207,7 +209,7 @@ static struct rte_pci_driver mlx5_common_pci_driver = {
 	.driver = {
 		   .name = MLX5_PCI_DRIVER_NAME,
 	},
-	.probe = mlx5_common_pci_probe,
+	.probe = mlx5_common_pci_probe,/*用于probe mellanox pci设备*/
 	.remove = mlx5_common_pci_remove,
 	.dma_map = mlx5_common_pci_dma_map,
 	.dma_unmap = mlx5_common_pci_dma_unmap,

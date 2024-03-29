@@ -209,7 +209,7 @@ rte_pci_match(const struct rte_pci_driver *pci_drv,
  * driver.
  */
 static int
-rte_pci_probe_one_driver(struct rte_pci_driver *dr,
+rte_pci_probe_one_driver(struct rte_pci_driver *dr/*驱动*/,
 			 struct rte_pci_device *dev)
 {
 	int ret;
@@ -304,12 +304,13 @@ rte_pci_probe_one_driver(struct rte_pci_driver *dr,
 		}
 	}
 
+	/*利用驱动probe PCI设备*/
 	RTE_LOG(INFO, EAL, "Probe PCI driver: %s (%x:%x) device: "PCI_PRI_FMT" (socket %i)\n",
 			dr->driver.name, dev->id.vendor_id, dev->id.device_id,
 			loc->domain, loc->bus, loc->devid, loc->function,
 			dev->device.numa_node);
 	/* call the driver probe() function */
-	ret = dr->probe(dr, dev);
+	ret = dr->probe(dr/*驱动对象*/, dev);
 	if (already_probed)
 		return ret; /* no rollback if already succeeded earlier */
 	if (ret) {

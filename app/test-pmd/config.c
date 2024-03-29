@@ -5853,16 +5853,17 @@ list_pkt_forwarding_modes(void)
 	unsigned i = 0;
 
 	if (strlen (fwd_modes) == 0) {
+		/*fwd_modes未初始化，收集当前支持的fwd_engines,产出fwd_modes*/
 		while ((fwd_eng = fwd_engines[i++]) != NULL) {
 			strncat(fwd_modes, fwd_eng->fwd_mode_name,
 					sizeof(fwd_modes) - strlen(fwd_modes) - 1);
 			strncat(fwd_modes, separator,
-					sizeof(fwd_modes) - strlen(fwd_modes) - 1);
+					sizeof(fwd_modes) - strlen(fwd_modes) - 1);/*添加分隔符*/
 		}
 		fwd_modes[strlen(fwd_modes) - strlen(separator)] = '\0';
 	}
 
-	return fwd_modes;
+	return fwd_modes;/*通过分隔符产生fwd_modes*/
 }
 
 char*
@@ -5874,6 +5875,7 @@ list_pkt_forwarding_retry_modes(void)
 	unsigned i = 0;
 
 	if (strlen(fwd_modes) == 0) {
+		/*fwd_modes未初始化，收集当前支持的fwd_engines(排除rx_only_engine),产出fwd_modes*/
 		while ((fwd_eng = fwd_engines[i++]) != NULL) {
 			if (fwd_eng == &rx_only_engine)
 				continue;
@@ -5882,12 +5884,12 @@ list_pkt_forwarding_retry_modes(void)
 					strlen(fwd_modes) - 1);
 			strncat(fwd_modes, separator,
 					sizeof(fwd_modes) -
-					strlen(fwd_modes) - 1);
+					strlen(fwd_modes) - 1);/*添加分隔符*/
 		}
 		fwd_modes[strlen(fwd_modes) - strlen(separator)] = '\0';
 	}
 
-	return fwd_modes;
+	return fwd_modes;/*通过分隔符产生fwd_modes(排除rx_only_engine)*/
 }
 
 void

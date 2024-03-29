@@ -11,14 +11,15 @@
 #include "cmdline_cirbuf.h"
 
 
+/*初始化cirbuf*/
 int
-cirbuf_init(struct cirbuf *cbuf, char *buf, unsigned int start, unsigned int maxlen)
+cirbuf_init(struct cirbuf *cbuf, char *buf/*注入buffer*/, unsigned int start, unsigned int maxlen)
 {
 	if (!cbuf || !buf)
 		return -EINVAL;
-	cbuf->maxlen = maxlen;
+	cbuf->maxlen = maxlen;/*buffer最大长度*/
 	cbuf->len = 0;
-	cbuf->start = start;
+	cbuf->start = start;/*起始长度*/
 	cbuf->end = start;
 	cbuf->buf = buf;
 	return 0;

@@ -891,7 +891,7 @@ mlx5_flow_ipool_create(struct mlx5_dev_ctx_shared *sh)
 	struct mlx5_indexed_pool_config cfg;
 
 	for (i = 0; i < MLX5_IPOOL_MAX; ++i) {
-		cfg = mlx5_ipool_cfg[i];
+		cfg = mlx5_ipool_cfg[i];/*各类pool的配置*/
 		switch (i) {
 		default:
 			break;
@@ -1339,7 +1339,7 @@ mlx5_dev_args_check_handler(const char *key, const char *val, void *opaque)
 	signed long tmp;
 
 	errno = 0;
-	tmp = strtol(val, NULL, 0);
+	tmp = strtol(val, NULL, 0);/*将value转为数字*/
 	if (errno) {
 		rte_errno = errno;
 		DRV_LOG(WARNING, "%s: \"%s\" is not a valid integer", key, val);
@@ -1367,8 +1367,10 @@ mlx5_dev_args_check_handler(const char *key, const char *val, void *opaque)
 	} else if (strcmp(MLX5_VF_NL_EN, key) == 0) {
 		config->vf_nl_en = !!tmp;
 	} else if (strcmp(MLX5_DV_ESW_EN, key) == 0) {
+		/*指明开启eswitch*/
 		config->dv_esw_en = !!tmp;
 	} else if (strcmp(MLX5_DV_FLOW_EN, key) == 0) {
+		/*dv_flow_en参数处理，设置dv_flow_en，其它一个整数，有0，1，2*/
 		if (tmp > 2) {
 			DRV_LOG(ERR, "Invalid %s parameter.", key);
 			rte_errno = EINVAL;
@@ -1376,11 +1378,13 @@ mlx5_dev_args_check_handler(const char *key, const char *val, void *opaque)
 		}
 		config->dv_flow_en = tmp;
 	} else if (strcmp(MLX5_DV_XMETA_EN, key) == 0) {
+		//"dv_xmeta_en"参数设置
 		if (tmp != MLX5_XMETA_MODE_LEGACY &&
 		    tmp != MLX5_XMETA_MODE_META16 &&
 		    tmp != MLX5_XMETA_MODE_META32 &&
 		    tmp != MLX5_XMETA_MODE_MISS_INFO &&
 		    tmp != MLX5_XMETA_MODE_META32_HWS) {
+			/*遇到不支持的参数*/
 			DRV_LOG(ERR, "Invalid extensive metadata parameter.");
 			rte_errno = EINVAL;
 			return -rte_errno;
@@ -1458,8 +1462,8 @@ mlx5_shared_dev_ctx_args_config(struct mlx5_dev_ctx_shared *sh,
 	/* Default configuration. */
 	memset(config, 0, sizeof(*config));
 	config->vf_nl_en = 1;
-	config->dv_esw_en = 1;
-	config->dv_flow_en = 1;
+	config->dv_esw_en = 1;/*默认开启eswitch*/
+	config->dv_flow_en = 1;/*默认开启dv_flow_en*/
 	config->decap_en = 1;
 	config->allow_duplicate_pattern = 1;
 	config->fdb_def_rule = 1;
@@ -1478,14 +1482,17 @@ mlx5_shared_dev_ctx_args_config(struct mlx5_dev_ctx_shared *sh,
 	}
 	/* Adjust parameters according to device capabilities. */
 	if (config->dv_flow_en && !sh->dev_cap.dv_flow_en) {
+		/*设备不支持dv_flow_en,置为0*/
 		DRV_LOG(WARNING, "DV flow is not supported.");
 		config->dv_flow_en = 0;
 	}
 	if (config->dv_esw_en && !sh->dev_cap.dv_esw_en) {
+		/*设备不支持eswitch,置为0*/
 		DRV_LOG(DEBUG, "E-Switch DV flow is not supported.");
 		config->dv_esw_en = 0;
 	}
 	if (config->dv_esw_en && !config->dv_flow_en) {
+		/*eswitch被开启了，但dv_flow_en未被使能，关闭掉eswitch开启标记*/
 		DRV_LOG(DEBUG,
 			"E-Switch DV flow is supported only when DV flow is enabled.");
 		config->dv_esw_en = 0;
@@ -1619,14 +1626,16 @@ mlx5_alloc_shared_dev_ctx(const struct mlx5_dev_spawn_data *spawn,
 	MLX5_ASSERT(rte_eal_process_type() == RTE_PROC_PRIMARY);
 	pthread_mutex_lock(&mlx5_dev_ctx_list_mutex);
 	/* Search for IB context by device name. */
+	/*遍历mlx5_dev_ctx_list*/
 	LIST_FOREACH(sh, &mlx5_dev_ctx_list, next) {
 		if (!strcmp(sh->ibdev_name, spawn->phys_dev_name)) {
 			sh->refcnt++;
-			goto exit;
+			goto exit;/*此设备已存在，引用增加，直接返回*/
 		}
 	}
 	/* No device found, we have to create new shared context. */
 	MLX5_ASSERT(spawn->max_port);
+	/*创建sh*/
 	sh = mlx5_malloc(MLX5_MEM_ZERO | MLX5_MEM_RTE,
 			 sizeof(struct mlx5_dev_ctx_shared) +
 			 spawn->max_port * sizeof(struct mlx5_dev_shared_port),
@@ -1669,6 +1678,7 @@ mlx5_alloc_shared_dev_ctx(const struct mlx5_dev_spawn_data *spawn,
 		sh->port[i].nl_ih_port_id = RTE_MAX_ETHPORTS;
 	}
 	if (sh->cdev->config.devx) {
+		/*创建td*/
 		sh->td = mlx5_devx_cmd_create_td(sh->cdev->ctx);
 		if (!sh->td) {
 			DRV_LOG(ERR, "TD allocation failure");
@@ -1705,7 +1715,7 @@ mlx5_alloc_shared_dev_ctx(const struct mlx5_dev_spawn_data *spawn,
 	mlx5_flow_aging_init(sh);
 	mlx5_flow_ipool_create(sh);
 	/* Add context to the global device list. */
-	LIST_INSERT_HEAD(&mlx5_dev_ctx_list, sh, next);
+	LIST_INSERT_HEAD(&mlx5_dev_ctx_list, sh, next);/*将sh添加进mlx5_dev_ctx_list*/
 	rte_spinlock_init(&sh->geneve_tlv_opt_sl);
 exit:
 	pthread_mutex_unlock(&mlx5_dev_ctx_list_mutex);
@@ -2331,7 +2341,7 @@ const struct eth_dev_ops mlx5_dev_ops = {
 	.reta_query = mlx5_dev_rss_reta_query,
 	.rss_hash_update = mlx5_rss_hash_update,
 	.rss_hash_conf_get = mlx5_rss_hash_conf_get,
-	.flow_ops_get = mlx5_flow_ops_get,
+	.flow_ops_get = mlx5_flow_ops_get,/*获取flow_ops*/
 	.rxq_info_get = mlx5_rxq_info_get,
 	.txq_info_get = mlx5_txq_info_get,
 	.rx_burst_mode_get = mlx5_rx_burst_mode_get,
@@ -2383,7 +2393,7 @@ const struct eth_dev_ops mlx5_dev_sec_ops = {
 };
 
 /* Available operations in flow isolated mode. */
-const struct eth_dev_ops mlx5_dev_ops_isolate = {
+const struct eth_dev_ops mlx5_dev_ops_isolate = {/*isolate被开启时，接口使用的ops*/
 	.dev_configure = mlx5_dev_configure,
 	.dev_start = mlx5_dev_start,
 	.dev_stop = mlx5_dev_stop,
@@ -2469,6 +2479,7 @@ mlx5_port_args_check_handler(const char *key, const char *val, void *opaque)
 
 	/* No-op, port representors are processed in mlx5_dev_spawn(). */
 	if (!strcmp(MLX5_REPRESENTOR, key))
+		/*针对参数representor,直接跳过，其由mlx5_dev_spawn处理*/
 		return 0;
 	errno = 0;
 	tmp = strtol(val, NULL, 0);
@@ -2562,10 +2573,12 @@ int
 mlx5_port_args_config(struct mlx5_priv *priv, struct mlx5_kvargs_ctrl *mkvlist,
 		      struct mlx5_port_config *config)
 {
+	/*针对port的参数配置*/
 	struct mlx5_hca_attr *hca_attr = &priv->sh->cdev->config.hca_attr;
 	struct mlx5_dev_cap *dev_cap = &priv->sh->dev_cap;
 	bool devx = priv->sh->cdev->config.devx;
 	const char **params = (const char *[]){
+		/*支持的参数列表*/
 		MLX5_RXQ_CQE_COMP_EN,
 		MLX5_RXQ_PKT_PAD_EN,
 		MLX5_RX_MPRQ_EN,
@@ -2612,7 +2625,7 @@ mlx5_port_args_config(struct mlx5_priv *priv, struct mlx5_kvargs_ctrl *mkvlist,
 	if (mkvlist != NULL) {
 		/* Process parameters. */
 		ret = mlx5_kvargs_process(mkvlist, params,
-					  mlx5_port_args_check_handler, config);
+					  mlx5_port_args_check_handler/*负责key的设置*/, config);
 		if (ret) {
 			DRV_LOG(ERR, "Failed to process port arguments: %s",
 				strerror(rte_errno));
@@ -2831,7 +2844,10 @@ mlx5_probe_again_args_validate(struct mlx5_common_device *cdev,
 	pthread_mutex_unlock(&mlx5_dev_ctx_list_mutex);
 	/* There is sh for this device -> it isn't probe again. */
 	if (sh == NULL)
+		/*此时没有找到此dev,退出，并返回0*/
 		return 0;
+
+	/*查找到sh了，申请config*/
 	config = mlx5_malloc(MLX5_MEM_ZERO | MLX5_MEM_RTE,
 			     sizeof(struct mlx5_sh_config),
 			     RTE_CACHE_LINE_SIZE, SOCKET_ID_ANY);
@@ -3280,10 +3296,10 @@ static const struct rte_pci_id mlx5_pci_id_map[] = {
 };
 
 static struct mlx5_class_driver mlx5_net_driver = {
-	.drv_class = MLX5_CLASS_ETH,
+	.drv_class = MLX5_CLASS_ETH,/*指明以太类驱动*/
 	.name = RTE_STR(MLX5_ETH_DRIVER_NAME),
-	.id_table = mlx5_pci_id_map,
-	.probe = mlx5_os_net_probe,
+	.id_table = mlx5_pci_id_map,/*以太支持的设备列表*/
+	.probe = mlx5_os_net_probe,/*以太类设备驱动probe*/
 	.remove = mlx5_net_remove,
 	.probe_again = 1,
 	.intr_lsc = 1,

@@ -918,10 +918,10 @@ static const struct rte_pci_id mlx5_compress_pci_id_map[] = {
 };
 
 static struct mlx5_class_driver mlx5_compress_driver = {
-	.drv_class = MLX5_CLASS_COMPRESS,
+	.drv_class = MLX5_CLASS_COMPRESS,/*指明为压缩类驱动*/
 	.name = RTE_STR(MLX5_COMPRESS_DRIVER_NAME),
 	.id_table = mlx5_compress_pci_id_map,
-	.probe = mlx5_compress_dev_probe,
+	.probe = mlx5_compress_dev_probe,/*压缩类设备驱动probe*/
 	.remove = mlx5_compress_dev_remove,
 };
 

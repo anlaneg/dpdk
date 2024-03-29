@@ -2182,6 +2182,7 @@ flow_verbs_sync_domain(struct rte_eth_dev *dev, uint32_t domains,
 	return 0;
 }
 
+/*MLX5_FLOW_TYPE_VERBS模式驱动*/
 const struct mlx5_flow_driver_ops mlx5_flow_verbs_drv_ops = {
 	.validate = flow_verbs_validate,
 	.prepare = flow_verbs_prepare,

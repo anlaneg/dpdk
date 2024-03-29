@@ -204,13 +204,14 @@ mlx5_nl_init(int protocol, int groups)
 	};
 	int ret;
 
+	/*创建netlink fd*/
 	fd = socket(AF_NETLINK, SOCK_RAW | SOCK_CLOEXEC, protocol);
 	if (fd == -1) {
 		rte_errno = errno;
 		return -rte_errno;
 	}
 	opt_size = sizeof(buf_size);
-	ret = getsockopt(fd, SOL_SOCKET, SO_SNDBUF, &buf_size, &opt_size);
+	ret = getsockopt(fd, SOL_SOCKET, SO_SNDBUF, &buf_size, &opt_size);/*取send buffer长度*/
 	if (ret == -1) {
 		rte_errno = errno;
 		goto error;
@@ -218,14 +219,14 @@ mlx5_nl_init(int protocol, int groups)
 	DRV_LOG(DEBUG, "Netlink socket send buffer: %d", buf_size);
 	if (buf_size < MLX5_SEND_BUF_SIZE) {
 		ret = setsockopt(fd, SOL_SOCKET, SO_SNDBUF,
-				 &buf_size, sizeof(buf_size));
+				 &buf_size, sizeof(buf_size));/*更新send buffer*/
 		if (ret == -1) {
 			rte_errno = errno;
 			goto error;
 		}
 	}
 	opt_size = sizeof(buf_size);
-	ret = getsockopt(fd, SOL_SOCKET, SO_RCVBUF, &buf_size, &opt_size);
+	ret = getsockopt(fd, SOL_SOCKET, SO_RCVBUF, &buf_size, &opt_size);/*获取rcvbuf*/
 	if (ret == -1) {
 		rte_errno = errno;
 		goto error;
@@ -233,12 +234,13 @@ mlx5_nl_init(int protocol, int groups)
 	DRV_LOG(DEBUG, "Netlink socket recv buffer: %d", buf_size);
 	if (buf_size < MLX5_RECV_BUF_SIZE) {
 		ret = setsockopt(fd, SOL_SOCKET, SO_RCVBUF,
-				 &buf_size, sizeof(buf_size));
+				 &buf_size, sizeof(buf_size));/*更新rcv buffer*/
 		if (ret == -1) {
 			rte_errno = errno;
 			goto error;
 		}
 	}
+	/*bind地址*/
 	ret = bind(fd, (struct sockaddr *)&local, sizeof(local));
 	if (ret == -1) {
 		rte_errno = errno;
@@ -314,6 +316,7 @@ mlx5_nl_request(int nlsk_fd, struct nlmsghdr *nh, uint32_t sn, void *req,
 static int
 mlx5_nl_send(int nlsk_fd, struct nlmsghdr *nh, uint32_t sn)
 {
+	/*发送netlink消息*/
 	struct sockaddr_nl sa = {
 		.nl_family = AF_NETLINK,
 	};
@@ -359,6 +362,7 @@ static int
 mlx5_nl_recv(int nlsk_fd, uint32_t sn, int (*cb)(struct nlmsghdr *, void *arg),
 	     void *arg)
 {
+	/*收取netlink响应*/
 	struct sockaddr_nl sa;
 	struct iovec iov;
 	struct msghdr msg = {
@@ -1134,6 +1138,7 @@ error:
 unsigned int
 mlx5_nl_ifindex(int nl, const char *name, uint32_t pindex)
 {
+	/*取给定ib设备的ifindex*/
 	struct mlx5_nl_port_info data = {
 			.ifindex = 0,
 			.name = name,
@@ -1194,7 +1199,7 @@ mlx5_nl_portnum(int nl, const char *name)
 {
 	struct mlx5_nl_port_info data = {
 		.flags = 0,
-		.name = name,
+		.name = name,/*设备名称*/
 		.ifindex = 0,
 		.portnum = 0,
 	};
@@ -1207,6 +1212,7 @@ mlx5_nl_portnum(int nl, const char *name)
 	uint32_t sn = MLX5_NL_SN_GENERATE;
 	int ret;
 
+	/*向kernel发送消息，获取portnum*/
 	ret = mlx5_nl_send(nl, &req, sn);
 	if (ret < 0)
 		return 0;
@@ -1216,12 +1222,13 @@ mlx5_nl_portnum(int nl, const char *name)
 	if (!(data.flags & MLX5_NL_CMD_GET_IB_NAME) ||
 	    !(data.flags & MLX5_NL_CMD_GET_IB_INDEX) ||
 	    !(data.flags & MLX5_NL_CMD_GET_PORT_INDEX)) {
+		/*以上标记需要存在缺失，报错*/
 		rte_errno = ENODEV;
 		return 0;
 	}
 	if (!data.portnum)
 		rte_errno = EINVAL;
-	return data.portnum;
+	return data.portnum;/*返回此接口对应的portnum*/
 }
 
 /**
@@ -1337,12 +1344,13 @@ mlx5_nl_switch_info_cb(struct nlmsghdr *nh, void *arg)
 			}
 			break;
 		case IFLA_PHYS_SWITCH_ID:
+			/*设置了switch id*/
 			info.switch_id = 0;
 			for (i = 0; i < RTA_PAYLOAD(ra); ++i) {
 				info.switch_id <<= 8;
-				info.switch_id |= ((uint8_t *)payload)[i];
+				info.switch_id |= ((uint8_t *)payload)[i];/*取switchid*/
 			}
-			switch_id_set = true;
+			switch_id_set = true;/*标记包含switch id设置*/
 			break;
 		}
 		off += RTA_ALIGN(ra->rta_len);
@@ -1386,12 +1394,12 @@ mlx5_nl_switch_info(int nl, unsigned int ifindex,
 			.nlmsg_len = NLMSG_LENGTH
 					(sizeof(req.info) +
 					 RTA_LENGTH(sizeof(uint32_t))),
-			.nlmsg_type = RTM_GETLINK,
+			.nlmsg_type = RTM_GETLINK,/*取接口info*/
 			.nlmsg_flags = NLM_F_REQUEST | NLM_F_ACK,
 		},
 		.info = {
 			.ifi_family = AF_UNSPEC,
-			.ifi_index = ifindex,
+			.ifi_index = ifindex,/*接口对应的ifindex*/
 		},
 		.rta = {
 			.rta_type = IFLA_EXT_MASK,

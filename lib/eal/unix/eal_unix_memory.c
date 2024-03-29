@@ -132,6 +132,7 @@ rte_mem_unmap(void *virt, size_t size)
 	return mem_unmap(virt, size);
 }
 
+/*取页大小*/
 size_t
 rte_mem_page_size(void)
 {

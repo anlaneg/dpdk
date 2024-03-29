@@ -955,6 +955,7 @@ mlx5_set_link_down(struct rte_eth_dev *dev)
 int
 mlx5_set_link_up(struct rte_eth_dev *dev)
 {
+	/*将接口置为up*/
 	return mlx5_set_flags(dev, ~IFF_UP, IFF_UP);
 }
 
@@ -1680,14 +1681,16 @@ free:
  *   0 on success, a negative errno value otherwise and rte_errno is set.
  */
 int
-mlx5_get_mac(struct rte_eth_dev *dev, uint8_t (*mac)[RTE_ETHER_ADDR_LEN])
+mlx5_get_mac(struct rte_eth_dev *dev, uint8_t (*mac/*出参，获取此设备的mac地址*/)[RTE_ETHER_ADDR_LEN])
 {
 	struct ifreq request;
 	int ret;
 
+	/*通过ioctl拿到设备的mac地址*/
 	ret = mlx5_ifreq(dev, SIOCGIFHWADDR, &request);
 	if (ret)
 		return ret;
+	/*出参，设置mac*/
 	memcpy(mac, request.ifr_hwaddr.sa_data, RTE_ETHER_ADDR_LEN);
 	return 0;
 }

@@ -3859,8 +3859,10 @@ enum rte_flow_field_id {
 	RTE_FLOW_FIELD_VXLAN_VNI,	/**< VXLAN Network Identifier. */
 	RTE_FLOW_FIELD_GENEVE_VNI,	/**< GENEVE Network Identifier. */
 	RTE_FLOW_FIELD_GTP_TEID,	/**< GTP Tunnel Endpoint Identifier. */
+	/*对tag进行操作*/
 	RTE_FLOW_FIELD_TAG,		/**< Tag value. */
 	RTE_FLOW_FIELD_MARK,		/**< Mark value. */
+	/*对meta进行操作*/
 	RTE_FLOW_FIELD_META,		/**< Metadata value. */
 	RTE_FLOW_FIELD_POINTER,		/**< Memory pointer. */
 	RTE_FLOW_FIELD_VALUE,		/**< Immediate value. */
@@ -3884,6 +3886,7 @@ enum rte_flow_field_id {
  * Field description for MODIFY_FIELD action.
  */
 struct rte_flow_action_modify_data {
+	/*字段编号*/
 	enum rte_flow_field_id field; /**< Field or memory type ID. */
 	union {
 		struct {
@@ -3924,7 +3927,7 @@ struct rte_flow_action_modify_data {
 					 * tunnel since MPLS may appear in
 					 * outer, inner or tunnel.
 					 */
-					uint8_t level;
+					uint8_t level;/*设置level字段*/
 					union {
 						/**
 						 * Tag index array inside
@@ -3991,9 +3994,12 @@ enum rte_flow_modify_op {
  * as tag, mark, metadata, immediate value or a pointer to it.
  */
 struct rte_flow_action_modify_field {
+	/*指定modify action对应的操作码*/
 	enum rte_flow_modify_op operation; /**< Operation to perform. */
+	/*目的地址*/
 	struct rte_flow_action_modify_data dst; /**< Destination field. */
 	struct rte_flow_action_modify_data src; /**< Source field. */
+	/*指定位宽*/
 	uint32_t width; /**< Number of bits to use from a source field. */
 };
 

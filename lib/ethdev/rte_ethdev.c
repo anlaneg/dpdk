@@ -398,9 +398,9 @@ rte_eth_dev_is_valid_port(uint16_t port_id)
 
 	if (port_id >= RTE_MAX_ETHPORTS ||
 	    (rte_eth_devices[port_id].state == RTE_ETH_DEV_UNUSED))
-		is_valid = 0;
+		is_valid = 0;/*port_id不存在，标记此port_id无效*/
 	else
-		is_valid = 1;
+		is_valid = 1;/*标记此port_id有效*/
 
 	rte_ethdev_trace_is_valid_port(port_id, is_valid);
 
@@ -701,6 +701,7 @@ rte_eth_dev_get_port_by_name(const char *name, uint16_t *port_id)
 		return -EINVAL;
 	}
 
+	/*遍历所有rte port,如果存在与预期名称相等的name,则直接返回port_id*/
 	RTE_ETH_FOREACH_VALID_DEV(pid)
 		if (!strcmp(name, eth_dev_shared_data->data[pid].name)) {
 			*port_id = pid;

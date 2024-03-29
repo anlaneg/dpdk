@@ -48,7 +48,7 @@ rdline_init(struct rdline *rdl,
 	rdl->complete = complete;
 	rdl->write_char = write_char;
 	rdl->opaque = opaque;
-	rdl->status = RDLINE_INIT;
+	rdl->status = RDLINE_INIT;/*标准处于init状态*/
 	return cirbuf_init(&rdl->history, rdl->history_buf, 0, RDLINE_HISTORY_BUF_SIZE);
 }
 
@@ -82,9 +82,9 @@ rdline_newline(struct rdline *rdl, const char *prompt)
 	if (!rdl || !prompt)
 		return;
 
-	vt100_init(&rdl->vt100);
-	cirbuf_init(&rdl->left, rdl->left_buf, 0, RDLINE_BUF_SIZE);
-	cirbuf_init(&rdl->right, rdl->right_buf, 0, RDLINE_BUF_SIZE);
+	vt100_init(&rdl->vt100);/*初始化vt*/
+	cirbuf_init(&rdl->left, rdl->left_buf, 0, RDLINE_BUF_SIZE);/*初始化left buffer*/
+	cirbuf_init(&rdl->right, rdl->right_buf, 0, RDLINE_BUF_SIZE);/*初始化right buffer*/
 
 	/*设置命令提示符*/
 	rdl->prompt_size = strnlen(prompt, RDLINE_PROMPT_SIZE-1);
@@ -95,7 +95,7 @@ rdline_newline(struct rdline *rdl, const char *prompt)
 	/*逐个输出字符*/
 	for (i=0 ; i<rdl->prompt_size ; i++)
 		rdl->write_char(rdl, rdl->prompt[i]);
-	rdl->status = RDLINE_RUNNING;
+	rdl->status = RDLINE_RUNNING;/*切换到running状态*/
 
 	rdl->history_cur_line = -1;
 }

@@ -4488,6 +4488,7 @@ signal_handler(int signum __rte_unused)
 	prompt_exit();
 }
 
+/*testpmd入口*/
 int
 main(int argc, char** argv)
 {
@@ -4514,7 +4515,7 @@ main(int argc, char** argv)
 		rte_exit(EXIT_FAILURE, "Cannot register log type");
 	rte_log_set_level(testpmd_logtype, RTE_LOG_DEBUG);
 
-	diag = rte_eal_init(argc, argv);
+	diag = rte_eal_init(argc, argv);/*初始化eal*/
 	if (diag < 0)
 		rte_exit(EXIT_FAILURE, "Cannot init EAL: %s\n",
 			 rte_strerror(rte_errno));
@@ -4538,6 +4539,7 @@ main(int argc, char** argv)
 	}
 	nb_ports = (portid_t) count;
 	if (nb_ports == 0)
+		/*没有发现可用的port*/
 		TESTPMD_LOG(WARNING, "No probed ethernet devices\n");
 
 	set_def_fwd_config();
@@ -4666,11 +4668,13 @@ main(int argc, char** argv)
 		rte_lcore_register_usage_cb(lcore_usage_callback);
 
 #ifdef RTE_LIB_CMDLINE
+	/*初始化命令行*/
 	if (init_cmdline() != 0)
 		rte_exit(EXIT_FAILURE,
 			"Could not initialise cmdline context.\n");
 
 	if (strlen(cmdline_filename) != 0)
+		/*提供有文件名称，自文件名称中读取cmdline*/
 		cmdline_read_from_file(cmdline_filename);
 
 	if (interactive == 1) {
@@ -4678,6 +4682,7 @@ main(int argc, char** argv)
 			printf("Start automatic packet forwarding\n");
 			start_packet_forwarding(0);
 		}
+		/*交互方式*/
 		prompt();
 	} else
 #endif

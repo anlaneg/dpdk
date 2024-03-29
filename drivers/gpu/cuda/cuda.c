@@ -295,6 +295,7 @@ cuda_loader(void)
 	else
 		snprintf(cuda_path, 1024, "%s/%s", getenv("CUDA_PATH_L"), "libcuda.so");
 
+	/*加载cuda.so,获得cudalib*/
 	cudalib = dlopen(cuda_path, RTLD_LAZY);
 	if (cudalib == NULL) {
 		rte_cuda_log(ERR, "Failed to find CUDA library in %s (CUDA_PATH_L=%s)",
@@ -311,18 +312,21 @@ cuda_sym_func_loader(void)
 	if (cudalib == NULL)
 		return -1;
 
+	/*查找符号cuInit,初始化sym_cuInit*/
 	sym_cuInit = dlsym(cudalib, "cuInit");
 	if (sym_cuInit == NULL) {
 		rte_cuda_log(ERR, "Failed to load CUDA missing symbol cuInit");
 		return -1;
 	}
 
+	/*查找符号cuDriverGetVersion，初始化sym_cuDriverGetVersion*/
 	sym_cuDriverGetVersion = dlsym(cudalib, "cuDriverGetVersion");
 	if (sym_cuDriverGetVersion == NULL) {
 		rte_cuda_log(ERR, "Failed to load CUDA missing symbol cuDriverGetVersion");
 		return -1;
 	}
 
+	/*查找符号cuGetProcAddress，初始化sym_cuGetProcAddress*/
 	sym_cuGetProcAddress = dlsym(cudalib, "cuGetProcAddress");
 	if (sym_cuGetProcAddress == NULL) {
 		rte_cuda_log(ERR, "Failed to load CUDA missing symbol cuGetProcAddress");
@@ -332,11 +336,13 @@ cuda_sym_func_loader(void)
 	return 0;
 }
 
+/*通过函数cuGetProcAddress拿到一组函数的函数指针*/
 static int
 cuda_pfn_func_loader(void)
 {
 	CUresult res;
 
+	/*取函数cuGetErrorString在版本cuda_driver_version中对应的函数指针*/
 	res = sym_cuGetProcAddress("cuGetErrorString",
 			(void **) (&pfn_cuGetErrorString), cuda_driver_version, 0);
 	if (res != 0) {
@@ -1169,6 +1175,7 @@ cuda_wmb(struct rte_gpu *dev)
 	return 0;
 }
 
+/*创建其于此pci设备的gpu设备对象*/
 static int
 cuda_gpu_probe(__rte_unused struct rte_pci_driver *pci_drv, struct rte_pci_device *pci_dev)
 {
@@ -1182,15 +1189,17 @@ cuda_gpu_probe(__rte_unused struct rte_pci_driver *pci_drv, struct rte_pci_devic
 	struct cuda_info *private;
 
 	if (pci_dev == NULL) {
+		/*未提供pci设备，报错*/
 		rte_cuda_log(ERR, "NULL PCI device");
 		rte_errno = ENODEV;
 		return -rte_errno;
 	}
 
+	/*格式化domain,bus,slot,function，得到dev_name（pci地址）*/
 	rte_pci_device_name(&pci_dev->addr, dev_name, sizeof(dev_name));
 
 	/* Allocate memory to be used privately by drivers */
-	dev = rte_gpu_allocate(pci_dev->device.name);
+	dev = rte_gpu_allocate(pci_dev->device.name);/*申请gpu设备*/
 	if (dev == NULL) {
 		rte_errno = ENODEV;
 		return -rte_errno;
@@ -1204,6 +1213,7 @@ cuda_gpu_probe(__rte_unused struct rte_pci_driver *pci_drv, struct rte_pci_devic
 
 		/* Load libcuda.so library */
 		if (cuda_loader()) {
+			/*加载cuda.so失败*/
 			rte_cuda_log(ERR, "CUDA Driver library not found");
 			rte_errno = ENOTSUP;
 			return -rte_errno;
@@ -1211,6 +1221,7 @@ cuda_gpu_probe(__rte_unused struct rte_pci_driver *pci_drv, struct rte_pci_devic
 
 		/* Load initial CUDA functions */
 		if (cuda_sym_func_loader()) {
+			/*查找并初始化必要符号失败*/
 			rte_cuda_log(ERR, "CUDA functions not found in library");
 			rte_errno = ENOTSUP;
 			return -rte_errno;
@@ -1221,9 +1232,9 @@ cuda_gpu_probe(__rte_unused struct rte_pci_driver *pci_drv, struct rte_pci_devic
 		 * Multiple calls of cuInit() will return immediately
 		 * without making any relevant change
 		 */
-		sym_cuInit(0);
+		sym_cuInit(0);/*调用函数cuInit*/
 
-		res = sym_cuDriverGetVersion(&cuda_driver_version);
+		res = sym_cuDriverGetVersion(&cuda_driver_version);/*调用函数cuDriverGetVersion*/
 		if (res != 0) {
 			rte_cuda_log(ERR, "cuDriverGetVersion failed with %d", res);
 			rte_errno = ENOTSUP;
@@ -1231,6 +1242,7 @@ cuda_gpu_probe(__rte_unused struct rte_pci_driver *pci_drv, struct rte_pci_devic
 		}
 
 		if (cuda_driver_version < CUDA_DRIVER_MIN_VERSION) {
+			/*cuda驱动版本过低*/
 			rte_cuda_log(ERR, "CUDA Driver version found is %d. "
 					"Minimum requirement is %d",
 					cuda_driver_version,
@@ -1239,6 +1251,7 @@ cuda_gpu_probe(__rte_unused struct rte_pci_driver *pci_drv, struct rte_pci_devic
 			return -rte_errno;
 		}
 
+		/*取得一组函数指针*/
 		if (cuda_pfn_func_loader()) {
 			rte_cuda_log(ERR, "CUDA PFN functions not found in library");
 			rte_errno = ENOTSUP;
@@ -1250,10 +1263,10 @@ cuda_gpu_probe(__rte_unused struct rte_pci_driver *pci_drv, struct rte_pci_devic
 
 	/* Fill HW specific part of device structure */
 	dev->device = &pci_dev->device;
-	dev->mpshared->info.numa_node = pci_dev->device.numa_node;
+	dev->mpshared->info.numa_node = pci_dev->device.numa_node;/*更新gpu numa node id*/
 
 	/* Get NVIDIA GPU Device descriptor */
-	res = pfn_cuDeviceGetByPCIBusId(&cu_dev_id, dev->device->name);
+	res = pfn_cuDeviceGetByPCIBusId(&cu_dev_id, dev->device->name);/*通过设备pcibusid获得设备描述符*/
 	if (res != 0) {
 		pfn_cuGetErrorString(res, &(err_string));
 		rte_cuda_log(ERR, "cuDeviceGetByPCIBusId name %s failed with %d: %s",
@@ -1262,7 +1275,7 @@ cuda_gpu_probe(__rte_unused struct rte_pci_driver *pci_drv, struct rte_pci_devic
 		return -rte_errno;
 	}
 
-	res = pfn_cuDevicePrimaryCtxRetain(&pctx, cu_dev_id);
+	res = pfn_cuDevicePrimaryCtxRetain(&pctx, cu_dev_id);/*通过cuda dev id拿到cucontext*/
 	if (res != 0) {
 		pfn_cuGetErrorString(res, &(err_string));
 		rte_cuda_log(ERR, "cuDevicePrimaryCtxRetain name %s failed with %d: %s",
@@ -1271,7 +1284,7 @@ cuda_gpu_probe(__rte_unused struct rte_pci_driver *pci_drv, struct rte_pci_devic
 		return -rte_errno;
 	}
 
-	res = pfn_cuCtxGetApiVersion(pctx, &cuda_api_version);
+	res = pfn_cuCtxGetApiVersion(pctx, &cuda_api_version);/*获得api版本*/
 	if (res != 0) {
 		rte_cuda_log(ERR, "cuCtxGetApiVersion failed with %d", res);
 		rte_errno = ENOTSUP;
@@ -1279,13 +1292,14 @@ cuda_gpu_probe(__rte_unused struct rte_pci_driver *pci_drv, struct rte_pci_devic
 	}
 
 	if (cuda_api_version < CUDA_API_MIN_VERSION) {
+		/*cuda api版本过小*/
 		rte_cuda_log(ERR, "CUDA API version found is %d Minimum requirement is %d",
 				cuda_api_version, CUDA_API_MIN_VERSION);
 		rte_errno = ENOTSUP;
 		return -rte_errno;
 	}
 
-	dev->mpshared->info.context = (uint64_t)pctx;
+	dev->mpshared->info.context = (uint64_t)pctx;/*记录此设备对应的context*/
 
 	/*
 	 * GPU Device generic info
@@ -1294,7 +1308,7 @@ cuda_gpu_probe(__rte_unused struct rte_pci_driver *pci_drv, struct rte_pci_devic
 	/* Processor count */
 	res = pfn_cuDeviceGetAttribute(&(processor_count),
 			CU_DEVICE_ATTRIBUTE_MULTIPROCESSOR_COUNT,
-			cu_dev_id);
+			cu_dev_id);/*获取处理器数目*/
 	if (res != 0) {
 		pfn_cuGetErrorString(res, &(err_string));
 		rte_cuda_log(ERR, "cuDeviceGetAttribute failed with %s",
@@ -1302,10 +1316,10 @@ cuda_gpu_probe(__rte_unused struct rte_pci_driver *pci_drv, struct rte_pci_devic
 		rte_errno = EPERM;
 		return -rte_errno;
 	}
-	dev->mpshared->info.processor_count = (uint32_t)processor_count;
+	dev->mpshared->info.processor_count = (uint32_t)processor_count;/*设置处理器数目*/
 
 	/* Total memory */
-	res = pfn_cuDeviceTotalMem(&dev->mpshared->info.total_memory, cu_dev_id);
+	res = pfn_cuDeviceTotalMem(&dev->mpshared->info.total_memory, cu_dev_id);/*取此设备上有多少内存*/
 	if (res != 0) {
 		pfn_cuGetErrorString(res, &(err_string));
 		rte_cuda_log(ERR, "cuDeviceTotalMem failed with %s",
@@ -1314,7 +1328,7 @@ cuda_gpu_probe(__rte_unused struct rte_pci_driver *pci_drv, struct rte_pci_devic
 		return -rte_errno;
 	}
 
-	dev->mpshared->info.page_size = (size_t)GPU_PAGE_SIZE;
+	dev->mpshared->info.page_size = (size_t)GPU_PAGE_SIZE;/*64kb占用一页*/
 
 	/*
 	 * GPU Device private info
@@ -1332,7 +1346,7 @@ cuda_gpu_probe(__rte_unused struct rte_pci_driver *pci_drv, struct rte_pci_devic
 	private->cu_dev = cu_dev_id;
 	res = pfn_cuDeviceGetName(private->gpu_name,
 			RTE_DEV_NAME_MAX_LEN,
-			cu_dev_id);
+			cu_dev_id);/*设置gpu设备名称*/
 	if (res != 0) {
 		pfn_cuGetErrorString(res, &(err_string));
 		rte_cuda_log(ERR, "cuDeviceGetName failed with %s",
@@ -1343,7 +1357,7 @@ cuda_gpu_probe(__rte_unused struct rte_pci_driver *pci_drv, struct rte_pci_devic
 
 	res = pfn_cuDeviceGetAttribute(&(private->gdr_supported),
 			CU_DEVICE_ATTRIBUTE_GPU_DIRECT_RDMA_SUPPORTED,
-			cu_dev_id);
+			cu_dev_id);/*检查gpu是否支持direct rdma*/
 	if (res != 0) {
 		pfn_cuGetErrorString(res, &(err_string));
 		rte_cuda_log(ERR, "cuDeviceGetAttribute failed with %s",
@@ -1384,6 +1398,7 @@ cuda_gpu_probe(__rte_unused struct rte_pci_driver *pci_drv, struct rte_pci_devic
 			rte_cuda_log(ERR, "GPUDirect RDMA flush writes API is not supported");
 	}
 
+	/*初始化设备ops*/
 	dev->ops.dev_info_get = cuda_dev_info_get;
 	dev->ops.dev_close = cuda_dev_close;
 	dev->ops.mem_alloc = cuda_mem_alloc;
@@ -1433,10 +1448,11 @@ cuda_gpu_remove(struct rte_pci_device *pci_dev)
 	return 0;
 }
 
+/*cuda驱动*/
 static struct rte_pci_driver rte_cuda_driver = {
 	.id_table = pci_id_cuda_map,
 	.drv_flags = RTE_PCI_DRV_WC_ACTIVATE,
-	.probe = cuda_gpu_probe,
+	.probe = cuda_gpu_probe,/*设备匹配后执行设备创建*/
 	.remove = cuda_gpu_remove,
 };
 

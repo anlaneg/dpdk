@@ -40,6 +40,7 @@ typedef int (rte_gpu_mem_cpu_map_t)(struct rte_gpu *dev, size_t size, void *ptr_
 typedef int (rte_gpu_mem_cpu_unmap_t)(struct rte_gpu *dev, void *ptr);
 typedef int (rte_gpu_wmb_t)(struct rte_gpu *dev);
 
+/*定义gpu操作集*/
 struct rte_gpu_ops {
 	/* Get device info. If NULL, info is just copied. */
 	rte_gpu_info_get_t *dev_info_get;
@@ -63,6 +64,7 @@ struct rte_gpu_ops {
 
 struct rte_gpu_mpshared {
 	/* Unique identifier name. */
+	/*gpu设备名称（实际存放位置）*/
 	char name[RTE_DEV_NAME_MAX_LEN]; /* Updated by this library. */
 	/* Driver-specific private data shared in multi-process. */
 	void *dev_private;

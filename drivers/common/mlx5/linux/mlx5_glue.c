@@ -68,6 +68,7 @@ mlx5_glue_unimport_pd(struct ibv_pd *pd)
 static struct ibv_device **
 mlx5_glue_get_device_list(int *num_devices)
 {
+	/*罗列所有ibv_deivce,并返回设备总数*/
 	return ibv_get_device_list(num_devices);
 }
 
@@ -539,6 +540,7 @@ mlx5_glue_dr_create_domain(struct ibv_context *ctx,
 			   enum  mlx5dv_dr_domain_type domain)
 {
 #ifdef HAVE_MLX5DV_DR
+	/*创建dr domain*/
 	return mlx5dv_dr_domain_create(ctx, domain);
 #else
 	(void)ctx;
@@ -802,6 +804,7 @@ __mlx5_glue_dv_create_flow_action_modify_header
 #endif
 }
 
+/*创建modify field对应的action*/
 static void *
 mlx5_glue_dv_create_flow_action_modify_header
 					(struct ibv_context *ctx,
@@ -814,6 +817,7 @@ mlx5_glue_dv_create_flow_action_modify_header
 #ifdef HAVE_MLX5DV_DR
 	(void)ctx;
 	(void)ft_type;
+	/*dr模式下，走此函数*/
 	return mlx5dv_dr_action_create_modify_header(domain, flags, actions_sz,
 						     (__be64 *)actions);
 #else
@@ -1589,6 +1593,7 @@ const struct mlx5_glue *mlx5_glue = &(const struct mlx5_glue) {
 	.dealloc_pd = mlx5_glue_dealloc_pd,
 	.import_pd = mlx5_glue_import_pd,
 	.unimport_pd = mlx5_glue_unimport_pd,
+	/*获取系统中所有ib设备*/
 	.get_device_list = mlx5_glue_get_device_list,
 	.free_device_list = mlx5_glue_free_device_list,
 	.open_device = mlx5_glue_open_device,

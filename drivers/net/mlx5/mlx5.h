@@ -151,7 +151,9 @@ struct mlx5_dev_cap {
 	 * operations.
 	 */
 	int mps; /* Multi-packet send supported mode. */
+	/*标记设备是否为vf*/
 	uint32_t vf:1; /* This is a VF. */
+	/*标记设备为sf接口*/
 	uint32_t sf:1; /* This is a SF. */
 	uint32_t txpp_en:1; /* Tx packet pacing is supported. */
 	uint32_t mpls_en:1; /* MPLS over GRE/UDP is supported. */
@@ -316,6 +318,7 @@ struct mlx5_sh_config {
 	uint32_t dv_esw_en:1; /* Enable E-Switch DV flow. */
 	/* Enable DV flow. 1 means SW steering, 2 means HW steering. */
 	uint32_t dv_flow_en:2; /* Enable DV flow. */
+	/*开启flow metadata支持*/
 	uint32_t dv_xmeta_en:3; /* Enable extensive flow metadata. */
 	uint32_t dv_miss_info:1; /* Restore packet after partial hw miss. */
 	uint32_t l3_vxlan_en:1; /* Enable L3 VXLAN flow creation. */
@@ -1117,9 +1120,12 @@ union mlx5_flow_tbl_key {
 	struct {
 		/* Table ID should be at the lowest address. */
 		uint32_t level;	/**< Level of the table. */
+		/*要下发的表id*/
 		uint32_t id:22;	/**< ID of the table. */
 		uint32_t dummy:1;	/**< Dummy table for DV API. */
+		/*是否下发到fdb table*/
 		uint32_t is_fdb:1;	/**< 1 - FDB, 0 - NIC TX/RX. */
+		/*是否为egress方向*/
 		uint32_t is_egress:1;	/**< 1 - egress, 0 - ingress. */
 		uint32_t reserved:7;	/**< must be zero for comparison. */
 	};
@@ -1408,6 +1414,7 @@ struct mlx5_dev_ctx_shared {
 	char ibdev_name[MLX5_FS_NAME_MAX]; /* SYSFS dev name. */
 	char ibdev_path[MLX5_FS_PATH_MAX]; /* SYSFS dev path for secondary */
 	struct mlx5_dev_cap dev_cap; /* Device capabilities. */
+	/*设备配置*/
 	struct mlx5_sh_config config; /* Device configuration. */
 	int numa_node; /* Numa node of backing physical device. */
 	/* Packet pacing related structure. */
@@ -1738,6 +1745,7 @@ struct mlx5_priv {
 	/* Device properties. */
 	uint16_t mtu; /* Configured MTU. */
 	unsigned int isolated:1; /* Whether isolated mode is enabled. */
+	/*标记这个设备是representor*/
 	unsigned int representor:1; /* Device is a port representor. */
 	unsigned int master:1; /* Device is a E-Switch master. */
 	unsigned int txpp_en:1; /* Tx packet pacing enabled. */

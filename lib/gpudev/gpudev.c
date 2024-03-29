@@ -64,6 +64,7 @@ rte_gpu_init(size_t dev_max)
 		return -rte_errno;
 	}
 
+	/*gpus是一个数组，拥有dev_max个rte_gpu结构体*/
 	gpus = calloc(dev_max, sizeof(struct rte_gpu));
 	if (gpus == NULL) {
 		GPU_LOG(ERR, "cannot initialize library");
@@ -75,6 +76,7 @@ rte_gpu_init(size_t dev_max)
 	return 0;
 }
 
+/*返回分配出的gpu数目*/
 uint16_t
 rte_gpu_count_avail(void)
 {
@@ -125,6 +127,7 @@ gpu_find_free_id(void)
 	return RTE_GPU_ID_NONE;
 }
 
+/*给定dev_id获得对应的gpu设备*/
 static struct rte_gpu *
 gpu_get_by_id(int16_t dev_id)
 {
@@ -133,6 +136,7 @@ gpu_get_by_id(int16_t dev_id)
 	return &gpus[dev_id];
 }
 
+/*给定gpu设备名称，查找rte_gpu结构体*/
 struct rte_gpu *
 rte_gpu_get_by_name(const char *name)
 {
@@ -140,10 +144,12 @@ rte_gpu_get_by_name(const char *name)
 	struct rte_gpu *dev;
 
 	if (name == NULL) {
+		/*名称不得为空*/
 		rte_errno = EINVAL;
 		return NULL;
 	}
 
+	/*在gpus中逐个进行查询，名称匹配者返回*/
 	RTE_GPU_FOREACH(dev_id) {
 		dev = &gpus[dev_id];
 		if (strncmp(name, dev->mpshared->name, RTE_DEV_NAME_MAX_LEN) == 0)
@@ -158,11 +164,13 @@ gpu_shared_mem_init(void)
 	const struct rte_memzone *memzone;
 
 	if (rte_eal_process_type() == RTE_PROC_PRIMARY) {
+		/*主进程分配memzone*/
 		memzone = rte_memzone_reserve(GPU_MEMZONE,
 				sizeof(*gpu_shared_mem) +
 				sizeof(*gpu_shared_mem->gpus) * gpu_max,
 				SOCKET_ID_ANY, 0);
 	} else {
+		/*从进程查询memzone*/
 		memzone = rte_memzone_lookup(GPU_MEMZONE);
 	}
 	if (memzone == NULL) {
@@ -171,10 +179,12 @@ gpu_shared_mem_init(void)
 		return -rte_errno;
 	}
 
+	/*初始化*/
 	gpu_shared_mem = memzone->addr;
 	return 0;
 }
 
+/*申请gpu设备*/
 struct rte_gpu *
 rte_gpu_allocate(const char *name)
 {
@@ -182,11 +192,13 @@ rte_gpu_allocate(const char *name)
 	struct rte_gpu *dev;
 
 	if (rte_eal_process_type() != RTE_PROC_PRIMARY) {
+		/*调用方必须为主进程*/
 		GPU_LOG(ERR, "only primary process can allocate device");
 		rte_errno = EPERM;
 		return NULL;
 	}
 	if (name == NULL) {
+		/*未提供gpu设备名称*/
 		GPU_LOG(ERR, "allocate device without a name");
 		rte_errno = EINVAL;
 		return NULL;
@@ -194,17 +206,22 @@ rte_gpu_allocate(const char *name)
 
 	/* implicit initialization of library before adding first device */
 	if (gpus == NULL && rte_gpu_init(RTE_GPU_DEFAULT_MAX) < 0)
+		/*gpus未初始化，执行初始化出错*/
 		return NULL;
 
 	/* initialize shared memory before adding first device */
 	if (gpu_shared_mem == NULL && gpu_shared_mem_init() < 0)
+		/*初始化gpu shared memory*/
 		return NULL;
 
 	if (rte_gpu_get_by_name(name) != NULL) {
+		/*此设备已存在，失败*/
 		GPU_LOG(ERR, "device with name %s already exists", name);
 		rte_errno = EEXIST;
 		return NULL;
 	}
+
+	/*为此设备分配一个dev id*/
 	dev_id = gpu_find_free_id();
 	if (dev_id == RTE_GPU_ID_NONE) {
 		GPU_LOG(ERR, "reached maximum number of devices");
@@ -212,25 +229,28 @@ rte_gpu_allocate(const char *name)
 		return NULL;
 	}
 
+	/*结构体清零*/
 	dev = &gpus[dev_id];
 	memset(dev, 0, sizeof(*dev));
 
+	/*为此dev设置其对应的mpshared,并将结构体清零*/
 	dev->mpshared = &gpu_shared_mem->gpus[dev_id];
 	memset(dev->mpshared, 0, sizeof(*dev->mpshared));
 
+	/*设置gpu设备名称*/
 	if (rte_strscpy(dev->mpshared->name, name, RTE_DEV_NAME_MAX_LEN) < 0) {
 		GPU_LOG(ERR, "device name too long: %s", name);
 		rte_errno = ENAMETOOLONG;
 		return NULL;
 	}
-	dev->mpshared->info.name = dev->mpshared->name;
+	dev->mpshared->info.name = dev->mpshared->name;/*指向gpu设备名称*/
 	dev->mpshared->info.dev_id = dev_id;
-	dev->mpshared->info.numa_node = -1;
+	dev->mpshared->info.numa_node = -1;/*numa node未知*/
 	dev->mpshared->info.parent = RTE_GPU_ID_NONE;
 	TAILQ_INIT(&dev->callbacks);
 	__atomic_fetch_add(&dev->mpshared->process_refcnt, 1, __ATOMIC_RELAXED);
 
-	gpu_count++;
+	gpu_count++;/*已分配的gpu数目*/
 	GPU_LOG(DEBUG, "new device %s (id %d) of total %d",
 			name, dev_id, gpu_count);
 	return dev;
@@ -256,15 +276,18 @@ rte_gpu_attach(const char *name)
 
 	/* implicit initialization of library before adding first device */
 	if (gpus == NULL && rte_gpu_init(RTE_GPU_DEFAULT_MAX) < 0)
+		/*gpus初始化*/
 		return NULL;
 
 	/* initialize shared memory before adding first device */
 	if (gpu_shared_mem == NULL && gpu_shared_mem_init() < 0)
+		/*gpu_shared_mem初始化*/
 		return NULL;
 
 	for (dev_id = 0; dev_id < gpu_max; dev_id++) {
 		shared_dev = &gpu_shared_mem->gpus[dev_id];
 		if (strncmp(name, shared_dev->name, RTE_DEV_NAME_MAX_LEN) == 0)
+			/*找到对应的设备，跳出*/
 			break;
 	}
 	if (dev_id >= gpu_max) {
@@ -272,6 +295,8 @@ rte_gpu_attach(const char *name)
 		rte_errno = ENOENT;
 		return NULL;
 	}
+
+	/*重新初始化gpu设备*/
 	dev = &gpus[dev_id];
 	memset(dev, 0, sizeof(*dev));
 
@@ -279,7 +304,7 @@ rte_gpu_attach(const char *name)
 	dev->mpshared = shared_dev;
 	__atomic_fetch_add(&dev->mpshared->process_refcnt, 1, __ATOMIC_RELAXED);
 
-	gpu_count++;
+	gpu_count++;/*增加gpu设备数量*/
 	GPU_LOG(DEBUG, "attached device %s (id %d) of total %d",
 			name, dev_id, gpu_count);
 	return dev;
@@ -296,6 +321,7 @@ rte_gpu_add_child(const char *name, int16_t parent, uint64_t child_context)
 		return -rte_errno;
 	}
 
+	/*分配gpu设备*/
 	dev = rte_gpu_allocate(name);
 	if (dev == NULL)
 		return -rte_errno;
@@ -314,7 +340,7 @@ rte_gpu_complete_new(struct rte_gpu *dev)
 		return;
 
 	dev->process_state = RTE_GPU_STATE_INITIALIZED;
-	rte_gpu_notify(dev, RTE_GPU_EVENT_NEW);
+	rte_gpu_notify(dev, RTE_GPU_EVENT_NEW);/*触发new事件*/
 }
 
 int
@@ -511,7 +537,7 @@ rte_gpu_info_get(int16_t dev_id, struct rte_gpu_info *info)
 {
 	struct rte_gpu *dev;
 
-	dev = gpu_get_by_id(dev_id);
+	dev = gpu_get_by_id(dev_id);/*通过dev_id获取gpu设备*/
 	if (dev == NULL) {
 		GPU_LOG(ERR, "query invalid device ID %d", dev_id);
 		rte_errno = ENODEV;
@@ -523,6 +549,7 @@ rte_gpu_info_get(int16_t dev_id, struct rte_gpu_info *info)
 		return -rte_errno;
 	}
 
+	/*尝试通过dev_info_get回调获取info信息*/
 	if (dev->ops.dev_info_get == NULL) {
 		*info = dev->mpshared->info;
 		return 0;
@@ -530,6 +557,7 @@ rte_gpu_info_get(int16_t dev_id, struct rte_gpu_info *info)
 	return GPU_DRV_RET(dev->ops.dev_info_get(dev, info));
 }
 
+/*申请gpu设备内存*/
 void *
 rte_gpu_mem_alloc(int16_t dev_id, size_t size, unsigned int align)
 {
@@ -551,14 +579,17 @@ rte_gpu_mem_alloc(int16_t dev_id, size_t size, unsigned int align)
 	}
 
 	if (size == 0) /* dry-run */
+		/*size参数有误*/
 		return NULL;
 
 	if (align && !rte_is_power_of_2(align)) {
+		/*align参数有误*/
 		GPU_LOG(ERR, "requested alignment is not a power of two %u", align);
 		rte_errno = EINVAL;
 		return NULL;
 	}
 
+	/*通过ops申请内存*/
 	ret = dev->ops.mem_alloc(dev, size, align, &ptr);
 
 	switch (ret) {
@@ -597,6 +628,7 @@ rte_gpu_mem_free(int16_t dev_id, void *ptr)
 	return GPU_DRV_RET(dev->ops.mem_free(dev, ptr));
 }
 
+/*将长度为size的内存(ptr)注册给gpu设备*/
 int
 rte_gpu_mem_register(int16_t dev_id, size_t size, void *ptr)
 {
@@ -644,6 +676,7 @@ rte_gpu_mem_unregister(int16_t dev_id, void *ptr)
 	return GPU_DRV_RET(dev->ops.mem_unregister(dev, ptr));
 }
 
+/*将指定长度（size)的gpu内存映射给cpu*/
 void *
 rte_gpu_mem_cpu_map(int16_t dev_id, size_t size, void *ptr)
 {
@@ -682,6 +715,7 @@ rte_gpu_mem_cpu_map(int16_t dev_id, size_t size, void *ptr)
 	}
 }
 
+/*解除之前映射给cpu的gpu内存（ptr指向的是映射给cpu的地址）*/
 int
 rte_gpu_mem_cpu_unmap(int16_t dev_id, void *ptr)
 {
@@ -724,6 +758,7 @@ rte_gpu_wmb(int16_t dev_id)
 	return GPU_DRV_RET(dev->ops.wmb(dev));
 }
 
+/*申请一小段（4字节）内存，并将这个内存映射给gpu,形成devflag结构体*/
 int
 rte_gpu_comm_create_flag(uint16_t dev_id, struct rte_gpu_comm_flag *devflag,
 		enum rte_gpu_comm_flag_type mtype)
@@ -736,18 +771,20 @@ rte_gpu_comm_create_flag(uint16_t dev_id, struct rte_gpu_comm_flag *devflag,
 		return -rte_errno;
 	}
 	if (mtype != RTE_GPU_COMM_FLAG_CPU) {
+		/*mtype必须为RTE_GPU_COMM_FLAG_CPU*/
 		rte_errno = EINVAL;
 		return -rte_errno;
 	}
 
-	flag_size = sizeof(uint32_t);
+	flag_size = sizeof(uint32_t);/*4个字节*/
 
-	devflag->ptr = rte_zmalloc(NULL, flag_size, 0);
+	devflag->ptr = rte_zmalloc(NULL, flag_size, 0);/*申请4个字节*/
 	if (devflag->ptr == NULL) {
 		rte_errno = ENOMEM;
 		return -rte_errno;
 	}
 
+	/*将内存映射给gpu*/
 	ret = rte_gpu_mem_register(dev_id, flag_size, devflag->ptr);
 	if (ret < 0) {
 		rte_errno = ENOMEM;
@@ -781,6 +818,7 @@ rte_gpu_comm_destroy_flag(struct rte_gpu_comm_flag *devflag)
 	return 0;
 }
 
+/*在cpu端，对指定内存进行写操作*/
 int
 rte_gpu_comm_set_flag(struct rte_gpu_comm_flag *devflag, uint32_t val)
 {
@@ -794,11 +832,12 @@ rte_gpu_comm_set_flag(struct rte_gpu_comm_flag *devflag, uint32_t val)
 		return -rte_errno;
 	}
 
-	RTE_GPU_VOLATILE(*devflag->ptr) = val;
+	RTE_GPU_VOLATILE(*devflag->ptr) = val;/*执行内存写操作*/
 
 	return 0;
 }
 
+/*读取devflag中存储的信息*/
 int
 rte_gpu_comm_get_flag_value(struct rte_gpu_comm_flag *devflag, uint32_t *val)
 {
@@ -838,12 +877,14 @@ rte_gpu_comm_create_list(uint16_t dev_id,
 		return NULL;
 	}
 
+	/*获取gpu上的info信息*/
 	ret = rte_gpu_info_get(dev_id, &info);
 	if (ret < 0) {
 		rte_errno = ENODEV;
 		return NULL;
 	}
 
+	/*申请一组rte_gpu_comm_list结构（内存）*/
 	comm_list = rte_zmalloc(NULL,
 			sizeof(struct rte_gpu_comm_list) * num_comm_items, 0);
 	if (comm_list == NULL) {
@@ -851,6 +892,7 @@ rte_gpu_comm_create_list(uint16_t dev_id,
 		return NULL;
 	}
 
+	/*将此内存映射给gpu*/
 	ret = rte_gpu_mem_register(dev_id,
 			sizeof(struct rte_gpu_comm_list) * num_comm_items, comm_list);
 	if (ret < 0) {
@@ -866,7 +908,7 @@ rte_gpu_comm_create_list(uint16_t dev_id,
 	 */
 	comm_list[0].status_d = rte_gpu_mem_alloc(dev_id,
 			sizeof(enum rte_gpu_comm_list_status) * num_comm_items,
-			info.page_size);
+			info.page_size);/*自gpu申请一段内存*/
 	if (ret < 0) {
 		rte_errno = ENOMEM;
 		return NULL;
@@ -874,7 +916,7 @@ rte_gpu_comm_create_list(uint16_t dev_id,
 
 	comm_list[0].status_h = rte_gpu_mem_cpu_map(dev_id,
 			sizeof(enum rte_gpu_comm_list_status) * num_comm_items,
-			comm_list[0].status_d);
+			comm_list[0].status_d);/*将这一段内存映射给cpu*/
 	if (comm_list[0].status_h == NULL) {
 		/*
 		 * If CPU mapping is not supported by driver
@@ -899,6 +941,7 @@ rte_gpu_comm_create_list(uint16_t dev_id,
 	}
 
 	for (idx_l = 0; idx_l < num_comm_items; idx_l++) {
+		/*申请一组gpu comm packet（内存）*/
 		comm_list[idx_l].pkt_list = rte_zmalloc(NULL,
 				sizeof(struct rte_gpu_comm_pkt) * RTE_GPU_COMM_LIST_PKTS_MAX, 0);
 		if (comm_list[idx_l].pkt_list == NULL) {
@@ -906,6 +949,7 @@ rte_gpu_comm_create_list(uint16_t dev_id,
 			return NULL;
 		}
 
+		/*将这段内存注册给gpu*/
 		ret = rte_gpu_mem_register(dev_id,
 				sizeof(struct rte_gpu_comm_pkt) * RTE_GPU_COMM_LIST_PKTS_MAX,
 				comm_list[idx_l].pkt_list);

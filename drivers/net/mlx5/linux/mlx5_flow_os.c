@@ -51,6 +51,7 @@ mlx5_flow_os_validate_item_esp(const struct rte_flow_item *item,
 int
 mlx5_flow_os_init_workspace_once(void)
 {
+	/*初始化此线程的key_workspace结构，并将其置为NULL*/
 	if (rte_thread_key_create(&key_workspace, NULL)) {
 		DRV_LOG(ERR, "Can't create flow workspace data thread key.");
 		rte_errno = ENOMEM;
@@ -62,17 +63,20 @@ mlx5_flow_os_init_workspace_once(void)
 void *
 mlx5_flow_os_get_specific_workspace(void)
 {
+	/*取key_workspace对应的私有结构*/
 	return rte_thread_value_get(key_workspace);
 }
 
 int
 mlx5_flow_os_set_specific_workspace(struct mlx5_flow_workspace *data)
 {
+	/*设置key_workspace对应的私有结构*/
 	return rte_thread_value_set(key_workspace, data);
 }
 
 void
 mlx5_flow_os_release_workspace(void)
 {
+	/*移除key_workspace*/
 	rte_thread_key_delete(key_workspace);
 }

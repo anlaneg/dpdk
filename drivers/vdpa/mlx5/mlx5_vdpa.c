@@ -981,10 +981,10 @@ static const struct rte_pci_id mlx5_vdpa_pci_id_map[] = {
 };
 
 static struct mlx5_class_driver mlx5_vdpa_driver = {
-	.drv_class = MLX5_CLASS_VDPA,
+	.drv_class = MLX5_CLASS_VDPA,/*指明vdpa类驱动*/
 	.name = RTE_STR(MLX5_VDPA_DRIVER_NAME),
 	.id_table = mlx5_vdpa_pci_id_map,
-	.probe = mlx5_vdpa_dev_probe,
+	.probe = mlx5_vdpa_dev_probe,/*vdpa类设备驱动probe*/
 	.remove = mlx5_vdpa_dev_remove,
 };
 

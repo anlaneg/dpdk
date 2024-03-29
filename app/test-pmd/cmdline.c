@@ -69,6 +69,7 @@
 
 static struct cmdline *testpmd_cl;
 static cmdline_parse_ctx_t *main_ctx;/*收集了test-pmd所有可用命令*/
+/*收集driver commands可用的命令，通过testpmd_add_driver_commands进行添加*/
 static TAILQ_HEAD(, testpmd_driver_commands) driver_commands_head =
 	TAILQ_HEAD_INITIALIZER(driver_commands_head);
 
@@ -5582,7 +5583,7 @@ static cmdline_parse_token_string_t cmd_setfwd_fwd =
 	TOKEN_STRING_INITIALIZER(struct cmd_set_fwd_mode_result, fwd, "fwd");
 static cmdline_parse_token_string_t cmd_setfwd_mode =
 	TOKEN_STRING_INITIALIZER(struct cmd_set_fwd_mode_result, mode,
-		"" /* defined at init */);
+		"" /* defined at init */);/*在函数cmd_set_fwd_mode_init中进行初始化mode*/
 
 static cmdline_parse_inst_t cmd_set_fwd_mode = {
 	.f = cmd_set_fwd_mode_parsed,
@@ -5596,6 +5597,7 @@ static cmdline_parse_inst_t cmd_set_fwd_mode = {
 	},
 };
 
+/*初始化cmd_set_fwd_mode*/
 static void cmd_set_fwd_mode_init(void)
 {
 	char *modes, *c;
@@ -5606,16 +5608,17 @@ static void cmd_set_fwd_mode_init(void)
 	modes = list_pkt_forwarding_modes();
 	snprintf(help, sizeof(help), "set fwd %s: "
 		"Set packet forwarding mode", modes);
-	cmd_set_fwd_mode.help_str = help;
+	cmd_set_fwd_mode.help_str = help;/*设置set fwd mode命令的帮助信息*/
 
 	/* string token separator is # */
+	/*将modes的内容复制到token中，将'|'替换成'#'号*/
 	for (c = token; *modes != '\0'; modes++)
 		if (*modes == '|')
 			*c++ = '#';
 		else
 			*c++ = *modes;
 	token_struct = (cmdline_parse_token_string_t*)cmd_set_fwd_mode.tokens[2];
-	token_struct->string_data.str = token;
+	token_struct->string_data.str = token;/*为set fwd $mode命令动态初始化token*/
 }
 
 /* *** SET RETRY FORWARDING MODE *** */
@@ -5673,14 +5676,16 @@ static void cmd_set_fwd_retry_mode_init(void)
 	modes = list_pkt_forwarding_retry_modes();
 	snprintf(help, sizeof(help), "set fwd %s retry: "
 		"Set packet forwarding mode with retry", modes);
-	cmd_set_fwd_retry_mode.help_str = help;
+	cmd_set_fwd_retry_mode.help_str = help;/*更新帮助信息*/
 
 	/* string token separator is # */
+	/*复制modes到token,并将'|'替换为'#'*/
 	for (c = token; *modes != '\0'; modes++)
 		if (*modes == '|')
 			*c++ = '#';
 		else
 			*c++ = *modes;
+	/*为命令cmd_set_fwd_retry_mode设置动态token*/
 	token_struct = (cmdline_parse_token_string_t *)
 		cmd_set_fwd_retry_mode.tokens[2];
 	token_struct->string_data.str = token;
@@ -13026,6 +13031,7 @@ static cmdline_parse_ctx_t builtin_ctx[] = {
 void
 testpmd_add_driver_commands(struct testpmd_driver_commands *c)
 {
+	/*各驱动附加的driver命令*/
 	TAILQ_INSERT_TAIL(&driver_commands_head, c, next);
 }
 
@@ -13037,6 +13043,7 @@ init_cmdline(void)
 	unsigned int i;
 
 	/* initialize non-constant commands */
+	/*依据fwd mode初始化动态命令字*/
 	cmd_set_fwd_mode_init();
 	cmd_set_fwd_retry_mode_init();
 
@@ -13045,7 +13052,7 @@ init_cmdline(void)
 	for (i = 0; builtin_ctx[i] != NULL; i++)
 		count++;
 
-	/*driver命令数目*/
+	/*附加上driver命令数目*/
 	TAILQ_FOREACH(c, &driver_commands_head, next) {
 		for (i = 0; c->commands[i].ctx != NULL; i++)
 			count++;

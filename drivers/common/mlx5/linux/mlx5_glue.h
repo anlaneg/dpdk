@@ -169,13 +169,16 @@ struct mlx5_glue {
 	struct ibv_pd *(*import_pd)(struct ibv_context *context,
 				    uint32_t pd_handle);
 	int (*unimport_pd)(struct ibv_pd *pd);
+	/*获得当前系统所有ib设备列表*/
 	struct ibv_device **(*get_device_list)(int *num_devices);
+	/*释放收集到的ib设备列表*/
 	void (*free_device_list)(struct ibv_device **list);
 	struct ibv_context *(*open_device)(struct ibv_device *device);
 	struct ibv_context *(*import_device)(int cmd_fd);
 	int (*close_device)(struct ibv_context *context);
 	int (*query_device)(struct ibv_context *context,
 			    struct ibv_device_attr *device_attr);
+	/*取设备的属性*/
 	int (*query_device_ex)(struct ibv_context *context,
 			       const struct ibv_query_device_ex_input *input,
 			       struct ibv_device_attr_ex *attr);
@@ -258,6 +261,7 @@ struct mlx5_glue {
 	void *(*dr_create_flow_action_pop_vlan)(void);
 	void *(*dr_create_flow_tbl)(void *domain, uint32_t level);
 	int (*dr_destroy_flow_tbl)(void *tbl);
+	/*创建domain*/
 	void *(*dr_create_domain)(struct ibv_context *ctx,
 				  enum mlx5dv_dr_domain_type domain);
 	int (*dr_destroy_domain)(void *domain);
@@ -287,6 +291,7 @@ struct mlx5_glue {
 	void *(*dv_create_flow_matcher_root)
 		(struct ibv_context *context,
 		 struct mlx5dv_flow_matcher_attr *matcher_attr);
+	/*创建flow*/
 	void *(*dv_create_flow)(void *matcher, void *match_value,
 			  size_t num_actions, void *actions[]);
 	void *(*dv_create_flow_root)(void *matcher, void *match_value,
@@ -328,6 +333,7 @@ struct mlx5_glue {
 	struct mlx5dv_devx_uar *(*devx_alloc_uar)(struct ibv_context *context,
 						  uint32_t flags);
 	void (*devx_free_uar)(struct mlx5dv_devx_uar *devx_uar);
+	/*创建object*/
 	struct mlx5dv_devx_obj *(*devx_obj_create)
 					(struct ibv_context *ctx,
 					 const void *in, size_t inlen,
@@ -403,6 +409,7 @@ struct mlx5_glue {
 	void *(*dv_create_flow_action_aso)
 			(struct mlx5dv_dr_domain *domain, void *aso_obj,
 			 uint32_t offset, uint32_t flags, uint8_t return_reg_c);
+	/*创建flow action,可以发送给kernel*/
 	void *(*dr_create_flow_action_send_to_kernel)(void *tbl,
 						      uint16_t priority);
 	struct mlx5dv_steering_anchor *(*create_steering_anchor)

@@ -33,11 +33,11 @@ cmdline_file_new(cmdline_parse_ctx_t *ctx/*一组解析指令*/, const char *pro
 }
 
 struct cmdline *
-cmdline_stdin_new(cmdline_parse_ctx_t *ctx, const char *prompt)
+cmdline_stdin_new(cmdline_parse_ctx_t *ctx, const char *prompt/*提示信息*/)
 {
 	struct cmdline *cl;
 
-	cl = cmdline_new(ctx, prompt, 0, 1);
+	cl = cmdline_new(ctx, prompt, 0/*标准输入*/, 1/*标准输出*/);
 
 	if (cl != NULL)
 		terminal_adjust(cl);

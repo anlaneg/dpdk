@@ -59,11 +59,13 @@ mlx5_pmd_socket_handle(void *cb __rte_unused)
 
 	memset(data, 0, sizeof(data));
 	/* Accept the connection from the client. */
-	conn_sock = accept(server_socket, NULL, NULL);
+	conn_sock = accept(server_socket, NULL, NULL);/*接入client*/
 	if (conn_sock < 0) {
 		DRV_LOG(WARNING, "connection failed: %s", strerror(errno));
 		return;
 	}
+
+	/*收取消息*/
 	ret = recvmsg(conn_sock, &msg, MSG_WAITALL);
 	if (ret != sizeof(struct mlx5_flow_dump_req)) {
 		DRV_LOG(WARNING, "wrong message received: %s",
@@ -78,8 +80,8 @@ mlx5_pmd_socket_handle(void *cb __rte_unused)
 		DRV_LOG(WARNING, "invalid file descriptor message");
 		goto error;
 	}
-	memcpy(&fd, CMSG_DATA(cmsg), sizeof(fd));
-	file = fdopen(fd, "w");
+	memcpy(&fd, CMSG_DATA(cmsg), sizeof(fd));/*收取传递过来的fd*/
+	file = fdopen(fd, "w");/*将此fd映射为FILE* */
 	if (!file) {
 		DRV_LOG(WARNING, "Failed to open file");
 		goto error;
@@ -92,20 +94,21 @@ mlx5_pmd_socket_handle(void *cb __rte_unused)
 
 	dump_req = (struct mlx5_flow_dump_req *)msg.msg_iov->iov_base;
 	if (dump_req) {
-		port_id = dump_req->port_id;
+		port_id = dump_req->port_id;/*指明dump哪个port*/
 		flow_ptr = (struct rte_flow *)((uintptr_t)dump_req->flow_id);
 	} else {
 		DRV_LOG(WARNING, "Invalid message");
 		goto error;
 	}
 
-	if (port_id == MLX5_ALL_PORT_IDS) {
+	if (port_id == MLX5_ALL_PORT_IDS/*要求dump所有port*/) {
 		/* Dump all port ids */
 		if (flow_ptr) {
 			DRV_LOG(WARNING, "Flow ptr unsupported with given port id");
 			goto error;
 		}
 
+		/*遍历所有mellanox网卡，针对网卡进行flow dump*/
 		MLX5_ETH_FOREACH_DEV(port_id, NULL) {
 			dev = &rte_eth_devices[port_id];
 			ret = mlx5_flow_dev_dump(dev, NULL, file, &err);
@@ -121,7 +124,7 @@ mlx5_pmd_socket_handle(void *cb __rte_unused)
 
 		/* Dump flow */
 		dev = &rte_eth_devices[port_id];
-		ret = mlx5_flow_dev_dump(dev, flow_ptr, file, &err);
+		ret = mlx5_flow_dev_dump(dev, flow_ptr, file, &err);/*显示指定flow*/
 	}
 
 	/* Set-up the ancillary data and reply. */
@@ -174,11 +177,15 @@ mlx5_pmd_socket_init(void)
 	flags = fcntl(server_socket, F_GETFL, 0);
 	if (flags == -1)
 		goto close;
+
+	/*指明server_socket为非阻塞*/
 	ret = fcntl(server_socket, F_SETFL, flags | O_NONBLOCK);
 	if (ret < 0)
 		goto close;
 	snprintf(sun.sun_path, sizeof(sun.sun_path), MLX5_SOCKET_PATH,
 		 getpid());
+
+	/*绑定server socket地址*/
 	remove(sun.sun_path);
 	ret = bind(server_socket, (const struct sockaddr *)&sun, sizeof(sun));
 	if (ret < 0) {
@@ -186,6 +193,8 @@ mlx5_pmd_socket_init(void)
 			"cannot bind mlx5 socket: %s", strerror(errno));
 		goto remove;
 	}
+
+	/*对server socket执行监听*/
 	ret = listen(server_socket, 0);
 	if (ret < 0) {
 		DRV_LOG(WARNING, "cannot listen on mlx5 socket: %s",
@@ -194,7 +203,7 @@ mlx5_pmd_socket_init(void)
 	}
 	server_intr_handle = mlx5_os_interrupt_handler_create
 		(RTE_INTR_INSTANCE_F_PRIVATE, false,
-		 server_socket, mlx5_pmd_socket_handle, NULL);
+		 server_socket, mlx5_pmd_socket_handle/*消息处理，执行flow dump*/, NULL);
 	if (server_intr_handle == NULL) {
 		DRV_LOG(WARNING, "cannot register interrupt handler for mlx5 socket: %s",
 			strerror(errno));

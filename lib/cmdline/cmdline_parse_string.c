@@ -57,6 +57,7 @@ cmdline_parse_string(cmdline_parse_token_hdr_t *tk, const char *buf, void *res,
 	const char *str;
 
 	if (res && ressize < STR_TOKEN_SIZE)
+		/*提供的res不满足要求，退出*/
 		return -1;
 
 	if (!tk || !buf || ! *buf)
@@ -68,34 +69,40 @@ cmdline_parse_string(cmdline_parse_token_hdr_t *tk, const char *buf, void *res,
 
 	/* fixed string (known single token) */
 	if ((sd->str != NULL) && (strcmp(sd->str, TOKEN_STRING_MULTI) != 0)) {
+		/*sd->str不为空，也不为空串*/
 		str = sd->str;
 		do {
-			token_len = get_token_len(str);
+			token_len = get_token_len(str);/*取token长度*/
 
 			/* if token is too big... */
 			if (token_len >= STR_TOKEN_SIZE - 1) {
+				/*token过长*/
 				continue;
 			}
 
 			if ( strncmp(buf, str, token_len) ) {
+				/*buf开始，token_len长度的token与str不匹配，尝试下一个token*/
 				continue;
 			}
 
 			if ( !cmdline_isendoftoken(*(buf+token_len)) ) {
+				/*未遇到token结尾*/
 				continue;
 			}
 
-			break;
+			break;/*成功匹配*/
 		} while ( (str = get_next_token(str)) != NULL );
 
 		if (!str)
-			return -1;
+			return -1;/*遍历结束，未匹配*/
 	}
 	/* multi string */
 	else if (sd->str != NULL) {
+		/*此时sd->str取值""*/
 		if (ressize < STR_MULTI_TOKEN_SIZE)
 			return -1;
 
+		/*取当前命令中token指定的长度*/
 		token_len = 0;
 		while (!cmdline_isendofcommand(buf[token_len]) &&
 		      token_len < (STR_MULTI_TOKEN_SIZE - 1))
@@ -103,10 +110,14 @@ cmdline_parse_string(cmdline_parse_token_hdr_t *tk, const char *buf, void *res,
 
 		/* return if token too long */
 		if (token_len >= (STR_MULTI_TOKEN_SIZE - 1))
+			/*token长度过长，报错*/
 			return -1;
 	}
 	/* unspecified string (unknown single token) */
 	else {
+		/*此时sd->str取值为NULL*/
+
+		/*取当前命令中的token指定长度*/
 		token_len = 0;
 		while(!cmdline_isendoftoken(buf[token_len]) &&
 		      token_len < (STR_TOKEN_SIZE-1))
@@ -114,11 +125,13 @@ cmdline_parse_string(cmdline_parse_token_hdr_t *tk, const char *buf, void *res,
 
 		/* return if token too long */
 		if (token_len >= STR_TOKEN_SIZE - 1) {
+			/*token长度过长，报错*/
 			return -1;
 		}
 	}
 
 	if (res) {
+		/*提供了出参res,针对NULL，空串情况，设置res*/
 		if ((sd->str != NULL) && (strcmp(sd->str, TOKEN_STRING_MULTI) == 0))
 			/* we are sure that token_len is < STR_MULTI_TOKEN_SIZE-1 */
 			strlcpy(res, buf, STR_MULTI_TOKEN_SIZE);
@@ -129,7 +142,7 @@ cmdline_parse_string(cmdline_parse_token_hdr_t *tk, const char *buf, void *res,
 		*((char *)res + token_len) = 0;
 	}
 
-	return token_len;
+	return token_len;/*返回匹配的命令字符串长度*/
 }
 
 int cmdline_complete_get_nb_string(cmdline_parse_token_hdr_t *tk)

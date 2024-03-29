@@ -54,17 +54,21 @@ eth_find_device(const struct rte_eth_dev *start, rte_eth_cmp_t cmp,
 
 /* Put new value into list. */
 static int
-rte_eth_devargs_enlist(uint16_t *list, uint16_t *len_list,
-		       const uint16_t max_list, uint16_t val)
+rte_eth_devargs_enlist(uint16_t *list/*list数组*/, uint16_t *len_list/*list数组的当前长度*/,
+		       const uint16_t max_list/*list数组的最大长度*/, uint16_t val)
 {
 	uint16_t i;
 
 	for (i = 0; i < *len_list; i++) {
 		if (list[i] == val)
+			/*val已有数组中，直接返回*/
 			return 0;
 	}
 	if (*len_list >= max_list)
+		/*val加入list中将会超限，报错*/
 		return -1;
+
+	/*将val添加进list*/
 	list[(*len_list)++] = val;
 	return 0;
 }
@@ -78,13 +82,16 @@ rte_eth_devargs_process_range(char *str, uint16_t *list, uint16_t *len_list,
 	int result, n = 0;
 	char *pos = str;
 
+	/*这里使用了%n，其目的是为了使以下内容生效，例如"2   - 3",其中%n会收集到'-‘前消费的字符数*/
 	result = sscanf(str, "%hu%n-%hu%n", &lo, &n, &hi, &n);
 	if (result == 1) {
+		/*只提供了1个数字*/
 		if (rte_eth_devargs_enlist(list, len_list, max_list, lo) != 0)
 			return NULL;
 	} else if (result == 2) {
 		if (lo > hi)
 			return NULL;
+		/*提供了一组数字，逐个加入到list中*/
 		for (val = lo; val <= hi; val++) {
 			if (rte_eth_devargs_enlist(list, len_list, max_list,
 						   val) != 0)
@@ -110,18 +117,21 @@ rte_eth_devargs_process_list(char *str, uint16_t *list, uint16_t *len_list,
 	char *pos = str;
 
 	if (*pos == '[')
-		pos++;
+		pos++;//跳过'['
 	while (1) {
+		/*收集一个"a-b"或者"a"格式，并填充到list中*/
 		pos = rte_eth_devargs_process_range(pos, list, len_list,
 						    max_list);
 		if (pos == NULL)
 			return NULL;
 		if (*pos != ',') /* end of list */
 			break;
-		pos++;
+		pos++;/*跳过','号*/
 	}
 	if (*str == '[' && *pos != ']')
+		/*以'[‘开头，则必须以']'结束*/
 		return NULL;
+	/*这个检查，会导致跳过结尾']'*/
 	if (*pos == ']')
 		pos++;
 	return pos;
@@ -147,16 +157,19 @@ rte_eth_devargs_parse_representor_ports(char *str, void *data)
 	struct rte_eth_devargs *eth_da = data;
 
 	if (str[0] == 'c') {
-		str += 1;
+		str += 1;/*跳过字符'c'*/
+		/*解析controllers，并填充*/
 		str = rte_eth_devargs_process_list(str, eth_da->mh_controllers,
 				&eth_da->nb_mh_controllers,
 				RTE_DIM(eth_da->mh_controllers));
 		if (str == NULL)
 			goto done;
 	}
+
 	if (str[0] == 'p' && str[1] == 'f') {
 		eth_da->type = RTE_ETH_REPRESENTOR_PF;
-		str += 2;
+		str += 2;/*跳过'pf'*/
+		/*解析ports，并填充*/
 		str = rte_eth_devargs_process_list(str, eth_da->ports,
 				&eth_da->nb_ports, RTE_DIM(eth_da->ports));
 		if (str == NULL || str[0] == '\0')
@@ -166,20 +179,24 @@ rte_eth_devargs_parse_representor_ports(char *str, void *data)
 		str = NULL;
 		goto done;
 	}
+
 	if (str[0] == 'v' && str[1] == 'f') {
 		eth_da->type = RTE_ETH_REPRESENTOR_VF;
-		str += 2;
+		str += 2;/*跳过'vf'*/
 	} else if (str[0] == 's' && str[1] == 'f') {
 		eth_da->type = RTE_ETH_REPRESENTOR_SF;
-		str += 2;
+		str += 2;/*跳过'sf'*/
 	} else {
 		/* 'pf' must followed by 'vf' or 'sf'. */
 		if (eth_da->type == RTE_ETH_REPRESENTOR_PF) {
+			/*上面已提明pf,故直接到done*/
 			str = NULL;
 			goto done;
 		}
+		/*未指明pf,指明为vf*/
 		eth_da->type = RTE_ETH_REPRESENTOR_VF;
 	}
+	/*执行解析并填充representor_ports*/
 	str = rte_eth_devargs_process_list(str, eth_da->representor_ports,
 		&eth_da->nb_representor_ports,
 		RTE_DIM(eth_da->representor_ports));

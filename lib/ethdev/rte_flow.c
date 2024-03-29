@@ -340,8 +340,9 @@ rte_flow_ops_get(uint16_t port_id, struct rte_flow_error *error)
 		code = ENODEV;
 	else if (unlikely(dev->dev_ops->flow_ops_get == NULL))
 		/* flow API not supported with this driver dev_ops */
-		code = ENOSYS;
+		code = ENOSYS;/*此设备不支持flow_ops_get回调*/
 	else
+		/*获取此设备对应的rte_flow_ops*/
 		code = dev->dev_ops->flow_ops_get(dev, &ops);
 	if (code == 0 && ops == NULL)
 		/* flow API not supported with this device */
@@ -399,7 +400,7 @@ rte_flow_create(uint16_t port_id,
 		const struct rte_flow_action actions[],
 		struct rte_flow_error *error)
 {
-	struct rte_eth_dev *dev = &rte_eth_devices[port_id];
+	struct rte_eth_dev *dev = &rte_eth_devices[port_id];/*取port_id对应的设备*/
 	struct rte_flow *flow;
 	const struct rte_flow_ops *ops = rte_flow_ops_get(port_id, error);
 

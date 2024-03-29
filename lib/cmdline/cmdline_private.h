@@ -28,7 +28,9 @@ struct rdline {
 	/* rdline bufs */
 	struct cirbuf left;
 	struct cirbuf right;
+	/*光标左侧buffer*/
 	char left_buf[RDLINE_BUF_SIZE+2]; /* reserve 2 chars for the \n\0 */
+	/*光标右侧buffer*/
 	char right_buf[RDLINE_BUF_SIZE];
 
 	char prompt[RDLINE_PROMPT_SIZE];
@@ -43,17 +45,18 @@ struct rdline {
 	int history_cur_line;
 
 	/* callbacks and func pointers */
-	/*字符输出函数，一般为cmdline_write_char*/
+	/*单个字符输出函数，一般为cmdline_write_char*/
 	rdline_write_char_t *write_char;
-	/*遇到回车时，仅对用户输入进行校验，并执行命令*/
+	/*遇到回车时，仅对用户输入进行校验，解析，并执行命令*/
 	rdline_validate_t *validate;
-	rdline_complete_t *complete;/*命令补全*/
+	/*命令补全*/
+	rdline_complete_t *complete;
 
 	/* vt100 parser */
 	struct cmdline_vt100 vt100;
 
 	/* opaque pointer */
-	void *opaque;
+	void *opaque;/*私有数据，例如struct cmdline*/
 };
 
 #ifdef RTE_EXEC_ENV_WINDOWS

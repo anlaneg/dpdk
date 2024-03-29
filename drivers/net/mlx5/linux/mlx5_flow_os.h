@@ -21,6 +21,7 @@ extern const struct mlx5_flow_driver_ops mlx5_flow_hw_drv_ops;
 static inline enum mlx5_flow_drv_type
 mlx5_flow_os_get_type(void)
 {
+	/*默认返回max*/
 	return MLX5_FLOW_TYPE_MAX;
 }
 
@@ -75,6 +76,7 @@ static inline int
 mlx5_flow_os_create_flow(void *matcher, void *match_value,
 			 size_t num_actions, void *actions[], void **flow)
 {
+	/*提供match,action创建flow*/
 	*flow = mlx5_glue->dv_create_flow(matcher, match_value,
 					  num_actions, actions);
 	return (*flow) ? 0 : -1;
@@ -229,6 +231,7 @@ mlx5_flow_os_create_flow_action_modify_header(void *ctx, void *domain,
 					(ctx, res->ft_type, domain, res->root ?
 					 MLX5DV_DR_ACTION_FLAGS_ROOT_LEVEL : 0,
 					 actions_len, (uint64_t *)res->actions);
+	/*创建action失败，返回-1*/
 	return (*action) ? 0 : -1;
 }
 

@@ -502,6 +502,7 @@ MLX5_TXOFF_INFO(i_mpw,
 eth_tx_burst_t
 mlx5_select_tx_function(struct rte_eth_dev *dev)
 {
+	/*选择tx函数*/
 	struct mlx5_priv *priv = dev->data->dev_private;
 	struct mlx5_port_config *config = &priv->config;
 	/*为设备配置的tx offloads*/

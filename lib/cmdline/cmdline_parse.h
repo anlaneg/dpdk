@@ -62,8 +62,8 @@ typedef struct cmdline_token_hdr cmdline_parse_token_hdr_t;
  */
 struct cmdline_token_ops {
 	/** parse(token ptr, buf, res pts, buf len) */
-	int (*parse)(cmdline_parse_token_hdr_t *, const char */*要解析的buffer*/, void *,
-		unsigned int);
+	int (*parse)(cmdline_parse_token_hdr_t */*要检查的parse token*/, const char */*要解析的buffer*/, void */*出参，匹配的token*/,
+		unsigned int/*入参，出参可填充的内容长度*/);
 	/** return the num of possible choices for this token */
 	int (*complete_get_nb)(cmdline_parse_token_hdr_t *);
 	/** return the elt x for this token (token, idx, dstbuf, size) */

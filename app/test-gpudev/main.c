@@ -74,7 +74,7 @@ alloc_gpu_memory(uint16_t gpu_id)
 	printf("\n=======> TEST: Allocate GPU memory\n\n");
 
 	/* Alloc memory on GPU 0 without any specific alignment */
-	ptr_1 = rte_gpu_mem_alloc(gpu_id, buf_bytes, 0);
+	ptr_1 = rte_gpu_mem_alloc(gpu_id, buf_bytes, 0);/*来一块内存*/
 	if (ptr_1 == NULL) {
 		fprintf(stderr, "rte_gpu_mem_alloc GPU memory returned error\n");
 		goto error;
@@ -83,7 +83,7 @@ alloc_gpu_memory(uint16_t gpu_id)
 			ptr_1, buf_bytes);
 
 	/* Alloc memory on GPU 0 with 4kB alignment */
-	ptr_2 = rte_gpu_mem_alloc(gpu_id, buf_bytes, align);
+	ptr_2 = rte_gpu_mem_alloc(gpu_id, buf_bytes, align);/*再来一块内存*/
 	if (ptr_2 == NULL) {
 		fprintf(stderr, "rte_gpu_mem_alloc GPU memory returned error\n");
 		goto error;
@@ -142,20 +142,20 @@ register_cpu_memory(uint16_t gpu_id)
 	printf("\n=======> TEST: Register CPU memory\n\n");
 
 	/* Alloc memory on CPU visible from GPU 0 */
-	ptr = rte_zmalloc(NULL, buf_bytes, 0);
+	ptr = rte_zmalloc(NULL, buf_bytes, 0);/*申请一块内存*/
 	if (ptr == NULL) {
 		fprintf(stderr, "Failed to allocate CPU memory.\n");
 		goto error;
 	}
 
-	ret = rte_gpu_mem_register(gpu_id, buf_bytes, ptr);
+	ret = rte_gpu_mem_register(gpu_id, buf_bytes, ptr);/*将此同存注册给设备*/
 	if (ret < 0) {
 		fprintf(stderr, "rte_gpu_mem_register CPU memory returned error %d\n", ret);
 		goto error;
 	}
 	printf("CPU memory registered at 0x%p %zdB\n", ptr, buf_bytes);
 
-	ret = rte_gpu_mem_unregister(gpu_id, (uint8_t *)(ptr)+0x700);
+	ret = rte_gpu_mem_unregister(gpu_id, (uint8_t *)(ptr)+0x700);/*此内存解注册（由于参数问题，必失败）*/
 	if (ret < 0) {
 		printf("CPU memory 0x%p NOT unregistered: GPU driver didn't find this memory address internally\n",
 				(uint8_t *)(ptr)+0x700);
@@ -165,7 +165,7 @@ register_cpu_memory(uint16_t gpu_id)
 		goto error;
 	}
 
-	ret = rte_gpu_mem_unregister(gpu_id, ptr);
+	ret = rte_gpu_mem_unregister(gpu_id, ptr);/*对此内存执行正常解注册*/
 	if (ret < 0) {
 		fprintf(stderr, "rte_gpu_mem_unregister returned error %d\n", ret);
 		goto error;
@@ -197,7 +197,7 @@ gpu_mem_cpu_map(uint16_t gpu_id)
 	printf("\n=======> TEST: Map GPU memory for CPU visibility\n\n");
 
 	/* Alloc memory on GPU 0 with 4kB alignment */
-	ptr_gpu = rte_gpu_mem_alloc(gpu_id, buf_bytes, align);
+	ptr_gpu = rte_gpu_mem_alloc(gpu_id, buf_bytes, align);/*向gpu设备申请一块内存*/
 	if (ptr_gpu == NULL) {
 		fprintf(stderr, "rte_gpu_mem_alloc GPU memory returned error\n");
 		goto error;
@@ -205,13 +205,14 @@ gpu_mem_cpu_map(uint16_t gpu_id)
 	printf("GPU memory allocated at 0x%p size is %zd bytes\n",
 			ptr_gpu, buf_bytes);
 
-	ptr_cpu = rte_gpu_mem_cpu_map(gpu_id, buf_bytes, ptr_gpu);
+	ptr_cpu = rte_gpu_mem_cpu_map(gpu_id, buf_bytes, ptr_gpu);/*将gpu一段内存映射给cpu*/
 	if (ptr_cpu == NULL) {
 		fprintf(stderr, "rte_gpu_mem_cpu_map returned error\n");
 		goto error;
 	}
 	printf("GPU memory CPU mapped at 0x%p\n", ptr_cpu);
 
+	/*演示映射给cpu的gpu内存的读写操作*/
 	((uint8_t *)ptr_cpu)[0] = 0x4;
 	((uint8_t *)ptr_cpu)[1] = 0x5;
 	((uint8_t *)ptr_cpu)[2] = 0x6;
@@ -221,14 +222,14 @@ gpu_mem_cpu_map(uint16_t gpu_id)
 			((uint8_t *)ptr_cpu)[1],
 			((uint8_t *)ptr_cpu)[2]);
 
-	ret = rte_gpu_mem_cpu_unmap(gpu_id, ptr_gpu);
+	ret = rte_gpu_mem_cpu_unmap(gpu_id, ptr_gpu);/*解除映射*/
 	if (ret < 0) {
 		fprintf(stderr, "rte_gpu_mem_cpu_unmap returned error %d\n", ret);
 		goto error;
 	}
 	printf("GPU memory CPU unmapped, 0x%p not valid anymore\n", ptr_cpu);
 
-	ret = rte_gpu_mem_free(gpu_id, ptr_gpu);
+	ret = rte_gpu_mem_free(gpu_id, ptr_gpu);/*释放gpu内存*/
 	if (ret < 0) {
 		fprintf(stderr, "rte_gpu_mem_free returned error %d\n", ret);
 		goto error;
@@ -257,12 +258,14 @@ create_update_comm_flag(uint16_t gpu_id)
 
 	printf("\n=======> TEST: Communication flag\n\n");
 
+	/*申请内存，并将此内存映射给gpu,并产生记录信息devflag*/
 	ret = rte_gpu_comm_create_flag(gpu_id, &devflag, RTE_GPU_COMM_FLAG_CPU);
 	if (ret < 0) {
 		fprintf(stderr, "rte_gpu_comm_create_flag returned error %d\n", ret);
 		goto error;
 	}
 
+	/*写25给gpu*/
 	set_val = 25;
 	ret = rte_gpu_comm_set_flag(&devflag, set_val);
 	if (ret < 0) {
@@ -270,6 +273,7 @@ create_update_comm_flag(uint16_t gpu_id)
 		goto error;
 	}
 
+	/*读取此映射地址内保存的信息*/
 	ret = rte_gpu_comm_get_flag_value(&devflag, &get_val);
 	if (ret < 0) {
 		fprintf(stderr, "rte_gpu_comm_get_flag_value returned error %d\n", ret);
@@ -279,6 +283,7 @@ create_update_comm_flag(uint16_t gpu_id)
 	printf("Communication flag value at 0x%p was set to %d and current value is %d\n",
 			devflag.ptr, set_val, get_val);
 
+	/*写38给gpu*/
 	set_val = 38;
 	ret = rte_gpu_comm_set_flag(&devflag, set_val);
 	if (ret < 0) {
@@ -286,6 +291,7 @@ create_update_comm_flag(uint16_t gpu_id)
 		goto error;
 	}
 
+	/*读取*/
 	ret = rte_gpu_comm_get_flag_value(&devflag, &get_val);
 	if (ret < 0) {
 		fprintf(stderr, "rte_gpu_comm_get_flag_value returned error %d\n", ret);
@@ -295,6 +301,7 @@ create_update_comm_flag(uint16_t gpu_id)
 	printf("Communication flag value at 0x%p was set to %d and current value is %d\n",
 			devflag.ptr, set_val, get_val);
 
+	/*去除此通信用flag*/
 	ret = rte_gpu_comm_destroy_flag(&devflag);
 	if (ret < 0) {
 		fprintf(stderr, "rte_gpu_comm_destroy_flags returned error %d\n", ret);
@@ -440,10 +447,12 @@ main(int argc, char **argv)
 	argc -= ret;
 	argv += ret;
 
-	nb_gpus = rte_gpu_count_avail();
+	nb_gpus = rte_gpu_count_avail();/*获取gpu设备数量*/
 	printf("\n\nDPDK found %d GPUs:\n", nb_gpus);
+	/*遍历系统中所有gpu设备*/
 	RTE_GPU_FOREACH(gpu_id)
 	{
+		/*取此gpu的info信息*/
 		if (rte_gpu_info_get(gpu_id, &ginfo))
 			rte_exit(EXIT_FAILURE, "rte_gpu_info_get error - bye\n");
 
@@ -468,14 +477,14 @@ main(int argc, char **argv)
 	/**
 	 * Memory tests
 	 */
-	alloc_gpu_memory(gpu_id);
-	register_cpu_memory(gpu_id);
-	gpu_mem_cpu_map(gpu_id);
+	alloc_gpu_memory(gpu_id);/*gpu内存申请释放测试*/
+	register_cpu_memory(gpu_id);/*为gpu注册，解注册内存测试*/
+	gpu_mem_cpu_map(gpu_id);/*将一段gpu内存映射给cpu,进行内存读写测试*/
 
 	/**
 	 * Communication items test
 	 */
-	create_update_comm_flag(gpu_id);
+	create_update_comm_flag(gpu_id);/*申请一小段内存，并将此内存映射给gpu进行读写，以达到通信的目的*/
 	create_update_comm_list(gpu_id);
 
 	/* clean up the EAL */

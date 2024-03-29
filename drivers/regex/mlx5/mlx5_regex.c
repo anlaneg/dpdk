@@ -168,10 +168,10 @@ static const struct rte_pci_id mlx5_regex_pci_id_map[] = {
 };
 
 static struct mlx5_class_driver mlx5_regex_driver = {
-	.drv_class = MLX5_CLASS_REGEX,
+	.drv_class = MLX5_CLASS_REGEX,/*指明正则类驱动*/
 	.name = RTE_STR(MLX5_REGEX_DRIVER_NAME),
 	.id_table = mlx5_regex_pci_id_map,
-	.probe = mlx5_regex_dev_probe,
+	.probe = mlx5_regex_dev_probe,/*正则表达式类设备驱动probe*/
 	.remove = mlx5_regex_dev_remove,
 };
 

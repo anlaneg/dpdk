@@ -53,6 +53,7 @@ mlx5_os_get_dev_device_name(void *dev)
 static inline const char *
 mlx5_os_get_ctx_device_name(void *ctx)
 {
+	/*取设备名称*/
 	if (!ctx)
 		return NULL;
 	return ((struct ibv_context *)ctx)->device->name;
@@ -72,6 +73,7 @@ mlx5_os_get_ctx_device_name(void *ctx)
 static inline const char *
 mlx5_os_get_ctx_device_path(void *ctx)
 {
+	/*取设备路径*/
 	if (!ctx)
 		return NULL;
 

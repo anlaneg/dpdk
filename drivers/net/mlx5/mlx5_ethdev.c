@@ -671,19 +671,23 @@ mlx5_port_to_eswitch_info(uint16_t port, bool valid)
 	struct mlx5_priv *priv;
 
 	if (port >= RTE_MAX_ETHPORTS) {
+		/*port过大，返回NULL*/
 		rte_errno = EINVAL;
 		return NULL;
 	}
 	if (!valid && !rte_eth_dev_is_valid_port(port)) {
+		/*检查port确认无效*/
 		rte_errno = ENODEV;
 		return NULL;
 	}
 	dev = &rte_eth_devices[port];
 	priv = dev->data->dev_private;
 	if (!priv->sh->esw_mode) {
+		/*设备未进入eswitch模式，报错*/
 		rte_errno = EINVAL;
 		return NULL;
 	}
+	/*返回此设备对应的eswitch info*/
 	return priv;
 }
 
@@ -704,6 +708,7 @@ mlx5_port_to_eswitch_info(uint16_t port, bool valid)
 struct mlx5_priv *
 mlx5_dev_to_eswitch_info(struct rte_eth_dev *dev)
 {
+	/*返回dev对应的eswitch info*/
 	struct mlx5_priv *priv;
 
 	priv = dev->data->dev_private;

@@ -69,7 +69,7 @@ cmdline_set_prompt(struct cmdline *cl, const char *prompt)
 }
 
 struct cmdline *
-cmdline_new(cmdline_parse_ctx_t *ctx, const char *prompt, int s_in, int s_out)
+cmdline_new(cmdline_parse_ctx_t *ctx, const char *prompt/*提示信息*/, int s_in, int s_out)
 {
 	struct cmdline *cl;
 	int ret;
@@ -83,8 +83,9 @@ cmdline_new(cmdline_parse_ctx_t *ctx, const char *prompt, int s_in, int s_out)
 	memset(cl, 0, sizeof(struct cmdline));
 	cl->s_in = s_in;
 	cl->s_out = s_out;
-	cl->ctx = ctx;
+	cl->ctx = ctx;/*设置解析指令*/
 
+	/*初始化readline*/
 	ret = rdline_init(&cl->rdl, cmdline_write_char, cmdline_valid_buffer,
 			cmdline_complete_buffer, cl);
 	if (ret != 0) {
@@ -147,7 +148,7 @@ cmdline_in(struct cmdline *cl, const char *buf, int size)
 		return -1;
 
 	for (i=0; i<size; i++) {
-		/*提供命令给rdl*/
+		/*提供命令给rdl,如果发现回车后，触发解析命令过程*/
 		ret = rdline_char_in(&cl->rdl, buf[i]);
 
 		if (ret == RDLINE_RES_VALIDATED) {
@@ -164,7 +165,7 @@ cmdline_in(struct cmdline *cl, const char *buf, int size)
 			buflen = strnlen(buffer, RDLINE_BUF_SIZE);
 			if (buflen > 1 && !same)
 				rdline_add_history(&cl->rdl, buffer);
-			rdline_newline(&cl->rdl, cl->prompt);
+			rdline_newline(&cl->rdl, cl->prompt);/*执行新行输出*/
 		}
 		else if (ret == RDLINE_RES_EOF)
 			return -1;

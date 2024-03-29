@@ -2056,6 +2056,7 @@ mlx5_devx_cmd_create_td(void *ctx)
 	uint32_t out[MLX5_ST_SZ_DW(alloc_transport_domain_out)] = {0};
 	struct mlx5_devx_obj *td = NULL;
 
+	/*申请devx_obj*/
 	td = mlx5_malloc(MLX5_MEM_ZERO, sizeof(*td), 0, SOCKET_ID_ANY);
 	if (!td) {
 		DRV_LOG(ERR, "Failed to allocate TD object");
@@ -2063,7 +2064,8 @@ mlx5_devx_cmd_create_td(void *ctx)
 		return NULL;
 	}
 	MLX5_SET(alloc_transport_domain_in, in, opcode,
-		 MLX5_CMD_OP_ALLOC_TRANSPORT_DOMAIN);
+		 MLX5_CMD_OP_ALLOC_TRANSPORT_DOMAIN);/*设置opcode为MLX5_CMD_OP_ALLOC_TRANSPORT_DOMAIN*/
+	/*创建object*/
 	td->obj = mlx5_glue->devx_obj_create(ctx, in, sizeof(in),
 					     out, sizeof(out));
 	if (!td->obj) {
@@ -2071,6 +2073,7 @@ mlx5_devx_cmd_create_td(void *ctx)
 		mlx5_free(td);
 		return NULL;
 	}
+	/*取此obj对应的id*/
 	td->id = MLX5_GET(alloc_transport_domain_out, out,
 			   transport_domain);
 	return td;

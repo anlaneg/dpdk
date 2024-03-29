@@ -147,6 +147,7 @@ mlx5_os_capabilities_prepare(struct mlx5_dev_ctx_shared *sh)
 	struct ibv_device_attr_ex attr_ex = { .comp_mask = 0 };
 	struct mlx5dv_context dv_attr = { .comp_mask = 0 };
 
+	/*读取设备扩展属性*/
 	err = mlx5_glue->query_device_ex(cdev->ctx, NULL, &attr_ex);
 	if (err) {
 		rte_errno = errno;
@@ -161,16 +162,18 @@ mlx5_os_capabilities_prepare(struct mlx5_dev_ctx_shared *sh)
 #ifdef HAVE_IBV_DEVICE_STRIDING_RQ_SUPPORT
 	dv_attr.comp_mask |= MLX5DV_CONTEXT_MASK_STRIDING_RQ;
 #endif
+	/*读取设备属性*/
 	err = mlx5_glue->dv_query_device(cdev->ctx, &dv_attr);
 	if (err) {
 		rte_errno = errno;
 		return -rte_errno;
 	}
+	/*先清空设备能力列表*/
 	memset(&sh->dev_cap, 0, sizeof(struct mlx5_dev_cap));
 	if (mlx5_dev_is_pci(cdev->dev))
 		sh->dev_cap.vf = mlx5_dev_is_vf_pci(RTE_DEV_TO_PCI(cdev->dev));
 	else
-		sh->dev_cap.sf = 1;
+		sh->dev_cap.sf = 1;/*标记为sf接口*/
 	sh->dev_cap.max_qp_wr = attr_ex.orig_attr.max_qp_wr;
 	sh->dev_cap.max_sge = attr_ex.orig_attr.max_sge;
 	sh->dev_cap.max_cq = attr_ex.orig_attr.max_cq;
@@ -543,7 +546,7 @@ mlx5_alloc_shared_dr(struct mlx5_priv *priv)
 		err = errno;
 		goto error;
 	}
-	sh->rx_domain = domain;
+	sh->rx_domain = domain;/*设置创建好的rx domain*/
 	domain = mlx5_glue->dr_create_domain(sh->cdev->ctx,
 					     MLX5DV_DR_DOMAIN_TYPE_NIC_TX);
 	if (!domain) {
@@ -551,7 +554,7 @@ mlx5_alloc_shared_dr(struct mlx5_priv *priv)
 		err = errno;
 		goto error;
 	}
-	sh->tx_domain = domain;
+	sh->tx_domain = domain;/*设置创建好的tx domain*/
 #ifdef HAVE_MLX5DV_DR_ESWITCH
 	if (sh->config.dv_esw_en) {
 		domain = mlx5_glue->dr_create_domain(sh->cdev->ctx,
@@ -561,7 +564,7 @@ mlx5_alloc_shared_dr(struct mlx5_priv *priv)
 			err = errno;
 			goto error;
 		}
-		sh->fdb_domain = domain;
+		sh->fdb_domain = domain;/*创建fdb对应的domain*/
 	}
 	/*
 	 * The drop action is just some dummy placeholder in rdma-core. It
@@ -773,6 +776,7 @@ mlx5_init_shared_data(void)
 
 	rte_spinlock_lock(&mlx5_shared_data_lock);
 	if (mlx5_shared_data == NULL) {
+		/*申请并初始化mlx5_shared_data*/
 		if (rte_eal_process_type() == RTE_PROC_PRIMARY) {
 			/* Allocate shared memory. */
 			mz = rte_memzone_reserve(MZ_MLX5_PMD_SHARED_DATA,
@@ -1048,9 +1052,11 @@ mlx5_dev_spawn(struct rte_device *dpdk_dev,
 	/* Build device name. */
 	if (spawn->pf_bond < 0) {
 		/* Single device. */
+		/*单设备情况*/
 		if (!switch_info->representor)
 			strlcpy(name, dpdk_dev->name, sizeof(name));
 		else
+			/*有representor,则构造显示哪个设备的第x个rep接口*/
 			err = snprintf(name, sizeof(name), "%s_representor_%s%u",
 				 dpdk_dev->name,
 				 switch_info->name_type ==
@@ -1072,6 +1078,7 @@ mlx5_dev_spawn(struct rte_device *dpdk_dev,
 		}
 	}
 	if (err >= (int)sizeof(name))
+		/*名称被截断*/
 		DRV_LOG(WARNING, "device name overflow %s", name);
 	/* check if the device is already spawned */
 	if (rte_eth_dev_get_port_by_name(name, &port_id) == 0) {
@@ -1117,8 +1124,8 @@ mlx5_dev_spawn(struct rte_device *dpdk_dev,
 		 * the primary device is not accessible from the
 		 * secondary process.
 		 */
-		eth_dev->rx_pkt_burst = mlx5_select_rx_function(eth_dev);
-		eth_dev->tx_pkt_burst = mlx5_select_tx_function(eth_dev);
+		eth_dev->rx_pkt_burst = mlx5_select_rx_function(eth_dev);/*选取收包函数*/
+		eth_dev->tx_pkt_burst = mlx5_select_tx_function(eth_dev);/*选取发包函数*/
 		return eth_dev;
 err_secondary:
 		mlx5_dev_close(eth_dev);
@@ -1408,6 +1415,8 @@ err_secondary:
 			strerror(rte_errno));
 		goto error;
 	}
+
+	/*创建rte_port,增加识别的设备*/
 	eth_dev = rte_eth_dev_allocate(name);
 	if (eth_dev == NULL) {
 		DRV_LOG(ERR, "can not allocate rte ethdev");
@@ -1983,7 +1992,7 @@ mlx5_os_pci_probe_pf(struct mlx5_common_device *cdev,
 	 * nd != 1 means there are multiple IB devices over the same
 	 * PCI device and we have representors and master.
 	 */
-	unsigned int nd = 0;
+	unsigned int nd = 0;/*定义设备的数目*/
 	/*
 	 * Number of found IB device Ports. nd = 1 and np = 1..n means
 	 * we have the single multiport IB device, and there may be
@@ -2010,7 +2019,7 @@ mlx5_os_pci_probe_pf(struct mlx5_common_device *cdev,
 	int ret = -1;
 
 	errno = 0;
-	ibv_list = mlx5_glue->get_device_list(&ret);
+	ibv_list = mlx5_glue->get_device_list(&ret);/*列出所有ib设备*/
 	if (!ibv_list) {
 		rte_errno = errno ? errno : ENOSYS;
 		DRV_LOG(ERR, "Cannot list devices, is ib_uverbs loaded?");
@@ -2021,10 +2030,11 @@ mlx5_os_pci_probe_pf(struct mlx5_common_device *cdev,
 	 * matching ones, gathering into the list.
 	 */
 	struct ibv_device *ibv_match[ret + 1];
-	int nl_route = mlx5_nl_init(NETLINK_ROUTE, 0);
-	int nl_rdma = mlx5_nl_init(NETLINK_RDMA, 0);
+	int nl_route = mlx5_nl_init(NETLINK_ROUTE, 0);/*创建route地址*/
+	int nl_rdma = mlx5_nl_init(NETLINK_RDMA, 0);/*创建rdma地址*/
 	unsigned int i;
 
+	/*反序遍历所有设备*/
 	while (ret-- > 0) {
 		struct rte_pci_addr pci_addr;
 
@@ -2056,21 +2066,24 @@ mlx5_os_pci_probe_pf(struct mlx5_common_device *cdev,
 			ibv_match[nd++] = ibv_list[ret];
 			break;
 		} else {
+			/*非binding设备走此流程*/
 			/* Bonding device not found. */
-			if (mlx5_get_pci_addr(ibv_list[ret]->ibdev_path,
-					      &pci_addr))
+			if (mlx5_get_pci_addr(ibv_list[ret]->ibdev_path/*例如/sys/class/infiniband/mlx5_0*/,
+					      &pci_addr))/*取此ib设备对应的pci地址*/
 				continue;
 			if (owner_pci.domain != pci_addr.domain ||
 			    owner_pci.bus != pci_addr.bus ||
 			    owner_pci.devid != pci_addr.devid ||
 			    owner_pci.function != pci_addr.function)
+				/*跳过与owner_pci不相等的情况*/
 				continue;
+			/*匹配此设备成功*/
 			DRV_LOG(INFO, "PCI information matches for device \"%s\"",
 				ibv_list[ret]->name);
-			ibv_match[nd++] = ibv_list[ret];
+			ibv_match[nd++] = ibv_list[ret];/*匹配成功*/
 		}
 	}
-	ibv_match[nd] = NULL;
+	ibv_match[nd] = NULL;/*补NULL表示设备匹配结束*/
 	if (!nd) {
 		/* No device matches, just complain and bail out. */
 		DRV_LOG(WARNING,
@@ -2080,17 +2093,19 @@ mlx5_os_pci_probe_pf(struct mlx5_common_device *cdev,
 			owner_pci.devid, owner_pci.function);
 		rte_errno = ENOENT;
 		ret = -rte_errno;
-		goto exit;
+		goto exit;/*没有匹配到任何ibv设备*/
 	}
 	if (nd == 1) {
+		/*只匹配了一个设备*/
 		/*
 		 * Found single matching device may have multiple ports.
 		 * Each port may be representor, we have to check the port
 		 * number and check the representors existence.
 		 */
 		if (nl_rdma >= 0)
-			np = mlx5_nl_portnum(nl_rdma, ibv_match[0]->name);
+			np = mlx5_nl_portnum(nl_rdma, ibv_match[0]->name);/*取设备的portnum*/
 		if (!np)
+			/*获取ib设备的port number失败*/
 			DRV_LOG(WARNING,
 				"Cannot get IB device \"%s\" ports number.",
 				ibv_match[0]->name);
@@ -2121,6 +2136,7 @@ mlx5_os_pci_probe_pf(struct mlx5_common_device *cdev,
 		MLX5_ASSERT(ns == 0);
 		MLX5_ASSERT(nd == 1);
 		MLX5_ASSERT(np);
+		/*构造list列表*/
 		for (i = 1; i <= np; ++i) {
 			list[ns].bond_info = &bond_info;
 			list[ns].max_port = np;
@@ -2218,20 +2234,22 @@ mlx5_os_pci_probe_pf(struct mlx5_common_device *cdev,
 		for (i = 0; i != nd; ++i) {
 			memset(&list[ns].info, 0, sizeof(list[ns].info));
 			list[ns].bond_info = NULL;
-			list[ns].max_port = 1;
+			list[ns].max_port = 1;/*最大port数为1*/
 			list[ns].phys_port = 1;
-			list[ns].phys_dev_name = ibv_match[i]->name;
+			list[ns].phys_dev_name = ibv_match[i]->name;/*物理设备名称，例如mlx5_0*/
 			list[ns].eth_dev = NULL;
 			list[ns].pci_dev = pci_dev;
 			list[ns].cdev = cdev;
 			list[ns].pf_bond = -1;
 			list[ns].ifindex = 0;
 			if (nl_rdma >= 0)
+				/*取此设备对应的ifindex*/
 				list[ns].ifindex = mlx5_nl_ifindex
 							    (nl_rdma,
 							     ibv_match[i]->name,
 							     1);
 			if (!list[ns].ifindex) {
+				/*取ifindex失败，通过ifname来获取*/
 				char ifname[IF_NAMESIZE];
 
 				/*
@@ -2269,6 +2287,7 @@ mlx5_os_pci_probe_pf(struct mlx5_common_device *cdev,
 			}
 			ret = -1;
 			if (nl_route >= 0)
+				/*通过ifindex获取switchinfo*/
 				ret = mlx5_nl_switch_info(nl_route,
 							  list[ns].ifindex,
 							  &list[ns].info);
@@ -2294,6 +2313,7 @@ mlx5_os_pci_probe_pf(struct mlx5_common_device *cdev,
 				 * May be SRIOV is not enabled or there is no
 				 * representors.
 				 */
+				/*没有检测到representor,认为非e-switch状态*/
 				DRV_LOG(INFO, "No E-Switch support detected.");
 				ns++;
 				break;
@@ -2469,16 +2489,19 @@ static int
 mlx5_os_pci_probe(struct mlx5_common_device *cdev,
 		  struct mlx5_kvargs_ctrl *mkvlist)
 {
+	/*取此cdev对应的pci设备*/
 	struct rte_pci_device *pci_dev = RTE_DEV_TO_PCI(cdev->dev);
 	struct rte_eth_devargs eth_da = { .nb_ports = 0 };
 	int ret = 0;
 	uint16_t p;
 
+	/*解析representor的配置，填充eth_da*/
 	ret = mlx5_os_parse_eth_devargs(cdev->dev, &eth_da);
 	if (ret != 0)
 		return ret;
 
 	if (eth_da.nb_ports > 0) {
+		/*指明了pf,这里对pf进行探测*/
 		/* Iterate all port if devargs pf is range: "pf[0-1]vf[...]". */
 		for (p = 0; p < eth_da.nb_ports; p++) {
 			ret = mlx5_os_pci_probe_pf(cdev, &eth_da,
@@ -2557,7 +2580,7 @@ mlx5_os_auxiliary_probe(struct mlx5_common_device *cdev,
  */
 int
 mlx5_os_net_probe(struct mlx5_common_device *cdev,
-		  struct mlx5_kvargs_ctrl *mkvlist)
+		  struct mlx5_kvargs_ctrl *mkvlist/*此设备关联的kvlist*/)
 {
 	int ret;
 
@@ -2571,11 +2594,13 @@ mlx5_os_net_probe(struct mlx5_common_device *cdev,
 	}
 	ret = mlx5_probe_again_args_validate(cdev, mkvlist);
 	if (ret) {
+		/*校验失败*/
 		DRV_LOG(ERR, "Probe again parameters are not compatible : %s",
 			strerror(rte_errno));
 		return -rte_errno;
 	}
 	if (mlx5_dev_is_pci(cdev->dev))
+		/*probe pci设备*/
 		return mlx5_os_pci_probe(cdev, mkvlist);
 	else
 		return mlx5_os_auxiliary_probe(cdev, mkvlist);

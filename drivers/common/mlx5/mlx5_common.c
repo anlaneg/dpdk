@@ -84,7 +84,7 @@ static TAILQ_HEAD(mlx5_drivers, mlx5_class_driver) drivers_list =
 
 /* Head of devices. */
 static TAILQ_HEAD(mlx5_devices, mlx5_common_device) devices_list =
-				TAILQ_HEAD_INITIALIZER(devices_list);
+				TAILQ_HEAD_INITIALIZER(devices_list);/*用于串连所有mellanox设备*/
 static pthread_mutex_t devices_list_lock;
 
 static const struct {
@@ -137,7 +137,9 @@ mlx5_kvargs_process(struct mlx5_kvargs_ctrl *mkvlist, const char *const keys[],
 		pair = &mkvlist->kvlist->pairs[i];
 		for (j = 0; keys[j] != NULL; ++j) {
 			if (strcmp(pair->key, keys[j]) != 0)
+				/*匹配失败*/
 				continue;
+			/*匹配成功，调用handler完成key,value的处理*/
 			if ((*handler)(pair->key, pair->value, opaque_arg) < 0)
 				return -1;
 			mkvlist->is_used[i] = true;
@@ -168,7 +170,7 @@ mlx5_kvargs_prepare(struct mlx5_kvargs_ctrl *mkvlist,
 	if (mkvlist == NULL)
 		return 0;
 	MLX5_ASSERT(devargs != NULL && devargs->args != NULL);
-	kvlist = rte_kvargs_parse(devargs->args, NULL);
+	kvlist = rte_kvargs_parse(devargs->args, NULL);/*将args组织成kvlist*/
 	if (kvlist == NULL) {
 		rte_errno = EINVAL;
 		return -rte_errno;
@@ -183,12 +185,12 @@ mlx5_kvargs_prepare(struct mlx5_kvargs_ctrl *mkvlist,
 			DRV_LOG(ERR, "Key %s is missing value.", pair->key);
 			rte_kvargs_free(kvlist);
 			rte_errno = EINVAL;
-			return -rte_errno;
+			return -rte_errno;/*不容许value为空的情况*/
 		}
 	}
 	/* Makes sure all devargs used array is false. */
-	memset(mkvlist, 0, sizeof(*mkvlist));
-	mkvlist->kvlist = kvlist;
+	memset(mkvlist, 0, sizeof(*mkvlist));/*初始化为0*/
+	mkvlist->kvlist = kvlist;/*指向kvlist*/
 	DRV_LOG(DEBUG, "Parse successfully %u devargs.",
 		mkvlist->kvlist->count);
 	return 0;
@@ -262,15 +264,17 @@ mlx5_common_args_check_handler(const char *key, const char *val, void *opaque)
 
 	if (strcmp(MLX5_DRIVER_KEY, key) == 0 ||
 	    strcmp(RTE_DEVARGS_KEY_CLASS, key) == 0)
+		/*本函数不处理driver,class两个匹配，遇到直接返回*/
 		return 0;
 	errno = 0;
-	tmp = strtol(val, NULL, 0);
+	tmp = strtol(val, NULL, 0);/*value转为整数*/
 	if (errno) {
 		rte_errno = errno;
 		DRV_LOG(WARNING, "%s: \"%s\" is an invalid integer.", key, val);
 		return -rte_errno;
 	}
 	if (strcmp(key, MLX5_TX_DB_NC) == 0)
+		/*对于tx_db_nc的参数，指明将废止*/
 		DRV_LOG(WARNING,
 			"%s: deprecated parameter, converted to queue_db_nc",
 			key);
@@ -292,7 +296,7 @@ mlx5_common_args_check_handler(const char *key, const char *val, void *opaque)
 	} else if (strcmp(key, MLX5_SYS_MEM_EN) == 0) {
 		config->sys_mem_en = !!tmp;
 	} else if (strcmp(key, MLX5_DEVICE_FD) == 0) {
-		config->device_fd = tmp;
+		config->device_fd = tmp;/*指明deivce_fd*/
 	} else if (strcmp(key, MLX5_PD_HANDLE) == 0) {
 		config->pd_handle = tmp;
 	}
@@ -333,7 +337,7 @@ mlx5_common_config_get(struct mlx5_kvargs_ctrl *mkvlist,
 	config->mr_mempool_reg_en = 1;
 	config->sys_mem_en = 0;
 	config->dbnc = MLX5_ARG_UNSET;
-	config->device_fd = MLX5_ARG_UNSET;
+	config->device_fd = MLX5_ARG_UNSET;/*device_fd初始化*/
 	config->pd_handle = MLX5_ARG_UNSET;
 	if (mkvlist == NULL)
 		return 0;
@@ -410,7 +414,7 @@ parse_class_options(const struct rte_devargs *devargs,
 		return class_name_to_value(devargs->cls->name);
 	/* Legacy devargs support multiple classes. */
 	rte_kvargs_process(mkvlist->kvlist, RTE_DEVARGS_KEY_CLASS,
-			   devargs_class_handler, &ret);
+			   devargs_class_handler, &ret);/*处理“class”对应的配置*/
 	return ret;
 }
 
@@ -422,6 +426,7 @@ static const unsigned int mlx5_class_invalid_combinations[] = {
 static int
 is_valid_class_combination(uint32_t user_classes)
 {
+	/*区分不支持的user_classes(当前为eth驱动与vdpa驱动不能同时使能）*/
 	unsigned int i;
 
 	/* Verify if user specified unsupported combination. */
@@ -448,6 +453,7 @@ to_mlx5_device(const struct rte_device *rte_dev)
 {
 	struct mlx5_common_device *cdev;
 
+	/*遍历devices_list,在其中查找rte_dev对应的cdev*/
 	TAILQ_FOREACH(cdev, &devices_list, next) {
 		if (rte_dev == cdev->dev)
 			return cdev;
@@ -749,6 +755,7 @@ mlx5_common_dev_create(struct rte_device *eal_dev, uint32_t classes,
 	struct mlx5_common_device *cdev;
 	int ret;
 
+	/*申请cdev*/
 	cdev = rte_zmalloc("mlx5_common_device", sizeof(*cdev), 0);
 	if (!cdev) {
 		DRV_LOG(ERR, "Device allocation failure.");
@@ -788,6 +795,7 @@ mlx5_common_dev_create(struct rte_device *eal_dev, uint32_t classes,
 						mlx5_mr_mem_event_cb, NULL);
 exit:
 	pthread_mutex_lock(&devices_list_lock);
+	/*将cdev添加进devices_list*/
 	TAILQ_INSERT_HEAD(&devices_list, cdev, next);
 	pthread_mutex_unlock(&devices_list_lock);
 	return cdev;
@@ -923,24 +931,31 @@ drivers_probe(struct mlx5_common_device *cdev, uint32_t user_classes,
 	bool already_loaded;
 	int ret = -EINVAL;
 
+	/*遍历所有驱动逐个进行probe*/
 	TAILQ_FOREACH(driver, &drivers_list, next) {
 		if ((driver->drv_class & user_classes) == 0)
+			/*驱动的class与指定的user_classes不匹配，忽略*/
 			continue;
 		if (!mlx5_bus_match(driver, cdev->dev))
+			/*此驱动不能匹配此设备*/
 			continue;
 		already_loaded = cdev->classes_loaded & driver->drv_class;
 		if (already_loaded && driver->probe_again == 0) {
+			/*设备已被probe*/
 			DRV_LOG(ERR, "Device %s is already probed",
 				cdev->dev->name);
 			ret = -EEXIST;
 			goto probe_err;
 		}
+		/*依据cdev设备的类型(例如以太，压缩，加密，正则等类型)进行probe*/
 		ret = driver->probe(cdev, mkvlist);
 		if (ret < 0) {
 			DRV_LOG(ERR, "Failed to load driver %s",
 				driver->name);
 			goto probe_err;
 		}
+
+		/*标记此驱动已probe此设备*/
 		enabled_classes |= driver->drv_class;
 	}
 	if (!ret) {
@@ -958,7 +973,7 @@ probe_err:
 }
 
 int
-mlx5_common_dev_probe(struct rte_device *eal_dev)
+mlx5_common_dev_probe(struct rte_device *eal_dev/*要probe的pci设备*/)
 {
 	struct mlx5_common_device *cdev;
 	struct mlx5_kvargs_ctrl mkvlist;
@@ -967,15 +982,20 @@ mlx5_common_dev_probe(struct rte_device *eal_dev)
 	bool new_device = false;
 	int ret;
 
-	DRV_LOG(INFO, "probe device \"%s\".", eal_dev->name);
+	DRV_LOG(INFO, "probe device \"%s\".", eal_dev->name);/*要probe的设备*/
 	if (eal_dev->devargs != NULL && eal_dev->devargs->args != NULL)
+		/*设备有devargs*/
 		mkvlist_p = &mkvlist;
+
+	/*准备devargs到mkvlist_p中*/
 	ret = mlx5_kvargs_prepare(mkvlist_p, eal_dev->devargs);
 	if (ret < 0) {
 		DRV_LOG(ERR, "Unsupported device arguments: %s",
 			eal_dev->devargs->args);
 		return ret;
 	}
+
+	/*处理“class”对应的配置，用于确定匹配此设备的哪种驱动*/
 	ret = parse_class_options(eal_dev->devargs, mkvlist_p);
 	if (ret < 0) {
 		DRV_LOG(ERR, "Unsupported mlx5 class type: %s",
@@ -985,7 +1005,7 @@ mlx5_common_dev_probe(struct rte_device *eal_dev)
 	classes = ret;
 	if (classes == 0)
 		/* Default to net class. */
-		classes = MLX5_CLASS_ETH;/*默认为net class*/
+		classes = MLX5_CLASS_ETH;/*未配置“class", 默认使用以太驱动*/
 	/*
 	 * MLX5 common driver supports probing again in two scenarios:
 	 * - Add new driver under existing common device (regardless of the
@@ -1026,7 +1046,7 @@ mlx5_common_dev_probe(struct rte_device *eal_dev)
 		DRV_LOG(ERR, "Unsupported mlx5 classes combination.");
 		goto class_err;
 	}
-	ret = drivers_probe(cdev, classes, mkvlist_p);
+	ret = drivers_probe(cdev, classes/*预期的驱动类型*/, mkvlist_p);
 	if (ret)
 		goto class_err;
 	/*
@@ -1330,6 +1350,7 @@ mlx5_devx_alloc_uar(struct mlx5_common_device *cdev)
 		 */
 		uar_mapping = 0;
 #endif
+		/*申请uar*/
 		uar = mlx5_glue->devx_alloc_uar(cdev->ctx, uar_mapping);
 #ifdef MLX5DV_UAR_ALLOC_TYPE_NC
 		if (!uar && uar_mapping == MLX5DV_UAR_ALLOC_TYPE_BF) {
@@ -1402,6 +1423,7 @@ mlx5_devx_uar_prepare(struct mlx5_common_device *cdev, struct mlx5_uar *uar)
 		rte_errno = ENOMEM;
 		return -1;
 	}
+	/*申请uar结构体*/
 	uar_obj = mlx5_devx_alloc_uar(cdev);
 	if (uar_obj == NULL || mlx5_os_get_devx_uar_reg_addr(uar_obj) == NULL) {
 		rte_errno = errno;

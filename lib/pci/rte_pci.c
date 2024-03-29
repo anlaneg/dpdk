@@ -92,6 +92,7 @@ pci_dbdf_parse(const char *input, struct rte_pci_addr *dev_addr)
 	return 0;
 }
 
+/*格式化pci设备名称*/
 void
 rte_pci_device_name(const struct rte_pci_addr *addr,
 		char *output, size_t size)

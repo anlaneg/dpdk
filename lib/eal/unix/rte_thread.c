@@ -352,6 +352,7 @@ rte_thread_value_set(rte_thread_key key, const void *value)
 	return 0;
 }
 
+/*给定key,取此key对应的数据*/
 void *
 rte_thread_value_get(rte_thread_key key)
 {

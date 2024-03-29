@@ -30,24 +30,39 @@
 const struct mlx5_glue *mlx5_glue;
 #endif
 
+/*解析此设备的device/uevent*/
 int
 mlx5_get_pci_addr(const char *dev_path, struct rte_pci_addr *pci_addr)
 {
 	FILE *file;
 	char line[32];
 	int rc = -ENOENT;
+	/*例如/sys/class/infiniband/mlx5_0/device/uevent文件*/
 	MKSTR(path, "%s/device/uevent", dev_path);
 
+	/*
+	 * 例如：
+	 * flow# cat /sys/class/infiniband/mlx5_0/device/uevent
+DRIVER=mlx5_core
+PCI_CLASS=20000
+PCI_ID=15B3:1018
+PCI_SUBSYS_ID=15B3:0068
+PCI_SLOT_NAME=0000:00:05.0
+MODALIAS=pci:v000015B3d00001018sv000015B3sd00000068bc02sc00i00
+	 */
 	file = fopen(path, "rb");
 	if (file == NULL) {
 		rte_errno = errno;
 		return -rte_errno;
 	}
+
+	/*自文件中读取内容*/
 	while (fgets(line, sizeof(line), file) == line) {
 		size_t len = strlen(line);
 
 		/* Truncate long lines. */
 		if (len == (sizeof(line) - 1)) {
+			/*此行过长，一直消费直到遇到'\n',相当于将长行截短*/
 			while (line[(len - 1)] != '\n') {
 				int ret = fgetc(file);
 
@@ -66,6 +81,7 @@ mlx5_get_pci_addr(const char *dev_path, struct rte_pci_addr *pci_addr)
 			   &pci_addr->bus,
 			   &pci_addr->devid,
 			   &pci_addr->function) == 4) {
+			/*自pci_slot_name中解析出此设备对应的domain,bus,devid,function*/
 			rc = 0;
 			break;
 		}
@@ -558,34 +574,43 @@ static struct ibv_device *
 mlx5_os_get_ibv_device(const struct rte_pci_device *pci_dev)
 {
 	int n;
+	/*列出系统所有ib设备*/
 	struct ibv_device **ibv_list = mlx5_glue->get_device_list(&n);
 	struct ibv_device *ibv_match = NULL;
 	uint8_t guid1[32] = {0};
 	uint8_t guid2[32] = {0};
 	int ret1, ret2 = -1;
 	struct rte_pci_addr paddr;
+	/*取此设备的pci地址*/
 	const struct rte_pci_addr *addr = &pci_dev->addr;
-	bool is_vf_dev = mlx5_dev_is_vf_pci(pci_dev);
+	bool is_vf_dev = mlx5_dev_is_vf_pci(pci_dev);/*是否为vf设备*/
 
 	if (ibv_list == NULL || !n) {
+		/*未查找到ib设备*/
 		rte_errno = ENOSYS;
 		if (ibv_list)
 			mlx5_glue->free_device_list(ibv_list);
 		return NULL;
 	}
+
+	/*读取设备的phys_switch_id作用guid*/
 	ret1 = mlx5_get_device_guid(addr, guid1, sizeof(guid1));
+
+	/*反序遍历每个ibv设备*/
 	while (n-- > 0) {
 		DRV_LOG(DEBUG, "Checking device \"%s\"..", ibv_list[n]->name);
 		if (mlx5_get_pci_addr(ibv_list[n]->ibdev_path, &paddr) != 0)
+			/*利用ib设备path，获取pci地址失败*/
 			continue;
 		if (ret1 > 0)
+			/*利用新获取的pci地址再读取guid*/
 			ret2 = mlx5_get_device_guid(&paddr, guid2, sizeof(guid2));
 		/* Bond device can bond secondary PCIe */
-		if ((strstr(ibv_list[n]->name, "bond") && !is_vf_dev &&
+		if ((strstr(ibv_list[n]->name, "bond") && !is_vf_dev /*名称中有bond,非vf设备情况*/&&
 		     ((ret1 > 0 && ret2 > 0 && !memcmp(guid1, guid2, sizeof(guid1))) ||
 		      (addr->domain == paddr.domain && addr->bus == paddr.bus &&
 		       addr->devid == paddr.devid))) ||
-		    !rte_pci_addr_cmp(addr, &paddr)) {
+		    !rte_pci_addr_cmp(addr, &paddr)/*两者pci地址不相等*/) {
 			ibv_match = ibv_list[n];
 			break;
 		}
@@ -598,7 +623,7 @@ mlx5_os_get_ibv_device(const struct rte_pci_device *pci_dev)
 		rte_errno = ENOENT;
 	}
 	mlx5_glue->free_device_list(ibv_list);
-	return ibv_match;
+	return ibv_match;/*返回匹配的设备*/
 }
 
 /* Try to disable ROCE by Netlink\Devlink. */
@@ -784,6 +809,7 @@ mlx5_open_device(struct mlx5_common_device *cdev, uint32_t classes)
 
 	MLX5_ASSERT(cdev->config.device_fd == MLX5_ARG_UNSET);
 	if (classes & MLX5_CLASS_VDPA)
+		/*针对vdpa设备*/
 		ibv = mlx5_vdpa_get_ibv_dev(cdev->dev);
 	else
 		ibv = mlx5_os_get_ibv_dev(cdev->dev);
@@ -883,8 +909,9 @@ mlx5_os_open_device(struct mlx5_common_device *cdev, uint32_t classes)
 	return 0;
 }
 
+/*读取设备的phys_switch_id*/
 int
-mlx5_get_device_guid(const struct rte_pci_addr *dev, uint8_t *guid, size_t len)
+mlx5_get_device_guid(const struct rte_pci_addr *dev, uint8_t *guid/*出参，设备的switch_id*/, size_t len)
 {
 	char tmp[512];
 	char cur_ifname[IF_NAMESIZE + 1];
@@ -896,6 +923,7 @@ mlx5_get_device_guid(const struct rte_pci_addr *dev, uint8_t *guid, size_t len)
 	if (guid == NULL || len < sizeof(u_int64_t) + 1)
 		return -1;
 	memset(guid, 0, len);
+	/*构造设备目录*/
 	snprintf(tmp, sizeof(tmp), "/sys/bus/pci/devices/%04x:%02x:%02x.%x/net",
 			dev->domain, dev->bus, dev->devid, dev->function);
 	dir = opendir(tmp);
@@ -905,12 +933,13 @@ mlx5_get_device_guid(const struct rte_pci_addr *dev, uint8_t *guid, size_t len)
 	do {
 		ptr = readdir(dir);
 		if (ptr == NULL || ptr->d_type != DT_DIR) {
+			/*打开目录失败或者非目录，返回-1*/
 			closedir(dir);
 			return -1;
 		}
 	} while (strchr(ptr->d_name, '.') || strchr(ptr->d_name, '_') ||
-		 strchr(ptr->d_name, 'v'));
-	snprintf(cur_ifname, sizeof(cur_ifname), "%s", ptr->d_name);
+		 strchr(ptr->d_name, 'v'));/*目录名称中有'.','_','v'时继续读取*/
+	snprintf(cur_ifname, sizeof(cur_ifname), "%s", ptr->d_name);/*取pf名称*/
 	closedir(dir);
 	snprintf(tmp + strlen(tmp), sizeof(tmp) - strlen(tmp),
 			"/%s/phys_switch_id", cur_ifname);
@@ -999,8 +1028,8 @@ mlx5_os_wrapped_mkey_destroy(struct mlx5_pmd_wrapped_mr *pmd_mr)
  *  - NULL on failure, with rte_errno set.
  */
 struct rte_intr_handle *
-mlx5_os_interrupt_handler_create(int mode, bool set_fd_nonblock, int fd,
-				 rte_intr_callback_fn cb, void *cb_arg)
+mlx5_os_interrupt_handler_create(int mode, bool set_fd_nonblock, int fd/*server fd*/,
+				 rte_intr_callback_fn cb/*server fd处理回调*/, void *cb_arg)
 {
 	struct rte_intr_handle *tmp_intr_handle;
 	int ret, flags;

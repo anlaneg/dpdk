@@ -469,10 +469,10 @@ static const struct rte_pci_id mlx5_crypto_pci_id_map[] = {
 };
 
 static struct mlx5_class_driver mlx5_crypto_driver = {
-	.drv_class = MLX5_CLASS_CRYPTO,
+	.drv_class = MLX5_CLASS_CRYPTO,/*指明为加密类驱动*/
 	.name = RTE_STR(MLX5_CRYPTO_DRIVER_NAME),
 	.id_table = mlx5_crypto_pci_id_map,
-	.probe = mlx5_crypto_dev_probe,
+	.probe = mlx5_crypto_dev_probe,/*加密类驱动设备probe*/
 	.remove = mlx5_crypto_dev_remove,
 };
 
